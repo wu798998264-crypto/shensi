@@ -6,6 +6,7 @@ const runtimeScripts = new Set(['scripts/launcher.mjs', 'scripts/update-installe
 const forbidden = /(?:^|\/)(?:tests?|fixtures|artifacts|test-results|runtime|output|logs|\.git|\.shensi|\.tmp[^/]*|generated|作品|笔记|原始资料|_备份_不参与规则扫描|版本草案|废弃设定|回收站)(?:\/|$)|(?:^|\/)(?:test-|audit-|smoke-|benchmark-|run-.*real|configure-existing-|rebind-|bind-existing-)|(?:向天垂钓|三相之力|幻烬)|\.(?:log|pfx|p12|pem|key|cer|db|sqlite|docx|mp4|zip)$/iu;
 function allowedPackagePath(value) {
   const file = String(value).replaceAll('\\', '/').replace(/^\.\//, '');
+  if (/^node_modules\/@openai\/codex(?:-(?:win32|linux|darwin)-(?:x64|arm64))?\//u.test(file)) return !/(?:^|\/)(?:test|tests|examples|\.env|\.git)(?:\/|$)/iu.test(file) && !file.includes('../');
   if (file.includes('../') || forbidden.test(file)) return false;
   if (runtimeScripts.has(file)) return true;
   if (['server.mjs', 'index.html', 'package.json', 'release-build.json', 'update-config.json'].includes(file)) return true;

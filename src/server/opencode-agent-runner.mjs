@@ -98,6 +98,7 @@ export const runOpenCodeAgent = async ({
   signal = null,
   onEvent = null,
   onProcess = null,
+  nativeHost = null,
 } = {}) => {
   const requestedModel = String(model || "").trim();
   if (!validModelId(requestedModel)) throw new Error("OpenCode Agent 模型必须是完整 provider/model ID");
@@ -106,7 +107,8 @@ export const runOpenCodeAgent = async ({
   const projectDirectory = String(cwd || "").trim();
   if (!projectDirectory) throw new Error("OpenCode Agent 没有可用的项目目录");
   const resources = deepSeekAgentContextText(contextBlocks);
-  const input = [agentPrompt({ allowEdits, allowNetwork }), task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
+  const nativeInstructions = "You own the complete user task. Use the shensi MCP tools to discover documents, load Skills, write with full history protection, generate candidates/media and ask the user. No fixed creative stages or keyword routes. Work only in the authorized workspace exposed by the tools.";
+  const input = [nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }), task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(input) > MAX_INPUT_BYTES) throw new Error("OpenCode Agent 输入超过 8MB，已停止本次调用");
   const executionSourceReceipt = buildExecutionSourceReceiptFromContextBlocks({
     finalInput: input,
@@ -124,6 +126,7 @@ export const runOpenCodeAgent = async ({
   const variant = String(reasoningEffort || "").trim().toLowerCase();
   if (["high", "max"].includes(variant)) args.push("--variant", variant);
   const permissions = deepSeekOpenCodeAgentPermissions({ allowEdits, allowNetwork });
+  if (nativeHost) Object.assign(permissions, { read: "deny", glob: "deny", grep: "deny", list: "deny", shensi_: "allow", "shensi_*": "allow" });
   let tempRoot = "";
   const managedCredential = credentialSource === "shensi";
   const secret = managedCredential ? String(apiKey || "").trim() : "";
@@ -146,11 +149,11 @@ export const runOpenCodeAgent = async ({
         shensi: {
           description: "Shensi isolated OpenCode workspace agent",
           mode: "primary",
-          prompt: agentPrompt({ allowEdits, allowNetwork }),
+          prompt: nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }),
           permission: permissions,
         },
       },
-      mcp: {},
+      mcp: nativeHost ? { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } : {},
       plugin: [],
     };
     isolatedEnvironment = {
@@ -164,6 +167,8 @@ export const runOpenCodeAgent = async ({
     const insertAt = args.indexOf("--model");
     if (insertAt >= 0) args.splice(insertAt, 0, "--agent", "shensi");
   }
+  if (nativeHost && !managedCredential) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
+  if (nativeHost) { const pureIndex = args.indexOf("--pure"); if (pureIndex >= 0) args.splice(pureIndex, 1); }
   if (Buffer.byteLength(input) <= 24_000) args.push(input);
   else {
     if (!tempRoot) tempRoot = await mkdtemp(join(tmpdir(), "shensi-opencode-agent-"));

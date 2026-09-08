@@ -44,6 +44,7 @@ const supportedAttachments = (attachments = []) => attachments.every((attachment
 
 const stageApplicationContext = ({ system = "", shensiRuntime = {} }) => {
   const stage = normalizedId(shensiRuntime.stage, "unknown").replace(/[<>"']/g, "");
+  if (shensiRuntime.agentDriven === true) return String(system || "");
   return [
     `<shensi-stage id="${stage}">`,
     "你是神思可信编排器内部的 Codex Agent 模型执行单元。",
@@ -94,11 +95,13 @@ export class ShensiCodexAgentRuntime {
     appVersion = "1.0.0",
     launchResolver = resolveLocalCodexLaunch,
     idleShutdownMs = 90_000,
+    environment = null,
   } = {}) {
     this.machineRoot = resolve(machineRoot);
     this.appRoot = resolve(appRoot);
     this.appVersion = appVersion;
     this.launchResolver = launchResolver;
+    this.environment = environment;
     this.root = resolve(this.machineRoot, "machine-sessions", "shensi-codex-runtime-v1");
     this.codexProfileRoot = shensiCodexProfileRoot(this.machineRoot);
     this.sandboxRoot = resolve(this.root, "isolated-workspaces");
@@ -151,7 +154,7 @@ export class ShensiCodexAgentRuntime {
     try {
       ({ child } = await spawnLocalCodexAppServer({
         cwd: this.appRoot,
-        env: shensiCodexEnvironment({ machineRoot: this.machineRoot }),
+        env: this.environment || shensiCodexEnvironment({ machineRoot: this.machineRoot }),
         launchResolver: this.launchResolver,
       }));
     } catch (error) {
@@ -213,6 +216,20 @@ export class ShensiCodexAgentRuntime {
       return;
     }
     if (message.id !== undefined && message.method) {
+      const run = this.findRun(message.params || {});
+      if (message.method === "item/tool/call" && run?.workspaceToolRuntime) {
+        const params = message.params || {};
+        const segments = String(params.tool || params.name || "").split(/[._]/u);
+        const namespace = params.namespace || segments.shift();
+        const tool = params.namespace ? String(params.tool || params.name) : segments.join("_");
+        const input = params.arguments || {};
+        run.onToolEvent?.({ phase: "started", kind: "workspace", name: `${namespace}.${tool}`, callId: String(message.id), input });
+        Promise.resolve(run.workspaceToolRuntime.invoke({ namespace, tool, arguments: input })).then((result) => {
+          run.onToolEvent?.({ phase: "completed", kind: "workspace", name: `${namespace}.${tool}`, callId: String(message.id), success: result.success === true });
+          this.respond(message.id, result);
+        }).catch((error) => this.respond(message.id, { success: false, contentItems: [{ type: "inputText", text: safeMessage(error) }] }));
+        return;
+      }
       if (APPROVAL_METHODS.has(message.method)) {
         const run = this.findRun(message.params || {});
         if (run) run.deniedToolCalls += 1;
@@ -314,9 +331,10 @@ export class ShensiCodexAgentRuntime {
         approvalsReviewer: "user",
         sandbox: "read-only",
         environments: [],
-        dynamicTools: [],
+        dynamicTools: options.shensiRuntime?.agentDriven === true ? options.workspaceToolRuntime?.dynamicTools || [] : [],
         selectedCapabilityRoots: [],
-        developerInstructions: [
+        ...(options.shensiRuntime?.agentDriven ? { config: { "features.shell_tool": false, "features.unified_exec": false, "features.apply_patch_freeform": false, "features.remote_models": false, "web_search": "disabled" } } : {}),
+        developerInstructions: options.shensiRuntime?.agentDriven === true ? String(options.system || "") : [
           "You are a model worker inside the trusted Shensi creative orchestrator.",
           "Use only the stage envelope supplied in each turn.",
           "Do not inspect files, run commands, access the network, call plugins, load skills, spawn agents, or modify state.",
@@ -369,6 +387,8 @@ export class ShensiCodexAgentRuntime {
       status: "starting",
       terminal: false,
       deniedToolCalls: 0,
+      workspaceToolRuntime: options.shensiRuntime?.agentDriven === true ? options.workspaceToolRuntime : null,
+      onToolEvent: options.onToolEvent,
       outputLimit: outputCharacterLimit(options.settings),
       resolve: resolveRun,
       reject: rejectRun,
@@ -397,6 +417,11 @@ export class ShensiCodexAgentRuntime {
       }, { timeoutMs: 30_000 });
       accepted = true;
       this.adoptTurnId(run, response?.turn?.id);
+      options.registerSteer?.(async (content) => {
+        if (run.terminal) return false;
+        await this.request("turn/steer", { threadId: run.threadId, expectedTurnId: run.turnId, input: [{ type: "text", text: content, text_elements: [] }] });
+        return true;
+      });
       if (!run.turnId || run.turnId.startsWith("starting-")) throw runtimeError("Codex Agent 未返回 turn ID", "CODEX_AGENT_TURN_FAILED", false);
 
       const abortPromise = new Promise((_, rejectAbort) => {

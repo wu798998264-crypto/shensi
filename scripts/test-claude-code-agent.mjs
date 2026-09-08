@@ -73,7 +73,7 @@ assert.deepEqual(executionModeCapabilities({
   credentialSource: "shensi",
   protocol: "anthropic_messages",
   baseUrl: "https://api.deepseek.com/anthropic",
-}).modes, ["chat", "agent"], "Claude Code+DeepSeek 安全凭据配置必须支持 Chat 与 Agent 双处理器");
+}).modes, ["agent"], "Claude Code+DeepSeek 安全凭据配置统一使用 Agent 处理器");
 assert.equal(generationProfileLabel({ agentEngine: "claude_code", provider: "DeepSeek", adapter: "cli" }, "text"), "Claude Code+DeepSeek");
 
 const normalizedComposite = normalizeGenerationProfiles({
@@ -95,7 +95,7 @@ const normalizedComposite = normalizeGenerationProfiles({
 });
 const normalizedCompositeProfile = normalizedComposite.textConnections.find((profile) => profile.id === "text-claude-code-deepseek");
 assert.equal(normalizedCompositeProfile.agentEngine, "claude_code", "新式 Claude Code+DeepSeek 配置不得被旧 DeepSeek OpenCode 迁移覆盖");
-assert.deepEqual(normalizedCompositeProfile.executionModes, ["chat", "agent"]);
+assert.deepEqual(normalizedCompositeProfile.executionModes, ["agent"]);
 
 const [appSource, serverSource, providerSource] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),

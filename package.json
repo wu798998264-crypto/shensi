@@ -88,6 +88,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@openai/codex": "0.146.0",
     "undici": "7.29.0"
   },
   "build": {
@@ -127,6 +128,13 @@
       "packaging/bundled/**/*",
       "public/assets/shensi-*",
       "node_modules/undici/**/*",
+      "node_modules/@openai/codex/**/*",
+      "node_modules/@openai/codex-win32-x64/**/*",
+      "node_modules/@openai/codex-win32-arm64/**/*",
+      "node_modules/@openai/codex-darwin-x64/**/*",
+      "node_modules/@openai/codex-darwin-arm64/**/*",
+      "node_modules/@openai/codex-linux-x64/**/*",
+      "node_modules/@openai/codex-linux-arm64/**/*",
       "!**/.git/**",
       "!**/node_modules/.cache/**",
       "!**/*.map",

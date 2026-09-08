@@ -52,8 +52,10 @@ const contextText = (blocks = []) => (Array.isArray(blocks) ? blocks : [])
 
 const buildInstructions = ({ contextBlocks = [], stage = "agent" } = {}) => [
   `<shensi-stage name="${stage}">`,
-  "你由神思运行器通过当前配置已核验的 Agent 协议执行。神思服务端负责文档、Skill、任务合同和正式落盘；你只能调用本轮明确提供的受控工具，不能自行猜测未读取的文件内容，也不能声称调用了实际未调用的工具。",
-  "工作区工具均为只读且受当前作品、历史授权和读取预算约束。正式文档修改必须返回完整候选内容和目标信息，由神思事务层校验 revision、保存历史并落盘；不得要求只读工具写文件，也不得声称已经直接覆盖作品文件。",
+  ...(stage === "conversation_agent" ? ["你是完整的 Agent。根据当前指令、任务路由和已读取证据自主执行。按需发现文档与 Skill，通过提供的工具完成任务；真实工具结果才是读写和生成成功的依据。"] : [
+    "你由神思运行器通过当前配置已核验的 Agent 协议执行。神思服务端负责文档、Skill、任务合同和正式落盘；你只能调用本轮明确提供的受控工具，不能自行猜测未读取的文件内容，也不能声称调用了实际未调用的工具。",
+    "工作区工具均为只读且受当前作品、历史授权和读取预算约束。正式文档修改必须返回完整候选内容和目标信息，由神思事务层校验 revision、保存历史并落盘；不得要求只读工具写文件，也不得声称已经直接覆盖作品文件。",
+  ]),
   contextText(contextBlocks),
   "</shensi-stage>",
 ].filter(Boolean).join("\n\n");
@@ -145,7 +147,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
     );
   };
 
-  const runStage = async ({ settings = {}, prompt = "", contextBlocks = [], stage = "agent", sessionId = "", signal = null, workspaceToolRuntime = null, onToolEvent = null } = {}) => {
+  const runStage = async ({ settings = {}, prompt = "", contextBlocks = [], stage = "agent", sessionId = "", signal = null, workspaceToolRuntime = null, onToolEvent = null, drainSupplements = () => [] } = {}) => {
     if (!supports({ settings, stage, sessionId })) {
       throw Object.assign(new Error("神思运行器配置不完整：需要已核验的 Responses 或 Chat Completions Agent 配置"), { code: "CODEX_API_AGENT_CONFIG_INVALID" });
     }
@@ -175,7 +177,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
             parameters: tool.parameters,
           },
         }));
-        const maxToolCalls = Math.max(1, Math.min(32, Number(settings.maxToolCalls) || 12));
+        const maxToolCalls = Math.max(1, Math.min(stage === "conversation_agent" ? 256 : 32, Number(settings.maxToolCalls) || (stage === "conversation_agent" ? 96 : 12)));
         const messages = [
           { role: "system", content: instructions },
           { role: "user", content: String(prompt || "") },
@@ -185,6 +187,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
         let workspaceToolsUsed = false;
         const workspaceToolCalls = [];
         while (true) {
+          for (const content of drainSupplements()) messages.push({ role: "user", content: String(content) });
           const response = await fetchProvider(`${normalizeBaseUrl(settings.baseUrl)}/chat/completions`, {
             method: "POST",
             headers: {

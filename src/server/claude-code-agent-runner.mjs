@@ -66,6 +66,7 @@ export const runClaudeCodeAgentTurn = async ({
   cliPath = "claude",
   maxTurns = 8,
   permissionMode = "default",
+  nativeHost = null,
   allowEdits = false,
   allowNetwork = false,
   contextBlocks = [],
@@ -77,7 +78,7 @@ export const runClaudeCodeAgentTurn = async ({
   const resources = deepSeekAgentContextText(contextBlocks);
   const finalPrompt = [
     "You are the Claude Code Agent embedded in Shensi. Follow the current user instruction and the verified Shensi product contract.",
-    allowEdits ? "Workspace changes are authorized only within the supplied target and transaction contract." : "This task is read-only; do not change files.",
+    nativeHost ? "Own the full task. Discover resources and perform authorized changes through the shensi MCP tools, which preserve complete document history. Do not use direct filesystem writes." : allowEdits ? "Workspace changes are authorized only within the supplied target and transaction contract." : "This task is read-only; do not change files.",
     allowNetwork ? "Public web access is allowed without bypassing access controls." : "Do not add network activity unless the task contract explicitly permits it.",
     String(prompt || "").trim(),
     resources ? `神思提供的本轮受控上下文：\n${resources}` : "",
@@ -88,6 +89,7 @@ export const runClaudeCodeAgentTurn = async ({
     stage: "claude_code_agent_final_input",
   });
   let args = claudeCodeCommandArgs({ prompt: finalPrompt, model, maxTurns, permissionMode });
+  if (nativeHost) args.push("--tools", "", "--strict-mcp-config", "--mcp-config", JSON.stringify({ mcpServers: { shensi: { type: "http", url: nativeHost.url, headers: nativeHost.headers } } }), "--allowedTools", "mcp__shensi__*");
   const providerEnvironment = claudeCodeProviderEnvironment({ provider, baseUrl, apiKey, credentialSource, model, environment });
   let executable = String(cliPath || "claude").trim() || "claude";
   if (launch === launchClaudeCode) {
