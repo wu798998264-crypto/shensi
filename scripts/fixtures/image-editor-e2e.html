@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Shensi image editor E2E</title></head>
+<body>
+  <main id="mount"></main>
+  <script type="module">
+    import { createImageCardEditor } from "../../src/image-card-editor.js";
+
+    HTMLCanvasElement.prototype.setPointerCapture = () => {};
+    const nextFrame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const sourceBlob = (mimeType) => new Promise((resolve, reject) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 96;
+      canvas.height = 64;
+      const context = canvas.getContext("2d");
+      const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+      gradient.addColorStop(0, "#ef3340");
+      gradient.addColorStop(1, "#37b24d");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = "#ffffff";
+      context.fillRect(12, 12, 24, 18);
+      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error(`无法创建 ${mimeType}`)), mimeType, 0.92);
+    });
+    const bitmapEvidence = async (blob) => {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let alpha = 0;
+      let color = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        color += pixels[index] + pixels[index + 1] + pixels[index + 2];
+        alpha += pixels[index + 3];
+      }
+      return { width: canvas.width, height: canvas.height, alpha, color };
+    };
+
+    window.__imageEditorEvidence = (async () => {
+      const editor = createImageCardEditor({ mount: document.querySelector("#mount") });
+      window.__imageEditorExternal = async (source) => {
+        await editor.open({ src: source, name: "real-attachment" });
+        try {
+          const canvas = editor.dialog.querySelector("[data-image-editor-canvas]");
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          const sampleWidth = Math.min(canvas.width, 256);
+          const sampleHeight = Math.min(canvas.height, 256);
+          const pixels = context.getImageData(0, 0, sampleWidth, sampleHeight).data;
+          let alpha = 0;
+          let color = 0;
+          let minimum = 255;
+          let maximum = 0;
+          for (let index = 0; index < pixels.length; index += 4) {
+            const brightness = pixels[index] + pixels[index + 1] + pixels[index + 2];
+            color += brightness;
+            alpha += pixels[index + 3];
+            minimum = Math.min(minimum, pixels[index], pixels[index + 1], pixels[index + 2]);
+            maximum = Math.max(maximum, pixels[index], pixels[index + 1], pixels[index + 2]);
+          }
+          const saved = await editor.exportResult();
+          return { width: canvas.width, height: canvas.height, savedBytes: saved.blob.size, alpha, color, contrast: maximum - minimum };
+        } finally {
+          editor.close();
+        }
+      };
+      const rows = [];
+      for (const mimeType of ["image/png", "image/jpeg", "image/webp"]) {
+        const input = await sourceBlob(mimeType);
+        const inputUrl = URL.createObjectURL(input);
+        try {
+          await editor.open({ src: inputUrl, name: mimeType });
+          const canvas = editor.dialog.querySelector("[data-image-editor-canvas]");
+          editor.dialog.querySelector('[data-image-editor-tool="rectangle"]').click();
+          const rect = canvas.getBoundingClientRect();
+          const point = (type, x, y) => canvas.dispatchEvent(new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: 7,
+            pointerType: "mouse",
+            button: 0,
+            buttons: type === "pointerup" ? 0 : 1,
+            clientX: rect.left + x,
+            clientY: rect.top + y,
+          }));
+          point("pointerdown", 20, 20);
+          point("pointermove", 80, 45);
+          point("pointerup", 80, 45);
+          await nextFrame();
+          const state = editor.getState();
+          if (state.operations.length !== 1) throw new Error(`${mimeType} 编辑操作没有写入画布状态`);
+          const saved = await editor.exportResult();
+          const firstEvidence = await bitmapEvidence(saved.blob);
+          if (!firstEvidence.alpha || !firstEvidence.color) throw new Error(`${mimeType} 编辑保存结果为黑屏或透明空图`);
+          editor.close();
+          const savedUrl = URL.createObjectURL(saved.blob);
+          try {
+            await editor.open({ src: savedUrl, name: `${mimeType}-reopen` });
+            const reopened = await editor.exportResult();
+            const reopenedEvidence = await bitmapEvidence(reopened.blob);
+            if (!reopenedEvidence.alpha || !reopenedEvidence.color) throw new Error(`${mimeType} 保存后重新打开失败`);
+            rows.push({ mimeType, inputBytes: input.size, savedBytes: saved.blob.size, operations: state.operations.length, ...reopenedEvidence });
+          } finally {
+            editor.close();
+            URL.revokeObjectURL(savedUrl);
+          }
+        } finally {
+          URL.revokeObjectURL(inputUrl);
+        }
+      }
+      return rows;
+    })();
+  </script>
+</body>
+</html>

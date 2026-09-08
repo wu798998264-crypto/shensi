@@ -1,0 +1,2 @@
+# Preserve the current source bytes; Git must not rewrite working files.
+* -text

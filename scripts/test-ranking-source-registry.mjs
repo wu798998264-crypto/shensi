@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { rankingSourceCatalog, assertRankingSourceUrl, parseRankingSourceFixture } from "../src/server/ranking-source-registry.mjs";
+
+const root = resolve(import.meta.dirname, "fixtures", "ranking-scan");
+const qidian = rankingSourceCatalog().find((item) => item.id === "qidian");
+assert.equal(qidian.acquisitionMode, "direct");
+assert.equal(qidian.fixtureVerified, true);
+assert.equal(qidian.liveVerified, false);
+assert.throws(() => assertRankingSourceUrl("qidian", "http://127.0.0.1/private"), /不允许|白名单/u);
+assert.throws(() => assertRankingSourceUrl("qidian", "https://evil.example/rank"), /白名单/u);
+assert.doesNotThrow(() => assertRankingSourceUrl("qidian", "https://www.qidian.com/rank/"));
+const qidianItems = parseRankingSourceFixture("qidian", await readFile(resolve(root, "qidian.html"), "utf8"), { rankingId: "new-book", channel: "male", collectedAt: "2026-08-21T08:00:00.000Z" });
+assert.equal(qidianItems.length, 3);
+assert.equal(qidianItems[0].title, "星门夜渡");
+assert.deepEqual(qidianItems[0].rawPublicMetrics, { 月票: 12800 });
+const jjwxcItems = parseRankingSourceFixture("jjwxc", await readFile(resolve(root, "jjwxc.html"), "utf8"), { rankingId: "gold", channel: "female", collectedAt: "2026-08-21T08:00:00.000Z" });
+assert.equal(jjwxcItems.length, 2);
+assert.deepEqual(jjwxcItems[0].rawPublicMetrics, { 积分: 880000 });
+console.log("Ranking source registry tests passed");

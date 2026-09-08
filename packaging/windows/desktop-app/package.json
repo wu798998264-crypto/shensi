@@ -1,0 +1,7 @@
+{
+  "name": "shensi-creative-engine-desktop",
+  "version": "5.5.2",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

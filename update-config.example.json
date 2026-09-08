@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "repository": "",
+  "channel": "stable",
+  "assetPattern": "Shensi-Creative-Engine-Setup-.*\\.exe$",
+  "checksumAssetPattern": "^SHA256SUMS\\.txt$",
+  "manifestAssetPattern": "^update-manifest\\.json$",
+  "manifestProduct": "shensi-creative-engine",
+  "manifestPublicKeyPem": "",
+  "manifestSigningKeyId": "",
+  "allowedPublisher": "",
+  "installerArgs": ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+}

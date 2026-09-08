@@ -1,0 +1,11 @@
+$ErrorActionPreference = "Stop"
+$exe = "C:\Users\Administrator\AppData\Local\Programs\Shensi\Shensi.exe"
+$root = "C:\Users\Administrator\Documents\shensi-source\output\real-loop-smoke-data"
+$user = "C:\Users\Administrator\Documents\shensi-source\output\real-loop-electron-user"
+$env:SHENSI_DATA_ROOT = $root
+$env:SHENSI_MACHINE_DATA_ROOT = $root
+$env:SHENSI_DESKTOP_USER_DATA_ROOT = $user
+$env:SHENSI_SKIP_UPDATE_CHECK = "1"
+$env:SHENSI_DISABLE_HARDWARE_ACCELERATION = "1"
+$env:SHENSI_TEST_DESKTOP_RUNTIME = "1"
+Start-Process -FilePath $exe -ArgumentList @("--remote-debugging-port=9376", "--disable-gpu", "--disable-gpu-compositing") -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden
