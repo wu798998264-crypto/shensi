@@ -7,7 +7,7 @@ import { bindFormalWriteCandidate, formalWriteInstructionHash } from "../formal-
 import { WORKSPACE_MODULES } from "../module-registry.js";
 
 const text = (value) => String(value ?? "");
-const body = (document) => text(document?.markdown ?? document?.text ?? document?.html);
+const body = (document) => text(document?.markdown || document?.text || document?.html);
 const objectSchema = (properties, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 const str = (description) => ({ type: "string", description });
 const integer = (description, minimum = 0) => ({ type: "integer", description, minimum });
@@ -19,7 +19,7 @@ export const conversationAgentInstructions = `你是神思的完整 Agent，直�
 需要作者选择的内容调用 interaction.ask，以自然语言提出问题和选项；用户可在输入口发送其他想法。不要提问选谁当主笔或几个主笔。保留多候选：用户直接描述数量与差异，生成后调用 interaction.candidates，不自动覆盖文档。
 图片/视频通过 media.generate 调用当前生成能力，明确指定的参数优先；缺配置时使用对应列表第一项，图片2K/高清、视频720p。视频没有明确时长时只确认时长。不能静默切换账号、扩大数量、重复付费提交或越过下载验收。`;
 
-export const createConversationAgentTools = ({ appRoot, workspacePath, workspaceKind = "project", requestId, conversationId, sourceMessageId, instruction, catalog = [], mediaProfiles = {}, readSkill, ask, candidates, media, mediaStatus, signal, emit = () => {}, load = loadWorkspaceState, write = executeDocumentTransaction } = {}) => {
+export const createConversationAgentTools = ({ appRoot, workspacePath, workspaceKind = "project", requestId, conversationId, sourceMessageId, instruction, catalog = [], mediaProfiles = {}, contentOnly = false, readSkill, ask, candidates, media, mediaStatus, signal, emit = () => {}, load = loadWorkspaceState, write = executeDocumentTransaction } = {}) => {
   const readState = async () => {
     if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
     if (!workspacePath) throw new Error("当前尚未绑定作品或笔记；需要文档操作时请选择工作区");
@@ -43,6 +43,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       tool("read", "加载目录中的具体 Skill 和其必需规则，不能假称已加载其他 Skill。", { id: str("目录中真实ID") }, ["id"]),
     ]),
     namespace("interaction", [
+      tool("open_candidates", "用户要求查看候选时打开当前对话已有候选对比，不生成新稿。", {}),
       tool("ask", "先向用户显示问题文字，再显示动态选择框；支持自然语言补充。", { question: str("问题及必要解释"), options: { type: "array", items: str("一个完整可选回答") }, multiple: { type: "boolean" } }, ["question", "options"]),
       tool("candidates", "交付多个候选稿，不要求选择主笔，也不自动写入文档。", { variants: { type: "array", items: { type: "object", properties: { title: str("候选名及差异"), content: str("完整候选稿") }, required: ["title", "content"], additionalProperties: false } } }, ["variants"]),
     ]),
@@ -52,8 +53,10 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       tool("generate", "使用既有后台媒体生成服务；返回下载验收结果，自动归档全部资产。缺少视频时长应先询问。", { channel: { type: "string", enum: ["image", "video"] }, prompt: str("生成提示词"), profileId: str("可选明确配置ID"), quality: str("图片清晰度，默认2k"), resolution: str("视频清晰度，默认720p"), duration: integer("视频秒数", 1), aspectRatio: str("画面比例"), operationId: str("同一生成幂等标识，不可盲目换ID重提") }, ["channel", "prompt", "operationId"]),
     ]),
   ];
+  if (contentOnly) for (const namespace of dynamicTools) namespace.tools = namespace.tools.filter((tool) => !(namespace.name === "documents" && tool.name === "write") && namespace.name !== "media");
   const call = async (namespace, name, args) => {
     if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
+    if (!dynamicTools.some((entry) => entry.name === namespace && entry.tools.some((tool) => tool.name === name))) throw new Error("当前任务未提供此工具");
     if (namespace === "skills") {
       if (name === "list") return catalog.filter((skill) => !args.query || text([skill.name, skill.description, skill.capabilities]).toLowerCase().includes(text(args.query).toLowerCase()));
       if (name === "read") {
@@ -62,6 +65,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       }
     }
     if (namespace === "interaction") {
+      if (name === "open_candidates") { await emit("open_candidates", {}); return { requested: true }; }
       if (name === "ask") return ask(args);
       if (name === "candidates") {
         if (!Array.isArray(args.variants) || args.variants.length < 2 || args.variants.some((item) => !text(item.content).trim())) throw new Error("多候选必须包含至少两份完整内容");

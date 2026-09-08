@@ -3,12 +3,14 @@ import { readFile } from "node:fs/promises";
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 
-const executeStart = app.indexOf("const executeMessage = async");
+const executeStart = app.indexOf("const executeConversationAgentMessage = async");
 const executeEnd = app.indexOf("const sendMessage = async", executeStart);
-assert.ok(executeStart >= 0 && executeEnd > executeStart, "executeMessage source window must exist");
+assert.ok(executeStart >= 0 && executeEnd > executeStart, "Agent 对话入口必须存在");
 const executeSource = app.slice(executeStart, executeEnd);
-assert.match(executeSource, /return await generateMediaFromComposer\(/u,
-  "媒体执行结果必须透传到队列确认层");
+assert.match(executeSource, /conversationAgentRequest\("\/api\/conversation-agent\/start"/u,
+  "媒体需求也先交给同一 Agent，再使用受保护后台媒体工具");
+assert.match(executeSource, /markConversationInstructionAccepted[\s\S]{0,300}ackQueuedConversationItem/u,
+  "持久化 Agent 接受后才确认队列项，断线不能重复付费执行");
 
 const mediaStart = app.indexOf("const generateMediaFromComposer = async");
 const mediaEnd = app.indexOf("const generateImageFromComposer", mediaStart);

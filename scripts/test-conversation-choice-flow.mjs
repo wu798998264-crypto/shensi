@@ -74,11 +74,8 @@ assert.match(app, /conversationChoiceInstruction: true/u, "点选结果必须显
 assert.match(app, /conversationChoiceQuestion: true/u, "神思提出的选项问题必须保留在对话记录中");
 assert.match(app, /const appendPendingConversationTaskInstruction =/u,
   "发送后需要先确认的任务必须有统一的原指令入区入口");
-const workspaceBindingGateStart = app.indexOf("if (workspaceBindingRequired &&");
-const workspaceBindingGateEnd = app.indexOf("const materialInspectionActive", workspaceBindingGateStart);
-const workspaceBindingGate = app.slice(workspaceBindingGateStart, workspaceBindingGateEnd);
-assert.match(workspaceBindingGate, /appendPendingConversationTaskInstruction\(\{[\s\S]{0,420}await openWorkspaceBindingChoice/u,
-  "工作区选择必须发生在原始用户指令入区之后");
+assert.doesNotMatch(app, /if \(workspaceBindingRequired &&/u, "不得在 Agent 理解前通过关键词判断是否需要工作区");
+assert.match(app, /taskMessages\.push\(userMessage\)[\s\S]{0,2000}await onPersist\(\)[\s\S]{0,500}yieldAfterImmediateInstructionRender/u, "用户消息先持久化和显示，再启动 Agent");
 const continuationChoiceStart = app.indexOf("const openContinuationDestinationChoice =");
 const continuationChoiceEnd = app.indexOf("const openLandingResolutionChoice", continuationChoiceStart);
 const continuationChoiceOpen = app.slice(continuationChoiceStart, continuationChoiceEnd);
@@ -91,7 +88,7 @@ assert.match(continuationHandler, /displayContent:\s*clarified/u,
   "选择续写目标后只能新增所选补充，不得把原指令重复显示一次");
 assert.match(continuationHandler, /taskContextSnapshot:\s*pending\.taskContextSnapshot/u,
   "续写目标选择必须沿用首次发送时锁定的任务和文档位置");
-assert.match(app, /hasGuidanceProtocol[\s\S]{0,180}guidanceChoice\?\.options/u, "创作引导必须以结构化协议决定是否显示选择卡");
+assert.match(app, /event\.type === "question"[\s\S]{0,1100}await persistNativeConversation\(runtime\)[\s\S]{0,200}await yieldAfterImmediateInstructionRender/u, "动态问题先保存显示，之后呈现选项");
 assert.match(app, /kind:\s*"media_connection"/u, "图片和视频配置选择必须接入统一对话选择卡");
 assert.match(app, /data-choice-type="media_connection_profile"|type:\s*"media_connection_profile"/u, "媒体选择卡必须先选择具体配置");
 assert.match(app, /type:\s*"media_connection_model"/u, "媒体选择卡必须支持按配置继续选择模型");
@@ -120,7 +117,7 @@ assert.equal(conversationMessageEligibleForModel({
 }), true, "点选内容必须作为普通用户上下文供后续自然语言覆盖");
 assert.doesNotMatch(app, /queueMicrotask\(\(\) => openCandidateComparison\(group\.id\)\)/u, "多候选生成后必须等待用户点击查看，不得自动弹出预览窗口");
 assert.match(app, /data-view-candidate-branches[^>]*>查看候选稿<\/button>/u, "候选消息必须提供打开原版候选预览窗口的明确入口");
-assert.match(app, /isCandidateComparisonOpenRequest\(content\)/u, "用户在对话中要求打开候选窗口时必须直接打开当前候选预览");
+assert.match(app, /event\.type === "open_candidates"[\s\S]{0,280}openLatestCandidateComparison/u, "Agent 根据语义请求打开当前候选预览，不用关键词分支");
 assert.match(app, /data-adopt-candidate-branch/u, "候选对比窗口必须提供独立采用入口");
 const switchStart = app.indexOf("const switchCandidateDraftBranch");
 const adoptStart = app.indexOf("const adoptCandidateDraftBranch", switchStart);

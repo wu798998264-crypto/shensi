@@ -65,6 +65,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         mediaStatus: (jobId) => mediaStatus(jobId, { request }),
         emit: (type, payload) => event(entry, type, payload),
       });
+      if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model])).digest("hex");
       const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "任务路由文档", text: route }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), request });
@@ -103,10 +104,10 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     },
     async status(id, after = 0) {
       const entry = await get(id);
-      if (!entry) throw new Error("任务不存在");
+      if (!entry) throw Object.assign(new Error("任务不存在"), { statusCode: 404 });
       const { record } = entry;
       await entry.saving;
-      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [] };
+      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [] };
     },
     async answer(id, decisionId, answer) {
       const entry = await get(id), pending = entry?.pending.get(decisionId);

@@ -1,5 +1,6 @@
 import { MODULES, MODULE_ITEMS, MODULE_VIEWS, clone, createBlankNotebookState, createBlankProjectState, createInitialState, ensureScriptOutlineSeries, normalizeChapterNumbering } from "./data.js";
 import { selectPendingAgentMessage } from "./codex-agent-event-routing.js";
+import { conversationAgentRequest, watchConversationAgent, snapshotAgentConfiguration } from "./conversation-agent-client.js";
 import { generationResultMayDefaultLand, terminalGenerationAttempt, waitForGenerationAttemptTerminal } from "./generation-attempt-client.js?v=1.0.0-live-task-recovery-2";
 import { dreaminaConfigSyncProposal, applyDreaminaConfigSync } from "./dreamina-config-sync-policy.js?v=1.0.0-manual-profile";
 import { dreaminaProfileSwitchMessage } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
@@ -16214,6 +16215,9 @@ const savePinnedConversationCompletion = async ({
           ...(clone(conversationState.snapshots ?? {})),
         };
       }
+      for (const key of ["nativeAgentRun", "agentQuestion", "candidateBranchGroups"]) {
+        if (conversationState && Object.hasOwn(conversationState, key)) conversation[key] = clone(conversationState[key]);
+      }
       if (candidateState) {
         conversation.currentCandidate = String(candidateState.currentCandidate || "");
         conversation.currentCandidateTarget = clone(candidateState.currentCandidateTarget ?? null);
@@ -19525,6 +19529,12 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
   if (ui.conversationPreview) {
     renderConversationPreview();
     return;
+  }
+  const nativeQuestion = activeConversation()?.agentQuestion;
+  queueMicrotask(recoverNativeConversationRuns);
+  if (nativeQuestion?.kind === "native_agent" && nativeQuestion.id !== pendingConversationChoice?.id) {
+    pendingConversationChoice = nativeQuestion;
+    queueMicrotask(() => renderConversationChoicePanel());
   }
   const operationProposal = activeConversation()?.agentOperationProposal ?? null;
   ui.agentOperationProposal = operationProposal;
@@ -31605,6 +31615,25 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
   // explicitly assembled card messages and attachments; never inherit the
   // active chat conversation, history capsule, or branch ledger.
   const requestConversation = whiteboardIsolated ? null : (conversationContext ?? inRequestWorkspace(() => activeConversation()));
+  if (!whiteboardIsolated) {
+    const sourceMessages = modelMessages || activeModelMessages(requestConversation?.messages || requestWorkspaceState.messages);
+    const settings = generationSettingsForAgentEngine(settingsOverride || requestWorkspaceState.settings, { agentConnectionId: (settingsOverride || requestWorkspaceState.settings).activeTextAgentConnectionId });
+    const started = await conversationAgentRequest("/api/conversation-agent/start", {
+      workspacePath: requestWorkspaceState.settings.workspacePath, workspaceKind: requestWorkspaceState.workspaceKind,
+      conversationId: requestConversation?.id || state.activeConversationId, sourceMessageId: requestId || uid("agent-content"),
+      messages: sourceMessages, targetDocumentId: target?.documentId || "", selectedSkills, attachments: modelAttachments || [],
+      contentOnly: true, settings, mediaProfiles: {},
+    });
+    const result = await watchConversationAgent({ runId: started.id, onEvent: async (event) => {
+      onProgress?.({ status: "running", result: event.type === "tool" ? event.payload.name : event.type });
+      if (event.type === "question") throw new Error("内容生成步骤需要补充决定，请在对话区继续原任务");
+    } });
+    if (result.status !== "completed") throw new Error(result.error || "Agent 未完成内容生成");
+    onTextDelta?.(result.text);
+    return { candidate: result.text, content: result.text, text: result.text, lead: "Agent 已生成候选内容", target,
+      execution: { status: "complete", strength: "native_agent", nativeAgentRunId: started.id },
+      engineExecution: { status: "complete", strength: "native_agent", nativeAgentRunId: started.id } };
+  }
   const requestMessages = whiteboardIsolated ? (Array.isArray(modelMessages) ? modelMessages : []) : (requestConversation?.messages ?? requestWorkspaceState.messages);
   const targetDocumentId = target?.documentId || (requestConversation?.documentBindingMode === "task" ? "" : requestConversation?.boundDocumentId || requestWorkspaceState.activeDocument);
   const compiledProjectContext = projectContext === null ? inRequestWorkspace(() => buildProjectContext(target, {
@@ -34173,9 +34202,7 @@ const scheduleConversationQueueDrain = (conversationId, { delayMs = 0 } = {}) =>
       }
       return;
     }
-    const queuedLandingOnly = isLandingRequest(nextQueuedItem.content)
-      && !isGenerationAndLandingRequest(nextQueuedItem.content);
-    const queuedUsesAgent = !queuedLandingOnly;
+    const queuedUsesAgent = true;
     const queuedWorkspace = nextQueuedItem?.taskContextSnapshot || null;
     const taskWorkspaceIsActive = queuedWorkspace
       ? workspaceTargetIsActive(queuedWorkspace.workspaceKind, queuedWorkspace.workspacePath)
@@ -34183,19 +34210,11 @@ const scheduleConversationQueueDrain = (conversationId, { delayMs = 0 } = {}) =>
         taskRuntime.workspaceScope?.workspaceKind,
         taskRuntime.workspaceScope?.workspacePath,
       );
-    if (!taskWorkspaceIsActive && (normalizeConversationMediaDispatchContract(nextQueuedItem.mediaDispatch)
-      || nextQueuedItem.inlineEdit
-      || nextQueuedItem.cockpitDecision
-      || !queuedUsesAgent)) {
-      nackQueuedConversationItem(conversation, nextQueuedItem, "waiting_for_owned_workspace");
-      persistAgentRuntimeView(taskRuntime);
-      return;
-    }
     if (!taskWorkspaceIsActive && queuedUsesAgent && !taskRuntime && !queuedWorkspace?.workspacePath) {
       nackQueuedConversationItem(conversation, nextQueuedItem, "missing_task_workspace");
       return;
     }
-    const dispatchContent = nextQueuedItem.runtimeSupplement === true && !queuedLandingOnly
+    const dispatchContent = nextQueuedItem.runtimeSupplement === true
       ? `这是对刚刚完成的同一任务的补充要求，不是新的独立任务。请承接该任务已经完成的结果与当前最新版文档，只处理这条补充影响的部分，不要撤销、重复或从头执行此前已完成的工作：\n${String(nextQueuedItem.content || "").trim()}`
       : nextQueuedItem.content;
     if (taskRuntime) persistAgentRuntimeView(taskRuntime);
@@ -34250,12 +34269,7 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
   const attachments = clone(activeReferenceScope.attachments);
   if (!trimmed && !references.length && !workspaceReferences.length && !skillReferences.length && !attachments.length) return false;
   const normalizedDecisionResolution = normalizeAgentDecisionResolution(decisionResolution);
-  const lockedMediaDispatch = inlineEdit || runtimeSupplement || normalizedDecisionResolution
-    ? null
-    : normalizeConversationMediaDispatchContract(mediaDispatch) || createConversationMediaDispatchContract({
-      text: trimmed,
-      messages: conversationMessagesForTaskState(conversation),
-    });
+  const lockedMediaDispatch = normalizeConversationMediaDispatchContract(mediaDispatch);
   conversation.queue ??= [];
   const queuedItem = {
     id: uid("queued"),
@@ -34265,6 +34279,8 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
     workspaceReferences,
     skillReferences,
     attachments,
+    nativeConfiguration: snapshotAgentConfiguration(generationSettingsForAgentEngine(state.settings, { agentConnectionId: state.settings.activeTextAgentConnectionId })),
+    nativeMediaProfiles: { image: snapshotAgentConfiguration(state.settings.imageConnections || []), video: snapshotAgentConfiguration(state.settings.videoConnections || []) },
     sourceMessageId: String(conversation.referenceContext?.sourceMessageId || ""),
     webSearchEnabled: conversation.webSearchEnabled === true,
     webReaderEnabled: conversation.webReaderEnabled === true,
@@ -34308,12 +34324,7 @@ const updateQueuedMessage = (queueId, content) => {
     conversation,
     itemId: queueId,
     content: nextContent,
-    mediaDispatch: item.inlineEdit ? null : createConversationMediaDispatchContract({
-      text: nextContent,
-      messages: conversationMessagesForTaskState(conversation),
-      channel: normalizeConversationMediaDispatchContract(item.mediaDispatch)?.channel || "",
-      profileId: normalizeConversationMediaDispatchContract(item.mediaDispatch)?.profileId || "",
-    }),
+    mediaDispatch: null,
   });
   if (!updated) return false;
   if (updated.decisionResolution) {
@@ -34378,6 +34389,9 @@ const supplementQueuedMessage = async (queueId) => {
         const id = typeof skill === "string" ? skill : skill.id || skill.relativePath;
         if (id && !job.skillReferences.some((current) => (typeof current === "string" ? current : current.id || current.relativePath) === id)) job.skillReferences.push(clone(skill));
       }
+    } else if (pending.execution?.nativeAgentRunId) {
+      const payload = await conversationAgentRequest(`/api/conversation-agent/${pending.execution.nativeAgentRunId}/supplement`, { content: supplementContent });
+      deferred = payload.accepted !== true;
     } else if (pending.execution?.strength === "agent") {
       const response = await fetch("/api/codex-agent/supplement", {
         method: "POST",
@@ -35698,2185 +35712,194 @@ const contextDependencyNotice = ({ blockingIds = [], explicitReferenceIds = [], 
   return `缺少必读资料：${descriptions.join("、")}。为避免无依据回答，请恢复或补充这些资料，或移除已失效的 @ 引用后重试。`;
 };
 
-const executeMessage = async (content, { queuedItem = null, inlineEdit = null, branchContext = null, guidanceDialog = false, dispatchToken = "", executionSurface = "agent", preflight = null, immediateInstructionId = "", conversationId = "", candidateWriterPlan = null, displayContent = "", mediaDispatch = null, materialUpdateInspection = null, materialUpdateExecutionPlan = null, forcedFormalTarget = null, taskContextSnapshot = null, workspaceState = null, decisionResolution = null } = {}) => {
-  executionSurface = "agent";
-  const trimmed = content.trim();
-  const decisionResolutionActive = Boolean(decisionResolution?.decisionId);
-  const taskWorkspaceSourceState = workspaceState || state;
-  const inTaskSourceWorkspace = (callback) => withSynchronousWorkspaceState(taskWorkspaceSourceState, callback);
-  const taskWorkspaceHasNoActiveEntry = withSynchronousWorkspaceState(taskWorkspaceSourceState, () => workspaceHasNoActiveEntry());
-  const workspaceBindingRequired = Boolean(
-    inlineEdit
-    || forcedFormalTarget?.documentId
-    || materialUpdateInspection?.confirmed === true
-    || materialUpdateExecutionPlan?.changes?.length
-    || isLandingRequest(trimmed)
-    || isFormalWriteRollbackRequest(trimmed)
-    || hasExplicitFormalAssetWriteIntent({ text: trimmed })
-    || hasExplicitCreativeProductionIntent({ text: trimmed })
-    || looksLikeWorkspaceOperation(trimmed)
-  );
-  if (workspaceBindingRequired && (taskWorkspaceHasNoActiveEntry || !String(taskWorkspaceSourceState.settings?.workspacePath || "").trim())) {
-    const bindingConversationId = String(conversationId || state.activeConversationId || "");
-    if (taskWorkspaceSourceState !== state || bindingConversationId !== String(state.activeConversationId || "")) {
-      return { dispatchAccepted: false, reason: "workspace_binding_required" };
-    }
-    const pendingTask = appendPendingConversationTaskInstruction({
-      instruction: trimmed,
-      conversationId: bindingConversationId,
-      taskContextSnapshot: queuedItem?.taskContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(bindingConversationId),
-      render: false,
-    });
-    if (pendingTask) removeImmediateConversationInstruction(immediateInstructionId);
-    renderConversationIfActive(bindingConversationId, { forceScrollToBottom: true });
-    await openWorkspaceBindingChoice({
-      instruction: trimmed,
-      conversationId: bindingConversationId,
-      sourceMessageId: pendingTask?.messageId || "",
-      taskContextSnapshot: pendingTask?.taskContextSnapshot || null,
-    });
-    return { dispatchAccepted: true, disposition: "awaiting_workspace_binding" };
-  }
-  const materialInspectionActive = materialUpdateInspection?.confirmed === true;
-  const materialExecutionActive = Boolean(materialUpdateExecutionPlan?.changes?.length);
-  const explicitFormalAssetWrite = materialExecutionActive || (!materialInspectionActive && hasExplicitFormalAssetWriteIntent({ text: trimmed }));
-  const effectiveGuidanceDialog = guidanceDialog && !explicitFormalAssetWrite;
-  const conversation = taskWorkspaceSourceState.conversations?.find((item) => item.id === conversationId)
-    || (taskWorkspaceSourceState === state
-      ? (conversationId ? conversationById(conversationId) : activeConversation())
-      : null);
-  if (!conversation) return { dispatchAccepted: false, reason: "conversation_missing" };
-  if (!withSynchronousWorkspaceState(taskWorkspaceSourceState, () => conversationBelongsToWorkspace(conversation, currentConversationWorkspace()))) return { dispatchAccepted: false, reason: "conversation_workspace_changed" };
-  if (queuedItem && !conversationQueueItemOwnedByTask({ conversation, itemId: queuedItem.id, leaseId: queuedItem.leaseId })) {
-    return { dispatchAccepted: false, reason: "queue_lease_lost" };
-  }
-  const taskMessages = conversationMessagesForTaskState(conversation, taskWorkspaceSourceState);
-  const taskSnapshots = conversation.id === taskWorkspaceSourceState.activeConversationId ? taskWorkspaceSourceState.snapshots : (conversation.snapshots ??= {});
-  const taskCandidateState = conversationCandidateState(conversation, taskWorkspaceSourceState);
-  if (conversation.id === taskWorkspaceSourceState.activeConversationId && ui.uploadingAttachments) {
-    const error = new Error("附件仍在上传，已保留排队指令");
-    error.code = "ATTACHMENTS_STILL_UPLOADING";
-    if (!queuedItem) ui.pendingComposerSubmit = true;
-    showToast("附件上传完成后会与这条文字一起发送");
-    throw error;
-  }
-  const hasActiveGenerationRuntime = executionSurface === "agent"
-    ? ui.codexAgent.status?.installed === true
-      && (activeAgentEngine() !== "deepseek_opencode" || deepSeekAgentCredentialAvailable())
-    : hasModelConfiguration();
-  ensureNetworkForTask(content, { notify: true });
-  const requestWebSearchEnabled = Boolean(
-    (queuedItem ? queuedItem.webSearchEnabled === true : conversation?.webSearchEnabled === true)
-    && (currentWebSearchMode() || (queuedItem ? queuedItem.webReaderEnabled === true : conversation?.webReaderEnabled === true)),
-  );
-  if (conversation.title === "新对话" && !(conversation.messages ?? []).length) {
-    conversation.title = trimmed.replace(/\s+/g, " ").slice(0, 22) || "新对话";
-    conversation.createdAt = `今天 ${nowTime()}`;
-  }
-  const submittedTaskContextSnapshot = queuedItem?.taskContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(conversation.id);
-  const currentAssociationSnapshot = { ...createTurnContextSnapshot({
-    conversation,
-    workspaceKind: submittedTaskContextSnapshot.workspaceKind,
-    workspacePath: submittedTaskContextSnapshot.workspacePath,
-    workspaceName: submittedTaskContextSnapshot.workspaceName,
-    activeDocumentId: submittedTaskContextSnapshot.activeDocumentId,
-    documents: taskWorkspaceSourceState.documents,
-  }), ...submittedTaskContextSnapshot,
-    boundDocumentId: taskDocumentAnchor({ instruction: trimmed, activeDocumentId: submittedTaskContextSnapshot.activeDocumentId }),
-    associationEnabled: requestsCurrentDocument(trimmed),
-  };
-  // Routing remains pinned to the workspace that owned the instruction. The
-  // user may browse another project/notebook while generation runs, but that
-  // later UI state must never participate in target selection.
-  const turnContextDocuments = clone(taskWorkspaceSourceState.documents);
-  const turnContextActiveModule = taskWorkspaceSourceState.activeModule;
-  const taskWorkspaceState = {
-    ...taskWorkspaceSourceState,
-    workspaceKind: submittedTaskContextSnapshot.workspaceKind,
-    projectName: submittedTaskContextSnapshot.workspaceName || taskWorkspaceSourceState.projectName,
-    activeDocument: submittedTaskContextSnapshot.activeDocumentId || "",
-    activeModule: turnContextActiveModule,
-    selectedText: String(submittedTaskContextSnapshot.selectedText || ""),
-    documents: turnContextDocuments,
-    moduleItems: clone(taskWorkspaceSourceState.moduleItems),
-    customFolders: clone(taskWorkspaceSourceState.customFolders ?? []),
-    messages: taskMessages,
-    activeConversationId: conversation.id,
-    settings: {
-      ...taskWorkspaceSourceState.settings,
-      workspacePath: submittedTaskContextSnapshot.workspacePath,
-      projectName: submittedTaskContextSnapshot.workspaceName || taskWorkspaceSourceState.settings?.projectName || "",
-    },
-  };
-  const inTaskWorkspace = (callback) => withSynchronousWorkspaceState(taskWorkspaceState, callback);
-  const taskWorkspaceScope = {
-    workspaceKind: submittedTaskContextSnapshot.workspaceKind === "notebook" ? "notebook" : "project",
-    workspacePath: String(submittedTaskContextSnapshot.workspacePath || taskWorkspaceSourceState.settings?.workspacePath || ""),
-    workspaceName: String(submittedTaskContextSnapshot.workspaceName || taskWorkspaceSourceState.projectName || taskWorkspaceSourceState.settings?.projectName || ""),
-  };
-  const persistTaskConversationState = async ({ stateOnly = false } = {}) => {
-    if (taskWorkspaceSourceState === state
-      && workspaceTargetIsActive(taskWorkspaceScope.workspaceKind, taskWorkspaceScope.workspacePath)) {
-      if (stateOnly) persistWorkspaceStateOnly();
-      else persist();
-      return true;
-    }
-    try {
-      return Boolean(await savePinnedConversationCompletion({
-        ...taskWorkspaceScope,
-        conversationId: conversation.id,
-        messages: taskMessages,
-        candidateState: taskCandidateState,
-        conversationState: conversation,
-        force: true,
-      }));
-    } catch (error) {
-      console.warn("Task workspace conversation save failed:", error.message);
-      return false;
-    }
-  };
-  const associationScopedHistory = conversationMessagesForActiveAssociation([
-    ...taskMessages,
-    { id: "current-historical-reference", role: "user", content: trimmed, turnContextSnapshot: currentAssociationSnapshot },
-  ]);
-  const historicalTaskReference = inlineEdit ? null : resolveHistoricalConversationTaskReference(associationScopedHistory, { request: trimmed });
-  const guidanceResources = guidanceDialog && conversation.creativeGuidance?.active
-    ? conversation.creativeGuidance
-    : guidanceDialog
-      && ui.creativeGuidance.active
-      && ui.creativeGuidance.conversationId === conversation.id
-      ? ui.creativeGuidance
-      : null;
-  const activeGuidanceFlow = Boolean(effectiveGuidanceDialog && (guidanceResources?.active || ui.creativeGuidance?.active));
-  const persistentReferenceContext = inlineEdit
-    ? { references: [], workspaceReferences: [], skillReferences: [], attachments: [], inherited: false, sourceMessageId: "" }
-    : queuedItem
-      ? { ...queuedItem, inherited: true, sourceMessageId: queuedItem.sourceMessageId || "" }
-      : guidanceResources
-        ? { ...guidanceResources, inherited: true, sourceMessageId: guidanceResources.sourceMessageId || "" }
-        : resolveConversationReferenceContext(conversation, { prompt: trimmed });
-  if (persistentReferenceContext.resetRequested) showToast("已按本条指令清空此前持续引用；本轮不会再读取这些资料");
-  const pendingReferences = inlineEdit ? [] : [...(persistentReferenceContext.references ?? [])];
-  const pendingWorkspaceReferences = inlineEdit ? [] : clone(persistentReferenceContext.workspaceReferences ?? []);
-  const pendingSkillReferences = inlineEdit ? [] : clone(persistentReferenceContext.skillReferences ?? []);
-  const pendingAttachments = inlineEdit ? [] : clone(persistentReferenceContext.attachments ?? []);
-  const composerMessageReferenceScope = inlineEdit
-    ? { references: [], workspaceReferences: [], skillReferences: [], attachments: [] }
-    : queuedItem
-      ? { references: pendingReferences, workspaceReferences: pendingWorkspaceReferences, skillReferences: pendingSkillReferences, attachments: pendingAttachments }
-      : guidanceResources
-        ? { references: pendingReferences, workspaceReferences: pendingWorkspaceReferences, skillReferences: pendingSkillReferences, attachments: pendingAttachments }
-        : conversationComposerReferenceScope(conversation);
-  if (!trimmed && !pendingReferences.length && !pendingWorkspaceReferences.length && !pendingSkillReferences.length && !pendingAttachments.length) {
-    return { dispatchAccepted: false, reason: "empty_instruction" };
-  }
-  const queuedMediaDispatch = normalizeConversationMediaDispatchContract(queuedItem?.mediaDispatch)
-    || normalizeConversationMediaDispatchContract(mediaDispatch)
-    || normalizeConversationMediaDispatchContract(createConversationMediaDispatchContract({
-      text: trimmed,
-      messages: taskMessages,
-      inlineEdit: Boolean(inlineEdit),
-    }));
-  const intentDecision = queuedMediaDispatch?.kind === "composite"
-    ? { kind: "composite", directMediaChannel: "", capabilitySteps: queuedMediaDispatch.steps, reason: queuedMediaDispatch.reason }
-    : queuedMediaDispatch
-      ? { kind: "media", directMediaChannel: queuedMediaDispatch.channel, reason: queuedMediaDispatch.reason }
-    : decideConversationMediaRoute({ text: trimmed, inlineEdit: Boolean(inlineEdit) });
-  if (intentDecision.kind === "composite" && intentDecision.capabilitySteps?.length > 1) {
-    enqueueCompositeConversationSteps({
-      conversation,
-      parentInstruction: trimmed,
-      steps: intentDecision.capabilitySteps,
-      baseItem: {
-        references: clone(pendingReferences),
-        workspaceReferences: clone(pendingWorkspaceReferences),
-        skillReferences: clone(pendingSkillReferences),
-        attachments: clone(pendingAttachments),
-        sourceMessageId: String(persistentReferenceContext.sourceMessageId || ""),
-        webSearchEnabled: requestWebSearchEnabled,
-        webReaderEnabled: requestWebSearchEnabled,
-        inlineEdit: null,
-        executionSurface: executionSurface === "agent" ? "agent" : "chat",
-        guidanceSessionId: String(queuedItem?.guidanceSessionId || ""),
-        taskContextSnapshot: clone(currentAssociationSnapshot),
-      },
-      idFor: () => uid("queued-composite"),
-    });
-    consumeConversationComposerReferences(conversation);
-    await persistTaskConversationState();
-    renderMessages({ forceScrollToBottom: true });
-    showToast(`已拆分为 ${intentDecision.capabilitySteps.length} 个能力步骤，将逐项持续执行`);
-    return { dispatchAccepted: true, disposition: "composite_steps_queued" };
-  }
-  const directMediaChannel = intentDecision.directMediaChannel;
-  if (directMediaChannel) {
-    return await generateMediaFromComposer(trimmed, {
-      channel: directMediaChannel,
-      displayPrompt: trimmed,
-      referenceIds: pendingReferences,
-      workspaceReferences: pendingWorkspaceReferences,
-      attachments: pendingAttachments,
-      landAfterGeneration: isLandingRequest(trimmed),
-      plannedImageBatch: queuedMediaDispatch?.channel === "image" ? queuedMediaDispatch.plannedBatch : null,
-      plannedVideoBatch: queuedMediaDispatch?.channel === "video" ? queuedMediaDispatch.plannedBatch : null,
-      profileId: queuedMediaDispatch?.profileId || "",
-      model: queuedMediaDispatch?.model || "",
-      aspectRatio: queuedMediaDispatch?.aspectRatio || "",
-      quality: queuedMediaDispatch?.quality || "",
-      reuseLastSuccessfulParameters: queuedMediaDispatch?.reuseLastSuccessfulParameters === true,
-      immediateInstructionId,
-      conversationId: conversation.id,
-      workspaceState: taskWorkspaceSourceState,
-      taskContextSnapshot: submittedTaskContextSnapshot,
-    });
-    return;
-  }
-  const messageContent = trimmed || "请查看本条消息附带的资料。";
-  const continuesTask = referencesPriorConversationContent(messageContent)
-    || /^\s*(?:继续|重试|再试|接着|按上条|沿用|就这样|可以)[。！!\s]*$/u.test(messageContent)
-    || (isLandingRequest(messageContent) && !isGenerationAndLandingRequest(messageContent));
-  const previousTaskId = [...taskMessages].reverse().find((message) => message.role === "user")?.turnContextSnapshot?.taskId;
-  currentAssociationSnapshot.taskId = String(decisionResolution?.taskId || submittedTaskContextSnapshot.taskId || "")
-    || (continuesTask && previousTaskId ? previousTaskId : uid("task"));
-  currentAssociationSnapshot.continuesTask = continuesTask;
-  Object.freeze(currentAssociationSnapshot);
-  if (!continuesTask) {
-    conversation.intentTarget = null;
-    conversation.constraintIndex = [];
-    conversation.contextCapsule = null;
-    conversation.conversationContextCheckpoint = null;
-    if (!queuedItem && !guidanceResources) {
-      const freshReferences = conversationComposerReferenceScope(conversation);
-      pendingReferences.splice(0, pendingReferences.length, ...freshReferences.references);
-      pendingWorkspaceReferences.splice(0, pendingWorkspaceReferences.length, ...freshReferences.workspaceReferences);
-      pendingSkillReferences.splice(0, pendingSkillReferences.length, ...freshReferences.skillReferences);
-      pendingAttachments.splice(0, pendingAttachments.length, ...freshReferences.attachments);
-    }
-  }
-  // Explicit directory-only instructions must never be reclassified as a
-  // creative generation/landing request merely because they mention “生成”
-  // or “立即落盘”.  Keep the operation on the local workspace transaction
-  // path so an Agent task cannot capture it as a long-form writing job.
-  const explicitStructuralOnlyWorkspaceOperation = isExplicitStructuralOnlyWorkspaceOperation(messageContent);
-  const generationAndLandingRequested = !explicitStructuralOnlyWorkspaceOperation
-    && isGenerationAndLandingRequest(messageContent);
-  const landingOnlyRequested = !explicitStructuralOnlyWorkspaceOperation
-    && isLandingRequest(messageContent)
-    && !generationAndLandingRequested;
-  if (conversation) conversation.updatedAt = `今天 ${nowTime()}`;
-  const freshCreativeStart = isExplicitFreshCreativeStart({ text: messageContent });
-  const boundDocumentId = requestsCurrentDocument(trimmed) ? currentAssociationSnapshot.boundDocumentId || "" : "";
-  const associationRoutingAnchorDocumentId = boundDocumentId;
-  const routingAnchorDocumentId = boundDocumentId;
-  const boundChapterNumber = Number(String(routingAnchorDocumentId).match(/^chapter-(\d+)$/)?.[1] ?? 0);
-  const boundChapterText = stripHtml(taskWorkspaceSourceState.documents[routingAnchorDocumentId]?.html ?? "").trim();
-  const batchStartBase = batchBaseChapterNumber({ chapterNumber: boundChapterNumber, chapterText: boundChapterText });
-  const structuredWorkspace = taskWorkspaceSourceState.workspaceKind !== "notebook";
-  const boundDocumentTitle = String(taskWorkspaceSourceState.documents[routingAnchorDocumentId]?.title ?? "").trim();
-  const explicitlyRequestsBoundDocumentTarget = explicitlyRequestsBoundDocument({
-    text: messageContent,
-    boundDocumentId: routingAnchorDocumentId,
-    boundDocumentTitle,
-  });
-  const explicitNewDocumentRequest = explicitNewDocumentIntent(messageContent);
-  let explicitChapterBatch = inlineEdit || !structuredWorkspace || explicitlyRequestsBoundDocumentTarget ? null : requestedChapterBatch(messageContent, {
-    baseChapterNumber: batchStartBase,
-    plannedEndChapter: inTaskSourceWorkspace(() => plannedNovelEndChapter()),
-  });
-  let explicitChapterTarget = inlineEdit ? null : explicitChapterBatch
-    ? {
-      chapterNumber: explicitChapterBatch.startChapter,
-      documentId: `chapter-${explicitChapterBatch.startChapter}`,
-      batchRequest: explicitChapterBatch,
-    }
-    : requestedChapterTarget(messageContent);
-  const artifactRoutingText = [
-    messageContent,
-    ...pendingAttachments.map((attachment) => attachment?.name).filter(Boolean),
-    ...pendingReferences.map((documentId) => taskWorkspaceSourceState.documents[documentId]?.title).filter(Boolean),
-    ...pendingWorkspaceReferences.map((reference) => reference?.title).filter(Boolean),
-  ].join("\n");
-  const reviewDelivery = reviewDeliveryPolicy({
-    text: artifactRoutingText,
-    contextDomain: inTaskSourceWorkspace(() => documentContextDomain(routingAnchorDocumentId)),
-  });
-  const reviewContentMutation = reviewDelivery.active && reviewIncludesContentMutation(artifactRoutingText);
-  const reviewScope = reviewDelivery.active
-    ? reviewScopeFromInstruction({
-      text: artifactRoutingText,
-      baseChapterNumber: batchStartBase,
-      plannedEndChapter: inTaskSourceWorkspace(() => plannedNovelEndChapter()),
-    })
-    : null;
-  const reviewScopeDocumentIds = reviewScope?.kind === "all_chapters"
-    ? Object.keys(taskWorkspaceSourceState.documents).filter((documentId) => (
-      /^(?:chapter|script-episode)-\d+$/.test(documentId)
-      && inTaskSourceWorkspace(() => documentHasSubstantiveContent(documentId))
-    ))
-    : [...new Set(reviewScope?.documentIds ?? [])];
-  const prewriteReviewScopeDocumentIds = reviewContentMutation
-    ? reviewScopeDocumentIds.filter((documentId) => (
-        Boolean(taskWorkspaceSourceState.documents[documentId])
-        && inTaskSourceWorkspace(() => documentHasSubstantiveContent(documentId))
-      ))
-    : reviewScopeDocumentIds;
-  const pureReview = reviewDelivery.active && !reviewContentMutation && !reviewDelivery.reportRequested;
-  if (reviewDelivery.active && !reviewContentMutation) {
-    // A pure batch self-check is a report workflow, not a long-form writing
-    // task. Chapter range text is the audit scope only.
-    explicitChapterBatch = null;
-    explicitChapterTarget = null;
-  }
-  const reviewMutationTargets = reviewContentMutation
-    ? explicitChapterBatch
-      ? Array.from({ length: explicitChapterBatch.count }, (_, index) => {
-        const chapterNumber = explicitChapterBatch.startChapter + index;
-        return { documentId: `chapter-${chapterNumber}`, chapterNumber, title: `第${chapterNumber}章`, moduleId: "manuscript", contextDomain: "novel", explicitChapter: true };
-      })
-      : explicitChapterTarget
-        ? [{ ...explicitChapterTarget, title: `第${explicitChapterTarget.chapterNumber}章`, moduleId: "manuscript", contextDomain: "novel", explicitChapter: true }]
-        : explicitlyRequestsBoundDocumentTarget && routingAnchorDocumentId
-          ? [{ documentId: routingAnchorDocumentId, title: boundDocumentTitle, moduleId: inTaskSourceWorkspace(() => moduleForDocument(routingAnchorDocumentId)), contextDomain: inTaskSourceWorkspace(() => documentContextDomain(routingAnchorDocumentId)), explicitArtifact: true }]
-          : []
-    : [];
-  const materialWorkflowTargets = materialExecutionActive
-    ? materialUpdateExecutionPlan.changes.filter((item) => item.changeType !== "snapshot").map((item) => ({
-      documentId: item.targetDocumentId,
-      title: item.targetTitle || materialUpdateDocumentTitle(item.targetDocumentId),
-      moduleId: materialUpdateModuleId(item.targetDocumentId),
-      contextDomain: /^script-/u.test(item.targetDocumentId) ? "script" : "novel",
-      explicitArtifact: true,
-      operation: ["insert", "patch"].includes(item.changeType) ? "patch" : item.changeType,
-      materialUpdateChangeType: item.changeType,
-    }))
-    : [];
-  const explicitWorkflowTargets = [
-    ...(forcedFormalTarget?.documentId ? [{ ...clone(forcedFormalTarget), explicitArtifact: true }] : []),
-    ...reviewMutationTargets,
-    ...(reviewDelivery.target ? [clone(reviewDelivery.target)] : []),
-    ...materialWorkflowTargets,
-  ];
-  const semanticArtifactTarget = !inlineEdit && reviewDelivery.target && !reviewContentMutation
-    ? clone(reviewDelivery.target)
-    : inlineEdit || explicitChapterTarget || explicitNewDocumentRequest.create || !structuredWorkspace || taskWorkspaceSourceState.workspaceKind === "notebook"
-      ? null
-      : requestedArtifactTarget(artifactRoutingText, { contextDomain: inTaskSourceWorkspace(() => documentContextDomain(routingAnchorDocumentId)) });
-  const compiledCreativeMutationPlan = !inlineEdit && structuredWorkspace && taskWorkspaceSourceState.workspaceKind === "project"
-    ? inTaskSourceWorkspace(() => compileCreativeMutationPlan({
-      instruction: artifactRoutingText,
-      boundDocument: routingAnchorDocumentId ? {
-        documentId: routingAnchorDocumentId,
-        title: boundDocumentTitle,
-        moduleId: moduleForDocument(routingAnchorDocumentId),
-      } : null,
-      inventory: workspaceOperationInventory(),
-      contextDomain: documentContextDomain(routingAnchorDocumentId),
-      formalWriteIntent: explicitFormalAssetWrite,
-      productionIntent: explicitFormalAssetWrite || hasExplicitCreativeProductionIntent({
-        text: messageContent,
-        targetDocumentId: routingAnchorDocumentId,
-      }),
-      explicitlyRequestsBoundDocument: explicitlyRequestsBoundDocumentTarget,
-      explicitTargets: explicitWorkflowTargets,
-      requiredContextDocumentIds: prewriteReviewScopeDocumentIds,
-    }))
-    : null;
-  const creativeMutationPlanBase = compiledCreativeMutationPlan && queuedItem?.taskContract?.protocol
-    ? { ...compiledCreativeMutationPlan, taskContract: clone(queuedItem.taskContract) }
-    : compiledCreativeMutationPlan;
-  const creativeMutationPlan = creativeMutationPlanBase && materialExecutionActive
-    ? { ...creativeMutationPlanBase, materialUpdateExecutionPlan: clone(materialUpdateExecutionPlan) }
-    : creativeMutationPlanBase;
-  const plannedRequestTarget = creativeMutationPlan?.primaryTargets?.length === 1
-    ? creativeMutationPlan.primaryTargets[0]
-    : creativeMutationPlan?.primaryTargets?.[0] ?? null;
-  const explicitRequestTarget = forcedFormalTarget?.documentId
-    ? { ...clone(forcedFormalTarget), explicitArtifact: true }
-    : semanticArtifactTarget ?? explicitChapterTarget ?? plannedRequestTarget;
-  if (explicitRequestTarget && conversation) {
-    conversation.intentTarget = {
-      ...explicitRequestTarget,
-      ...(explicitChapterTarget ? { explicitChapter: true } : {}),
-      sourceAssociationDocumentId: routingAnchorDocumentId,
-    };
-  }
-  const persistedIntentTarget = structuredWorkspace ? conversation?.intentTarget : null;
-  const persistedIntentStillAnchored = Boolean(persistedIntentTarget
-    && String(persistedIntentTarget.sourceAssociationDocumentId || "") === String(routingAnchorDocumentId || ""));
-  const pureReviewScopeTarget = pureReview && reviewScopeDocumentIds[0]
-    ? {
-      documentId: reviewScopeDocumentIds[0],
-      chapterNumber: Number(String(reviewScopeDocumentIds[0]).match(/^chapter-(\d+)$/)?.[1] ?? 0) || null,
-      moduleId: inTaskSourceWorkspace(() => moduleForDocument(reviewScopeDocumentIds[0])),
-      contextDomain: inTaskSourceWorkspace(() => documentContextDomain(reviewScopeDocumentIds[0])),
-      explicitChapter: true,
-    }
-    : null;
-  const reportDocumentIdPattern = /^(?:report-(?:novel|script|adaptation)|report)$/u;
-  const safeBoundReviewTarget = pureReview && routingAnchorDocumentId && !reportDocumentIdPattern.test(routingAnchorDocumentId)
-    ? {
-      documentId: routingAnchorDocumentId,
-      chapterNumber: Number(String(routingAnchorDocumentId).match(/^chapter-(\d+)$/)?.[1] ?? 0) || null,
-      moduleId: inTaskSourceWorkspace(() => moduleForDocument(routingAnchorDocumentId)),
-      contextDomain: inTaskSourceWorkspace(() => documentContextDomain(routingAnchorDocumentId)),
-    }
-    : null;
-  let requestTarget = clone(forcedFormalTarget?.documentId
-    ? { ...forcedFormalTarget, explicitArtifact: true }
-    : inlineEdit?.documentId
-    ? {
-      documentId: inlineEdit.documentId,
-      chapterNumber: Number(String(inlineEdit.documentId).match(/^chapter-(\d+)$/)?.[1] ?? 0) || null,
-      explicitChapter: true,
-    }
-    : explicitlyRequestsBoundDocumentTarget
-      && !(pureReview && reportDocumentIdPattern.test(routingAnchorDocumentId)) ? {
-      documentId: routingAnchorDocumentId,
-      moduleId: inTaskSourceWorkspace(() => moduleForDocument(routingAnchorDocumentId)),
-      contextDomain: inTaskSourceWorkspace(() => documentContextDomain(routingAnchorDocumentId)),
-        explicitArtifact: true,
-      }
-      : explicitRequestTarget
-        ? { ...explicitRequestTarget, ...(explicitChapterTarget ? { explicitChapter: true } : {}) }
-      : pureReview
-        ? (pureReviewScopeTarget || safeBoundReviewTarget || { documentId: null, explicitChapter: false })
-      : persistedIntentStillAnchored ? persistedIntentTarget : {
-      documentId: routingAnchorDocumentId || null,
-      chapterNumber: Number(String(routingAnchorDocumentId).match(/^chapter-(\d+)$/)?.[1] ?? 0) || null,
-      explicitChapter: false,
-    });
-  if (materialExecutionActive) requestTarget.materialUpdateExecutionPlan = clone(materialUpdateExecutionPlan);
-  if (pureReview && reviewScopeDocumentIds.length) requestTarget.reviewScopeDocumentIds = [...reviewScopeDocumentIds];
-  // Cross-format work has an explicit source and a separately resolved target.
-  // This executes before model context is assembled, so both Chat and Agent
-  // receive the same target and never overwrite the source merely because it
-  // is the current association.
-  if (!forcedFormalTarget?.documentId && !inlineEdit && structuredWorkspace && taskWorkspaceSourceState.workspaceKind !== "notebook") {
-    inTaskSourceWorkspace(() => {
-      const crossFormatRoute = resolveCrossFormatContentRoute({
-        instruction: messageContent,
-        documents: Object.entries(state.documents).map(([id, document]) => ({ id, ...document })),
-        associatedDocumentId: boundDocumentId,
-        activeTargetDocumentId: requestTarget.documentId,
-        chapterEpisodeMappings: state.chapterEpisodeMappings,
-        projectName: state.projectName || state.settings.projectName || "",
-      });
-      if (!crossFormatRoute) return;
-      if (crossFormatRoute.create) {
-        const previousModule = state.activeModule;
-        const previousView = activeViewForModule(previousModule);
-        state.activeModule = crossFormatRoute.create.moduleId;
-        state.moduleViews ??= {};
-        state.moduleViews[crossFormatRoute.create.moduleId] = crossFormatRoute.create.viewId;
-        const createdDocumentId = createDocument(crossFormatRoute.create.title, null, { kind: crossFormatRoute.create.kind });
-        state.activeModule = previousModule;
-        state.moduleViews[previousModule] = previousView;
-        if (createdDocumentId) crossFormatRoute.targetDocumentId = createdDocumentId;
-      }
-      if (!crossFormatRoute.targetDocumentId) return;
-      state.chapterEpisodeMappings ??= [];
-      const mappingIndex = state.chapterEpisodeMappings.findIndex((mapping) => (
-        mapping.sourceDocumentId === crossFormatRoute.sourceDocumentId
-        && mapping.targetContentType === crossFormatRoute.targetContentType
-      ));
-      const mapping = {
-        sourceDocumentId: crossFormatRoute.sourceDocumentId,
-        sourceContentType: crossFormatRoute.sourceContentType,
-        targetContentType: crossFormatRoute.targetContentType,
-        targetDocumentId: crossFormatRoute.targetDocumentId,
-        updatedAt: new Date().toISOString(),
-      };
-      if (mappingIndex >= 0) state.chapterEpisodeMappings[mappingIndex] = mapping;
-      else state.chapterEpisodeMappings.push(mapping);
-      requestTarget = {
-        documentId: crossFormatRoute.targetDocumentId,
-        moduleId: moduleForDocument(crossFormatRoute.targetDocumentId),
-        contextDomain: documentContextDomain(crossFormatRoute.targetDocumentId),
-        viewId: crossFormatRoute.create?.viewId || state.documents[crossFormatRoute.targetDocumentId]?.workspaceView || "",
-        title: state.documents[crossFormatRoute.targetDocumentId]?.title || crossFormatRoute.targetTitle,
-        explicitArtifact: true,
-        crossFormatRoute,
-      };
-      if (!pendingReferences.includes(crossFormatRoute.sourceDocumentId)) pendingReferences.push(crossFormatRoute.sourceDocumentId);
-      if (conversation) conversation.intentTarget = { ...requestTarget };
-    });
-  }
-  if (explicitlyRequestsBoundDocumentTarget && conversation) conversation.intentTarget = clone(requestTarget);
-  const immediatePreviousUserMessage = [...taskMessages]
-    .reverse()
-    .find((message) => message.role === "user");
-  const previousUserMessage = historicalTaskReference?.userMessage ?? immediatePreviousUserMessage;
-  const previousUserCreativeRequest = previousUserMessage?.content || "";
-  const inferredDeliverableType = creativeDeliverableType({
-    text: freshCreativeStart ? `${previousUserCreativeRequest}\n${messageContent}` : messageContent,
-    targetDocumentId: requestTarget.documentId,
-  });
-  const freshOpeningTarget = freshNovelOpeningTarget({
-    text: messageContent,
-    workspaceKind: taskWorkspaceSourceState.workspaceKind,
-    deliverableType: inferredDeliverableType,
-  });
-  if (explicitChapterTarget || freshOpeningTarget) {
-    const chapterDocumentId = String((explicitChapterTarget ?? freshOpeningTarget)?.documentId || "");
-    requestTarget = canonicalNovelChapterRequestTarget({
-      currentTarget: requestTarget,
-      explicitChapterTarget,
-      freshOpeningTarget,
-      existingTitle: taskWorkspaceSourceState.documents[chapterDocumentId]?.title || "",
-    });
-    if (conversation) conversation.intentTarget = clone(requestTarget);
-  }
-  if (!requestTarget.sourceMode) requestTarget.sourceMode = documentSourceMode(requestTarget.documentId);
-  if (creativeMutationPlan?.primaryTargets?.length) requestTarget.creativeMutationPlan = clone(creativeMutationPlan);
-  if (inferredDeliverableType === "short_drama_script") {
-    requestTarget.contextDomain = "script";
-    if (!requestTarget.sourceMode) {
-      requestTarget.sourceMode = /小说.{0,16}(?:改编|改成|改写成|转换成)|小说改编|原著改编|原作改编|根据.{0,24}(?:小说|原著|原文|章节)/.test(messageContent)
-        ? "adaptation"
-        : "original";
-    }
-  }
-  if (requestTarget.sourceMode) {
-    conversation.intentTarget = { ...(conversation.intentTarget ?? requestTarget), sourceMode: requestTarget.sourceMode };
-    const locatedTarget = inTaskSourceWorkspace(() => documentItem(requestTarget.documentId));
-    if (locatedTarget?.item) {
-      locatedTarget.item[2] ??= {};
-      locatedTarget.item[2].sourceMode = requestTarget.sourceMode;
-    }
-    if (taskWorkspaceSourceState.documents[requestTarget.documentId]) taskWorkspaceSourceState.documents[requestTarget.documentId].sourceMode = requestTarget.sourceMode;
-  }
-  if (!inlineEdit && isFormalWriteRollbackRequest(messageContent)) {
-    const rollbackDocumentId = String(forcedFormalTarget?.documentId || requestTarget.documentId || routingAnchorDocumentId || "");
-    const rollbackAvailability = inTaskSourceWorkspace(() => latestFormalWriteRollbackCheckpoint({
-      checkpoints: state.formalWriteRollbackCheckpoints,
-      documentId: rollbackDocumentId,
-      currentRevision: currentDocumentRevision(rollbackDocumentId),
-    }));
-    taskMessages.push({
-      id: uid("message"),
-      role: "user",
-      time: nowTime(),
-      content: messageContent,
-      target: clone(requestTarget),
-      turnContextSnapshot: currentAssociationSnapshot,
-    });
-    if (rollbackAvailability.available) {
-      taskMessages.push({
-        id: uid("message"),
-        role: "assistant",
-        time: nowTime(),
-        content: `已找到“${taskWorkspaceSourceState.documents[rollbackDocumentId]?.title || rollbackDocumentId}”最近一次正式写入，可以恢复到写入前状态。请在输入框上方确认。`,
-        conversationChoiceQuestion: true,
-      });
-    } else {
-      const reason = rollbackAvailability.reason === "document_changed_after_write"
-        ? "该文档在正式写入后又发生了修改，不能静默退回；请改用历史版本恢复，避免覆盖后续编辑。"
-        : rollbackAvailability.reason === "created_document_requires_delete"
-          ? "最近一次正式写入新建了该文档，请使用正常删除流程；删除仍会进入回收站并保留历史。"
-          : "当前文档没有可退回的最近正式写入检查点。";
-      taskMessages.push({ id: uid("message"), role: "assistant", time: nowTime(), content: reason });
-    }
-    taskSnapshots[taskMessages.at(-2)?.id || taskMessages.at(-1)?.id] = inTaskWorkspace(() => captureSnapshot());
-    await persistTaskConversationState({ stateOnly: true });
-    renderConversationIfActive(conversation.id, { all: true, forceScrollToBottom: true });
-    if (rollbackAvailability.available) openFormalWriteRollbackChoice({
-      conversationId: conversation.id,
-      documentId: rollbackDocumentId,
-      checkpoint: rollbackAvailability.checkpoint,
-    });
-    return { dispatchAccepted: true, disposition: "awaiting_rollback_confirmation" };
-  }
-  if (!inlineEdit && !forcedFormalTarget?.documentId && inferredDeliverableType !== "public_account"
-    && (explicitFormalAssetWrite || landingOnlyRequested || generationAndLandingRequested)) {
-    const compatibility = formalTargetCompatibility({
-      instruction: artifactRoutingText,
-      taskContract: creativeMutationPlan?.taskContract ?? null,
-      target: {
-        ...requestTarget,
-        title: taskWorkspaceSourceState.documents[requestTarget.documentId]?.title || requestTarget.title || requestTarget.documentId,
-      },
-    });
-    if (!compatibility.compatible) {
-      const userGateMessage = {
-        id: uid("message"),
-        role: "user",
-        time: nowTime(),
-        content: messageContent,
-        target: clone(requestTarget),
-        turnContextSnapshot: currentAssociationSnapshot,
-      };
-      taskMessages.push(userGateMessage, {
-        id: uid("message"),
-        role: "assistant",
-        time: nowTime(),
-        content: compatibility.message,
-        conversationChoiceQuestion: true,
-      });
-      taskSnapshots[userGateMessage.id] = inTaskWorkspace(() => captureSnapshot());
-      await persistTaskConversationState({ stateOnly: true });
-      renderConversationIfActive(conversation.id, { all: true, forceScrollToBottom: true });
-      openFormalTargetCorrectionChoice({
-        conversationId: conversation.id,
-        instruction: messageContent,
-        message: compatibility.message,
-        moduleId: compatibility.recommendedModuleId,
-        currentTarget: requestTarget,
-      });
-      return { dispatchAccepted: true, disposition: "awaiting_target_confirmation" };
-    }
-  }
-  const resumeRequested = /继续(?:上次|当前)?(?:长篇)?(?:自动)?任务|恢复(?:上次|当前)?(?:长篇)?(?:自动)?任务/.test(messageContent);
-  const longFormJob = !decisionResolutionActive && structuredWorkspace && hasActiveGenerationRuntime && !explicitStructuralOnlyWorkspaceOperation
-    ? (explicitChapterBatch
-      ? createLongFormJob({ batch: explicitChapterBatch, conversation, userPrompt: messageContent, skillReferences: pendingSkillReferences, taskContextSnapshot: currentAssociationSnapshot, workspaceState: taskWorkspaceSourceState })
-      : resumeRequested ? [...(taskWorkspaceSourceState.longFormJobs ?? [])].reverse().find((job) => job.conversationId === conversation?.id && ["planning", "writing", "paused", "failed"].includes(job.status)) ?? null : null)
-    : null;
-  if (longFormJob && resumeRequested) {
-    longFormJob.stopRequested = false;
-    longFormJob.status = longFormJob.phase === "chapters" ? "writing" : "planning";
-    longFormJob.error = null;
-  }
-  // Allocate the run identity before any router or patch planner can attach
-  // work to it.  Exact-replacement planning happens earlier than the pending
-  // message is rendered, so declaring this beside pendingId used to leave the
-  // planner inside JavaScript's temporal dead zone.
-  const requestId = uid("run");
-  const deterministicLocalEditPlan = !longFormJob && !inlineEdit
-    && taskWorkspaceSourceState.documents[requestTarget.documentId]
-    ? inTaskSourceWorkspace(() => inferExactReplacementEditPlan({
-      instruction: messageContent,
-      targetDocumentId: requestTarget.documentId,
-      currentContent: stripHtml(taskWorkspaceSourceState.documents[requestTarget.documentId].html ?? ""),
-      executionSurface,
-      requestId,
-      baselineRevision: contentRevision(stripHtml(taskWorkspaceSourceState.documents[requestTarget.documentId].html ?? "")),
-    }))
-    : null;
-  const formalCreativeProductionRequested = !explicitStructuralOnlyWorkspaceOperation && (
-    generationAndLandingRequested
-    || hasExplicitCreativeProductionIntent({ text: messageContent, targetDocumentId: requestTarget.documentId })
-  );
-  const workspaceOperationRequested = !decisionResolutionActive && !longFormJob
-    && !inlineEdit
-    && (!generationAndLandingRequested || explicitStructuralOnlyWorkspaceOperation)
-    && !landingOnlyRequested
-    && (Boolean(deterministicLocalEditPlan)
-      || (!formalCreativeProductionRequested && looksLikeWorkspaceOperation(messageContent)));
-  const immediatePreviousAssistantMessage = [...taskMessages].reverse().find((message) => message.role === "assistant");
-  const previousAssistantMessage = historicalTaskReference?.assistantMessages?.at(-1) ?? immediatePreviousAssistantMessage;
-  const previousAssistantText = String(previousAssistantMessage?.content || previousAssistantMessage?.lead || "").trim();
-  const previousAssistantAwaitingCreativeChoice = Boolean(previousAssistantMessage && (
-    previousAssistantMessage.execution?.result === "等待作者确认关键创作取舍"
-    || previousAssistantMessage.execution?.result === "等待作者确认主笔能力路由"
-    || /(?:请|需要).{0,10}(?:选择|确认|贴出|提供)|更想|希望.{0,8}(?:哪|什么)|无法可靠承接|主笔能力路由|异文体\s*Skill|最终产物不兼容/.test(previousAssistantText)
-  ));
-  const previousAssistantHasCreativeContext = Boolean(previousAssistantMessage && (
-    String(previousAssistantMessage.candidate || "").trim()
-    || (Array.isArray(previousAssistantMessage.execution?.contextDocuments)
-      && previousAssistantMessage.execution.contextDocuments.length > 0)
-    || previousAssistantMessage.execution?.result === "已结合指定资料完成回答"
-  ));
-  const recoverableContextGateRetry = isRecoverableOrdinaryScaffoldRetry({
-    text: messageContent,
-    previousUserMessage,
-    previousAssistantMessage,
-    target: requestTarget,
-    executionSurface,
-  });
-  const currentMessageHasResources = Boolean(pendingReferences.length || pendingWorkspaceReferences.length || pendingSkillReferences.length || pendingAttachments.length);
-  const latestInstructionOwnsDeliveryScope = Boolean(creativeMutationPlan?.primaryTargets?.length)
-    && !/^(?:继续|接着|承接|沿用|按(?:照)?(?:上条|上一条|前述|刚才|这个)|就按(?:上条|上一条|前述|刚才|这个))/u.test(messageContent);
-  const creativeContinuationAnswer = !freshCreativeStart && !latestInstructionOwnsDeliveryScope && (
-    recoverableContextGateRetry
-    || continuesPriorCreativeTask({
-      text: messageContent,
-      previousRequestMode: previousUserMessage?.requestMode,
-      previousAssistantAwaitingChoice: previousAssistantAwaitingCreativeChoice,
-      previousAssistantHasCreativeContext,
-      hasResources: currentMessageHasResources,
-    })
-  );
-  const previousRoutingRequest = String(previousUserMessage?.modelContent || previousUserCreativeRequest || "").trim();
-  const historicalRoutingPrompt = historicalTaskReference
-    ? historicalConversationReferencePrompt(historicalTaskReference, messageContent)
-    : "";
-  const routingMessageContent = historicalRoutingPrompt
-    || (creativeContinuationAnswer && previousRoutingRequest
-      ? `【上一轮仍在执行的原始目标｜消息 ${previousUserMessage?.id || "unknown"}】\n${previousRoutingRequest}\n\n【本轮补充或澄清】\n${messageContent}`
-    : recoverableContextGateRetry
-      ? previousRoutingRequest || messageContent
-      : messageContent);
-  const hasProjectTerms = hasProjectTerminology({
-    text: `${routingMessageContent}\n${inlineEdit?.originalText ?? ""}`,
-    projectCorpus: inTaskSourceWorkspace(() => projectTerminologyCorpus()),
-  });
-  const userMessageId = uid("message");
-  const authorizationTargetIds = [...new Set([
-    ...(creativeMutationPlan?.primaryTargets ?? []).map((target) => target?.documentId),
-    requestTarget.documentId,
-  ].filter(Boolean))];
-  const authorizationExpectedRevisions = Object.fromEntries(authorizationTargetIds.map((documentId) => [
-    documentId,
-    inTaskSourceWorkspace(() => currentDocumentRevision(documentId)),
-  ]));
-  const taskRoute = buildAdaptiveTaskRoute({
-    text: routingMessageContent,
-    authorizationInstruction: messageContent,
-    sourceMessageId: userMessageId,
-    workspaceOperation: workspaceOperationRequested,
-    longForm: Boolean(longFormJob),
-    landing: !workspaceOperationRequested && (generationAndLandingRequested || landingOnlyRequested),
-    inlineEdit: Boolean(inlineEdit),
-    targetDocumentId: requestTarget.documentId,
-    target: {
-      ...requestTarget,
-      revision: authorizationExpectedRevisions[requestTarget.documentId] || "",
-      title: taskWorkspaceSourceState.documents[requestTarget.documentId]?.title || requestTarget.title || "",
-    },
-    targetDocumentIds: authorizationTargetIds,
-    expectedRevisions: authorizationExpectedRevisions,
-    targetExists: Boolean(taskWorkspaceSourceState.documents[requestTarget.documentId]),
-    targetTitle: taskWorkspaceSourceState.documents[requestTarget.documentId]?.title || requestTarget.title || "",
-    contextDomain: requestTarget.contextDomain || inTaskSourceWorkspace(() => documentContextDomain(requestTarget.documentId)),
-    hasSelection: Boolean(ui.selectionRange && submittedTaskContextSnapshot.selectedText),
-    hasResources: currentMessageHasResources,
-    continuesCreativeThread: creativeContinuationAnswer,
-    hasProjectTerms,
-    preparedCreativeContext: inTaskSourceWorkspace(() => preparedNovelProductionContext(requestTarget)),
-    targetModuleId: requestTarget.moduleId || inTaskSourceWorkspace(() => moduleForDocument(requestTarget.documentId)),
-    workspaceKind: taskWorkspaceSourceState.workspaceKind,
-    taskContract: creativeMutationPlan?.taskContract ?? null,
-    skillIds: pendingSkillReferences.map((skill) => skill.id || skill.relativePath || skill.name).filter(Boolean),
-  }, { executionSurface });
-  // An explicit single chapter remains a single formal artifact even when the
-  // instruction asks the pipeline to run self-check, continuity review or
-  // de-AI polishing internally. Those process nouns must not manufacture
-  // report targets or turn auto-commit into a multi-document batch.
-  const formalAssetWriteTargets = explicitFormalAssetWrite && !explicitChapterTarget
-    ? creativeMutationPlan?.primaryTargets?.length
-      ? clone(creativeMutationPlan.primaryTargets)
-      : requestedArtifactTargets(routingMessageContent, {
-        contextDomain: requestTarget.contextDomain || inTaskSourceWorkspace(() => documentContextDomain(requestTarget.documentId)),
-      })
-    : [];
-  const authoritativeTaskContract = taskRoute.taskContractValidation?.authoritative === true;
-  const requestMode = authoritativeTaskContract
-    ? taskRoute.mode
-    : effectiveGuidanceDialog ? "creative_guidance" : taskRoute.mode;
-  const generalInquiry = materialInspectionActive || requestMode === "general";
-  const creativeGuidanceRequested = requestMode === "creative_guidance";
-  const uncheckedVisualPromptRequested = requestMode === "visual_prompt";
-  const quickRevisionRequested = requestMode === "quick_revision";
-  const routedDeliverableType = String((guidanceDialog ? ui.creativeGuidance.deliverableType : "") || taskRoute.deliverableType || inferredDeliverableType || "");
-  const boundNotebookDocument = taskWorkspaceSourceState.workspaceKind === "notebook" ? taskWorkspaceSourceState.documents[boundDocumentId] : null;
-  const boundNotebookText = stripHtml(boundNotebookDocument?.html ?? boundNotebookDocument?.markdown ?? "").trim();
-  const editingExistingDeliverable = Boolean(boundNotebookDocument) && !freshCreativeStart && (
-    !boundNotebookText
-    || /(?:继续|续写|修改|微调|改写|重写|润色|优化|精修|调整|补充|收紧|压缩|精简|扩写|打磨)/.test(messageContent)
-    || boundNotebookDocument.deliverableType === routedDeliverableType
-  );
-  const notebookDestination = (taskWorkspaceSourceState.workspaceKind === "notebook" || routedDeliverableType === "public_account")
-    && !generalInquiry
-    && !workspaceOperationRequested
-    && !inlineEdit
-    && !explicitChapterTarget
-    && !editingExistingDeliverable
-    && (isExplicitDirectCreationRequest({ text: messageContent })
-      || hasExplicitCreativeProductionIntent({ text: messageContent, targetDocumentId: requestTarget.documentId })
-      || creativeContinuationAnswer)
-    ? inTaskSourceWorkspace(() => captureNotebookLandingDestination(notebookDestinationForDeliverable({
-      deliverableType: routedDeliverableType,
-      text: messageContent,
-      targetDocumentId: requestTarget.documentId,
-      hasProjectReferences: Boolean(pendingReferences.length || pendingWorkspaceReferences.length),
-    })))
-    : null;
-  if (notebookDestination) requestTarget = {
-    ...requestTarget,
-    notebookDestination,
-    standaloneNotebookDeliverable: true,
-  };
-  // The first turn must reach the unified Agent exactly once. Local routing
-  // may prepare safe context, but it must not create a guidance session or
-  // recursively resend the message before the Agent has classified its lane.
-  const guidanceSessionId = guidanceDialog
-    ? String(queuedItem?.guidanceSessionId || guidanceResources?.sessionId || "")
-    : "";
-  const guidanceResourcesAlreadyShown = Boolean(guidanceSessionId && taskMessages.some((message) => (
-    message.role === "user" && message.guidanceSessionId === guidanceSessionId
-  )));
-  const guidanceDeliverableType = guidanceDialog
-    ? String(guidanceResources?.deliverableType || taskRoute.deliverableType || "")
-    : String(taskRoute.deliverableType || "");
-  const guidanceDeliverableLabel = guidanceDialog
-    ? String(guidanceResources?.deliverableLabel || taskRoute.deliverableLabel || "创作")
-    : String(taskRoute.deliverableLabel || "");
-  const workspaceLandingScope = resolveWorkspaceLandingScope({
-    workspaceKind: taskWorkspaceSourceState.workspaceKind,
-    workspacePath: taskWorkspaceScope.workspacePath,
-    workspaceName: taskWorkspaceScope.workspaceName,
-    instruction: messageContent,
-    explicitTargetWorkspaceKind: requestTarget?.workspaceKind || "",
-    explicitTargetWorkspacePath: requestTarget?.workspacePath || "",
-    explicitTargetWorkspaceName: requestTarget?.workspaceName || "",
-  });
-  const turnContextSnapshot = currentAssociationSnapshot;
-  const userMessage = {
-    id: userMessageId,
-    role: "user",
-    time: nowTime(),
-    content: displayContent || inlineEdit?.displayContent || (queuedItem?.runtimeSupplement ? queuedItem.displayContent || queuedItem.content : messageContent),
-    modelContent: displayContent
-      ? messageContent
-      : queuedItem?.runtimeSupplement
-      ? messageContent
-      : inlineEdit
-      ? messageContent
-      : historicalRoutingPrompt
-        || (creativeContinuationAnswer
-        ? `【继续同一创作任务】\n【上一轮原始目标｜消息 ${previousUserMessage?.id || "unknown"}】\n${previousRoutingRequest || previousUserCreativeRequest}\n\n【作者本轮补充或澄清】\n${messageContent}\n\n必须把两条内容合并理解；本轮补充只修正未明确部分，不得丢弃上一轮目标，不要重复追问已经给出的信息。`
-        : ""),
-    references: guidanceResourcesAlreadyShown ? [] : composerMessageReferenceScope.references.map((id) => ({ id, title: taskWorkspaceSourceState.documents[id]?.title ?? id })),
-    workspaceReferences: guidanceResourcesAlreadyShown ? [] : composerMessageReferenceScope.workspaceReferences.map(workspaceReferenceMetadata),
-    skillReferences: guidanceResourcesAlreadyShown ? [] : composerMessageReferenceScope.skillReferences,
-    attachments: guidanceResourcesAlreadyShown ? [] : composerMessageReferenceScope.attachments,
-    referenceContextSnapshot: conversationReferenceMessageSnapshot({
-      references: pendingReferences,
-      workspaceReferences: pendingWorkspaceReferences,
-      skillReferences: pendingSkillReferences,
-      attachments: pendingAttachments,
-    }, {
-      inherited: persistentReferenceContext.inherited === true,
-      sourceMessageId: persistentReferenceContext.sourceMessageId,
-      cleared: persistentReferenceContext.resetRequested === true,
-    }),
-    target: requestTarget,
-    ...(creativeMutationPlan ? { creativeMutationPlan: clone(creativeMutationPlan) } : {}),
-    ...(materialInspectionActive ? { materialUpdateInspection: clone(materialUpdateInspection) } : {}),
-    ...(materialExecutionActive ? { materialUpdateExecutionPlan: clone(materialUpdateExecutionPlan) } : {}),
-    turnContextSnapshot,
-    associationHistoryRequested: false,
-    workspaceLandingScope,
-    requestMode,
-    executionSurface,
-    guidanceSessionId,
-    webSearchEnabled: requestWebSearchEnabled,
-    ...(guidanceDeliverableType ? {
-      deliverableType: guidanceDeliverableType,
-      deliverableLabel: guidanceDeliverableLabel,
-    } : {}),
-    ...(branchContext ? {
-      branchGroupId: branchContext.groupId,
-      branchVersionId: branchContext.versionId,
-    } : {}),
-  };
-  removeImmediateConversationInstruction(immediateInstructionId);
-  taskMessages.push(userMessage);
-  if (queuedItem) markConversationInstructionAccepted({
-    conversation,
-    itemId: queuedItem.id,
-    leaseId: queuedItem.leaseId,
-    sourceMessageId: userMessage.id,
-    requestId,
-  });
-  if (!inlineEdit && fullTextImportInstructionRequested(messageContent)) {
-    if (conversation && !inlineEdit) synchronizeConversationReferenceContext(conversation, {
-      scope: userMessage.referenceContextSnapshot,
-      sourceMessageId: userMessage.id,
-      cleared: persistentReferenceContext.resetRequested === true,
-    });
-    if (conversation && !inlineEdit) consumeConversationComposerReferences(conversation);
-    taskSnapshots[userMessage.id] = inTaskWorkspace(() => captureSnapshot());
-    await persistTaskConversationState();
-    try {
-      const fullTextResult = await executeFullTextImport({
-        conversation,
-        taskMessages,
-        message: userMessage,
-        attachments: pendingAttachments,
-        workspaceState: taskWorkspaceSourceState,
-      });
-      await persistTaskConversationState();
-      return fullTextResult;
-    } catch (error) {
-      taskMessages.push({
-        id: uid("message"),
-        role: "assistant",
-        time: nowTime(),
-        content: `全文拆分导入未完成：${error.message || "未知错误"}。未覆盖已有正文。`,
-        execution: { status: "failed", progressPercent: 100, result: "全文拆分导入失败，未完成批量归档" },
-      });
-      await persistTaskConversationState();
-      renderConversationIfActive(conversation.id, { all: true, forceScrollToBottom: true });
-      return { dispatchAccepted: true, disposition: "full_text_import_failed" };
-    }
-  }
-  try {
-    const sourceArchive = workspaceTargetIsActive(
-      taskWorkspaceScope.workspaceKind,
-      taskWorkspaceScope.workspacePath,
-    )
-      ? await archiveInlineSourceMaterial({ messageId: userMessage.id, content: messageContent })
-      : await archiveInlineSourceMaterialInPinnedWorkspace({
-        workspaceState: taskWorkspaceSourceState,
-        workspacePath: taskWorkspaceScope.workspacePath,
-        messageId: userMessage.id,
-        content: messageContent,
-      });
-    if (sourceArchive) userMessage.inlineSourceArchive = sourceArchive;
-  } catch (error) {
-    taskMessages.push({
-      id: uid("message"),
-      role: "assistant",
-      time: nowTime(),
-      content: `检测到本条消息包含明确的原始素材，但资料库归档失败：${error.message || "未知保存错误"}。为避免基于未保存素材继续创作，本轮没有调用模型，也没有修改正式文档。`,
-      execution: { status: "failed", result: "原始素材未能归档，已阻止后续创作" },
-    });
-    taskSnapshots[userMessage.id] = inTaskWorkspace(() => captureSnapshot());
-    await persistTaskConversationState();
-    renderConversationIfActive(conversation.id, { forceScrollToBottom: true });
-    return { dispatchAccepted: true, disposition: "source_archive_failed" };
-  }
-  const preparation = beginConversationPreparation({
-    conversationId: conversation.id,
-    sourceMessageId: userMessage.id,
-    dispatchToken,
-    executionSurface,
-  });
-  ui.preparingConversationMessageIds.add(userMessage.id);
-  if (conversation && !inlineEdit) synchronizeConversationReferenceContext(conversation, {
-    scope: userMessage.referenceContextSnapshot,
-    sourceMessageId: userMessage.id,
-    cleared: persistentReferenceContext.resetRequested === true,
-  });
-  if (conversation && !inlineEdit) consumeConversationComposerReferences(conversation);
-  taskSnapshots[userMessage.id] = inTaskWorkspace(() => captureSnapshot());
-  await persistTaskConversationState();
-  if (conversation.id === taskWorkspaceSourceState.activeConversationId
-    && workspaceTargetIsActive(taskWorkspaceScope.workspaceKind, taskWorkspaceScope.workspacePath)) {
-    clearActiveComposerDraft();
-    renderContextChips();
-  }
-  renderConversationIfActive(conversation.id, { forceScrollToBottom: true });
-  await yieldAfterImmediateInstructionRender();
-  assertConversationPreparationActive(preparation);
-  if (typeof preflight === "function") await preflight();
-  assertConversationPreparationActive(preparation);
-  const contextTaskPrompt = String(userMessage.modelContent || messageContent);
-  const pendingId = uid("pending");
-  const standaloneCreativeContext = usesStandaloneCreativeContext({
-    text: messageContent,
-    deliverableType: guidanceDeliverableType || taskRoute.deliverableType || "",
-    hasExplicitProjectReferences: Boolean(pendingReferences.length || pendingWorkspaceReferences.length),
-  }) || Boolean(
-    notebookDestination
-    && creativeContinuationAnswer
-    && !pendingReferences.length
-    && !pendingWorkspaceReferences.length,
-  );
-  const requestAdaptiveEvidence = !landingOnlyRequested && !generalInquiry && !workspaceOperationRequested && !inlineEdit && !quickRevisionRequested
-    && !standaloneCreativeContext
-    ? inTaskWorkspace(() => buildAdaptiveCreativeEvidenceForRequest({
-      prompt: messageContent,
-      target: requestTarget,
-      deliverableType: guidanceDeliverableType || taskRoute.deliverableType || "",
-      taskContextSnapshot: turnContextSnapshot,
-    }))
-    : null;
-  const requestModelAttachments = inlineEdit
-    ? []
-    : inTaskWorkspace(() => adaptiveModelAttachments({ evidence: requestAdaptiveEvidence, explicitAttachments: pendingAttachments }));
-  let requestProjectContext = landingOnlyRequested
-    ? ""
-    : generalInquiry
-    ? inTaskWorkspace(() => buildGeneralQuestionContext({ prompt: messageContent, target: requestTarget, referenceIds: pendingReferences, workspaceReferenceCount: pendingWorkspaceReferences.length, conversation, messages: taskMessages, taskContextSnapshot: turnContextSnapshot }))
-    : workspaceOperationRequested
-    ? ""
-    : inlineEdit
-    ? inTaskWorkspace(() => buildInlineEditProjectContext(inlineEdit))
-    : quickRevisionRequested
-    ? inTaskWorkspace(() => buildQuickRevisionProjectContext(requestTarget, { taskContextSnapshot: turnContextSnapshot }))
-    : inTaskWorkspace(() => buildProjectContext(requestTarget, {
-      referenceIds: pendingReferences,
-      workspaceReferenceCount: pendingWorkspaceReferences.length,
-      prompt: contextTaskPrompt,
-      adaptiveEvidence: requestAdaptiveEvidence,
-      standaloneCreativeContext,
-      existingAssetIntent: taskRoute.existingAssetIntent === true,
-      conversationContext: conversation,
-      candidateState: taskCandidateState,
-      reviewScopeDocumentIds: prewriteReviewScopeDocumentIds,
-      requiredContextDocumentIds: taskRoute.intentEnvelope?.requiredContextDocumentIds ?? [],
-      taskContextSnapshot: turnContextSnapshot,
-    }));
-  if (materialInspectionActive) {
-    requestProjectContext = materialUpdateInspectionProjectContext(materialUpdateInspection, taskWorkspaceState);
-  }
-  const mutationOutputContract = creativeMutationOutputContract(creativeMutationPlan)
-    || (requestTarget?.documentId ? documentMutationOutputInstruction(messageContent) : "");
-  if (mutationOutputContract && !generalInquiry && !workspaceOperationRequested) {
-    requestProjectContext = [requestProjectContext, mutationOutputContract].filter(Boolean).join("\n\n");
-  }
-  assertConversationPreparationActive(preparation);
-  // Creative reading is workspace-sealed: a project never absorbs another
-  // project/notebook, and a notebook never absorbs another notebook/project.
-  // Explicit external references remain available to general Q&A only.
-  if (generalInquiry && !workspaceOperationRequested && !inlineEdit && pendingWorkspaceReferences.length) {
-    requestProjectContext = await appendWorkspaceReferenceContext(requestProjectContext, pendingWorkspaceReferences, contextTaskPrompt);
-    assertConversationPreparationActive(preparation);
-  }
-  const contextGate = parseContextGate(requestProjectContext);
-  const missingContextIds = Array.isArray(contextGate?.missingRequiredIds) ? contextGate.missingRequiredIds : [];
-  const reviewScopeMissingIds = reviewDelivery.active && !reviewContentMutation
-    ? missingContextIds.filter((documentId) => reviewScopeDocumentIds.includes(documentId))
-    : [];
-  const explicitContextReferenceIds = new Set(pendingReferences.map((documentId) => String(documentId ?? "").trim()).filter(Boolean));
-  const targetIsNonSubstantiveBoundDocument = Boolean(
-    requestTarget?.documentId
-    && taskWorkspaceState.documents[requestTarget.documentId]
-    && !inTaskWorkspace(() => documentHasSubstantiveContent(requestTarget.documentId))
-    && !explicitContextReferenceIds.has(String(requestTarget.documentId)),
-  );
-  const hardBlockingContextIds = contextGate?.status === "blocked"
-    ? contextGate.malformed || !missingContextIds.length
-      ? ["invalid-context-gate"]
-      : [...new Set([
-        ...blockingCreativeContextIds({
-          text: contextTaskPrompt,
-          targetDocumentId: requestTarget.documentId,
-          missingRequiredIds: missingContextIds,
-          existingAssetIntent: taskRoute.existingAssetIntent === true,
-          sourceBackedAssetIntent: taskRoute.sourceBackedAssetIntent === true,
-        }),
-        ...reviewScopeMissingIds,
-        ...missingContextIds.filter((documentId) => explicitContextReferenceIds.has(documentId)),
-      ])].filter((documentId) => !(
-        targetIsNonSubstantiveBoundDocument
-        && documentId === requestTarget.documentId
-      ))
-    : [];
-  const contextAvailability = contextAvailabilityDecision({
-    missingRequiredIds: hardBlockingContextIds.filter((documentId) => documentId !== "invalid-context-gate"),
-    documents: taskWorkspaceState.documents,
-    explicitReferenceIds: pendingReferences,
-  });
-  const clientContextDependencyReport = planContextDependencies({
-    dependencies: hardBlockingContextIds.map((documentId) => ({
-      id: documentId,
-      status: "missing",
-      explicit: explicitContextReferenceIds.has(documentId),
-      reason: documentId === "invalid-context-gate" ? "invalid_context_gate" : "current_context_unavailable",
-    })),
-    subtasks: inferContextSubtasks({
-      instruction: contextTaskPrompt,
-      missingDependencyIds: hardBlockingContextIds,
-      explicitDependencyIds: [...explicitContextReferenceIds],
-      targetDependencyId: requestTarget.documentId,
-      targetMissing: hardBlockingContextIds.includes(requestTarget.documentId),
-    }),
-    userInsists: true,
-  });
-  // Context gaps must not become a global generation/write gate. Only an
-  // existing-asset mutation whose actual target document is unavailable is
-  // impossible to perform safely. Other missing references are reported to
-  // the model as unavailable and the runnable work continues without claiming
-  // those sources were read.
-  const freshStartChoiceRequired = contextGate?.status === "blocked"
-    && contextAvailability.status === "ask_fresh_start"
-    && hardBlockingContextIds.length > 0
-    && !pureReview
-    && !recoverableContextGateRetry;
-  const reviewScopeBlocked = pureReview && reviewScopeMissingIds.length > 0;
-  const hardContextBlocked = !decisionResolutionActive && (reviewScopeBlocked || (contextAvailability.status !== "retry_read" && ((taskRoute.existingAssetIntent === true
-    && Boolean(requestTarget.documentId)
-    && hardBlockingContextIds.includes(requestTarget.documentId)
-    && !recoverableContextGateRetry) || freshStartChoiceRequired)));
-  const hardContextBlockCopy = reviewScopeBlocked
-    ? `本轮自检需要读取${reviewScopeMissingIds.map((documentId) => `《${inTaskWorkspace(() => contextDependencyTitle(documentId, taskMessages))}》`).join("、")}，但这些章节当前不存在、为空或超出可用上下文预算。请先创建或导入对应正文后再执行自检；本轮未从零开始，也未生成报告。`
-    : freshStartChoiceRequired
-    ? `当前确实没有找到本轮指定的必读资料：${contextAvailability.missingIds.map((documentId) => `《${inTaskWorkspace(() => contextDependencyTitle(documentId, taskMessages))}》`).join("、")}。是否从零开始完成这项任务？`
-    : inTaskWorkspace(() => contextDependencyNotice({
-    blockingIds: hardBlockingContextIds,
-    explicitReferenceIds: pendingReferences,
-    targetDocumentId: requestTarget.documentId,
-    messages: taskMessages,
-  }));
-  const contextDocumentTitles = projectContextDocumentTitles(requestProjectContext);
-  const sourceDocumentId = requestTarget?.crossFormatRoute?.sourceDocumentId || boundDocumentId || "";
-  const creativeTask = buildUnifiedCreativeTask({
-    taskId: requestId,
-    instruction: messageContent,
-    sourceMessageId: userMessage?.id || requestId,
-    executionSurface,
-    taskContract: creativeMutationPlan?.taskContract ?? null,
-    source: {
-      workId: turnContextSnapshot.workspaceName || taskWorkspaceState.projectName || taskWorkspaceState.settings?.projectName || "",
-      documentIds: sourceDocumentId ? [sourceDocumentId] : [],
-      contentType: requestTarget?.crossFormatRoute?.sourceContentType || inTaskWorkspace(() => documentContextDomain(sourceDocumentId)) || "document",
-    },
-    context: {
-      workspaceKind: turnContextSnapshot.workspaceKind,
-      workspacePath: turnContextSnapshot.workspacePath,
-      workspaceName: turnContextSnapshot.workspaceName,
-      associatedDocumentId: boundDocumentId,
-      activeDocumentId: turnContextSnapshot.activeDocumentId,
-      associationEnabled: conversationAutoAssociationEnabled(conversation),
-      associationRevision: turnContextSnapshot.associationRevision,
-      documentRevision: turnContextSnapshot.documentRevision,
-      initialBoundDocumentId: associationRoutingAnchorDocumentId,
-      referenceDocumentIds: pendingReferences,
-      skillIds: pendingSkillReferences,
-      loadingLevel: requestTarget?.crossFormatRoute ? 2 : 1,
-    },
-    target: {
-      workId: workspaceLandingScope.workspaceName || turnContextSnapshot.workspaceName || taskWorkspaceState.projectName || "",
-      workspaceKind: workspaceLandingScope.workspaceKind,
-      workspacePath: workspaceLandingScope.workspacePath,
-      workspaceName: workspaceLandingScope.workspaceName,
-      contentType: requestTarget?.crossFormatRoute?.targetContentType || inTaskWorkspace(() => documentContextDomain(requestTarget.documentId)) || "document",
-      documentId: requestTarget.documentId,
-      directoryId: requestTarget.moduleId || "",
-      requestedTitle: requestTarget.title
-        || requestTarget.chapterTitle
-        || (requestTarget.explicitChapter ? "" : explicitNewDocumentRequest.title)
-        || "",
-      forceCreateNew: Boolean(explicitNewDocumentRequest.create || requestTarget?.crossFormatRoute?.create),
-      allowMultiple: Boolean(explicitChapterBatch || formalAssetWriteTargets.length > 1 || creativeMutationPlan?.primaryTargets?.length > 1),
-      documents: clone(creativeMutationPlan?.primaryTargets ?? []),
-      allowFormatMismatch: requestTarget?.forceTypeMismatch === true,
-    },
-    operation: taskRoute.writeAuthorization?.action === "rename"
-      ? "rename"
-      : requestTarget?.crossFormatRoute
-      ? "transform"
-      : explicitChapterBatch
-        ? "batch"
-        : formalAssetWriteTargets.length > 1 || creativeMutationPlan?.primaryTargets?.length > 1
-          ? "batch"
-          : explicitFormalAssetWrite
-            ? taskWorkspaceState.documents[requestTarget.documentId] ? "patch" : "create"
-        : creativeGuidanceRequested
-          ? "assist"
-        : inlineEdit
-          ? "patch"
-          : explicitNewDocumentRequest.create
-            ? "create"
-            : generalInquiry || workspaceOperationRequested
-              ? "assist"
-              : taskWorkspaceState.documents[requestTarget.documentId]
-                ? "patch"
-                : "create",
-    writeAuthorization: taskRoute.writeAuthorization,
-  });
-  userMessage.creativeTask = clone(creativeTask);
-  const execution = {
-    status: "running",
-    requestId,
-    conversationId: conversation.id,
-    startedAt: Date.now(),
-    progressPercent: 3,
-    sourceMessageId: userMessage.id,
-    ...(queuedItem ? { queueItemId: queuedItem.id, queueLeaseId: queuedItem.leaseId } : {}),
-    routeReason: taskRoute.reason,
-    taskRoute: clone(taskRoute),
-    webSearchEnabled: requestWebSearchEnabled,
-    webSearchUsed: false,
-    delegatedFromAgent: executionSurface === "agent",
-    ...(longFormJob ? { jobId: longFormJob.id } : {}),
-    direct: isDirectGenerationRequest(contextTaskPrompt),
-    ...(generalInquiry
-      ? { strength: "general" }
-      : workspaceOperationRequested
-        ? { strength: "operation" }
-        : creativeGuidanceRequested
-          ? { strength: "guidance" }
-        : quickRevisionRequested
-          ? { strength: "quick" }
-          : uncheckedVisualPromptRequested
-            ? { strength: "visual" }
-            : {}),
-    targetLabel: generalInquiry
-      ? requestProjectContext ? "轻量资料问答" : "通用问答"
-      : workspaceOperationRequested ? "当前作品结构" : guidanceDeliverableLabel || targetLabel(requestTarget),
-    resourceCount: pendingReferences.length + pendingWorkspaceReferences.length + pendingSkillReferences.length + requestModelAttachments.length,
-    referenceContextInherited: persistentReferenceContext.inherited === true,
-    referenceContextSourceMessageId: String(persistentReferenceContext.sourceMessageId || ""),
-    ...(historicalTaskReference ? {
-      historicalConversationRecall: {
-        sourceMessageIds: [...historicalTaskReference.sourceMessageIds],
-        interveningMessages: historicalTaskReference.interveningMessages,
-        requestMode: historicalTaskReference.requestMode,
-        activeDocumentReferences: pendingReferences.length,
-        activeWorkspaceReferences: pendingWorkspaceReferences.length,
-        activeSkillReferences: pendingSkillReferences.length,
-        activeAttachments: pendingAttachments.length,
-      },
-    } : {}),
-    attachmentSummary: requestModelAttachments.map((attachment) => attachment.name).filter(Boolean).join("、"),
-    ...(requestAdaptiveEvidence ? {
-      adaptiveEvidence: {
-        facets: requestAdaptiveEvidence.facets ?? [],
-        documents: (requestAdaptiveEvidence.documents ?? []).map((document) => ({ id: document.id, title: document.title, reasons: document.reasons })),
-        assets: (requestAdaptiveEvidence.assets ?? []).map((asset) => ({ id: asset.id, name: asset.name, kind: asset.kind, reasons: asset.reasons })),
-      },
-    } : {}),
-    contextDocuments: contextDocumentTitles,
-    plannedSkillNames: pendingSkillReferences.map((skill) => skill.name || skill.id || skill.relativePath || "Skill").filter(Boolean),
-    contextReads: buildExecutionContextReadState({
-      status: "running",
-      currentStage: "routing",
-      plannedDocuments: contextDocumentTitles.map((title) => ({ title, stage: "规划" })),
-      plannedSkills: pendingSkillReferences.map((skill) => ({
-        id: skill.id || skill.name,
-        name: skill.name || skill.id || "Skill",
-        version: skill.version || "",
-        stage: "规划",
-      })),
-    }),
-    contextDependencyReport: clientContextDependencyReport,
-    creativeTask: clone(creativeTask),
-    ...(!generalInquiry && !workspaceOperationRequested && !inlineEdit && !quickRevisionRequested && /^chapter-\d+$/.test(requestTarget.documentId || "")
-      ? { contextCoverage: inTaskWorkspace(() => projectContextCoverage(contextDocumentTitles)) }
-      : {}),
-  };
-  if (creativeGuidanceRequested) execution.routeReason = `继续${guidanceDeliverableLabel || "专项创作"}合同引导`;
-  completeConversationPreparation(preparation);
-  ui.preparingConversationMessageIds.delete(userMessage.id);
-  taskMessages.push({
-    id: pendingId,
-    role: "assistant",
-    time: nowTime(),
-    pending: true,
-    execution,
-    guidanceSessionId,
-    ...(branchContext ? {
-      branchGroupId: branchContext.groupId,
-      branchVersionId: branchContext.versionId,
-    } : {}),
-  });
-  recordActivity({
-    type: "chat",
-    label: `在“${conversation?.title || "当前对话"}”发送消息`,
-    documentId: requestTarget?.documentId || turnContextSnapshot.boundDocumentId || turnContextSnapshot.activeDocumentId,
-    conversationId: conversation?.id,
-    messageId: userMessage.id,
-  });
-  syncActiveConversationBusyState();
-  let guidanceCompletedThisTurn = false;
-  let completionMessage = null;
-  let libraryArchiveWorkspaceMutation = null;
-  await persistTaskConversationState();
-  renderConversationIfActive(conversation.id, { forceScrollToBottom: true });
 
-  try {
-    if (!landingOnlyRequested) void protectConversationDispatchBeforeModel().then((result) => recordConversationDispatchDurability({
-      conversation,
-      messages: taskMessages,
-      userMessage,
-      requestId,
-      workspace: turnContextSnapshot,
-      result,
-    }));
-    // Each model turn owns a fresh landing slot. The previous candidate stays
-    // in its immutable assistant message for continuation and recovery, but it
-    // must not remain in the mutable pointer where a malformed new response
-    // could accidentally commit an older turn.
-    if (!landingOnlyRequested) {
-      taskCandidateState.currentCandidate = "";
-      taskCandidateState.currentCandidateTarget = null;
-      taskCandidateState.currentCandidateMemoryUpdate = null;
-      taskCandidateState.currentCandidateAuthorization = null;
-      taskCandidateState.currentCandidateDeliverableType = "";
-      taskCandidateState.currentCandidateSourceMessageId = "";
-    }
-    const isLocalMutation = !decisionResolutionActive && (landingOnlyRequested || isLocalWriteCapabilityQuestion(messageContent));
-    // Do not let the legacy local classifier short-circuit the unified Agent.
-    // Only an explicit material inspection remains deterministic and local.
-    const localRuntimeReply = materialInspectionActive ? inTaskWorkspace(() => localRuntimeStatusReply(messageContent)) : null;
-    let rawReply = localRuntimeReply ?? (hardContextBlocked
-      ? {
-        content: hardContextBlockCopy,
-        memoryUpdate: null,
-        freshStartChoice: freshStartChoiceRequired,
-        engineExecution: { status: "blocked", result: "缺少必读资料", blockingContextIds: hardBlockingContextIds },
-      }
-      : longFormJob
-      ? await runLongFormJob({ job: longFormJob, pendingId, conversation, messages: taskMessages, candidateState: taskCandidateState, taskContextSnapshot: turnContextSnapshot, workspaceState: taskWorkspaceSourceState })
-      : workspaceOperationRequested
-      ? deterministicLocalEditPlan
-        ? {
-          content: `将对“${taskWorkspaceState.documents[deterministicLocalEditPlan.targetDocumentId]?.title ?? "当前文档"}”执行 ${deterministicLocalEditPlan.edits.length} 组精确局部替换。`,
-          workspacePlan: bindCurrentWorkspaceOperationConfirmation({
-            status: "waiting_confirm",
-            intent: messageContent,
-            summary: "已生成精确局部替换计划",
-            operations: deterministicLocalEditPlan.edits.map((edit) => ({
-              type: "document.replace_text",
-              documentId: deterministicLocalEditPlan.targetDocumentId,
-              find: edit.originalText,
-              replace: edit.replacementText,
-              replaceAll: true,
-              expectedOccurrences: edit.expectedOccurrences,
-              expectedRevision: inTaskWorkspace(() => currentDocumentRevision(deterministicLocalEditPlan.targetDocumentId)),
-            })),
-          }, {
-            required: false,
-            source: "explicit_user_instruction",
-            reason: "目标文档、原文和替换文字均由用户原指令明确给出",
-          }),
-        }
-        : (() => {
-          const structuralPlan = inTaskWorkspace(() => deterministicStructuralWorkspacePlan(messageContent));
-          return structuralPlan
-            ? {
-              content: "已生成章节目录归类计划，准备按你的明确指令执行；正文与标题保持不变。",
-              workspacePlan: structuralPlan,
-            }
-            : null;
-        })() || await requestWorkspaceOperationPlan({ prompt: messageContent, requestId, taskContextSnapshot: turnContextSnapshot, workspaceState: taskWorkspaceState })
-      : isLocalMutation || (!hasActiveGenerationRuntime && !decisionResolutionActive)
-      ? isLocalMutation
-        ? await assistantReplyFor(messageContent, requestTarget, { conversation, messages: taskMessages, candidateState: taskCandidateState, taskContextSnapshot: turnContextSnapshot })
-        : { content: generalInquiry
-          ? "这是一个通用问题，但当前没有可用的 Agent 连接。请先在设置中连接 API 或 CLI。"
-          : "这条消息需要先由 Agent 判断任务类型并选择相应能力，但当前没有可用的 Agent 连接。请先在设置中连接 API 或 CLI。" }
-      : await requestModelReply(requestTarget, {
-        storeCandidate: !inlineEdit && !quickRevisionRequested && !activeGuidanceFlow,
-        requestId,
-        projectContext: requestProjectContext,
-        modelAttachments: requestModelAttachments,
-        selectedSkills: inlineEdit ? [] : pendingSkillReferences,
-        // Choosing “从零开始” explicitly releases a missing/empty @ source
-        // for this retry; the original reference remains visible in the
-        // conversation and can be supplied again later.
-        explicitReferenceDocumentIds: inlineEdit || freshCreativeStart || recoverableContextGateRetry ? [] : pendingReferences,
-        ...(inlineEdit ? {
-          modelMessages: [{ role: "user", content: messageContent }],
-          modelAttachments: [],
-        } : historicalTaskReference?.sourceConversationId ? {
-          // A cross-conversation continuation must travel inside the trusted
-          // model message stream. Project context is deliberately recompiled
-          // from workspace files by the server, so putting the recalled turn
-          // there makes the prior candidate disappear and triggers a false
-          // blocking context request.
-          modelMessages: [{ role: "user", content: historicalRoutingPrompt, recalledHistory: true }],
-        } : activeGuidanceFlow ? {} : generalInquiry ? {} : {
-          modelMessages: activeModelContext(taskMessages, conversation),
-        }),
-        ...(activeGuidanceFlow ? {
-          modelMessages: activeGuidanceModelMessages(guidanceSessionId, taskMessages, conversation),
-          modelAttachments: requestModelAttachments,
-          guidanceState: latestCreativeGuidanceState(guidanceSessionId, taskMessages, conversation),
-        } : {}),
-        ...(generalInquiry ? {
-          modelMessages: activeGeneralMessages(taskMessages, conversation),
-          modelAttachments: requestModelAttachments,
-        } : {}),
-        conversationContext: conversation,
-        candidateState: taskCandidateState,
-        workspaceState: taskWorkspaceState,
-        requestMode,
-        executionSurface,
-        continuesCreativeThread: creativeContinuationAnswer,
-        webSearchEnabled: requestWebSearchEnabled,
-        allowNativeFallback: recoverableContextGateRetry,
-        creativeTask,
-        candidateWriterPlan,
-        decisionResolution,
-        onTextDelta: (delta) => {
-          if (!delta) return;
-          const pendingMessage = taskMessages.find((message) => message.id === pendingId);
-          if (!pendingMessage) return;
-          pendingMessage.streamText = `${pendingMessage.streamText ?? ""}${delta}`;
-          const visibleStreamText = requestWebSearchEnabled
-            ? cleanGeneratedPlainText(separateWebSources(pendingMessage.streamText).text)
-            : cleanGeneratedPlainText(pendingMessage.streamText);
-          pendingMessage.streamDisplayText = visibleStreamText;
-          const textNode = elements.chatFeed.querySelector(`[data-message="${CSS.escape(pendingId)}"] [data-stream-text]`);
-          if (textNode) {
-            const followTail = chatFeedIsNearTail();
-            textNode.textContent = visibleStreamText;
-            if (followTail) scrollChatFeedToTail();
-          } else {
-            renderConversationIfActive(conversation.id);
-          }
-        },
-        onProgress: (progressExecution) => {
-          const pendingMessage = taskMessages.find((message) => message.id === pendingId);
-          if (!pendingMessage || !progressExecution) return;
-          pendingMessage.execution = {
-            ...pendingMessage.execution,
-            ...progressExecution,
-            requestId,
-            status: "running",
-          };
-          renderConversationIfActive(conversation.id);
-        },
-      }));
-    const semanticOperationKind = String(rawReply?.agentOperationRequest?.kind || "");
-    if (rawReply?.agentOperationRequest && !Object.values(AGENT_OPERATION_KINDS).includes(semanticOperationKind)) {
-      throw Object.assign(new Error("Agent 返回了未知的高影响操作类型，已阻止执行。"), {
-        code: "AGENT_OPERATION_KIND_INVALID",
-      });
-    }
-    if (semanticOperationKind) {
-      const presented = await presentAgentOperationProposalFromDecision({
-        prompt: messageContent,
-        conversation,
-        kind: semanticOperationKind,
-        attachments: pendingAttachments,
-        workspaceState: taskWorkspaceSourceState,
-        sourceMessageId: userMessage.id,
-      });
-      if (!presented) {
-        throw Object.assign(new Error("Agent 操作提案未能建立，未执行任何高影响修改。"), {
-          code: "AGENT_OPERATION_PROPOSAL_NOT_CREATED",
-        });
-      }
-      rawReply = {
-        ...rawReply,
-        content: rawReply.content || "已识别为高影响操作，请先核对并确认执行方案。",
-        engineExecution: {
-          ...(rawReply.engineExecution ?? {}),
-          status: "awaiting_confirmation",
-          result: "等待高影响操作确认",
-        },
-      };
-    }
-    if (rawReply?.libraryArchiveCommitRequest?.workflow === "library_archive") {
-      const commitWorkspacePath = String(rawReply.libraryArchiveCommitRequest.workspacePath || "").trim();
-      if (normalizedWorkspacePath(commitWorkspacePath) !== normalizedWorkspacePath(taskWorkspaceScope.workspacePath)) {
-        throw Object.assign(new Error("归档确认不属于发送任务时锁定的工作区，已阻止写入。"), {
-          code: "LIBRARY_ARCHIVE_WORKSPACE_MISMATCH",
-        });
-      }
-      if (taskWorkspaceSourceState === state
-        && workspaceTargetIsActive(taskWorkspaceScope.workspaceKind, taskWorkspaceScope.workspacePath)) {
-        await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
-      } else {
-        const saved = await persistTaskConversationState();
-        if (!saved) throw new Error("归档确认消息尚未安全保存，已阻止写入。请重试确认。");
-      }
-      const committedArchive = await commitLibraryArchiveWorkflow(rawReply.libraryArchiveCommitRequest, {
-        sourceMessageId: userMessage.id,
-      });
-      libraryArchiveWorkspaceMutation = committedArchive.payload;
-      rawReply = {
-        ...rawReply,
-        content: committedArchive.content,
-        libraryArchiveCommitRequest: null,
-        libraryArchiveCommitResult: clone(committedArchive.payload),
-        engineExecution: {
-          ...(rawReply.engineExecution ?? {}),
-          status: "complete",
-          progressPercent: 100,
-          currentStage: "归档完成",
-          nextStep: "",
-          result: committedArchive.content,
-          workspaceMutationCommitted: committedArchive.payload.status === "completed",
-          libraryArchive: {
-            counts: clone(committedArchive.payload.counts ?? {}),
-            sourceDocumentIds: clone(committedArchive.payload.sourceDocumentIds ?? []),
-            targetDocumentIds: clone(committedArchive.payload.targetDocumentIds ?? []),
-            fingerprint: committedArchive.payload.fingerprint || "",
-          },
-        },
-      };
-    }
-    const replyCandidate = String(rawReply?.candidate || "").trim();
-    const replyBaseAuthorization = rawReply?.writeAuthorization
-      && ["candidate_only", "commit"].includes(rawReply.writeAuthorization.state)
-      ? rawReply.writeAuthorization
-      : taskRoute.writeAuthorization;
-    const boundReplyAuthorization = replyCandidate
-      ? bindFormalWriteCandidate(replyBaseAuthorization, {
-          candidate: replyCandidate,
-          targetDocumentIds: replyBaseAuthorization?.targetDocumentIds,
-          expectedRevisions: replyBaseAuthorization?.expectedRevisions,
-        })
-      : replyBaseAuthorization;
-    const formalWriteAuthorized = validateFormalWriteAuthorization(boundReplyAuthorization, {
-      requiredState: "commit",
-      sourceMessageId: userMessage.id,
-      instruction: messageContent,
-      candidate: replyCandidate,
-      targetDocumentIds: replyBaseAuthorization?.targetDocumentIds,
-      expectedRevisions: replyBaseAuthorization?.expectedRevisions,
-      requireBodyMutation: replyBaseAuthorization?.action !== "rename",
-      requireTitleMutation: replyBaseAuthorization?.action === "rename",
-    }).valid;
-    const candidateOnlyAuthorized = validateFormalWriteAuthorization(boundReplyAuthorization, {
-      requiredState: "candidate_only",
-      sourceMessageId: userMessage.id,
-      instruction: messageContent,
-      candidate: replyCandidate,
-      targetDocumentIds: replyBaseAuthorization?.targetDocumentIds,
-      expectedRevisions: replyBaseAuthorization?.expectedRevisions,
-    }).valid;
-    if (replyCandidate && (formalWriteAuthorized || candidateOnlyAuthorized)) {
-      rawReply = { ...rawReply, writeAuthorization: clone(boundReplyAuthorization) };
-      taskCandidateState.currentCandidateAuthorization = clone(boundReplyAuthorization);
-      taskRoute.writeAuthorization = clone(boundReplyAuthorization);
-      creativeTask.writeAuthorization = clone(boundReplyAuthorization);
-      creativeTask.context.documentRevision = String(boundReplyAuthorization.expectedRevisions?.[requestTarget.documentId] || creativeTask.context.documentRevision || "");
-      execution.taskRoute = clone(taskRoute);
-      if (rawReply.engineExecution) rawReply.engineExecution.writeAuthorization = clone(boundReplyAuthorization);
-    }
-    if (!formalWriteAuthorized && !candidateOnlyAuthorized && replyCandidate) {
-      rawReply = {
-        ...rawReply,
-        content: rawReply.content || rawReply.lead || rawReply.candidate,
-        candidate: "",
-        candidateDocuments: [],
-        target: null,
-      };
-      taskCandidateState.currentCandidate = "";
-      taskCandidateState.currentCandidateTarget = null;
-      taskCandidateState.currentCandidateMemoryUpdate = null;
-      taskCandidateState.currentCandidateAuthorization = null;
-      taskCandidateState.currentCandidateDeliverableType = "";
-      taskCandidateState.currentCandidateSourceMessageId = "";
-    }
-    const assistantOutputClassification = classifyAssistantOutput({
-      instruction: messageContent,
-      route: taskRoute,
-      result: rawReply,
-      candidateCount: Array.isArray(rawReply?.candidateDocuments) ? rawReply.candidateDocuments.length : 0,
-    });
-    rawReply = { ...rawReply, outputKind: assistantOutputClassification.kind };
-    const guidanceProducedFormalArtifact = creativeGuidanceRequested
-      && rawReply?.engineExecution?.guidanceCompleted === true
-      && Boolean(String(rawReply?.candidate || "").trim());
-    const candidateLandingDeferred = candidateLandingShouldBeDeferred({
-      route: taskRoute,
-      creativeGuidanceRequested,
-      guidanceProducedFormalArtifact,
-      explicitlyDeferred: explicitlyDefersCandidateLanding(messageContent),
-    });
-    const requestedLandingTargets = inlineEdit || explicitChapterTarget || turnContextSnapshot.workspaceKind !== "project" || !explicitFormalAssetWrite
-      ? []
-      : creativeMutationPlan?.primaryTargets?.length
-        ? clone(creativeMutationPlan.primaryTargets)
-        : inTaskWorkspace(() => requestedArtifactTargets(artifactRoutingText, { contextDomain: documentContextDomain(requestTarget?.documentId) }));
-    const parsedCandidateBatch = Array.isArray(rawReply?.candidateDocuments)
-      && rawReply.candidateDocuments.length > 1
-      && ["document-batch", "chapter-batch"].includes(String(rawReply?.target?.kind || ""));
-    let automaticLandingTarget = guidanceProducedFormalArtifact
-      ? creativeGuidanceLandingTarget({
-        requestMode,
-        target: {
-          ...requestTarget,
-          guidanceState: clone(rawReply?.engineExecution?.guidanceState ?? null),
-        },
-      })
-      : parsedCandidateBatch ? clone(rawReply.target) : requestTarget;
-    if (guidanceProducedFormalArtifact) {
-      taskCandidateState.currentCandidateTarget = clone(automaticLandingTarget);
-      rawReply = { ...rawReply, target: clone(automaticLandingTarget) };
-    }
-    let automaticLandingAmbiguous = false;
-    const landingAssociationChange = resolveTurnAssociationChange({
-      snapshot: turnContextSnapshot,
-      current: createTurnContextSnapshot({
-        conversation,
-        workspaceKind: state.workspaceKind,
-        workspacePath: state.settings.workspacePath,
-        workspaceName: state.projectName || state.settings.projectName || "",
-        activeDocumentId: turnContextSnapshot.activeDocumentId,
-        documents: state.documents,
-      }),
-      explicitRetarget: Boolean(requestTarget?.explicitTarget || requestTarget?.crossFormatRoute),
-      sameWorkspace: String(turnContextSnapshot.workspacePath || "").toLocaleLowerCase() === String(state.settings.workspacePath || "").toLocaleLowerCase(),
-    });
-    // A running task owns the association snapshot captured when it was sent.
-    // Browsing another document must not silently redirect its result. Explicit
-    // cross-format/retarget instructions remain authoritative.
-    const boundDocumentIdForLanding = landingAssociationChange.action === "reroute"
-      ? String(requestTarget?.documentId || turnContextSnapshot.boundDocumentId || "")
-      : String(turnContextSnapshot.boundDocumentId || "");
-    const smartLandingHint = !candidateLandingDeferred
-      && String(rawReply?.candidate || "").trim()
-      && !inlineEdit
-      && turnContextSnapshot.workspaceKind === "project"
-      ? analyzeSmartLandingPath({
-          instruction: messageContent,
-          result: rawReply,
-          boundDocumentId: boundDocumentIdForLanding,
-          documents: turnContextDocuments,
-          moduleRootId: turnContextActiveModule,
-          workspaceKind: turnContextSnapshot.workspaceKind,
-        })
-      : { action: "none", reason: "not_applicable" };
-    if (!parsedCandidateBatch && explicitNewDocumentRequest.create && smartLandingHint.action === "create_and_land") {
-      // Cross-format routing already created the named target before the model
-      // call. Reuse that exact document instead of manufacturing a second
-      // transient target after the candidate heading is parsed.
-      const candidateAuthorityTarget = taskCandidateState.currentCandidateTarget || rawReply.target || null;
-      const resolvedNamedTarget = requestTarget?.crossFormatRoute?.targetDocumentId || requestTarget?.explicitChapter
-        ? requestTarget
-        : explicitNamedDocumentLandingTarget({
-            intent: explicitNewDocumentRequest,
-            fallbackTarget: candidateAuthorityTarget || requestTarget,
+const nativeConversationMonitors = new Map();
+
+const persistNativeConversation = async (runtime) => {
+  const { conversation, messages, workspaceScope, candidateState } = runtime;
+  conversation.messages = messages;
+  if (!workspaceScope.workspacePath) { persist(); return; }
+  await savePinnedConversationCompletion({ ...workspaceScope, conversationId: conversation.id,
+    messages, conversationState: conversation, candidateState, force: true });
+};
+
+const renderNativeConversation = (runtime, forceScrollToBottom = false) => {
+  if (!workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) return;
+  mergeAgentRuntimeConversationState(state, runtime);
+  renderConversationIfActive(runtime.conversation.id, { forceScrollToBottom });
+};
+
+const monitorNativeConversation = (runtime, pending) => {
+  const runId = pending.execution.nativeAgentRunId;
+  if (nativeConversationMonitors.has(runId)) return nativeConversationMonitors.get(runId);
+  const monitor = (async () => {
+    const { conversation, messages } = runtime;
+    try {
+      const result = await watchConversationAgent({ runId, onEvent: async (event) => {
+        pending.execution.nativeAgentCursor = event.sequence;
+        if (event.type === "question") {
+          const id = `question-${event.payload.id}`;
+          if (!messages.some((message) => message.id === id)) messages.push({
+            id, role: "assistant", content: event.payload.question, time: nowTime(), conversationChoiceQuestion: true,
           });
-      const namedTarget = resolvedNamedTarget
-        ? inheritCandidateTargetProvenance(resolvedNamedTarget, candidateAuthorityTarget)
-        : null;
-      if (namedTarget) {
-        automaticLandingTarget = namedTarget;
-        taskCandidateState.currentCandidateTarget = clone(namedTarget);
-        rawReply = { ...rawReply, target: clone(namedTarget) };
-      }
-    }
-    const shouldTrySemanticLanding = !candidateLandingDeferred
-      && String(rawReply?.candidate || "").trim()
-      && !parsedCandidateBatch
-      && automaticLandingDecision({
-        instruction: messageContent,
-        result: rawReply,
-        taskPolicy: taskRoute.taskPolicy,
-        route: taskRoute,
-        target: automaticLandingTarget || requestTarget,
-      }).action === "land"
-      && (requestedLandingTargets.length > 1 || (smartLandingHint.action === "create_and_land" && !explicitNewDocumentRequest.create));
-    const taskWorkspaceStillActive = () => workspaceTargetIsActive(
-      turnContextSnapshot.workspaceKind,
-      turnContextSnapshot.workspacePath,
-    );
-    if (shouldTrySemanticLanding) {
-      try {
-        const packageForMultipleAssets = await requestSemanticLandingPackageForContent({
-          sourcePrompt: artifactRoutingText,
-          source: rawReply.candidate,
-          fallbackTarget: requestTarget,
-          memoryUpdate: rawReply.memoryUpdate ?? null,
-          requiredTargets: requestedLandingTargets,
-          workspaceState: taskWorkspaceState,
-        });
-        if (packageForMultipleAssets?.target) {
-          taskCandidateState.currentCandidate = packageForMultipleAssets.candidate;
-          packageForMultipleAssets.target = inheritCandidateTargetProvenance(
-            packageForMultipleAssets.target,
-            taskCandidateState.currentCandidateTarget || rawReply.target,
-          );
-          taskCandidateState.currentCandidateTarget = clone(packageForMultipleAssets.target);
-          taskCandidateState.currentCandidateMemoryUpdate = clone(packageForMultipleAssets.memoryUpdate);
-          automaticLandingTarget = packageForMultipleAssets.target;
-          rawReply = {
-            ...rawReply,
-            candidate: packageForMultipleAssets.candidate,
-            candidateDocuments: clone(packageForMultipleAssets.documents),
-            target: clone(packageForMultipleAssets.target),
-          };
-        } else if (taskWorkspaceStillActive() && smartLandingHint.action === "create_and_land" && smartLandingHint.suggestedTitle) {
-          const newDocumentId = createDocument(smartLandingHint.suggestedTitle, null, { kind: smartLandingHint.documentKind || "document" });
-          if (newDocumentId) {
-            automaticLandingTarget = {
-              documentId: newDocumentId,
-              moduleId: moduleForDocument(newDocumentId),
-              contextDomain: documentContextDomain(newDocumentId),
-              inferredFromPlanning: true,
-            };
+          conversation.agentQuestion = { ...event.payload, kind: "native_agent", runId,
+            conversationId: conversation.id, workspacePath: runtime.workspaceScope.workspacePath, sourceMessageId: id };
+          pending.execution.status = "waiting_input";
+          await persistNativeConversation(runtime);
+          renderNativeConversation(runtime, true);
+          await yieldAfterImmediateInstructionRender();
+          if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
+            pendingConversationChoice = conversation.agentQuestion;
+            renderConversationChoicePanel();
           }
-        } else automaticLandingAmbiguous = true;
-      } catch (error) {
-        if (taskWorkspaceStillActive() && smartLandingHint.action === "create_and_land" && smartLandingHint.suggestedTitle) {
-          const newDocumentId = createDocument(smartLandingHint.suggestedTitle, null, { kind: smartLandingHint.documentKind || "document" });
-          if (newDocumentId) {
-            automaticLandingTarget = {
-              documentId: newDocumentId,
-              moduleId: moduleForDocument(newDocumentId),
-              contextDomain: documentContextDomain(newDocumentId),
-              inferredFromPlanning: true,
-            };
+        } else if (event.type === "open_candidates") {
+          if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) openLatestCandidateComparison();
+        } else if (event.type === "answer" || event.type === "answer_accepted") {
+          const id = `answer-${event.payload.decisionId}`;
+          if (!messages.some((message) => message.id === id)) messages.push({ id, role: "user", content: event.payload.answer, time: nowTime(), conversationChoiceInstruction: true });
+          conversation.agentQuestion = null;
+          pending.execution.status = "running";
+        } else if (event.type === "candidates") {
+          pending.candidate = event.payload.variants[0].content;
+          pending.generationAttempt = { requestId: runId, candidateVariants: event.payload.variants.map((variant, index) => ({
+            id: `${runId}-${index + 1}`, position: index + 1, label: variant.title, text: variant.content, selected: index === 0,
+          })), validationStatus: "pending", landingStatus: "not_requested" };
+          materializeCandidateDraftBranches({ conversation, messages, messageIndex: messages.indexOf(pending), candidateState: runtime.candidateState });
+          await persistNativeConversation(runtime);
+        } else if (event.type === "tool") {
+          pending.execution.result = `${event.payload.phase === "started" ? "正在执行" : "已处理"}：${event.payload.name}`;
+        } else if (["document_saved", "media_saved", "media_job"].includes(event.type)) {
+          pending.execution.agentResultReferences ??= [];
+          if (!pending.execution.agentResultReferences.some((entry) => entry.sequence === event.sequence)) {
+            pending.execution.agentResultReferences.push({ sequence: event.sequence, type: event.type, ...event.payload });
           }
-        } else {
-          automaticLandingAmbiguous = true;
-          rawReply = {
-            ...rawReply,
-            lead: [rawReply.lead, `已保留正式内容，但资产的目标尚未唯一确认：${error.message}`].filter(Boolean).join(" "),
-          };
-        }
+          if (event.type === "media_saved") {
+            const id = `media-${event.payload.jobId}`;
+            if (!messages.some((message) => message.id === id)) messages.push({ id, role: "assistant", content: "已生成并备份到全部资产。",
+              time: nowTime(), [event.payload.channel === "video" ? "videos" : "images"]: [event.payload.attachment] });
+          }
+          await persistNativeConversation(runtime);
+        } else if (event.type === "completed") pending.content = event.payload.text;
+        else if (["failed", "cancelled"].includes(event.type)) pending.content = event.payload.message;
+        renderNativeConversation(runtime);
+      }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
+      pending.content ||= result.text || result.error || "Agent 已完成任务。";
+      pending.pending = false;
+      Object.assign(pending.execution, { status: result.status === "completed" ? "complete" : result.status,
+        nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: result.status === "completed" ? "Agent 执行完成" : result.error || result.status });
+      conversation.agentQuestion = null;
+      conversation.nativeAgentRun = null;
+      if (pending.nativeInlineEdit && result.status === "completed") {
+        const edit = pending.nativeInlineEdit;
+        const placed = workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)
+          && showInlineEditCandidate(edit.id, pending.content);
+        pending.inlineEditResult = { id: edit.id, documentId: edit.documentId, original: edit.originalText,
+          candidate: pending.content, mutationMode: edit.mutationMode || "replace", placed: Boolean(placed) };
+        if (!placed) retainInlineEditConflict(edit, "修改结果已保留，需返回原文确认应用");
       }
-    }
-    if (materialExecutionActive) {
-      automaticLandingTarget = { ...(automaticLandingTarget || requestTarget), materialUpdateExecutionPlan: clone(materialUpdateExecutionPlan) };
-      taskCandidateState.currentCandidateTarget = clone(automaticLandingTarget);
-      rawReply = { ...rawReply, target: clone(automaticLandingTarget) };
-    }
-    const resolvedAutomaticTarget = automaticLandingTarget || requestTarget;
-    const automaticTargetDocumentId = String(resolvedAutomaticTarget?.documentId || "");
-    const automaticTargetDocumentIds = [...new Set([
-      ...(resolvedAutomaticTarget?.chapterDocuments ?? []).map((document) => document?.target?.documentId),
-      automaticTargetDocumentId,
-    ].filter(Boolean))];
-    const creativeGuidanceWriteConfirmationRequired = guidanceProducedFormalArtifact
-      && automaticTargetDocumentId === CREATIVE_GUIDANCE_DOCUMENT_ID;
-    const landingResolutionReason = creativeGuidanceWriteConfirmationRequired
-      ? "operation"
-      : formalLandingResolutionReason({
-        targetAmbiguous: automaticLandingAmbiguous,
-        targetDocumentId: automaticTargetDocumentId,
-        targetDocumentIds: automaticTargetDocumentIds,
-        writeAuthorization: boundReplyAuthorization,
-        targetExists: Boolean(taskWorkspaceState.documents[automaticTargetDocumentId]),
-        targetHasContent: inTaskWorkspace(() => documentHasSubstantiveContent(automaticTargetDocumentId)),
-      });
-    const landingDecision = automaticLandingDecision({
-      instruction: messageContent,
-      result: rawReply,
-      explicitlyDeferred: candidateLandingDeferred,
-      targetAmbiguous: Boolean(landingResolutionReason),
-      taskPolicy: taskRoute.taskPolicy,
-      route: taskRoute,
-      target: resolvedAutomaticTarget,
-    });
-    if (!inlineEdit && !longFormJob && landingDecision.action === "land") {
-      const contractProposal = creativeContractObservationProposal(rawReply?.reviewArtifact, {
-        instruction: messageContent,
-        writingStyleQuality: rawReply?.writingStyleQuality,
-      });
-      const contractState = normalizeCreativeContract(taskWorkspaceState.documents[CREATIVE_CONTRACT_DOCUMENT_ID] ?? {});
-      if (contractProposal?.suggestedRule && !contractState.specialNotes.includes(contractProposal.suggestedRule)) {
-        if (taskWorkspaceStillActive()) promptCreativeContractObservation(contractProposal);
+      await persistNativeConversation(runtime);
+      if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
+        await runBoundedExternalWorkspaceRefresh({ silent: true });
       }
+      return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
+    } catch (error) {
+      pending.pending = false; pending.content = error.message; pending.execution.status = "interrupted";
+      pending.execution.nativeAgentTerminal = true;
+      // Do not resubmit when the transport fails after acceptance.
+      await persistNativeConversation(runtime).catch(() => {});
+      return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
+    } finally {
+      renderNativeConversation(runtime);
+      nativeConversationMonitors.delete(runId);
+      scheduleConversationQueueDrain(conversation.id);
     }
-    if (!inlineEdit && !longFormJob && landingDecision.action === "land" && generationResultMayDefaultLand(rawReply)) {
-      const landingMessage = taskMessages.find((message) => message.id === pendingId);
-      if (landingMessage) {
-        const landingStartedAt = new Date().toISOString();
-        const totalSteps = Math.max(1, Number(rawReply.engineExecution?.totalSteps || landingMessage.execution?.totalSteps) || 1);
-        landingMessage.execution = {
-          ...(landingMessage.execution ?? {}),
-          ...(rawReply.engineExecution ?? {}),
-          requestId: null,
-          status: "applying",
-          currentStep: totalSteps,
-          totalSteps,
-          progressPercent: 99,
-          currentStage: "正在自动落盘",
-          stageStartedAt: landingStartedAt,
-          heartbeatAt: landingStartedAt,
-          nextStep: "完成磁盘复核并释放后续指令队列",
-          result: "正式内容已生成，正在写入目标文档并核对磁盘结果",
-        };
-        renderConversationIfActive(conversation.id);
-      }
-      const resolvedLandingWorkspaceKind = creativeTask?.target?.workspaceKind
-        || workspaceLandingScope.workspaceKind
-        || turnContextSnapshot.workspaceKind;
-      const resolvedLandingWorkspacePath = creativeTask?.target?.workspacePath
-        || workspaceLandingScope.workspacePath
-        || (resolvedLandingWorkspaceKind === turnContextSnapshot.workspaceKind ? turnContextSnapshot.workspacePath : "");
-      const resolvedLandingWorkspaceScope = {
-        workspaceKind: resolvedLandingWorkspaceKind,
-        workspacePath: resolvedLandingWorkspacePath,
-        workspaceName: creativeTask?.target?.workspaceName
-          || workspaceLandingScope.workspaceName
-          || (resolvedLandingWorkspaceKind === turnContextSnapshot.workspaceKind ? turnContextSnapshot.workspaceName : ""),
-      };
-      const resolvedWorkspaceActive = workspaceTargetIsActive(
-        resolvedLandingWorkspaceScope.workspaceKind,
-        resolvedLandingWorkspaceScope.workspacePath,
-      );
-      const landingReply = resolvedWorkspaceActive
-        ? await withActiveWorkspaceFormalLandingLock(() => assistantReplyFor("落盘", automaticLandingTarget, { conversation, messages: taskMessages, candidateState: taskCandidateState, taskContextSnapshot: turnContextSnapshot }))
-        : await landFormalCandidateInPinnedWorkspace({
-            reply: rawReply,
-            target: automaticLandingTarget,
-            creativeTask,
-            instruction: messageContent,
-            workspaceScope: resolvedLandingWorkspaceScope,
-          requestId,
-        });
-      const landed = hasVerifiedLandingReceipt(landingReply);
-      const writeConfirmationPending = landingReply?.writeConfirmationRequired === true;
-      const committedExecution = landed ? {
-        ...(rawReply.engineExecution ?? {}),
-        status: "complete",
-        validationStatus: "passed",
-        landingStatus: "committed",
-        finalVerdict: "committed",
-        currentStage: "落盘完成",
-        nextStep: "",
-        result: landingReply?.content || "正式内容已完成落盘",
-        endedAt: Date.now(),
-      } : (landingReply?.engineExecution ?? rawReply.engineExecution);
-      rawReply = {
-        ...rawReply,
-        lead: [rawReply.lead, landingReply?.content].filter(Boolean).join(" "),
-        landingManifest: landingReply?.landingManifest ?? null,
-        landedDocuments: clone(landingReply?.landedDocuments ?? []),
-        materialUpdatePrompt: landed ? clone(landingReply?.materialUpdatePrompt ?? null) : null,
-        landingStatus: formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : writeConfirmationPending ? "not_requested" : landed ? "complete" : "failed",
-        landingErrorCode: landed ? "" : landingReply?.engineExecution?.errorCode || landingReply?.errorCode || "",
-        engineExecution: committedExecution,
-        ...(landed && rawReply.generationAttempt ? {
-          generationAttempt: {
-            ...rawReply.generationAttempt,
-            status: "committed",
-            landingStatus: "committed",
-            landingEligible: true,
-            executionStatus: "terminal",
-            execution: committedExecution,
-          },
-        } : {}),
-      };
-    }
-    const generatedCandidate = Boolean(rawReply.candidate);
-    const generatedFormalArtifact = rawReply.outputKind === "formal_artifact";
-    const engineExecution = rawReply.engineExecution ?? null;
-    const unifiedGuidedThisTurn = engineExecution?.lane === "guided_dialogue";
-    if (unifiedGuidedThisTurn && !userMessage.guidanceSessionId) {
-      const activateUnifiedGuidanceUi = taskWorkspaceStillActive() && conversation.id === state.activeConversationId;
-      const sourceMessageIndex = Math.max(0, taskMessages.findIndex((message) => message.id === userMessage.id));
-      const unifiedGuidance = inTaskWorkspace(() => beginConversationCreativeGuidance({
-        conversationId: conversation.id,
-        deliverableType: engineExecution?.guidanceState?.deliverableType
-          || engineExecution?.agentDecision?.deliverableType
-          || taskRoute.deliverableType
-          || "novel",
-        deliverableLabel: taskRoute.deliverableLabel || "创作",
-        startIndex: sourceMessageIndex,
-        guidanceState: engineExecution?.guidanceState ?? null,
-        references: pendingReferences,
-        workspaceReferences: pendingWorkspaceReferences,
-        skillReferences: pendingSkillReferences,
-        attachments: pendingAttachments,
-        activateUi: activateUnifiedGuidanceUi,
-      }));
-      userMessage.guidanceSessionId = unifiedGuidance.sessionId;
-    }
-    if (unifiedGuidedThisTurn && userMessage.guidanceSessionId && engineExecution?.guidanceState) {
-      updateConversationCreativeGuidanceState({
-        conversation,
-        sessionId: userMessage.guidanceSessionId,
-        guidanceState: engineExecution.guidanceState,
-        activateUi: taskWorkspaceStillActive() && conversation.id === state.activeConversationId,
-      });
-    }
-    guidanceCompletedThisTurn = Boolean(
-      unifiedGuidedThisTurn
-      && engineExecution?.guidanceCompleted === true,
-    );
-    if (guidanceCompletedThisTurn && taskWorkspaceStillActive()) {
-      const confirmedView = creativeWorkspaceView(guidanceDeliverableType);
-      if (confirmedView) {
-        selectCreativeWorkspaceView(guidanceDeliverableType);
-        ui.documentPreviewKey = manuscriptDocumentHasSubstantiveContent(state.activeDocument)
-          ? currentDocumentPreviewKey()
-          : null;
-        persistNavigationState();
-        renderAll();
-      }
-    }
-    const persistentGuidanceContractKey = creativeGuidancePersistentContractKey({
-      deliverableType: guidanceDeliverableType,
-      sourceMode: requestTarget.sourceMode || documentSourceMode(requestTarget.documentId),
-    });
-    if (guidanceCompletedThisTurn
-      && persistentGuidanceContractKey
-      && engineExecution?.guidanceState
-      && conversation) {
-      conversation[persistentGuidanceContractKey] = clone({
-        ...engineExecution.guidanceState,
-        confirmedAt: Date.now(),
-        sourceSessionId: guidanceSessionId,
-      });
-      conversation.updatedAt = `今天 ${nowTime()}`;
-    }
-    const memoryUpdate = rawReply.memoryUpdate ?? null;
-    const { engineExecution: _engineExecution, memoryUpdate: _memoryUpdate, ...replyContent } = rawReply;
-    let reply = replyContent;
-    if (inlineEdit) {
-      const placed = generatedCandidate && showInlineEditCandidate(inlineEdit.id, rawReply.candidate, memoryUpdate);
-      taskCandidateState.currentCandidate = "";
-      taskCandidateState.currentCandidateTarget = null;
-      taskCandidateState.currentCandidateMemoryUpdate = null;
-      if (taskWorkspaceSourceState === state
-        && workspaceTargetIsActive(taskWorkspaceScope.workspaceKind, taskWorkspaceScope.workspacePath)
-        && (!submittedTaskContextSnapshot.selectedTextDocumentId || state.activeDocument === submittedTaskContextSnapshot.selectedTextDocumentId)) {
-        state.selectedText = "";
-      }
-      if (!placed) {
-        if (String(rawReply.candidate || "").trim()) retainInlineEditConflict(inlineEdit, "修改结果已生成，但当前原文位置无法重新锁定");
-        else cancelInlineEdit(inlineEdit.id);
-      }
-      reply = {
-        content: placed
-          ? landingDecision.reason === "multiple_candidates"
-            ? "已保留多个局部修改候选，请选择采用的版本后再写入。"
-            : `已显示${inlineEditModeLabel(inlineEdit.mutationMode)}差异预览；确认应用后才会写入，取消则原文保持不变。`
-           : rawReply.content || "未生成可用的局部替换，原文未修改。",
-        inlineEditResult: {
-          id: inlineEdit.id,
-          documentId: inlineEdit.documentId,
-          original: inlineEdit.originalText,
-          replacement: rawReply.candidate || "",
-          mutationMode: inlineEdit.mutationMode || "replace",
-          status: placed ? "candidate" : String(rawReply.candidate || "").trim() ? "anchor_conflict" : "failed",
-        },
-      };
-    }
-    const index = taskMessages.findIndex((message) => message.id === pendingId);
-    const finishedAt = Date.now();
-    const latestExecution = index >= 0 ? taskMessages[index]?.execution ?? execution : execution;
-    if (index >= 0) taskMessages[index] = {
-      id: uid("message"),
-      role: "assistant",
-      pending: false,
-      turnContextSnapshot: userMessage.turnContextSnapshot,
-      time: nowTime(),
-      branchGroupId: userMessage.branchGroupId,
-      branchVersionId: userMessage.branchVersionId,
-      guidanceSessionId: userMessage.guidanceSessionId,
-      memoryUpdate: clone(memoryUpdate),
-      ...reply,
-      execution: {
-        ...latestExecution,
-        ...(engineExecution ?? {}),
-        startedAt: Number(latestExecution.startedAt) || Number(engineExecution?.startedAt) || execution.startedAt,
-        status: conversationCompletionStatus(engineExecution?.status),
-        executionStatus: "terminal",
-        progressPercent: 100,
-        endedAt: finishedAt,
-        elapsedMs: finishedAt - execution.startedAt,
-        result: engineExecution?.result ?? (generatedFormalArtifact
-          ? (inlineEdit ? "局部正式修改已生成" : "正式内容已生成并完成质量检查")
-          : generatedCandidate ? "正式内容已生成并完成质量检查" : "已完成本轮处理"),
-      },
-    };
-    completionMessage = index >= 0
-      ? materializeCandidateDraftBranches({ conversation, messages: taskMessages, messageIndex: index, candidateState: taskCandidateState })
-      : null;
-    if (completionMessage && rawReply.materialUpdatePrompt
-      && (rawReply.landingStatus === "complete" || engineExecution?.status === "complete")) {
-      bindMaterialUpdatePromptToMessage({
-        message: completionMessage,
-        prompt: rawReply.materialUpdatePrompt,
-        conversationId: conversation.id,
-      });
-      if (completionMessage.materialUpdatePrompt && taskWorkspaceStillActive() && conversation.id === state.activeConversationId) {
-        queueMicrotask(() => openMaterialUpdateChoice(completionMessage.materialUpdatePrompt));
-      }
-    }
-    if (completionMessage && landingDecision.reason === "ambiguous_target" && String(rawReply.candidate || "").trim()) {
-      const resolutionTargets = creativeGuidanceWriteConfirmationRequired ? [resolvedAutomaticTarget] : [
-        ...requestedLandingTargets,
-        resolvedAutomaticTarget,
-        requestTarget,
-        boundDocumentIdForLanding ? {
-          documentId: boundDocumentIdForLanding,
-          moduleId: moduleForDocument(boundDocumentIdForLanding),
-          contextDomain: documentContextDomain(boundDocumentIdForLanding),
-        } : null,
-      ];
-      queueMicrotask(() => openLandingResolutionChoice({
-        conversationId: conversation.id,
-        messageId: completionMessage.id,
-        requestId: rawReply.generationAttempt?.requestId || requestId,
-        reason: landingResolutionReason,
-        targets: resolutionTargets,
-        fixedOperation: creativeGuidanceWriteConfirmationRequired ? "append" : "",
-      }));
-    } else if (completionMessage && landingDecision.action === "land"
-      && rawReply.landingStatus === "failed" && String(rawReply.candidate || "").trim()) {
-      queueMicrotask(() => openLandingRecoveryChoice({
-        conversationId: conversation.id,
-        messageId: completionMessage.id,
-        requestId: rawReply.generationAttempt?.requestId || requestId,
-        reason: completionMessage.execution?.result || rawReply.lead || "正式内容未完成磁盘复核",
-        code: rawReply.landingErrorCode || completionMessage.execution?.errorCode || "",
-      }));
-    }
-    if (rawReply?.formalContentReferenceChoice) {
-      queueMicrotask(() => openFormalContentReferenceChoice({
-        ...rawReply.formalContentReferenceChoice,
-        messageId: completionMessage?.id || "",
-      }));
-    }
-    if (rawReply?.formalTargetCorrectionChoice) {
-      queueMicrotask(() => openFormalTargetCorrectionChoice(rawReply.formalTargetCorrectionChoice));
-    }
-    const guidanceChoice = structuredCreativeGuidanceChoice(engineExecution);
-    const hasGuidanceProtocol = Boolean(engineExecution?.guidanceState && typeof engineExecution.guidanceState === "object");
-    const generalChoices = hasGuidanceProtocol
-      ? guidanceChoice?.options || []
-      : Array.isArray(rawReply?.choiceOptions)
-        ? rawReply.choiceOptions
-        : Array.isArray(engineExecution?.choiceOptions)
-          ? engineExecution.choiceOptions
-          : [];
-    const pendingAgentDecision = isAgentDecision(rawReply?.pendingDecision)
-      ? rawReply.pendingDecision
-      : null;
-    if (pendingAgentDecision) {
-      queueMicrotask(() => openAgentDecisionDialog({
-        decision: pendingAgentDecision,
-        conversationId: conversation.id,
-        messageId: completionMessage?.id || "",
-      }));
-    }
-    if (!pendingAgentDecision && Array.isArray(generalChoices) && generalChoices.length) {
-      queueMicrotask(() => openCreativeChoiceDialog({
-        question: guidanceChoice?.question || rawReply?.choiceQuestion || engineExecution?.choiceQuestion || reply.content,
-        options: generalChoices,
-        conversationId: conversation.id,
-        messageId: completionMessage?.id || "",
-        guidanceSessionId: hasGuidanceProtocol ? userMessage.guidanceSessionId : "",
-      }));
-    }
-    if (!pendingAgentDecision && rawReply?.freshStartChoice === true) {
-      queueMicrotask(() => openFreshStartChoice({
-        question: hardContextBlockCopy,
-        conversationId: conversation.id,
-        taskContextSnapshot,
-      }));
-    }
-    if (completionMessage?.workspacePlan?.status === "waiting_confirm"
-      && !candidateLandingDeferred
-      && (explicitStructuralOnlyWorkspaceOperation || !requestsMultipleCandidates(messageContent))
-      && !workspacePlanRequiresConfirmation(completionMessage.workspacePlan)) {
-      await applyWorkspaceOperationPlan(completionMessage.id, { automatic: true });
-      completionMessage = taskMessages.find((message) => message.id === completionMessage.id) ?? completionMessage;
-    }
-  } catch (error) {
-    if (inlineEdit?.id) {
-      const currentInlineEdit = inlineEditRecord(inlineEdit.id);
-      if (currentInlineEdit?.candidate) retainInlineEditConflict(currentInlineEdit, "任务异常中断，候选未写入正文");
-      else cancelInlineEdit(inlineEdit.id);
-    }
-    const index = taskMessages.findIndex((message) => message.id === pendingId);
-    const stoppedAt = Date.now();
-    const latestExecution = index >= 0 ? taskMessages[index]?.execution ?? execution : execution;
-    if (index >= 0 && error.code === "TASK_CANCELLED") {
-      taskMessages[index] = {
-        id: uid("message"),
-        role: "assistant",
-        pending: false,
-        time: nowTime(),
-        branchGroupId: userMessage.branchGroupId,
-        branchVersionId: userMessage.branchVersionId,
-        guidanceSessionId: userMessage.guidanceSessionId,
-        content: "当前任务已终止。未完成内容没有进入候选、记忆或正文。",
-        execution: {
-          ...latestExecution,
-          requestId: null,
-          status: "cancelled",
-          executionStatus: "terminal",
-          progressPercent: 100,
-          endedAt: stoppedAt,
-          elapsedMs: stoppedAt - execution.startedAt,
-          result: "任务已终止，作品内容未发生变化",
-          stages: taskMessages[index]?.execution?.stages ?? [],
-        },
-      };
-    } else if (index >= 0 && error.code === "LONG_FORM_PAUSED" && longFormJob) {
-      taskMessages[index] = {
-        id: uid("message"),
-        role: "assistant",
-        pending: false,
-        time: nowTime(),
-        branchGroupId: userMessage.branchGroupId,
-        branchVersionId: userMessage.branchVersionId,
-        guidanceSessionId: userMessage.guidanceSessionId,
-        content: error.message,
-        execution: {
-          ...latestExecution,
-          jobId: error.jobId,
-          requestId: null,
-          status: "paused",
-          executionStatus: "terminal",
-          progressPercent: 100,
-          endedAt: stoppedAt,
-          elapsedMs: stoppedAt - execution.startedAt,
-          result: "任务已暂停，检查点已保存",
-          stages: longFormStageRows(longFormJob),
-        },
-      };
-    } else if (index >= 0) {
-      taskMessages[index] = {
-        id: uid("message"),
-        role: "assistant",
-        pending: false,
-        time: nowTime(),
-        branchGroupId: userMessage.branchGroupId,
-        branchVersionId: userMessage.branchVersionId,
-        guidanceSessionId: userMessage.guidanceSessionId,
-        content: longFormJob
-          ? `长篇自动任务在第${longFormJob.currentChapter}章前停止：${error.message}。已经完成并落盘的章节及规划检查点均已保留，可继续任务后从断点恢复。`
-          : String(error.message || "模型没有返回可用内容"),
-        execution: {
-          ...latestExecution,
-          ...(longFormJob ? { jobId: longFormJob.id, stages: longFormStageRows(longFormJob) } : {}),
-          ...(longFormJob && latestExecution.requestId ? { completedRequestId: latestExecution.requestId, requestId: null } : {}),
-          status: "failed",
-          executionStatus: "terminal",
-          progressPercent: 100,
-          endedAt: stoppedAt,
-          elapsedMs: stoppedAt - execution.startedAt,
-          result: longFormJob ? "任务中断，已保留可续跑检查点" : "调用失败，未修改作品内容",
-        },
-      };
-    }
-    completionMessage = index >= 0 ? taskMessages[index] : null;
-    if (completionMessage && longFormJob?.materialUpdateSourceDocumentIds?.length) {
-      bindMaterialUpdatePromptToMessage({
-        message: completionMessage,
-        prompt: materialUpdatePromptFor({
-          documentIds: longFormJob.materialUpdateSourceDocumentIds,
-          executionSurface: "agent",
-          workspaceState: taskWorkspaceSourceState,
-        }),
-        conversationId: conversation.id,
-      });
-    }
-  } finally {
-    if (guidanceCompletedThisTurn) {
-      ui.creativeGuidance.active = false;
-      if (conversation?.creativeGuidance) conversation.creativeGuidance.active = false;
-    }
-    // Completion persistence follows the workspace captured when this turn
-    // was sent. A task may finish after navigation, or after its detached
-    // workspace has been reloaded as a fresh object; both cases must write
-    // through the pinned reconciliation path instead of the visible state.
-    if (!workspaceTargetIsActive(turnContextSnapshot.workspaceKind, turnContextSnapshot.workspacePath)
-      || taskWorkspaceSourceState !== state) {
-      try {
-        await savePinnedConversationCompletion({
-          workspaceKind: turnContextSnapshot.workspaceKind,
-          workspacePath: turnContextSnapshot.workspacePath,
-          conversationId: conversation.id,
-          messages: taskMessages,
-          candidateState: taskCandidateState,
-          conversationState: conversation,
-          force: true,
-        });
-        if (libraryArchiveWorkspaceMutation?.status === "completed") {
-          ui.workspaceStateCache.delete(workspaceCacheKey(turnContextSnapshot.workspaceKind, turnContextSnapshot.workspacePath));
-        }
-      } catch (error) {
-        console.warn("Task workspace conversation save failed:", error.message);
-      }
-    } else {
-      persist();
-      if (libraryArchiveWorkspaceMutation?.status === "completed") {
-        try {
-          // The archive transaction advanced the disk state while this turn
-          // still held its pre-commit in-memory snapshot. Force the normal
-          // conflict-aware save now: it rebases the completion message onto
-          // the committed target documents instead of letting a later stale
-          // autosave overwrite them.
-          await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
-        } catch (error) {
-          console.warn("Library archive workspace reconciliation failed:", error.message);
-          showToast("归档已写入磁盘，但当前界面同步失败；请重新载入作品后核对。", { tone: "warning" });
-        }
-      }
-    }
-    renderConversationIfActive(conversation.id, { all: true });
-    if (conversation.id === state.activeConversationId) elements.chatInput.focus();
+  })();
+  nativeConversationMonitors.set(runId, monitor);
+  return monitor;
+};
+
+const answerNativeConversationQuestion = async (question, answer) => {
+  if (!String(answer || "").trim()) return;
+  const runtime = agentTaskRuntimeFor({ conversationId: question.conversationId });
+  if (!runtime || runtime.conversation.agentQuestion?.id !== question.id) { showToast("选项已过期，请刷新当前任务"); return; }
+  const id = `answer-${question.id}`;
+  if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: String(answer), time: nowTime(), conversationChoiceInstruction: true });
+  clearActiveComposerDraft();
+  await persistNativeConversation(runtime);
+  renderNativeConversation(runtime, true);
+  try {
+    await conversationAgentRequest(`/api/conversation-agent/${question.runId}/answer`, { decisionId: question.id, answer: String(answer) });
+    runtime.conversation.agentQuestion = null;
+    if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
+  } catch (error) { showToast(error.message); }
+};
+
+const recoverNativeConversationRuns = () => {
+  for (const conversation of state.conversations || []) {
+    const messages = conversationMessagesForTaskState(conversation);
+    const pending = messages.find((message) => message.execution?.nativeAgentRunId && !message.execution.nativeAgentTerminal);
+    if (!pending || nativeConversationMonitors.has(pending.execution.nativeAgentRunId)) continue;
+    pending.pending = true;
+    const runtime = registerAgentTaskRuntime({ conversation, messages, workspaceState: state,
+      workspaceScope: { workspacePath: state.settings.workspacePath, workspaceKind: state.workspaceKind }, pendingId: pending.id, requestId: pending.execution.requestId });
+    void monitorNativeConversation(runtime, pending);
   }
-  return completionMessage;
+};
+
+const executeConversationAgentMessage = async (content, options) => {
+  const { conversation, taskMessages, workspaceState, taskContextSnapshot, onPersist, queuedItem } = options;
+  const sourceMessageId = queuedItem?.sourceMessageIdForRun || uid("message");
+  if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
+  const refs = queuedItem || resolveConversationReferenceContext(conversation);
+  const targetDocumentId = options.inlineEdit?.documentId || taskContextSnapshot.activeDocumentId || conversation.boundDocumentId || "";
+  const profileSettings = queuedItem?.nativeConfiguration
+    ? applyGenerationRuntimeBindings(queuedItem.nativeConfiguration, machineGenerationRuntime, storedGenerationSecrets())
+    : generationSettingsForAgentEngine(workspaceState.settings, { agentConnectionId: workspaceState.settings.activeTextAgentConnectionId });
+  const mediaProfiles = queuedItem?.nativeMediaProfiles || {
+    image: snapshotAgentConfiguration(workspaceState.settings.imageConnections || []),
+    video: snapshotAgentConfiguration(workspaceState.settings.videoConnections || []),
+  };
+  const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
+    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []) };
+  removeImmediateConversationInstruction(options.immediateInstructionId);
+  if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
+  const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
+    target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
+    execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
+      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理" } };
+  taskMessages.push(pending);
+  conversation.messages = taskMessages;
+  const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,
+    workspaceScope: taskContextSnapshot, pendingId: pending.id, requestId: sourceMessageId, taskContextSnapshot });
+  consumeConversationComposerReferences(conversation);
+  if (conversation.id === state.activeConversationId) clearActiveComposerDraft();
+  try {
+    await onPersist();
+    if (workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)) await flushWorkspaceSave({ throwOnError: true });
+    renderNativeConversation(runtime, true);
+    await yieldAfterImmediateInstructionRender();
+    const started = await conversationAgentRequest("/api/conversation-agent/start", {
+      sourceMessageId, conversationId: conversation.id, branchId: activeCandidateThreadScope(conversation, taskMessages),
+      workspaceKind: taskContextSnapshot.workspaceKind, workspacePath: taskContextSnapshot.workspacePath, targetDocumentId,
+      selection: options.inlineEdit ? { documentId: options.inlineEdit.documentId, originalText: options.inlineEdit.originalText } : null,
+      contentOnly: Boolean(options.inlineEdit),
+      messages: taskMessages.filter((message) => !message.pending && ["user", "assistant"].includes(message.role)).map((message) => ({
+        role: message.role, content: message.id === sourceMessageId ? String(content) : message.content || message.candidate || "",
+      })),
+      previousResults: taskMessages.flatMap((message) => message.execution?.agentResultReferences || []),
+      settings: profileSettings, references: refs.references || [], selectedSkills: refs.skillReferences || [], attachments: refs.attachments || [], mediaProfiles,
+    });
+    pending.execution.nativeAgentRunId = started.id;
+    conversation.nativeAgentRun = { id: started.id, pendingMessageId: pending.id, workspacePath: taskContextSnapshot.workspacePath };
+    if (queuedItem) { markConversationInstructionAccepted({ conversation, itemId: queuedItem.id, leaseId: queuedItem.leaseId, sourceMessageId, requestId: sourceMessageId }); ackQueuedConversationItem(conversation, queuedItem); }
+    await persistNativeConversation(runtime);
+    return monitorNativeConversation(runtime, pending);
+  } catch (error) {
+    pending.pending = false; pending.content = error.message; pending.execution.status = "failed";
+    await persistNativeConversation(runtime).catch(() => {});
+    renderNativeConversation(runtime);
+    return { dispatchAccepted: false, reason: error.code || "agent_start_failed" };
+  }
 };
 
 const sendMessage = async (content, options = {}) => {
@@ -37926,26 +35949,6 @@ const sendMessage = async (content, options = {}) => {
   // named-project convenience switch is only a foreground routing action;
   // running it for a background task would replace that task's conversation
   // with whichever conversation happens to be active after navigation.
-  if (!options.crossWorkspaceResolved
-    && !options.queuedItem
-    && !taskRuntime
-    && taskSourceIsVisible
-    && !options.inlineEdit
-    && isExplicitCrossFormatInstruction(content)) {
-    const namedProject = await namedProjectForPrompt(content);
-    const currentPath = String(state.settings.workspacePath || "").toLowerCase();
-    const requestedPath = String(namedProject?.workspacePath || "").toLowerCase();
-    if (namedProject && requestedPath && requestedPath !== currentPath) {
-      const switched = await switchProject(namedProject);
-      if (!switched) return null;
-      return sendMessage(content, {
-        ...options,
-        conversationId: state.activeConversationId,
-        crossWorkspaceResolved: true,
-        taskContextSnapshot: captureTaskContextSnapshot(state.activeConversationId),
-      });
-    }
-  }
   const conversation = taskWorkspaceConversation
     || (taskWorkspaceStateForSend === state
       ? (options.conversationId ? conversationById(options.conversationId) : activeConversation())
@@ -37995,8 +35998,6 @@ const sendMessage = async (content, options = {}) => {
     return null;
   }
   try {
-    const immediateContractProposal = creativeContractObservationProposal(null, { instruction: content });
-    if (immediateContractProposal?.suggestedRule) promptCreativeContractObservation(immediateContractProposal);
     const cockpitBeforeHashes = cockpitDecision ? documentSaveHashes(state.documents) : null;
     if (cockpitDecision) {
       updatePendingDecisionItem(cockpitDecision.itemId, {
@@ -38007,7 +36008,7 @@ const sendMessage = async (content, options = {}) => {
       persist({ documentIds: ["index-pending"] });
       renderCompilationDecisionSummary();
     }
-    const result = await executeMessage(content, { ...options, dispatchToken, decisionResolution: options.decisionResolution ?? options.queuedItem?.decisionResolution ?? null });
+    const result = await executeConversationAgentMessage(content, { ...options, dispatchToken, conversation, taskMessages, onPersist: persistTaskConversation, decisionResolution: options.decisionResolution ?? options.queuedItem?.decisionResolution ?? null });
     if (cockpitDecision) {
       await finalizeCockpitDecisionExecution({
         ...cockpitDecision,
@@ -38374,6 +36375,13 @@ const cancelConversationRun = async (requestId) => {
   pendingMessage.execution.cancelling = true;
   renderMessages();
   try {
+    if (pendingMessage.execution?.nativeAgentRunId) {
+      const response = await conversationAgentRequest(`/api/conversation-agent/${pendingMessage.execution.nativeAgentRunId}/cancel`, {});
+      pendingMessage.execution.cancelling = false;
+      if (response.accepted) pendingMessage.execution.result = "已请求取消 Agent 任务";
+      renderMessages();
+      return;
+    }
     const response = await fetch("/api/chat/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38733,6 +36741,25 @@ const renderConversationChoicePanel = () => {
   if (!pending || !elements.conversationChoicePanel) return;
   if (!conversationChoiceIsCurrent(pending)) {
     closeConversationChoicePanel({ focus: false });
+    return;
+  }
+  if (pending.kind === "candidate") {
+    // Legacy candidate wizard state is display-only after the Agent runtime
+    // migration. Keep persisted candidate branches, but never reopen the
+    // writer-role/quantity wizard.
+    closeConversationChoicePanel({ focus: false });
+    return;
+  }
+  if (pending.kind === "native_agent") {
+    elements.conversationChoiceQuestion.textContent = pending.question || "Agent 需要你的决定";
+    elements.conversationChoiceOptions.innerHTML = (pending.options || []).map((option) => conversationChoiceButton({
+      label: option.label,
+      type: "native_agent_answer",
+      value: option.label,
+      selected: (pending.selectedValues || []).includes(option.label),
+    })).join("") + (pending.multiple ? conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length }) : "");
+    elements.conversationChoiceHint.textContent = "也可以直接在下方输入其他想法。";
+    elements.conversationChoicePanel.hidden = false;
     return;
   }
   const state = pending.state;
@@ -39802,16 +37829,9 @@ const closeCandidateGenerationDialog = ({ focus = true } = {}) => {
 };
 
 const openCandidateGenerationDialog = (prompt = "") => {
-  const source = String(prompt || "").trim();
-  if (!source || pendingConversationChoice?.kind === "candidate") return false;
-  pendingMultiCandidateGenerationPrompt = source;
-  pendingCandidateChoiceState = createConversationChoiceState({ prompt: source, writers: candidateWritersForChoice() });
-  pendingConversationChoice = { kind: "candidate", state: pendingCandidateChoiceState };
-  appendConversationChoiceMessage({ role: "user", content: source });
-  elements.chatInput.value = "";
-  clearActiveComposerDraft();
-  renderConversationChoicePanel();
-  return true;
+  // Candidate count and variation are ordinary task language. The selected
+  // Agent decides whether a choice is needed; never ask for a writer role.
+  return false;
 };
 
 const candidateDirectionLabel = (direction = "free") => ({
@@ -45654,6 +43674,21 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
     const conversationId = pending.conversationId || state.activeConversationId;
     closeConversationChoicePanel({ focus: false });
     dispatchComposerContent(option.label, { conversationId, decisionResolution });
+    return;
+  }
+  if (pendingConversationChoice.kind === "native_agent" && type === "native_agent_answer") {
+    const pending = pendingConversationChoice;
+    if (pending.multiple) {
+      pending.selectedValues ??= [];
+      pending.selectedValues = pending.selectedValues.includes(value) ? pending.selectedValues.filter((item) => item !== value) : [...pending.selectedValues, value];
+      renderConversationChoicePanel();
+      return;
+    }
+    await answerNativeConversationQuestion(pending, value);
+    return;
+  }
+  if (pendingConversationChoice.kind === "native_agent" && type === "native_agent_confirm") {
+    await answerNativeConversationQuestion(pendingConversationChoice, (pendingConversationChoice.selectedValues || []).join("；"));
     return;
   }
   if (pendingConversationChoice.kind === "contract" && type === "contract") {
@@ -62632,82 +60667,15 @@ const configureConversationMediaDefault = async (content, intent = conversationM
 };
 
 const dispatchComposerContent = (content, {
-  mediaDispatch = null,
-  conversationId = "",
-  decisionResolution = null,
-  taskContextSnapshot = null,
-  displayContent = "",
+  conversationId = "", taskContextSnapshot = null, displayContent = "",
 } = {}) => {
   const targetConversationId = String(conversationId || state.activeConversationId || "");
-  const submittedTaskContextSnapshot = taskContextSnapshot
-    ? clone(taskContextSnapshot)
-    : captureTaskContextSnapshot(targetConversationId);
-  const lockedMediaDispatch = lockedComposerMediaDispatch(content, mediaDispatch);
-  const normalizedDecisionResolution = normalizeAgentDecisionResolution(decisionResolution);
+  const snapshot = taskContextSnapshot ? clone(taskContextSnapshot) : captureTaskContextSnapshot(targetConversationId);
   clearActiveComposerDraft();
   const immediateInstructionId = showImmediateConversationInstruction(displayContent || content);
   dispatchAfterImmediateInstructionPaint(() => {
-    const targetConversation = conversationById(targetConversationId) || activeConversation();
-    if (normalizedDecisionResolution) {
-      void sendMessage(content, {
-        immediateInstructionId,
-        executionSurface: "agent",
-        conversationId: targetConversationId,
-        taskContextSnapshot: submittedTaskContextSnapshot,
-        displayContent,
-        decisionResolution: normalizedDecisionResolution,
-      });
-      return;
-    }
-    const landingOnly = isLandingRequest(content) && !isGenerationAndLandingRequest(content);
-    const deletedContentRequest = deletedContentRequestMentioned(content);
-    if (landingOnly || deletedContentRequest) {
-      void sendMessage(content, {
-        immediateInstructionId,
-        executionSurface: "agent",
-        conversationId: targetConversationId,
-        taskContextSnapshot: submittedTaskContextSnapshot,
-        displayContent,
-        ...(deletedContentRequest ? { preflight: () => runBoundedExternalWorkspaceRefresh({ silent: true }) } : {}),
-      });
-      return;
-    }
-    const retryContext = resolveTaskContractRetryContext({
-      instruction: content,
-      messages: conversationMessagesForTaskState(activeConversation()),
-    });
-    if (retryContext?.prompt) {
-      const retryItem = {
-        id: uid("formal-retry"),
-        content: retryContext.prompt,
-        displayContent: String(content || "").trim(),
-        taskContract: retryContext.taskContract,
-        references: clone(retryContext.sourceMessage.references ?? []),
-        workspaceReferences: clone(retryContext.sourceMessage.workspaceReferences ?? []),
-        skillReferences: clone(retryContext.sourceMessage.skillReferences ?? []),
-        attachments: clone(retryContext.sourceMessage.attachments ?? []),
-        taskContextSnapshot: clone(retryContext.sourceMessage.turnContextSnapshot || submittedTaskContextSnapshot),
-        formalTaskRetry: true,
-      };
-      void sendMessage(retryContext.prompt, {
-        queuedItem: retryItem,
-        displayContent: retryItem.displayContent,
-        immediateInstructionId,
-        conversationId: targetConversationId,
-        executionSurface: "agent",
-        taskContextSnapshot: retryItem.taskContextSnapshot,
-      });
-      return;
-    }
-    void sendMessage(content, {
-      immediateInstructionId,
-      conversationId: targetConversationId,
-      mediaDispatch: lockedMediaDispatch,
-      guidanceDialog: conversationCreativeGuidanceIsActive(),
-      executionSurface: "agent",
-      taskContextSnapshot: submittedTaskContextSnapshot,
-      displayContent,
-    });
+    void sendMessage(content, { immediateInstructionId, conversationId: targetConversationId,
+      taskContextSnapshot: snapshot, executionSurface: "agent", displayContent });
   });
   return true;
 };
@@ -63163,8 +61131,9 @@ try {
 document.querySelector("#chatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (conversationPreviewBlocksComposerMutation()) return;
+  const content = String(elements.chatInput.value || "").trim();
+  if (!content) return;
   if (temporaryNotebookMutationBlocked()) {
-    const content = elements.chatInput.value;
     await requestTemporaryNotebookPromotion(`chat:${content}`, state.activeDocument);
     return;
   }
@@ -63173,108 +61142,12 @@ document.querySelector("#chatForm").addEventListener("submit", async (event) => 
     showToast("附件上传完成后会与当前文字一起发送");
     return;
   }
-  const content = elements.chatInput.value;
-  const pendingTaskChoice = pendingConversationChoice?.sourceMessageId
-    ? pendingConversationChoice
-    : null;
-  const pendingAgentDecision = pendingConversationChoice?.kind === "agent_decision"
-    ? pendingConversationChoice
-    : null;
-  const decisionConversationId = pendingAgentDecision?.conversationId || state.activeConversationId;
-  const decisionResolution = pendingAgentDecision
-    ? agentDecisionResolutionForAnswer({ decision: pendingAgentDecision.decision, answer: content })
-    : null;
-  if (pendingAgentDecision && pendingAgentDecision.decision?.allowFreeText === false) {
-    showToast("这项决定需要点击当前有效选项");
+  const question = activeConversation()?.agentQuestion;
+  if (question?.kind === "native_agent") {
+    await answerNativeConversationQuestion(question, content);
     return;
   }
-  if (pendingAgentDecision && !decisionResolution) {
-    showToast("请先输入你的决定");
-    return;
-  }
-  if (pendingTaskChoice?.kind === "continuation_destination" && !String(content || "").trim()) {
-    showToast("请输入续写位置或补充要求");
-    return;
-  }
-  const choiceOverride = conversationChoiceOverrideFromInstruction(content);
-  if (choiceOverride) {
-    state.messages = supersedeConversationChoiceInstructions(state.messages, content);
-    const conversation = activeConversation();
-    if (conversation) conversation.messages = clone(state.messages);
-    if (pendingCandidateChoiceState?.writerMode === "single" && choiceOverride.candidateCount) {
-      pendingCandidateChoiceState = { ...pendingCandidateChoiceState, count: choiceOverride.candidateCount, step: "confirm" };
-    }
-  }
-  if (pendingConversationChoice) {
-    if (pendingConversationChoice.kind === "contract") settleCreativeContractObservation("skip");
-    else {
-      if (pendingTaskChoice) settlePendingConversationTaskInstruction(pendingTaskChoice, "resolved");
-      closeConversationChoicePanel({ focus: false });
-    }
-  }
-  if (decisionResolution) {
-    dispatchComposerContent(content, {
-      conversationId: decisionConversationId,
-      decisionResolution,
-    });
-    return;
-  }
-  if (pendingTaskChoice?.kind === "continuation_destination") {
-    dispatchComposerContent(`${content}。${pendingTaskChoice.instruction || "继续写作"}`, {
-      conversationId: pendingTaskChoice.conversationId || state.activeConversationId,
-      displayContent: content,
-      taskContextSnapshot: pendingTaskChoice.taskContextSnapshot,
-    });
-    return;
-  }
-  if (explicitPostLandingMaterialsUpdateRequested(content)) {
-    appendConversationChoiceMessage({ role: "user", content: String(content || "").trim() });
-    elements.chatInput.value = "";
-    clearActiveComposerDraft();
-    await runExplicitPostLandingMaterialsUpdate();
-    return;
-  }
-  const mediaDefaultIntent = conversationMediaDefaultIntent(content);
-  if (mediaDefaultIntent) {
-    await configureConversationMediaDefault(content, mediaDefaultIntent);
-    return;
-  }
-  if (isCandidateComparisonOpenRequest(content)) {
-    appendConversationChoiceMessage({ role: "user", content });
-    elements.chatInput.value = "";
-    clearActiveComposerDraft();
-    openLatestCandidateComparison();
-    return;
-  }
-  const scanIntent = rankingScanIntent(content);
-  if (scanIntent.kind === "scan") {
-    await openRankingScanDialog(scanIntent);
-    return;
-  }
-  if (requestsMultipleCandidates(content) && openCandidateGenerationDialog(content)) return;
-  if (continuationDestinationIntent(content) === "ambiguous") {
-    openContinuationDestinationChoice({ instruction: content, conversationId: state.activeConversationId });
-    return;
-  }
-  const directComposerMediaDispatch = lockedComposerMediaDispatch(content);
-  if (directComposerMediaDispatch?.kind === "media") {
-    dispatchComposerContent(content, {
-      mediaDispatch: directComposerMediaDispatch,
-      conversationId: state.activeConversationId,
-    });
-    return;
-  }
-  if (codexSubmissionRequiresLogin() && currentCodexConnectionSelected() && !ui.temporaryCodexSelected) {
-    await refreshCodexAgentStatus({ refreshAccount: true });
-  }
-  if (codexSubmissionRequiresLogin()) {
-    const panel = document.querySelector("#quickModelPanel");
-    if (panel) panel.hidden = false;
-    document.querySelector("#quickModelButton")?.setAttribute("aria-expanded", "true");
-    renderQuickModelSelector();
-    showToast("Codex 未连接；登录成功前不会提交本轮任务");
-    return;
-  }
+  if (pendingConversationChoice) closeConversationChoicePanel({ focus: false });
   ui.pendingChatAgentGuidance = null;
   dispatchComposerContent(content);
 });

@@ -111,8 +111,8 @@ assert.equal(reviewOnly, null, "缺少来源授权合同的旧诊断消息不得
 assert.match(appSource, /const deleteAllowed = documentDeleteAllowed\(/u);
 assert.match(appSource, /data-menu-action="delete"[^\n]+protectedDocument \|\| !deleteAllowed/u);
 assert.match(appSource, /recovered\.deliverableType === "review_report"[\s\S]{0,180}currentCandidateTarget/u);
-assert.match(appSource, /let explicitChapterTarget = inlineEdit \? null : explicitChapterBatch/u);
-assert.match(appSource, /canonicalNovelChapterRequestTarget\(\{/u);
+assert.doesNotMatch(appSource, /const executeMessage = async/u, "旧关键词对话执行器必须删除");
+assert.match(appSource, /const executeConversationAgentMessage = async/u, "自然语言指令由统一 Agent 接管");
 assert.match(appSource, /forceCreateNewDocument/u);
 assert.match(indexSource, /app\.js\?v=\d+\.\d+\.\d+-[a-z0-9-]+/u);
 

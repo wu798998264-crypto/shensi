@@ -153,7 +153,7 @@ export const candidateGenerationRequest = (state = {}) => {
 };
 
 export const conversationChoiceStepLabel = (step = "") => ({
-  writer_mode: "先选择主笔数量",
+  writer_mode: "请描述候选稿数量和你希望比较的差异",
   direction: "选择候选差异方向",
   candidate_count: "核对候选稿数量",
   writers: "选择参与生成的主笔",

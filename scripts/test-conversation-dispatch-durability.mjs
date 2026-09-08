@@ -56,7 +56,7 @@ import { ensureConversationDispatchDurability } from "../src/conversation-dispat
 }
 
 const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(app, /if \(!landingOnlyRequested\) void protectConversationDispatchBeforeModel\(\)\.then\(\(result\) => recordConversationDispatchDurability/u, "生成型对话必须后台启动双层持久化保护并记录降级状态");
+assert.match(app, /await onPersist\(\)[\s\S]{0,250}flushWorkspaceSave\(\{ throwOnError: true \}\)/u, "Agent 对话先持久化用户消息；写入失败不能虚假报告已发送");
 assert.doesNotMatch(app, /if \(!landingOnlyRequested\) await protectConversationDispatchBeforeModel\(\);/u, "完整保存不得再阻塞模型调用");
 const integration = app.slice(
   app.indexOf("const protectConversationDispatchBeforeModel ="),

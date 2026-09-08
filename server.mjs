@@ -5883,6 +5883,9 @@ const handleApiRequest = async (request, response, pathname) => {
   }
   if (pathname === "/api/chat" && request.method === "POST") {
     const submittedBody = await readJsonBody(request, 64 * 1024 * 1024, 256 * 1024 * 1024);
+    if (submittedBody.outputSurface !== "whiteboard") return sendJson(response, 410, {
+      ok: false, code: "LEGACY_CONVERSATION_RUNTIME_RETIRED", message: "旧对话编排接口已停用，请刷新界面后使用统一 Agent 对话入口。白板生成接口保持不变。",
+    });
     // Text generation has one public execution surface. The legacy field is
     // accepted for old clients but cannot route a request around the Agent
     // runtime, task identity, or host-side permission checks.
