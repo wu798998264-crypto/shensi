@@ -32,17 +32,7 @@ export const MODULE_VIEWS = {
 
 export const MODULE_ITEMS = {
   manuscript: [
-    ["chapter-1", "第1章　暴雨将至"],
-    ["chapter-2", "第2章　破局"],
-    ["chapter-3", "第3章　无人之地"],
-    ["chapter-4", "第4章　旧事重提"],
-    ["chapter-5", "第5章　暗潮"],
-    ["chapter-6", "第6章　第一次误判"],
-    ["chapter-7", "第7章　交锋"],
-    ["chapter-8", "第8章　深水"],
-    ["chapter-9", "第9章　逆光"],
-    ["chapter-10", "第10章　终局之前"],
-    ["script-episode-1", "第一集　样集", { workspaceView: "script", contextDomain: "script", treeGroup: "scripts" }],
+    ["script-episode-1", "第一集", { workspaceView: "script", contextDomain: "script", treeGroup: "scripts" }],
     ["prompt-video-1", "第一集视频提示词", { workspaceView: "prompts", contextDomain: "script", treeGroup: "video" }],
     ["prompt-visual-assets", "视觉资产总表", { workspaceView: "prompts", contextDomain: "script", treeGroup: "visual" }],
     ["prompt-panorama-1", "第一集全景调度图提示词", { workspaceView: "prompts", contextDomain: "script", treeGroup: "panorama" }],
@@ -106,20 +96,6 @@ export const MODULE_ITEMS = {
   ],
 };
 
-const manuscript = `
-  <p>雨在凌晨停了。城市像被人按下静音键，连远处高架桥上的车流声都消失了，只剩偶尔滴落的水声，敲在铁皮屋檐上，轻而缓慢。</p>
-  <p>陆沉站在窗前，指尖夹着一支将熄的烟。烟灰在玻璃杯里堆成一小截，他没去弹。桌上摊着几张打印件，边角被水汽弄得微微卷起。</p>
-  <p>那组数据不对劲。</p>
-  <p>不是结论不对，而是逻辑链在某个节点上被人为掐断了。掐断它的人，很可能以为自己做得天衣无缝。</p>
-  <p>手机在桌面上震动了一下，是简宁。</p>
-  <p>“我到了老地方，东西带来了。”</p>
-  <p><span class="seed-selection">他没立刻回。目光落在其中一页的时间戳上——03:17。</span></p>
-  <p>那时他应该在会议室，却出现在了别处。</p>
-  <p>第一次误判，往往不是信息不足，而是把太像真的线索，当成了真相。</p>
-  <p>他掐灭烟，起身拉开抽屉，拿出一个牛皮纸文件袋。</p>
-  <p>里面是一张被折叠过无数次的地图，边缘磨白，折痕处有细小的裂口。陆沉将它摊开，指尖沿着那条被红笔圈出的路线移动。</p>
-  <p>这座城市从不说谎，只有人会。</p>
-`;
 
 const simpleDocument = (title, body, metadata = {}) => ({
   title,
@@ -211,111 +187,7 @@ export const normalizeChapterNumbering = (targetState) => {
   return changed;
 };
 
-const documents = {
-  "chapter-6": {
-    title: "第一次误判",
-    html: manuscript,
-    updatedAt: "10:31",
-    continuityDelta: {
-      summary: "陆沉发现时间记录冲突，决定带地图前往老地方。",
-      nextCarryover: ["03:17记录冲突仍未解释。", "陆沉即将与简宁在老地方会面。"],
-      updatedAt: "10:31",
-    },
-  },
-  "outline-series": simpleDocument("全集大纲", "全书以一次被人为制造的误判为起点，逐层揭开人物关系、利益交换与旧案真相。"),
-  "outline-volume-1": simpleDocument("第一卷卷纲", "第一卷完成主角入局、第一次误判和核心对手的首次正面交锋。"),
-  "outline-chapter-6": simpleDocument("第6章章纲", "本章用03:17的时间戳制造逻辑断点，让主角第一次意识到证据链被人主动修改。"),
-  "canon-characters": simpleDocument("人物设定", "陆沉：克制、敏锐，在信息不足时习惯先压下情绪；简宁：掌握旧案关键材料。"),
-  "canon-world": { title: "世界观与基础规则", html: "<h1>世界观与基础规则</h1><h2>世界观</h2><p>故事发生在一座高度依赖数据调度的沿海城市，公开记录不等于真实发生。</p><h2>基础规则</h2><p>概念、规则、基础设定、力量体系、种族与特殊机制均按标题锚点维护在本聚合板中。</p>", updatedAt: "10:31" },
-  "canon-factions": simpleDocument("势力与组织", "城建集团、旧案调查组与匿名数据修正者构成当前三方力量。"),
-  "canon-relations": simpleDocument("人物关系", "陆沉与简宁互相需要，但双方仍各自保留一部分关键信息。"),
-  "canon-locations": simpleDocument("地图与地点", "老地方：废弃高架桥下的通宵餐馆；会议室：03:17线索的冲突地点。"),
-  "canon-items": simpleDocument("物品与道具", "牛皮纸文件袋、折叠地图和被修改的打印数据是当前关键物品。"),
-  "canon-events": { title: "事件与时间线", html: "<h1>事件与时间线</h1><h2>事件</h2><p>03:17记录冲突被确认，但造成冲突的人和目的尚未揭示。</p><h2>时间线</h2><p>02:40会议开始；03:17系统记录出现冲突；凌晨雨停后陆沉复核材料。</p>", updatedAt: "10:31" },
-  "canon-glossary": simpleDocument("术语表", "尚未收录正式术语。"),
-  "memory-foreshadowing": simpleDocument("伏笔管理", "F-006：03:17时间戳。状态：已埋设；预计在第十二章完成第一次解释。"),
-  "memory-information-ledger": simpleDocument("信息账本", "当前没有已通过正文证据验收的记录。", { moduleId: "memory", mergedMemoryView: true }),
-  "memory-first-appearance": simpleDocument("重要信息登场账本", "03:17在第六章首次进入读者视野，目前只知道它与陆沉的不在场记录冲突。"),
-  "memory-release": simpleDocument("信息释放表", "第六章释放：记录冲突。暂缓释放：谁修改了记录，以及简宁掌握材料的真实来源。"),
-  "memory-reader": simpleDocument("读者当前知识库", "读者知道数据链被人为掐断，但尚不知道陆沉是否真的离开过会议室。"),
-  "memory-snapshot": simpleDocument("状态快照", "陆沉：警觉上升；简宁：等待见面；03:17：未解释；地图：已重新启用。"),
-  "script-episode-1": simpleDocument("样集", "按单集剧本格式承接剧本大纲、剧本设定和当前状态；当前等待确认本集主戏剧问题。", { contextDomain: "script", workspaceView: "script", moduleId: "manuscript" }),
-  "prompt-video-1": simpleDocument("第一集视频提示词", "按镜头拆分可执行的视频提示词，并追溯到对应分集剧本。", { contextDomain: "script", workspaceView: "prompts", treeGroup: "video", moduleId: "manuscript" }),
-  "prompt-visual-assets": simpleDocument("视觉资产总表", "维护剧本所需角色、场景、道具和复用资产的视觉生成提示词。", { contextDomain: "script", workspaceView: "prompts", treeGroup: "visual", moduleId: "manuscript" }),
-  "prompt-panorama-1": simpleDocument("第一集全景调度图提示词", "固定多人场景的空间关系、站位、朝向、动线和关键动作区域。", { contextDomain: "script", workspaceView: "prompts", treeGroup: "panorama", moduleId: "manuscript" }),
-  "script-outline-series": simpleDocument("剧本全集大纲", "原创项目在此建立类型契约、核心矛盾、阶段爆点和终局；改编项目在原作基础上重构为剧本总控。", { contextDomain: "script", workspaceView: "script", moduleId: "outline" }),
-  "script-outline-episode-1": simpleDocument("第一集集纲", "记录本集主戏剧问题、情绪变化、信息释放、关系推进和结尾画面钩子。", { contextDomain: "script", workspaceView: "script", moduleId: "outline" }),
-  "script-canon-characters": simpleDocument("人物改编", "只记录相对小说正史发生的人物删减、功能合并、表演方向和出场顺序变化。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-relations": simpleDocument("关系改编", "只记录剧本化导致的关系位置、关系弧线和人物合并变化。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-world": simpleDocument("世界与规则改编", "只记录为画面呈现、制作执行或观众理解而改动的世界信息与规则，不复制小说正史。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-locations": simpleDocument("场景与地点改编", "只记录场景调度、地点压缩、合并、替换与新增。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-factions": simpleDocument("势力与组织改编", "只记录组织的保留、合并、替换及其戏剧功能变化。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-events": simpleDocument("事件与时间线改编", "只记录原作事件的删并重排、跨集位置与时间顺序变化。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-items": simpleDocument("道具改编", "只记录承担证据、反转、身份标记或视觉记忆点的关键道具变化。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-canon-glossary": simpleDocument("剧本术语", "只记录剧本新增或为观众理解而改写的术语。", { contextDomain: "script", workspaceView: "script", moduleId: "canon" }),
-  "script-memory-foreshadowing": simpleDocument("剧本伏笔管理", "记录原创或改编剧本中已经成立的可呈现伏笔及其跨集回收位置。", { contextDomain: "script", workspaceView: "script", moduleId: "memory" }),
-  "script-memory-information-ledger": simpleDocument("信息账本", "当前没有已通过正文证据验收的记录。", { contextDomain: "script", workspaceView: "script", moduleId: "memory", mergedMemoryView: true }),
-  "script-memory-first-appearance": simpleDocument("剧本重要信息登场账本", "记录关键信息在剧本中的首次出现、局部揭示和正式揭示集数。", { contextDomain: "script", workspaceView: "script", moduleId: "memory" }),
-  "script-memory-release": simpleDocument("剧本信息释放表", "按集维护观众获得的信息、角色知情差和延后解释事项。", { contextDomain: "script", workspaceView: "script", moduleId: "memory" }),
-  "script-memory-audience": simpleDocument("观众当前知识库", "记录观众在当前集结束时已经确认、怀疑和仍未知的信息。", { contextDomain: "script", workspaceView: "script", moduleId: "memory" }),
-  "script-memory-snapshot": simpleDocument("剧本状态快照", "记录人物、关系、道具、伤口、地点和未兑现集尾承诺的当前状态。", { contextDomain: "script", workspaceView: "script", moduleId: "memory" }),
-  "report-novel": simpleDocument("小说自检", "当前未发现硬设定冲突。风险：03:17若解释过早，会削弱后续调查线的牵引力。"),
-  "report-script": simpleDocument("剧本自检", "当前尚未执行剧本自检。", { contextDomain: "script", moduleId: "reports" }),
-  "report-compile": simpleDocument("项目总览", "本报告将根据当前项目的大纲、分卷、正文、设定和连续性资料实时更新。", { derived: true }),
-  "report-adaptation": {
-    title: "小说改剧本编译报告",
-    html: "<h1>小说改剧本编译报告</h1><h2>改编范围</h2><p>记录本轮采用的小说章节、设定和目标集数。</p><h2>具体改动</h2><p>逐项记录保留、删除、合并、前置、后置、视觉化和功能转移。</p><h2>改编思路</h2><p>说明每项调整服务的冲突、节奏、人物功能、信息释放或制作执行目标。</p><h2>连续性与风险</h2><p>记录对后续集数、人物关系、伏笔回收和小说正史隔离的影响。</p>",
-    updatedAt: "10:31",
-    contextDomain: "script",
-    moduleId: "reports",
-  },
-  "library-reference": simpleDocument("参考资料", "用于保存研究资料、用户导入文本和不会直接进入正史的参考信息。"),
-  "library-retired": simpleDocument("废弃设定", "已经废弃但需要保留来源的设定进入隔离区。"),
-  "library-memo": simpleDocument("备忘录", "", { moduleId: "library", readPolicy: "explicit-only", userFacingReference: true }),
-  "index-language-blacklist": {
-    ...simpleDocument("创作合同", ""),
-    html: "<h1>创作合同</h1><h2>项目禁用词</h2><p>当前没有项目级禁用词。</p><h2>特别注意事项</h2><p>记录只针对本项目生效的创作边界、必须承接事项和特殊要求。</p>",
-  },
-  "index-update-log": simpleDocument("更新日志", "当前尚无结构化更新记录。"),
-  "index-pending": simpleDocument("待确认事项", "03:17冲突最终指向情感误会还是商业判断失误，仍待作者确认。"),
-};
-
-for (const [id, label] of MODULE_ITEMS.manuscript) {
-  if (!documents[id]) {
-    documents[id] = {
-      ...simpleDocument(label.replace(/^第.+?章　/, ""), ""),
-      html: "",
-    };
-  }
-}
-
-const initialMessages = [
-  {
-    id: "m1",
-    role: "user",
-    time: "10:28",
-    content: "把他没立刻回。目光落在其中一页的时间戳上——03:17。改得更有张力一些。",
-  },
-  {
-    id: "m2",
-    role: "assistant",
-    time: "10:28",
-    lead: "已生成以下候选稿：",
-    candidate: "他没有回信。目光停在那一页的时间戳上——03:17，像一根被刻意留下的针。",
-  },
-  {
-    id: "m3",
-    role: "user",
-    time: "10:29",
-    content: "全自动写下去。",
-  },
-  {
-    id: "m4",
-    role: "assistant",
-    time: "10:31",
-    content: "现有设定与大纲足以支撑续写。先确认一个会影响本章效果的细节：这次误判，你更希望它偏向情感误会，还是商业判断失误？",
-  },
-];
+const documents = Object.fromEntries(Object.entries(MODULE_ITEMS).flatMap(([moduleId, items]) => items.map(([id, title, metadata = {}]) => [id, { title, html: "", markdown: "", moduleId, ...metadata }])));
 
 export const createInitialState = () => ({
   schemaVersion: 19,
@@ -327,94 +199,38 @@ export const createInitialState = () => ({
   theme: "light",
   layout: { leftPaneWidth: 270, rightPaneWidth: 420 },
   activeModule: "manuscript",
-  activeDocument: "chapter-6",
+  activeDocument: "",
   moduleItems: structuredClone(MODULE_ITEMS),
   customFolders: [],
   documents: structuredClone(documents),
-  histories: {
-    "chapter-6": [
-      {
-        id: "h12",
-        title: "03:17线索更隐晦，男主没有立即回应",
-        version: "v12",
-        time: "今天 10:31",
-        html: manuscript.replace("他没立刻回。", "他没有回复。"),
-      },
-      {
-        id: "h11",
-        title: "误判被写成信息不足，情绪冲击较弱",
-        version: "v11",
-        time: "今天 09:47",
-        html: manuscript.replace("往往不是信息不足", "往往只是信息不足"),
-      },
-      {
-        id: "h10",
-        title: "会议室线索尚未前置",
-        version: "v10",
-        time: "昨天 22:18",
-        html: manuscript.replace("那时他应该在会议室，却出现在了别处。", ""),
-      },
-    ],
-  },
+  histories: {},
   chapterEpisodeMappings: [],
   viewHistories: {},
   volumeHistories: {},
-  moduleHistories: {
-    manuscript: [{ id: "mh1", title: "第六章冲突线索尚未强化", version: "正文快照 18", time: "今天 10:31" }],
-    outline: [{ id: "oh1", title: "第一卷终点仍停在旧案重启", version: "大纲快照 7", time: "昨天 21:06" }],
-    canon: [{ id: "ch1", title: "简宁的信息权限尚未收紧", version: "设定快照 12", time: "昨天 19:42" }],
-    memory: [{ id: "mm1", title: "03:17伏笔尚未进入读者知识库", version: "记忆快照 31", time: "今天 09:47" }],
-    index: [{ id: "ih1", title: "待确认事项尚未加入误判方向", version: "索引快照 15", time: "今天 09:48" }],
-  },
-  projectHistories: [
-    { id: "ph1", title: "第六章首次引入03:17冲突之前", version: "作品快照 24", time: "今天 09:40" },
-    { id: "ph2", title: "第一卷调查线重新排序之前", version: "作品快照 23", time: "昨天 21:06" },
-  ],
+  moduleHistories: {},
+  projectHistories: [],
   workspaceAssets: [],
   assetHistoryTombstones: [],
   longFormJobs: [],
   currentVersionMeta: { documents: {}, views: {}, volumes: {}, modules: {}, project: null },
-  messages: structuredClone(initialMessages),
+  messages: [],
   snapshots: {},
   isolatedBranches: [],
-  currentCandidate: initialMessages[1].candidate,
-  currentCandidateTarget: { chapterNumber: 6, documentId: "chapter-6" },
+  currentCandidate: "",
+  currentCandidateTarget: null,
   currentCandidateMemoryUpdate: null,
   activeConversationId: "conversation-main",
-  documentConversationBindings: { "chapter-6": "conversation-main" },
-  conversations: [
-    {
-      id: "conversation-main",
-      title: "第六章修改",
-      homeDocumentId: "chapter-6",
-      homeDocumentBoundAtEpoch: 0,
-      boundDocumentId: "chapter-6",
-      autoAssociateActiveDocument: true,
-      messages: structuredClone(initialMessages),
-      snapshots: {},
-      isolatedBranches: [],
-      currentCandidate: initialMessages[1].candidate,
-      currentCandidateTarget: { chapterNumber: 6, documentId: "chapter-6" },
-      currentCandidateMemoryUpdate: null,
-      nativeAgentSession: null,
-      constraintIndex: [],
-      conversationContextCheckpoint: null,
-      contextLedger: null,
-      contextCompressionSignature: "",
-      contextCompressionStatus: null,
-      intentTarget: { chapterNumber: 6, documentId: "chapter-6" },
-      queue: [],
-      references: [],
-      attachments: [],
-      createdAt: "今天 10:28",
-      updatedAt: "今天 10:31",
-    },
-  ],
-  activities: [
-    { id: "activity-seed", type: "open", label: "打开第六章《第一次误判》", documentId: "chapter-6", time: "今天 10:31" },
-  ],
+  documentConversationBindings: {},
+  conversations: [{
+    id: "conversation-main", title: "新对话", homeDocumentId: null, boundDocumentId: null,
+    messages: [], snapshots: {}, isolatedBranches: [], currentCandidate: "",
+    currentCandidateTarget: null, currentCandidateMemoryUpdate: null,
+    nativeAgentSession: null, constraintIndex: [], conversationContextCheckpoint: null,
+    contextLedger: null, queue: [], references: [], attachments: [],
+  }],
+  activities: [],
   trash: [],
-  selectedText: "他没立刻回。目光落在其中一页的时间戳上——03:17。",
+  selectedText: "",
   settings: {
     adapter: "api",
     provider: "OpenAI",

@@ -24,6 +24,8 @@ for (const file of files) {
   const checked = spawnSync(process.execPath, ["--check", file], { stdio: "inherit" });
   if (checked.status !== 0) process.exit(checked.status || 1);
 }
+const packageBoundary = spawnSync(process.execPath, ["scripts/test-package-content-policy.mjs"], { stdio: "inherit" });
+if (packageBoundary.status !== 0) process.exit(packageBoundary.status || 1);
 for (const test of ["scripts/test-v101-core.mjs", "scripts/test-v103-regressions.mjs", "scripts/test-v106-full-optimization.mjs", "scripts/test-v109-execution-authority.mjs", "scripts/test-v110-terminal-routing.mjs", "scripts/test-v111-creative-contract.mjs", "scripts/test-agent-decision-ui-integration.mjs", "scripts/test-codex-api-agent-runtime.mjs", "scripts/test-video-card-focus-pause.mjs"]) {
   const tested = spawnSync(process.execPath, [test], { stdio: "inherit" });
   if (tested.status !== 0) process.exit(tested.status || 1);

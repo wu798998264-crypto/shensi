@@ -168,7 +168,7 @@ if ($hasElectronBuilder) {
     }
     Write-Host "==> electron-builder packaging complete"
 } else {
-    Write-Warning "electron-builder not found; performing simple portable packaging ..."
+    throw "electron-builder is required; unsafe fallback copying is disabled to prevent shipping personal works or test data."
 
     $stageName = "$ProductName-$version-$buildId"
     $stageRoot = Join-Path $windowsOutput $stageName
