@@ -15,6 +15,7 @@
 !/packaging/
 /packaging/*
 !/packaging/windows/
+!/packaging/bundled/
 !/public/
 /public/*
 !/public/assets/
@@ -45,6 +46,10 @@
 **/generated/
 **/backups/
 **/原始资料/
+**/_备份_不参与规则扫描/
+**/版本草案/
+**/废弃设定/
+**/回收站/
 **/作品/
 **/笔记/
 **/*credentials*.json

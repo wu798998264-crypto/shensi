@@ -1,0 +1,4 @@
+interface:
+  display_name: "融合型科幻创作理论"
+  short_description: "融合商业成长、科技后果、文明推演与思想余震的长篇科幻框架"
+  default_prompt: "Use $hybrid-science-fiction to design a commercial long-form science-fiction story that combines progression, technology consequences, civilization change, and philosophical depth."

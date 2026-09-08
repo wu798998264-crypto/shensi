@@ -1,4 +1,5 @@
 import { isLegacyNarrativePlaceholderText, isNarrativeUnitDocumentId } from "./narrative-placeholder.js";
+import { sha256HexSync } from "./version-integrity.js";
 
 const normalizeLines = (value) => String(value ?? "")
   .replace(/\r\n?/g, "\n")
@@ -18,47 +19,115 @@ const withoutFirstContentLine = (value) => {
   return lines.join("\n").trim();
 };
 
-const LEGACY_EXACT_BODIES = Object.freeze({
-  "outline-series": ["全书以一次被人为制造的误判为起点，逐层揭开人物关系、利益交换与旧案真相。"],
-  "outline-volume-1": ["第一卷完成主角入局、第一次误判和核心对手的首次正面交锋。"],
-  "outline-chapter-6": ["本章用03:17的时间戳制造逻辑断点，让主角第一次意识到证据链被人主动修改。"],
-  "canon-characters": ["陆沉：克制、敏锐，在信息不足时习惯先压下情绪；简宁：掌握旧案关键材料。"],
-  "canon-factions": ["城建集团、旧案调查组与匿名数据修正者构成当前三方力量。"],
-  "canon-relations": ["陆沉与简宁互相需要，但双方仍各自保留一部分关键信息。"],
-  "canon-locations": ["老地方：废弃高架桥下的通宵餐馆；会议室：03:17线索的冲突地点。"],
-  "canon-items": ["牛皮纸文件袋、折叠地图和被修改的打印数据是当前关键物品。"],
-  "memory-foreshadowing": ["F-006：03:17时间戳。状态：已埋设；预计在第十二章完成第一次解释。"],
-  "memory-first-appearance": ["03:17在第六章首次进入读者视野，目前只知道它与陆沉的不在场记录冲突。"],
-  "memory-release": ["第六章释放：记录冲突。暂缓释放：谁修改了记录，以及简宁掌握材料的真实来源。"],
-  "memory-reader": ["读者知道数据链被人为掐断，但尚不知道陆沉是否真的离开过会议室。"],
-  "memory-snapshot": ["陆沉：警觉上升；简宁：等待见面；03:17：未解释；地图：已重新启用。"],
-  "script-episode-1": ["按单集剧本格式承接剧本大纲、剧本设定和当前状态；当前等待确认本集主戏剧问题。"],
-  "prompt-video-1": ["按镜头拆分可执行的视频提示词，并追溯到对应分集剧本。"],
-  "prompt-visual-assets": ["维护剧本所需角色、场景、道具和复用资产的视觉生成提示词。"],
-  "prompt-panorama-1": ["固定多人场景的空间关系、站位、朝向、动线和关键动作区域。"],
-  "script-outline-series": ["原创项目在此建立类型契约、核心矛盾、阶段爆点和终局；改编项目在原作基础上重构为剧本总控。"],
-  "script-outline-episode-1": ["记录本集主戏剧问题、情绪变化、信息释放、关系推进和结尾画面钩子。"],
-  "script-canon-characters": ["只记录相对小说正史发生的人物删减、功能合并、表演方向和出场顺序变化。"],
-  "script-canon-relations": ["只记录剧本化导致的关系位置、关系弧线和人物合并变化。"],
-  "script-canon-world": ["只记录为画面呈现、制作执行或观众理解而改动的世界信息与规则，不复制小说正史。"],
-  "script-canon-locations": ["只记录场景调度、地点压缩、合并、替换与新增。"],
-  "script-canon-factions": ["只记录组织的保留、合并、替换及其戏剧功能变化。"],
-  "script-canon-events": ["只记录原作事件的删并重排、跨集位置与时间顺序变化。"],
-  "script-canon-items": ["只记录承担证据、反转、身份标记或视觉记忆点的关键道具变化。"],
-  "script-canon-glossary": ["只记录剧本新增或为观众理解而改写的术语。"],
-  "script-memory-foreshadowing": ["记录原创或改编剧本中已经成立的可呈现伏笔及其跨集回收位置。"],
-  "script-memory-first-appearance": ["记录关键信息在剧本中的首次出现、局部揭示和正式揭示集数。"],
-  "script-memory-release": ["按集维护观众获得的信息、角色知情差和延后解释事项。"],
-  "script-memory-audience": ["记录观众在当前集结束时已经确认、怀疑和仍未知的信息。"],
-  "script-memory-snapshot": ["记录人物、关系、道具、伤口、地点和未兑现集尾承诺的当前状态。"],
-  "library-reference": ["用于保存研究资料、用户导入文本和不会直接进入正史的参考信息。"],
-  "library-retired": ["已经废弃但需要保留来源的设定进入隔离区。"],
-  "index-language-blacklist": [
-    "项目禁用词 当前没有项目级禁用词。 特别注意事项 记录只针对本项目生效的创作边界、必须承接事项和特殊要求。",
-    "当前没有项目级禁用词。记录只针对本项目生效的创作边界、必须承接事项和特殊要求。",
-    "项目禁用词 当前没有项目级禁用词。 特别注意事项 当前没有项目级特别注意事项。",
-    "Project banned terms No project-specific banned terms. Special project constraints No project-specific special constraints.",
+const LEGACY_BODY_HASHES = Object.freeze({
+  "outline-series": [
+    "62a58ba2d72f27b47c216be8b48e03d66152a4c1cfde67567e5221f27ff8186c"
   ],
+  "outline-volume-1": [
+    "34fe51ebb0db2cdc803d2b30a61f69aa9bf6990db19b7e247e727afcc46e2720"
+  ],
+  "outline-chapter-6": [
+    "9c7b25000adb54f846cf8035743351795c118935392f6ef76b57a50eb14c89f1"
+  ],
+  "canon-characters": [
+    "ed5ef3e4ecb1d2504d76f660d2fbd6cc948dd5373d5ff8730509b76c7dedc712"
+  ],
+  "canon-factions": [
+    "3480dddf8865ec33e09746a4f86d8f7436b31e29415ec9043e5db7eefcaa0aee"
+  ],
+  "canon-relations": [
+    "5436eeb960ab28f89e66f1eff68254b5b14caaeca6cbb291874f47c53c8ac81f"
+  ],
+  "canon-locations": [
+    "f515699114081a9ee1550506241a4ea229a017cd8348b19d6432a22122cf5e5d"
+  ],
+  "canon-items": [
+    "4ffcd42b6ea6be6409145f8895deb6107159563c99ec8c3c7e6aaa1e711fa81d"
+  ],
+  "memory-foreshadowing": [
+    "61bcb164c40b124a3a56246eedad547c6dcda3f59268643d8c7d4ab93a293a3c"
+  ],
+  "memory-first-appearance": [
+    "7c8e8f1ef3b4d1327e2a193976299bcba0641b266cba13f663ab3dbb10b00577"
+  ],
+  "memory-release": [
+    "6deebfe8ebf433c857ad20dcd1656a3a21eb5adaca3e4c58bdd55dd0d684d88f"
+  ],
+  "memory-reader": [
+    "39fa65cdd66b8a0edb7bbb1af12ea6f91847fed50384403aa042f41414c4d97f"
+  ],
+  "memory-snapshot": [
+    "8d323690df925aebfc954a56f67d767f622d9e703180141b847e3d9c701aae16"
+  ],
+  "script-episode-1": [
+    "e346b0a6ec8e969b328bacb0575f7f1a9fc8af8f41ba47d8308c1e9d752c58c1"
+  ],
+  "prompt-video-1": [
+    "1bbc64d2870cedd6632b744977737359d53026a8add74b96b8f40094b56e45f9"
+  ],
+  "prompt-visual-assets": [
+    "181010888cf4c37d3afc850076d4da4df2396af64a31a83aeb237f90ad391c4f"
+  ],
+  "prompt-panorama-1": [
+    "a5090adaf230cccc199640e0851bce972cb55d84c6bedbad1dcdeaf371c44485"
+  ],
+  "script-outline-series": [
+    "e9bd7ad90974d3af8e7498f3e4a775dd857e3d9d34a1c8d5c984c50fadc13882"
+  ],
+  "script-outline-episode-1": [
+    "c9b0ce14fbbc9eaf0817088d298e7eb7a2a424ae6c4c3e6a881e9e7c8365251d"
+  ],
+  "script-canon-characters": [
+    "98432ff6f563e9a1f21a7e3b5e6c0f47703db3bf7a94fdf198c8c1f40c24da27"
+  ],
+  "script-canon-relations": [
+    "447af3cd6c44217067b020dcd76ba16f03a467e1808f551bde2e3de688fa328f"
+  ],
+  "script-canon-world": [
+    "749ac71f050e1878c349cda9991c477f79d724fd38629b8fd59d53183ff5201e"
+  ],
+  "script-canon-locations": [
+    "522381c34fc196671581c5450a0c39a32619028259a5bdf925a1f4b46f13d23b"
+  ],
+  "script-canon-factions": [
+    "25790796e5977a73249dfd1f5e280d8c111a8d7836ad6702f3b6c83eef97e25a"
+  ],
+  "script-canon-events": [
+    "0250aeb7afd3b8315d6597eab81e309b9e0e03e651c11bd8f899728236bfe26f"
+  ],
+  "script-canon-items": [
+    "c9535331b74747a1a9a4110e437ec6172f6f7016b36589b8eb07e4d15e1f4932"
+  ],
+  "script-canon-glossary": [
+    "5b6f951d292de4844dc85b3239bbba246bc4ac13b2872c800aceb18e2c066a9c"
+  ],
+  "script-memory-foreshadowing": [
+    "08235310fb4b1cd9260b994439c685e5845b0aa316f9979d5c201762939baa7e"
+  ],
+  "script-memory-first-appearance": [
+    "fc6dbeb12c7aaeabf127a3ee34fb95589ae684841f57d9251f2d653b6eb1df66"
+  ],
+  "script-memory-release": [
+    "4cadfc8376b11e2850d140e870ea6d4b827eea4f04cbce6a1899f491c8e8a2a4"
+  ],
+  "script-memory-audience": [
+    "1ebe2cf04ebf3774e5119b06fc30884859f9e514d18bf2b8754a8c5cf61a492a"
+  ],
+  "script-memory-snapshot": [
+    "f610e4085d5e6f3f97fabdb478e32351dd0d96aec75494248f0b62687c416a1b"
+  ],
+  "library-reference": [
+    "d8d7adb9f26e638d1776a2cd2c355dedbaebeeda9bda3d35156738d454110c9d"
+  ],
+  "library-retired": [
+    "c53cf3b066ccdd36505f83add4c28b12a038323d873d356b0676166f857deae5"
+  ],
+  "index-language-blacklist": [
+    "6a1c547dd656570594837f9648aa5f2917cd485e2582d724c4f2a3bcb2c07921",
+    "6a491fb75015f9245bee86492ac9928b2b8dacca2bbd9da369e46a8c1a5e9fa3",
+    "62229007879e44d40ac1eaf06b281c3160c73d23ad96967a0ad6f8261f4e4214",
+    "7c53b1669c25f86ebfce6a48797494b1afaaf5f8b08fca655d5566b578642b4d"
+  ]
 });
 
 const GENERIC_EMPTY_BODIES = Object.freeze([
@@ -86,7 +155,8 @@ export const isContextPlaceholderContent = (documentId = "", value = "") => {
   if (!text) return true;
   if (isNarrativeUnitDocumentId(documentId) && isLegacyNarrativePlaceholderText(text)) return true;
   if (bodyMatches(text, GENERIC_EMPTY_BODIES)) return true;
-  return bodyMatches(text, LEGACY_EXACT_BODIES[String(documentId)] ?? []);
+  const hashes = LEGACY_BODY_HASHES[String(documentId)] ?? [];
+  return [text, withoutFirstContentLine(text)].map(normalizedSignature).filter(Boolean).some((value) => hashes.includes(sha256HexSync(value)));
 };
 
 export { isNarrativeUnitDocumentId };

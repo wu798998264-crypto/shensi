@@ -1,0 +1,4 @@
+interface:
+  display_name: "爆款扫榜"
+  short_description: "受控采集公开文学榜单并生成可追溯的市场观察报告"
+  default_prompt: "Use $bestseller-ranking-scan only after the user explicitly starts a ranking scan; keep collection, permissions, snapshots, and landing under the trusted runtime."

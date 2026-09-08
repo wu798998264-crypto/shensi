@@ -1,0 +1,4 @@
+interface:
+  display_name: "网文科幻创作理论"
+  short_description: "以科技成长、阶段目标、世界扩张和章节钩子驱动商业长篇科幻"
+  default_prompt: "Use $web-novel-science-fiction to design a commercial long-form science-fiction story with clear progression, technology payoffs, world expansion, and chapter hooks."

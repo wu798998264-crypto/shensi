@@ -1,0 +1,4 @@
+interface:
+  display_name: "短视频剧本通用创作概论"
+  short_description: "为剧情类短视频设计抓取、冲突、情绪释放、留钩与可拍执行结构"
+  default_prompt: "Use $general-short-video-screenwriting to create or diagnose a plot-driven short-video script with strong retention, emotional payoff, and production-ready visual action."

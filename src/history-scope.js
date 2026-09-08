@@ -107,7 +107,7 @@ const inferDocumentInModule = (state, moduleId, title, { allowSingleton = false 
       [/章纲|第[0-9〇零一二三四五六七八九十百千两]+章/, "outline-chapter-6"],
     ],
     canon: [
-      [/陆沉|简宁|人物|角色|主角|配角/, "canon-characters"],
+      [/人物|角色|主角|配角/, "canon-characters"],
       [/术语|词汇|名词解释/, "canon-glossary"],
       [/种族|族群|物种|衍生|特殊设定|特殊机制|概念|规则|法则|约束|基础设定|历法|货币|语言|度量衡|力量体系|能力体系|修炼体系|战力体系|世界观|世界背景/, "canon-world"],
       [/势力|组织|集团/, "canon-factions"],

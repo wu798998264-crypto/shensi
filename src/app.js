@@ -18231,24 +18231,7 @@ const renderEditor = () => {
       hideSelectionToolbar();
       return;
     }
-    const seed = elements.editor.querySelector(".seed-selection");
-    if (!seed || state.activeDocument !== "chapter-6") {
-      hideSelectionToolbar();
-      return;
-    }
-    const seededText = seed.textContent?.trim() ?? "";
-    if (!seededText) {
-      hideSelectionToolbar();
-      return;
-    }
-    state.selectedText = seededText;
-    const rect = seed.getBoundingClientRect();
-    const range = document.createRange();
-    range.selectNodeContents(seed);
-    rememberSelectionRange(range);
-    elements.selectionCount.textContent = `已选 ${state.selectedText.replace(/\s/g, "").length} 字`;
-    setSelectionEditMode(false);
-    positionSelectionToolbar(rect);
+    hideSelectionToolbar();
   });
   requestAnimationFrame(renderSearchHighlight);
 };
@@ -34120,21 +34103,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
     return { content: "已收到直接生成要求，但当前没有可用的模型连接。请先在设置中连接 API 或 CLI，然后重试本条指令。" };
   }
 
-  if (/继续写/.test(command)) {
-    return { content: "现有设定与大纲足以支撑续写。先确认一个会影响本章效果的细节：这次误判，你更希望它偏向情感误会，还是商业判断失误？" };
-  }
-
-  if (state.selectedText || /改|重写|克制|张力|修改/.test(command)) {
-    const candidate = state.selectedText
-      ? `${state.selectedText.replace(/[。！？]$/, "")}。他没有急着得出结论，只把那一秒钟的迟疑记了下来。`
-      : "他没有回信。目光停在那一页的时间戳上——03:17，像一根被刻意留下的针。";
-    state.currentCandidate = candidate;
-    state.currentCandidateTarget = clone(requestTarget);
-    state.currentCandidateMemoryUpdate = null;
-    return { lead: "已根据当前选区与修改意见生成修改结果：", candidate, target: clone(requestTarget) };
-  }
-
-  return { content: "我会先承接当前正文、正史设定和有效记忆。这个调整最希望改变读者的哪一种感受？" };
+  return { content: "当前没有可用的 Agent 连接，尚未生成或修改内容。请连接运行器后重试。" };
 };
 
 const conversationMessagesForTaskState = (conversation, workspaceState = state) => (

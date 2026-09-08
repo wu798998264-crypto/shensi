@@ -1,0 +1,4 @@
+interface:
+  display_name: "原创短剧剧本"
+  short_description: "用小说级原创能力生成结构完整、连续稳定且可拍的原创短剧"
+  default_prompt: "Use $original-short-drama to develop an original Chinese short drama from story engine through formal episode scripts."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "另类科普写作理论"
+  short_description: "用反常识问题、故事化解释和证据边界创作可信、可传播的公众号科普文章"
+  default_prompt: "Use $alternative-popular-science to create or diagnose a story-driven, counterintuitive WeChat popular-science article with rigorous evidence boundaries."

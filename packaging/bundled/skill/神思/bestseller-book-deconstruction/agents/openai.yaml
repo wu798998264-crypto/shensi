@@ -1,0 +1,4 @@
+interface:
+  display_name: "爆款拆书"
+  short_description: "完整拆解叙事作品的结构、章节功能、情绪兑现与商业追读机制"
+  default_prompt: "Use $bestseller-book-deconstruction to completely deconstruct the provided work into an auditable reusable craft report."

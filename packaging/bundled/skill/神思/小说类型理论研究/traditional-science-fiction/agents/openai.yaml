@@ -1,0 +1,4 @@
+interface:
+  display_name: "传统科幻创作理论"
+  short_description: "以科学假设驱动文明推演、认知冲突与思想余震的严肃科幻创作框架"
+  default_prompt: "Use $traditional-science-fiction to develop a rigorous science-fiction premise and derive its world, conflict, characters, and ending."

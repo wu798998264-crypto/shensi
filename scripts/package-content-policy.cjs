@@ -1,5 +1,6 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const runtimeScripts = new Set(['scripts/launcher.mjs', 'scripts/update-installer-helper.mjs', 'scripts/windows/dreamina-profile-runner.ps1']);
 const forbidden = /(?:^|\/)(?:tests?|fixtures|artifacts|test-results|runtime|output|logs|\.git|\.shensi|\.tmp[^/]*|generated|作品|笔记|原始资料|_备份_不参与规则扫描|版本草案|废弃设定|回收站)(?:\/|$)|(?:^|\/)(?:test-|audit-|smoke-|benchmark-|run-.*real|configure-existing-|rebind-|bind-existing-)|(?:向天垂钓|三相之力|幻烬)|\.(?:log|pfx|p12|pem|key|cer|db|sqlite|docx|mp4|zip)$/iu;
@@ -11,7 +12,7 @@ function allowedPackagePath(value) {
   if (file.startsWith('src/')) return /\.(?:mjs|cjs|js|css|html|json|svg|png|woff2?)$/i.test(file);
   if (file.startsWith('public/assets/')) return /^public\/assets\/shensi-[a-z-]+\.(?:png|ico|svg)$/i.test(file);
   if (file.startsWith('packaging/windows/desktop-app/')) return /\.(?:mjs|cjs|json|nsh)$/i.test(file);
-  if (file.startsWith('packaging/bundled/')) return /\.(?:md|json|yaml|yml|txt|js|mjs|py)$/i.test(file);
+  if (file.startsWith('packaging/bundled/')) return /(?:\.(?:md|json|yaml|yml|txt|js|mjs|py|png|svg)|\/LICENSE)$/i.test(file);
   if (file.startsWith('node_modules/undici/')) return !/(?:^|\/)(?:test|tests|benchmarks|examples)(?:\/|$)/i.test(file);
   return false;
 }
@@ -34,6 +35,13 @@ async function verifyPackagedApplication(appRoot) {
 module.exports = async function afterPack(context) {
   const appRoot = path.join(context.appOutDir, 'resources', 'app');
   await verifyPackagedApplication(appRoot);
+  const { buildBundledShensiManifest, validateBundledShensi } = await import(pathToFileURL(path.join(context.packager.projectDir, 'src/server/bundled-shensi.mjs')));
+  const sourceManifest = JSON.parse(await fs.readFile(path.join(context.packager.projectDir, 'packaging/bundled/shensi-bundle-manifest.json'), 'utf8'));
+  const expected = sourceManifest.files.filter((file) => file.role !== 'reference-only' && allowedPackagePath(`packaging/bundled/skill/神思/${file.path}`));
+  const actual = await buildBundledShensiManifest({ appRoot });
+  if (JSON.stringify(actual.files) !== JSON.stringify(expected)) throw new Error('发布能力包与审查过的运行文件不一致；禁止自动接纳新增文件或缺失能力');
+  await fs.writeFile(path.join(appRoot, 'packaging/bundled/shensi-bundle-manifest.json'), JSON.stringify(actual, null, 2));
+  await validateBundledShensi({ appRoot });
 };
 module.exports.allowedPackagePath = allowedPackagePath;
 module.exports.verifyPackagedApplication = verifyPackagedApplication;

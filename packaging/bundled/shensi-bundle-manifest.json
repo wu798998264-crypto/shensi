@@ -1,0 +1,3641 @@
+{
+  "schemaVersion": 1,
+  "bundleId": "shensi-capability-bundle",
+  "bundleVersion": "sha256:5d944a2567a4cd90",
+  "bundleSha256": "5d944a2567a4cd901c06c8000439ce4b356a0916d7dee54b12fea0aafbd52a57",
+  "entry": "神思.md",
+  "fileCount": 598,
+  "totalBytes": 19166519,
+  "contentSummary": {
+    "runtime-content": 176,
+    "runtime-data": 25,
+    "reference-only": 397
+  },
+  "skillSummary": {
+    "routableCount": 20,
+    "referenceOnlyCount": 21,
+    "routablePaths": [
+      "AI漫剧图片资产提示词skill/国漫场景提示词/SKILL.md",
+      "AI漫剧图片资产提示词skill/工业角色提示词/SKILL.md",
+      "bestseller-book-deconstruction/SKILL.md",
+      "bestseller-ranking-scan/SKILL.md",
+      "novel-cover-design/SKILL.md",
+      "original-short-drama/SKILL.md",
+      "公众号文章创作理论/alternative-popular-science/SKILL.md",
+      "公众号文章创作理论/ian-xiaohei-illustrations/SKILL.md",
+      "公众号文章创作理论/public-account-humanizer/SKILL.md",
+      "小说写作技能skill/02-chinese-novelist-skill/SKILL.md",
+      "小说写作技能skill/04-webnovel-theory-engine/SKILL.md",
+      "小说改编短剧剧本skill/SKILL.md",
+      "小说类型理论研究/hybrid-science-fiction/SKILL.md",
+      "小说类型理论研究/short-science-fiction/SKILL.md",
+      "小说类型理论研究/traditional-science-fiction/SKILL.md",
+      "小说类型理论研究/web-novel-science-fiction/SKILL.md",
+      "短剧生产链/短剧精髓保真与爆点增强/SKILL.md",
+      "短剧生产链/短剧结构对位改编/SKILL.md",
+      "短剧生产链/短剧视频逆推剧本/SKILL.md",
+      "短视频剧本创作理论/general-short-video-screenwriting/SKILL.md"
+    ]
+  },
+  "externalDependencyCount": 0,
+  "runtimePolicy": {
+    "executeBundledScripts": false,
+    "externalRuleFallback": false,
+    "referenceOnlyDirectories": [
+      "_备份_不参与规则扫描",
+      "原始资料",
+      "废弃设定",
+      "版本草案"
+    ]
+  },
+  "files": [
+    {
+      "path": "AI漫剧图片资产提示词skill/AI漫剧图片资产提示词skill.md",
+      "sizeBytes": 7237,
+      "sha256": "5105f5daddb4754d4df1d968d2a7784718e288cc8397e45f256e185dbf14bf07",
+      "role": "runtime-content"
+    },
+    {
+      "path": "AI漫剧图片资产提示词skill/国漫场景提示词/SKILL.md",
+      "sizeBytes": 11001,
+      "sha256": "48d505f7b55ea8e49dc64ab48178b015f2c42b4ad39a121c2164c01dfbc6f8d8",
+      "role": "runtime-content"
+    },
+    {
+      "path": "AI漫剧图片资产提示词skill/工业角色提示词/SKILL.md",
+      "sizeBytes": 6972,
+      "sha256": "2260d2cd91357abedc6a65808ea0d333a05d50b5075f218da7be187a17c5d7a8",
+      "role": "runtime-content"
+    },
+    {
+      "path": "ai漫剧提示词转换skill/多人物场景站位线稿图 Skill.md",
+      "sizeBytes": 13515,
+      "sha256": "0e9c835312634698cf09b2a8bc14905e139dd8efe76b3986d58ba9529bfc55b8",
+      "role": "runtime-content"
+    },
+    {
+      "path": "ai漫剧提示词转换skill/漫剧提示词转换skill.md",
+      "sizeBytes": 6897,
+      "sha256": "2c40961fdafe001b0e169fcb15b93c49362daab9d86e9ef6216b60b11ef38c3c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-book-deconstruction/SKILL.md",
+      "sizeBytes": 5722,
+      "sha256": "f1903204e8bd0b614a4cc3bcedad7663b63a6ac9539b9acd903268d5c91ca54a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-book-deconstruction/agents/openai.yaml",
+      "sizeBytes": 291,
+      "sha256": "0818bc61c33cc27f7499582907595d81e746f1db9ac924ac9876301e02cfa6b8",
+      "role": "runtime-data"
+    },
+    {
+      "path": "bestseller-book-deconstruction/references/deconstruction-framework.md",
+      "sizeBytes": 3961,
+      "sha256": "a0c2ca9f32ba4d276a3db7fd88f7ef0638d467ba5d8f2e2970d40f7e5b552a9c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-book-deconstruction/references/output-template.md",
+      "sizeBytes": 2379,
+      "sha256": "913d00a9761d48f3f365b5419f1396d1a561d95c40e1272ebb50eef35ab000a2",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-ranking-scan/SKILL.md",
+      "sizeBytes": 3562,
+      "sha256": "a9369f67574ec3fca1cefcbffbd4aa7935ac40cf7bcf35f89c806e1cc43ea093",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-ranking-scan/agents/openai.yaml",
+      "sizeBytes": 318,
+      "sha256": "0ba3db6289be997a22e1ad209630e8dff05fa84fe7212aba2e9080575c5f730c",
+      "role": "runtime-data"
+    },
+    {
+      "path": "bestseller-ranking-scan/references/data-quality.md",
+      "sizeBytes": 476,
+      "sha256": "bf3d47f431d02558243304cfe41f2b189a6d9b699a85a6019b5cca536454208b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-ranking-scan/references/long-scan-framework.md",
+      "sizeBytes": 493,
+      "sha256": "62b712484675e29dc997ee73b1aebc4794ca13a2ee6771195f66f6bab1e692c9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-ranking-scan/references/output-template.md",
+      "sizeBytes": 643,
+      "sha256": "bbe3900521e0243632c716e53845f0d7579ef1ca7e084a9ae3812f577dbe5b8a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "bestseller-ranking-scan/references/short-scan-framework.md",
+      "sizeBytes": 418,
+      "sha256": "3a47a10ad5e8b661282c13b4dbddf8e5549963c3bdb974d07f15039a49dde72e",
+      "role": "runtime-content"
+    },
+    {
+      "path": "novel-cover-design/SKILL.md",
+      "sizeBytes": 5501,
+      "sha256": "a6316337e1ba9f81f37c53d32a7526fc18cccb773312f38b77a20dfa001eee7f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/SKILL.md",
+      "sizeBytes": 8615,
+      "sha256": "c9ed7708c77cdd9e825a58a7e1f19d37c9b5ea5ba7fef9d5223e505139962108",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/agents/openai.yaml",
+      "sizeBytes": 296,
+      "sha256": "1af08015eddf1168d15a54a70fedfafd86adf21e48f5f24659a99ada9b3623b3",
+      "role": "runtime-data"
+    },
+    {
+      "path": "original-short-drama/references/original-short-drama-audit.md",
+      "sizeBytes": 8064,
+      "sha256": "64e187833e8a544ba4e5edb6554517d3d3770d3707634a478696360b30bbee50",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/references/outline-script-workflow.md",
+      "sizeBytes": 5669,
+      "sha256": "2c6dc59c4a4a0b1f037eb1685bb5fa8ac3f888424a17a723b96267448cd79c2d",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/references/rewrite-ladder.md",
+      "sizeBytes": 6747,
+      "sha256": "199fbae00e6e571c5eb7493d225503ad915b1406c3607f62adabcbb27d0d1cc1",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/references/setting-memory-information.md",
+      "sizeBytes": 5065,
+      "sha256": "5ede1cad9ffd11d38fdfb605048b2669944345181209af9ea20d470e1d13b7b4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/references/story-engine.md",
+      "sizeBytes": 5073,
+      "sha256": "a99be20f4578f720b01662ed4d222cb8a4db21b6a1b483b70d792d71056f4b69",
+      "role": "runtime-content"
+    },
+    {
+      "path": "original-short-drama/references/top-tier-benchmark.md",
+      "sizeBytes": 6638,
+      "sha256": "e11b4614300123645686ca89f28102eae2afb5b4256bc4daa5fc5295fa93a5e9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/alternative-popular-science/SKILL.md",
+      "sizeBytes": 8129,
+      "sha256": "3457a7563e1b41eee28ef615bf7d168a422a931e5d4b97c7e12044d64d0227ff",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/alternative-popular-science/agents/openai.yaml",
+      "sizeBytes": 355,
+      "sha256": "7a1f23e41746c4cd4b142cec1f1ce343c7ea6b2a3743565c262296a49b962934",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/alternative-popular-science/references/theory.md",
+      "sizeBytes": 12386,
+      "sha256": "d8329f54d302d80ac9c0c3f22963f4d00fe9df8bc332d9b353a13448abfee49a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/LICENSE",
+      "sizeBytes": 1060,
+      "sha256": "b995a6b845825b06461cbc5d7ace91d05fe0fe6d061e1c17bffc31964d2684aa",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/NOTICE.md",
+      "sizeBytes": 590,
+      "sha256": "4a3af27fc11b160217a64fd0c63ec813edae93ddbadaf3f733ececa80ae71d20",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/SKILL.md",
+      "sizeBytes": 4205,
+      "sha256": "54ff046da98d9a0a4a3b6c3ddf5b9fb3c832bdee41baa97abeac0cc9c402d60b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/UPSTREAM.md",
+      "sizeBytes": 644,
+      "sha256": "3ebb945db99e893bade134cf129b4244b6f8c307b3c1e805134e7eb794419198",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/agents/openai.yaml",
+      "sizeBytes": 304,
+      "sha256": "c4006527abc026f66ff04e5e9cecc87b3f83f256af43e7b0993938a009d0ef2f",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/01-two-breakpoints.png",
+      "sizeBytes": 807090,
+      "sha256": "cce4bd8d555796063305642714c67bab0f37cd3ff9cee0da9d18bd6187cf4397",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/02-minimum-loop.png",
+      "sizeBytes": 952871,
+      "sha256": "586bc88af928ca57fcd43c17f4e4566ee891967fb9a4ff5ed0e2455078618029",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/03-sort-by-purpose.png",
+      "sizeBytes": 869435,
+      "sha256": "e23e7974b03d9540662728cc343d57aec8339c37db8ca0eae922e4f0cfdd8980",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/04-one-fish-many-uses.png",
+      "sizeBytes": 1121158,
+      "sha256": "ffb6abeb4e5361ffec6a3cecd40fff122c5f99008e9b2b45e2b83f5c04206ac1",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/05-handoff-path.png",
+      "sizeBytes": 740706,
+      "sha256": "2c4ed6f85c1381b0c9723d21ae3dca4059135c00d3a09b0ed8502a81134ca39e",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/06-three-sources.png",
+      "sizeBytes": 1036312,
+      "sha256": "70a13265b34685ad418676611b68a3ef2fd16b10aaaf8b1152b7ad347eded674",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/07-three-content-jobs.png",
+      "sizeBytes": 942378,
+      "sha256": "429b319c459220def8777e0481e52ac2d8b0026dda3066436c7843b2f178d5cb",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/08-handoff-copy-toolbox.png",
+      "sizeBytes": 924354,
+      "sha256": "c92342daed9af66c7bdbd82da3483b835f21ba19c64d8864b4793ef5ae8ee573",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/09-common-pits-no-title.png",
+      "sizeBytes": 1160863,
+      "sha256": "b14ca58c823e54fa08b4db310cdac19f133d86ae006708527f4b19417391e7f1",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/10-information-well.png",
+      "sizeBytes": 1075561,
+      "sha256": "d36df9a941fe071814ad1e08cdb6131d6e8d840ee655ac04732735dcf8721ccf",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/11-idea-press.png",
+      "sizeBytes": 937104,
+      "sha256": "cded74b04e9225141c394ae9386caff4c3f7f533a51a41c9842999cab83a18ee",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/12-content-fermentation.png",
+      "sizeBytes": 915474,
+      "sha256": "929d4f2fde6938abdab4a5b20a010578389bd59bf0d6fa32daf6611a898b4c32",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/13-system-bearing.png",
+      "sizeBytes": 936889,
+      "sha256": "bcd26b1f34e5c8d220e2180618ffed448455faebfe32ff9e0904ad33a1ab8603",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/assets/examples/14-trust-bridge.png",
+      "sizeBytes": 1164218,
+      "sha256": "381194efc7d3fd6a9c7db9d6d3cf361ae3508aa6614727e0b0615d9f83afe522",
+      "role": "runtime-data"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/references/composition-patterns.md",
+      "sizeBytes": 3318,
+      "sha256": "95d3d352f15ecd37a0ec6368075cf56270c5414937ff98e0e8eb51ad775caf5b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/references/prompt-template.md",
+      "sizeBytes": 2957,
+      "sha256": "12878d39e34fa7863a4ee38b79dc646824d12e4ad5fae17ab8b421cea91635b9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/references/qa-checklist.md",
+      "sizeBytes": 1799,
+      "sha256": "1b8f29da36752ff2c843e4a17afb0425579d9f166232ddea91c1b42e95afc596",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/references/style-dna.md",
+      "sizeBytes": 1854,
+      "sha256": "5325d9faefc2dc10f5ff35434189d30db0470d88431aefc2352197dd44f9f8a3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/ian-xiaohei-illustrations/references/xiaohei-ip.md",
+      "sizeBytes": 1544,
+      "sha256": "0ceb63283816380867d034a711c2db01d6a85363827275702de4985130bff889",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/public-account-humanizer/SKILL.md",
+      "sizeBytes": 4329,
+      "sha256": "0ab13af3caedebf46bbe528bedbc4ae71e2f4c559f29af32c54aecab9d216022",
+      "role": "runtime-content"
+    },
+    {
+      "path": "公众号文章创作理论/公众号文章创作理论.md",
+      "sizeBytes": 4983,
+      "sha256": "6a7d282eaac05f68a7fcc2b35e569673a35161f136c0dde5d197b8c7f165397f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/browser-cdp/SKILL.md",
+      "sizeBytes": 6474,
+      "sha256": "0d2ba9d2045aaaa67b0e51aa2b7b6f42dfa9685e50bbe2437b4f23f10c302785",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/browser-cdp/scripts/setup-cdp-chrome.js",
+      "sizeBytes": 18775,
+      "sha256": "a1649396081c687c964bf20ed63f5963b04467dd9d0598731612e5e1c1875d3d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-cover/SKILL.md",
+      "sizeBytes": 14921,
+      "sha256": "a68ef3dd37d9e19bf8e4742db7b8d3568d880f8308664eda5d62cc58369c6dac",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-cover/references/cover-styles.md",
+      "sizeBytes": 9202,
+      "sha256": "5490dcaa8bb1f4ad0d726afb396deddd84cfc08f18d81556124eeaf69e5f85e3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/SKILL.md",
+      "sizeBytes": 26520,
+      "sha256": "9862efcf72ee67db14e9c6230059dad5e540ecfaf3c2b05d3210976f0d08ceda",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/references/anti-ai-writing.md",
+      "sizeBytes": 21808,
+      "sha256": "92bb9b57711790ca3a11f31e71a09a5a71d5f770a31102747713c3738a80c475",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/scripts/check-ai-patterns.js",
+      "sizeBytes": 15603,
+      "sha256": "5f6e9122ee7a504f2b44ad7fa81f6b234f3670349b36efcf3b6961f10a7045a9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/scripts/check-degeneration.js",
+      "sizeBytes": 14318,
+      "sha256": "42aacda05c78a8b774d6cba277f939bb054096d16fcaba76f35fdf3743dfaa00",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-deslop/scripts/normalize-punctuation.js",
+      "sizeBytes": 8380,
+      "sha256": "2ffbc9e9530666079256ffd9697ec0b7e9d5989d9feba4554dd174a7ecbcbd1e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/SKILL.md",
+      "sizeBytes": 37316,
+      "sha256": "340ef0c8d790f52964ebf844bc869668c64d0e18e82b9e003c2e7224fcdde7c3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/character-state-reverse.md",
+      "sizeBytes": 6052,
+      "sha256": "1f805bf454e9b05e77dc7a5966dfaadea53b0911f63e1470e5b4c60bed23bc41",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/format-and-structure.md",
+      "sizeBytes": 11329,
+      "sha256": "5c44f98a0c5f19d1b6f5e5c1d4e461e32af8bf5c27428d2cffcb863377ff8873",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/length-routing.md",
+      "sizeBytes": 5436,
+      "sha256": "c15878e5b48be68d70e76f66efbd7031c31c3a512968e0a9ebd71293f8b8da9a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/state-tracking.md",
+      "sizeBytes": 4104,
+      "sha256": "1f762f022fe2137ae94ff1dfc70d5263b41aa0487c7f343e8ec5f2801e844c8b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/structure-mapping-long.md",
+      "sizeBytes": 19348,
+      "sha256": "c0953b46baf4a0be280198d3136dd6ebbdbb5f2f41a26f5067cdea63fdb7c246",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-import/references/structure-mapping-short.md",
+      "sizeBytes": 7772,
+      "sha256": "29275346340f6d3930f4f1996dc7d04acbf3d142ebb272915e4e384a594e3336",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/SKILL.md",
+      "sizeBytes": 27149,
+      "sha256": "26147012afe54d522dd0e3feceb023da7fb57a421eb896f85251959f68c5b0aa",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/deconstruction-notes.md",
+      "sizeBytes": 11460,
+      "sha256": "0c03797d7d330a4c9885a5fac95f43635fb3f8267dd6e2b7df068cd0355bc2a0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/material-decomposition.md",
+      "sizeBytes": 29553,
+      "sha256": "15233eea56223333efbfe2ce283ce0848a8c3897d87be278bfefdaab95fac4b6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/output-templates.md",
+      "sizeBytes": 26438,
+      "sha256": "2b4dda9a4c650ca1cb1b4b1f03bb561189f68c0329318c9da9360ae8ffc513f7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/pipeline-ops.md",
+      "sizeBytes": 3705,
+      "sha256": "8ecbe29d354919685695220f840044880fdec1daeef1b50398b254b72f686922",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/style-profile-generator.md",
+      "sizeBytes": 10257,
+      "sha256": "e8135a81c5b718031b4077bcb8b8694265ecbcb4293dceac253008e4f7f1fe4b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-analyze/references/style-profile-protocol.md",
+      "sizeBytes": 5958,
+      "sha256": "24c7e24eba0cdb2857d2f37b8960a737dbd541c6b4e6953020533e1406b89918",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/SKILL.md",
+      "sizeBytes": 18241,
+      "sha256": "b0e9603352db1c802d0843ff31a9c1e83b8817ad5c26f0c10052b8260c9c2b79",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/references/genre-trends.md",
+      "sizeBytes": 7373,
+      "sha256": "1d60bc0ad86a510845c11d3b6b3320b446de938c038d9b636c694890cf1d90e6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/references/publishing-guide.md",
+      "sizeBytes": 5448,
+      "sha256": "e84bae7816a06ef0da4b0faa6e9947d35b6e3f9552cba084720f5eab63e19615",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/references/reader-profiling.md",
+      "sizeBytes": 4087,
+      "sha256": "713ad7db4df6ef10e0605fc7581545d288c09577d5890c724eb3f8efef414b75",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/references/scan-output-format.md",
+      "sizeBytes": 8835,
+      "sha256": "4df1f415ed339b766c1d7d408db69ef4958d73e35d34ee453e57f9b1e107ba7d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/references/topic-decision.md",
+      "sizeBytes": 4037,
+      "sha256": "4e5a176a03dd3dea9ac1667c815656d80360d0b91130868c6b6bbd887b8752e2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/cdp-utils.js",
+      "sizeBytes": 2513,
+      "sha256": "6e0cf730a95948619c66fb3677d3f368acac6a9dfd00cf85e736fd732ab2ef30",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/ciweimao-rank-scraper.js",
+      "sizeBytes": 9694,
+      "sha256": "f08325b2b490a9ed6382cd4c2f05ad58fc3511b08cf812de52c9f39c33dbbfdf",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/fanqie-rank-scraper.js",
+      "sizeBytes": 17094,
+      "sha256": "8d028325521f1ba3b4181592c383273d29f4ede290834d33ac3fd6774a49b479",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/jjwxc-rank-scraper.js",
+      "sizeBytes": 14388,
+      "sha256": "8eff955429363e2d9db031434d49d16c32410041f5e5039ad9ff8c471c3e31b5",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/qidian-rank-scraper.js",
+      "sizeBytes": 18467,
+      "sha256": "a4687996778c48ffee7c9a2eb0001ff88c21117809d8c32d03fb59fcff31d790",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-scan/scripts/qimao-rank-scraper.js",
+      "sizeBytes": 11265,
+      "sha256": "3835d0d21b590d3b7cfa0e06c5497ee387b685ce800cd92951430d4d31487bd4",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/SKILL.md",
+      "sizeBytes": 64698,
+      "sha256": "6a599a82d5bde1f3fe7c58c34dd76a134ddf05c0330330248006448545b165f2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/anti-ai-writing.md",
+      "sizeBytes": 21816,
+      "sha256": "6089808e42d61d2002e02a1d9928bfb332a3bd3f40f8a454b232e08eae33c763",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/artifact-protocols.md",
+      "sizeBytes": 11472,
+      "sha256": "6a4edd7b620c858ae62ca5f73126e5e360e8cfe0ac37b07a8393f34fa4a9ec0c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/character-basics.md",
+      "sizeBytes": 16877,
+      "sha256": "af3af7586a7173f80fa2fa37b0ac45469aed3d8994ab2380635623c4cd0c2c51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/character-design-methods.md",
+      "sizeBytes": 16690,
+      "sha256": "85125ba6b420c442bc04ad69a36fb60b76b3411a377afb9cf0ee6e66de6f3f62",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/character-relations.md",
+      "sizeBytes": 15855,
+      "sha256": "1f15248dcaa7965f3fb56690372e6365fb3978593c06a6ba112a27377fe09580",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/commercial-core-methods.md",
+      "sizeBytes": 21150,
+      "sha256": "61a5e1bb61975cd5ce4a0329f512bd3a35538daa9c55ef0964e37de2fadb0661",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/cross-book-recall.md",
+      "sizeBytes": 4299,
+      "sha256": "7822ddcee89399d1b22ef4ccf912f231e499d2b1e190c47bbbe650ede7e84520",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/dialogue-mastery.md",
+      "sizeBytes": 11609,
+      "sha256": "6a9f69691179dcdbc327b12215e4d3bd6204c3af51156943c8b6eae9e23650dc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/emotional-arc-design.md",
+      "sizeBytes": 17811,
+      "sha256": "f0f52819f7f679ef7b7143ad97c250cc54094c12868d97c205961ea0965ac86c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/emotional-methods.md",
+      "sizeBytes": 7869,
+      "sha256": "49bd7d07cb21cd5a756d44ab8223304377a212e4162ad529deb4746a9164a67b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/female-audience-writing.md",
+      "sizeBytes": 11999,
+      "sha256": "c7d0733819f8e7b9a3da67849284f85b6208eb9fb42a83e4d550a79ee258f470",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/format-and-structure.md",
+      "sizeBytes": 11329,
+      "sha256": "5c44f98a0c5f19d1b6f5e5c1d4e461e32af8bf5c27428d2cffcb863377ff8873",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/genre-catalog.md",
+      "sizeBytes": 20964,
+      "sha256": "3e3c4702a350b0c77f54d38b947d81773ef6d9aa4721801f9f59033cbfef0c47",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/genre-core-mechanics.md",
+      "sizeBytes": 17775,
+      "sha256": "18a1a2b689eddb97362d05a5827053e281ec32493647cfbfc4ec354d11ac4767",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/genre-readers.md",
+      "sizeBytes": 11207,
+      "sha256": "d71b4ae5e028c8ccec8f5ab2cdecfceecd1aaf2f33ab2e55f17d071a9e6b3d66",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/genre-writing-formulas.md",
+      "sizeBytes": 21538,
+      "sha256": "534dd2aa5faa05f3f8a03ee26e94872e32c7e42f25f126cd8226239b46198192",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/hooks-chapter.md",
+      "sizeBytes": 8857,
+      "sha256": "db7ccb7a8364b0ac8e19e6783f1fc5aaa14b1c377c64173580c8a76f5b905c7e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/hooks-paragraph.md",
+      "sizeBytes": 6994,
+      "sha256": "2b6987682ad63b858bcc69d2c9846fa05a48f5163d19eb9d2a24812cd9a8eb81",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/hooks-suspense.md",
+      "sizeBytes": 15660,
+      "sha256": "e80fd4344f906baaa12daf57daeb7d337d6d33aad6656be52e01e98df717c68d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/opening-design.md",
+      "sizeBytes": 12158,
+      "sha256": "608c4b42ae31a9c864eba1ad0fdbea3adcfcaf2c861e906e14fe50d8722c987c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/outline-conflict.md",
+      "sizeBytes": 18240,
+      "sha256": "3327030da6fbfd62fb1998f801faceaeee372b5443a226365b7edb5445b01a1a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/outline-methods.md",
+      "sizeBytes": 11177,
+      "sha256": "f37f73272c70d97f5eb6a28d34cefc40aba4151178871c9a5e389f02746a7763",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/outline-rhythm.md",
+      "sizeBytes": 13267,
+      "sha256": "2d4de913350b3eded3a486606df091e41b3e8a827f4c8907a49e8d17d42581b7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/outline-structure-theory.md",
+      "sizeBytes": 19716,
+      "sha256": "74036e5d5624d19995a8952e5a52072b9958cb6e2ffb86f0108279155b572ab9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/plot-core-methods.md",
+      "sizeBytes": 21208,
+      "sha256": "ae90f5e43d11eb872d983616982f9bffda7aa41b06152661604537f0dbaf319f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/plot-emotion-system.md",
+      "sizeBytes": 16221,
+      "sha256": "77c25c49b1ab1ffcd9b7ed852419249277994e32b567032fea153daa5251aba5",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/plot-frameworks.md",
+      "sizeBytes": 29847,
+      "sha256": "d84ed583adba4043805ab32692eea501f6e7ba8a97dfa26df1bc230e4e53b6f2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/plot-special-topics.md",
+      "sizeBytes": 26151,
+      "sha256": "cbfb846a3e01dddaea5057d796273d4272f563a88968d817ec56d8cb30ab811f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/quality-checklist.md",
+      "sizeBytes": 9686,
+      "sha256": "face740dfbefd9a8ccd2ea0758863ea4550306a78260735ce86c4f3350ad7677",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/reversal-toolkit.md",
+      "sizeBytes": 16064,
+      "sha256": "d337502ed14e832d291fcaae3bae8da482118eb5d7ec45494a2c4107ca7fe827",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/state-tracking.md",
+      "sizeBytes": 4104,
+      "sha256": "1f762f022fe2137ae94ff1dfc70d5263b41aa0487c7f343e8ec5f2801e844c8b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/style-combat-face.md",
+      "sizeBytes": 20587,
+      "sha256": "5291150dbf347273e38c60cc60ac0a564e8ba2ba93b3fcecd611dd3b73ddec4b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/style-craft.md",
+      "sizeBytes": 13708,
+      "sha256": "ffd0d6ff2a7abff73cee87a65053539df1ba02555c21e991c07bfc405cb2678c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/style-genre-modules.md",
+      "sizeBytes": 21346,
+      "sha256": "9d4519872bee447c572381f7fbd579c8da5785523d4cf56c78141d0fbacaa27c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/workflow-daily.md",
+      "sizeBytes": 24744,
+      "sha256": "eb2afdd85887cc1dd52b8b4b88bb72b0ec5bfd409729683b4c69c5d3524b783e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/workflow-revision.md",
+      "sizeBytes": 4819,
+      "sha256": "9a84cbd7269197c0b6a5d90f295618456977f10f533cec2db70a139ced79f5aa",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/references/writing-craft.md",
+      "sizeBytes": 19170,
+      "sha256": "048d259c20ba9cc156923f453cc11c01f2d8f33be92fda7ae5176c6551e32bb3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/scripts/check-ai-patterns.js",
+      "sizeBytes": 15603,
+      "sha256": "5f6e9122ee7a504f2b44ad7fa81f6b234f3670349b36efcf3b6961f10a7045a9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/scripts/check-degeneration.js",
+      "sizeBytes": 14318,
+      "sha256": "42aacda05c78a8b774d6cba277f939bb054096d16fcaba76f35fdf3743dfaa00",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-long-write/scripts/normalize-punctuation.js",
+      "sizeBytes": 8380,
+      "sha256": "2ffbc9e9530666079256ffd9697ec0b7e9d5989d9feba4554dd174a7ecbcbd1e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/SKILL.md",
+      "sizeBytes": 32709,
+      "sha256": "574259bd2aa423472e840b6a52073652893e9c705998a6cb6799a49719eb6ff3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/anti-ai-writing.md",
+      "sizeBytes": 21808,
+      "sha256": "dc5f8c133dace13fb9326edb5b3d0ead3b85751785fb94d73613c583e011aa27",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/character-relations.md",
+      "sizeBytes": 15855,
+      "sha256": "1f15248dcaa7965f3fb56690372e6365fb3978593c06a6ba112a27377fe09580",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/dialogue-mastery.md",
+      "sizeBytes": 11609,
+      "sha256": "6a9f69691179dcdbc327b12215e4d3bd6204c3af51156943c8b6eae9e23650dc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/plot-core-methods.md",
+      "sizeBytes": 21208,
+      "sha256": "ae90f5e43d11eb872d983616982f9bffda7aa41b06152661604537f0dbaf319f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/quality-checklist.md",
+      "sizeBytes": 9520,
+      "sha256": "21b2de6a2855d2efd9adfac4898ccf2011a006ae45f8e692e2db1deedf566ba8",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/quality-rubric.md",
+      "sizeBytes": 3575,
+      "sha256": "853c3ba3f1dfa885150b32e74f4f6a59f45d5d3303ba3df49634c792e63a924d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/rubrics/fanqie.md",
+      "sizeBytes": 909,
+      "sha256": "cf7ac8ddd9478422dd75bbb7a1b0c3e5b81dbae9252ca6e29bad579644b05a06",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/rubrics/qidian.md",
+      "sizeBytes": 1006,
+      "sha256": "543d7b2ad4a393db0e69655941b9529e20441450a5ecc284aa965e59552cea71",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/references/rubrics/zhihu.md",
+      "sizeBytes": 1185,
+      "sha256": "b9442637d92a5f08e512941fc801115dd74b4c12f39abce9abaf56d319da5abf",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/scripts/check-ai-patterns.js",
+      "sizeBytes": 15603,
+      "sha256": "5f6e9122ee7a504f2b44ad7fa81f6b234f3670349b36efcf3b6961f10a7045a9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/scripts/check-degeneration.js",
+      "sizeBytes": 14318,
+      "sha256": "42aacda05c78a8b774d6cba277f939bb054096d16fcaba76f35fdf3743dfaa00",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-review/scripts/normalize-punctuation.js",
+      "sizeBytes": 8380,
+      "sha256": "2ffbc9e9530666079256ffd9697ec0b7e9d5989d9feba4554dd174a7ecbcbd1e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/SKILL.md",
+      "sizeBytes": 34245,
+      "sha256": "6f8b94ad4110fcd460c93d3875966072c0e99b3938f8bd6445fb9d5ce8236686",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/UPGRADING.md",
+      "sizeBytes": 17199,
+      "sha256": "4781d8b958e847577b6254871e084887cb5be55bf121cc14817d2f23e3a4b496",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/anti-ai-writing.md",
+      "sizeBytes": 21840,
+      "sha256": "a58c36a8425ce700c9933c6deec1bf2104366d9f53e0e3cffb4e1bc6a2d34f92",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/character-basics.md",
+      "sizeBytes": 16877,
+      "sha256": "af3af7586a7173f80fa2fa37b0ac45469aed3d8994ab2380635623c4cd0c2c51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/character-design-methods.md",
+      "sizeBytes": 16690,
+      "sha256": "85125ba6b420c442bc04ad69a36fb60b76b3411a377afb9cf0ee6e66de6f3f62",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/character-relations.md",
+      "sizeBytes": 15855,
+      "sha256": "1f15248dcaa7965f3fb56690372e6365fb3978593c06a6ba112a27377fe09580",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/dialogue-mastery.md",
+      "sizeBytes": 11609,
+      "sha256": "6a9f69691179dcdbc327b12215e4d3bd6204c3af51156943c8b6eae9e23650dc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/emotional-arc-design.md",
+      "sizeBytes": 17811,
+      "sha256": "f0f52819f7f679ef7b7143ad97c250cc54094c12868d97c205961ea0965ac86c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/emotional-methods.md",
+      "sizeBytes": 7869,
+      "sha256": "49bd7d07cb21cd5a756d44ab8223304377a212e4162ad529deb4746a9164a67b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/format-and-structure.md",
+      "sizeBytes": 11329,
+      "sha256": "5c44f98a0c5f19d1b6f5e5c1d4e461e32af8bf5c27428d2cffcb863377ff8873",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/genre-catalog.md",
+      "sizeBytes": 20964,
+      "sha256": "3e3c4702a350b0c77f54d38b947d81773ef6d9aa4721801f9f59033cbfef0c47",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/genre-core-mechanics.md",
+      "sizeBytes": 17775,
+      "sha256": "18a1a2b689eddb97362d05a5827053e281ec32493647cfbfc4ec354d11ac4767",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/genre-readers.md",
+      "sizeBytes": 11207,
+      "sha256": "d71b4ae5e028c8ccec8f5ab2cdecfceecd1aaf2f33ab2e55f17d071a9e6b3d66",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/genre-writing-formulas.md",
+      "sizeBytes": 21538,
+      "sha256": "534dd2aa5faa05f3f8a03ee26e94872e32c7e42f25f126cd8226239b46198192",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/hooks-chapter.md",
+      "sizeBytes": 8857,
+      "sha256": "db7ccb7a8364b0ac8e19e6783f1fc5aaa14b1c377c64173580c8a76f5b905c7e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/hooks-suspense.md",
+      "sizeBytes": 15660,
+      "sha256": "e80fd4344f906baaa12daf57daeb7d337d6d33aad6656be52e01e98df717c68d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/opening-design.md",
+      "sizeBytes": 12158,
+      "sha256": "608c4b42ae31a9c864eba1ad0fdbea3adcfcaf2c861e906e14fe50d8722c987c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/outline-conflict.md",
+      "sizeBytes": 18240,
+      "sha256": "3327030da6fbfd62fb1998f801faceaeee372b5443a226365b7edb5445b01a1a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/outline-methods.md",
+      "sizeBytes": 11177,
+      "sha256": "f37f73272c70d97f5eb6a28d34cefc40aba4151178871c9a5e389f02746a7763",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/outline-rhythm.md",
+      "sizeBytes": 13267,
+      "sha256": "2d4de913350b3eded3a486606df091e41b3e8a827f4c8907a49e8d17d42581b7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/plot-core-methods.md",
+      "sizeBytes": 21208,
+      "sha256": "ae90f5e43d11eb872d983616982f9bffda7aa41b06152661604537f0dbaf319f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/quality-checklist.md",
+      "sizeBytes": 9686,
+      "sha256": "face740dfbefd9a8ccd2ea0758863ea4550306a78260735ce86c4f3350ad7677",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/reversal-toolkit.md",
+      "sizeBytes": 16064,
+      "sha256": "d337502ed14e832d291fcaae3bae8da482118eb5d7ec45494a2c4107ca7fe827",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/style-combat-face.md",
+      "sizeBytes": 20587,
+      "sha256": "5291150dbf347273e38c60cc60ac0a564e8ba2ba93b3fcecd611dd3b73ddec4b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/style-genre-modules.md",
+      "sizeBytes": 21346,
+      "sha256": "9d4519872bee447c572381f7fbd579c8da5785523d4cf56c78141d0fbacaa27c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/agent-references/writing-craft.md",
+      "sizeBytes": 19170,
+      "sha256": "048d259c20ba9cc156923f453cc11c01f2d8f33be92fda7ae5176c6551e32bb3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/AGENTS.md.tmpl",
+      "sizeBytes": 2764,
+      "sha256": "6deb5685686e13b4066490832bd00b2ac653223c38689213372960f0d4be5d2d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/chapter-extractor.toml",
+      "sizeBytes": 15631,
+      "sha256": "12ee369ebdb93f63c873d9232759840dc8fa629ed3d781a3a1e2945587c5d4a1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/character-designer.toml",
+      "sizeBytes": 10381,
+      "sha256": "69652404b715f13ebae9e4334a01358300782d31d7b6f4ea1fcaa989c56bd0fe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/consistency-checker.toml",
+      "sizeBytes": 11259,
+      "sha256": "f03c2c81586f8a5485cb5ad0a23ccaec8c148423b908924f02f5539e17cfdf0e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/narrative-writer.toml",
+      "sizeBytes": 30170,
+      "sha256": "6b08c37fc9345705ee4e94446cf0ff28e6d83680c2dd72b2f71e2d85ef46705e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/story-architect.toml",
+      "sizeBytes": 12036,
+      "sha256": "0323457819d1ffc2dd8b6f84e062df748a782a1f61b6091b9681e425724244e0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/story-explorer.toml",
+      "sizeBytes": 19990,
+      "sha256": "b2ac238b9d6b221d9ded16802008398409192a3cc43f785d14f9bb6dfdc58485",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/agents/story-researcher.toml",
+      "sizeBytes": 13310,
+      "sha256": "fd750655eefb16079bfef52bd5bacb7313a10a9ff34292299f6b451361daf823",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/hooks/hooks.json",
+      "sizeBytes": 6741,
+      "sha256": "0a10881182e4be338a4ac7af1195297d8ab70a5220c19d1e4f39a3cae0c38a51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/codex/hooks/story_codex_hook.py",
+      "sizeBytes": 28495,
+      "sha256": "cbdfef570e0f36494d0db779ff85d6cddf3bc8e4ed98d88c2396cf06b98a9ec6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/openclaw/AGENTS.md.tmpl",
+      "sizeBytes": 3403,
+      "sha256": "7f63946e225610a34b0ed00909b81805c4bcc46e6f5d8c250cc9a6bc7f4a5b01",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/AGENTS.md.tmpl",
+      "sizeBytes": 2085,
+      "sha256": "568ae8457929e2abbbab20939b5a87f563a6a231af194d08f6e1b86973584989",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/chapter-extractor.md",
+      "sizeBytes": 14838,
+      "sha256": "1d58a4b222f03c923c50f864d8fd1548f612db347dc94eac67d389257dba314a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/character-designer.md",
+      "sizeBytes": 9450,
+      "sha256": "986b8d5e27ac06993f2b393048636d3719da217479b99ece58e430a45c81ab4d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/consistency-checker.md",
+      "sizeBytes": 10295,
+      "sha256": "05a335ecc0bf60def5e9c8c76c05a0e0d869c57bd43a289961f26e28ff96f774",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/narrative-writer.md",
+      "sizeBytes": 29238,
+      "sha256": "77761056747a43f418ee68883ec288fd3270e89bb771290a2661cc97284d4a87",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/story-architect.md",
+      "sizeBytes": 11115,
+      "sha256": "53ac1325c22d3a7564af429090d00b26db590108bacf722dee09943132d2b0d4",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/story-explorer.md",
+      "sizeBytes": 19217,
+      "sha256": "c86a73e1ae95b1760eb1ac12ffa0bf3c32416e266799588bca9757aedc720a58",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/agents/story-researcher.md",
+      "sizeBytes": 12569,
+      "sha256": "c52017134bef437533f8105d9c35eb485e27c8a447b77ba93a85e3e9b92fd8eb",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/browser-cdp.md",
+      "sizeBytes": 262,
+      "sha256": "7d53b936db401a161345988485f34759cc1e532c1b09a5248d94df6d30dde94c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-cover.md",
+      "sizeBytes": 167,
+      "sha256": "ff14c4ce8f7fff61980053c652655f342ac05f3ad6f74ea3936a88cb11cf0ff7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-deslop.md",
+      "sizeBytes": 200,
+      "sha256": "8623ca9a04fa8e5af083aedd9a256d203d58afc381d9a822fd6935d6acdc5fed",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-import.md",
+      "sizeBytes": 213,
+      "sha256": "194baa9b3de7ed5fab39c73e55f6e7cf80df7d60c945f968a4493dfb3d0ca65e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-long-analyze.md",
+      "sizeBytes": 192,
+      "sha256": "13d1636895a4bb2a9fda286f114c1dec4c406ab3c5cf9a6ddd7c4601432abd85",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-long-scan.md",
+      "sizeBytes": 210,
+      "sha256": "95d3fbc70672cc50e07b0fb2810060c2d53c948059da603121c6d78121a51957",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-long-write.md",
+      "sizeBytes": 178,
+      "sha256": "c9394f24ec2a28b202009434c932bc4b08cfcd18b832722cedfd3b39a0c24c6e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-review.md",
+      "sizeBytes": 190,
+      "sha256": "2a0894231b78eff95b05065c7ebb579c9feaf392474de14268af93e71114eb9e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-setup.md",
+      "sizeBytes": 208,
+      "sha256": "8042c50719ce91bb79aeb227c97f2d15008243b22bad48eb593b14c34d9dbe0e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-short-analyze.md",
+      "sizeBytes": 187,
+      "sha256": "19ae698121af962bbc933d052c99ec1f769f1e8d08fd75f339a4ce8f74a717c3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-short-scan.md",
+      "sizeBytes": 193,
+      "sha256": "de897006a9717653865ab91e73f51eba1face357bc9001b20a70bcf8916f1891",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story-short-write.md",
+      "sizeBytes": 170,
+      "sha256": "6065a973abcb1519a5249595c04b22b6944bbe1e560496528d1c3513ed60873a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/commands/story.md",
+      "sizeBytes": 216,
+      "sha256": "6d1346a4eb85248829eaad9cac8ef493ab76737498aa632420148ebab8419209",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/opencode.json.patch",
+      "sizeBytes": 117,
+      "sha256": "8ea7ddc05f3397fe1acb4f1396f8cf3910fb652dad558e5d5fd3e193f2cae793",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/plugin.ts",
+      "sizeBytes": 19654,
+      "sha256": "5a6c547742c52c00f0b2d94488ef22e8b0eb69788733fe37bd983d3a94f25065",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/opencode/pre-commit.sh",
+      "sizeBytes": 1443,
+      "sha256": "d9a882ac47af3e2523eafa9e3dc7fd858782f96e4a097fe83863290999f4c02e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/CLAUDE.md.tmpl",
+      "sizeBytes": 2087,
+      "sha256": "39fa96b909104044730d677ab14099a4d1369142ee969d73310aa96ee586898e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/chapter-extractor.md",
+      "sizeBytes": 14885,
+      "sha256": "086a30d6bac6e953bc00a85cf22a150e171987693577d0f6e42f669ed378e485",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/character-designer.md",
+      "sizeBytes": 9688,
+      "sha256": "bf611afa795f9e1190e0c247bc5669388f81c655b86ff0aade55f8a5d9d3b16c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/consistency-checker.md",
+      "sizeBytes": 10658,
+      "sha256": "ca9030cd9a45524a634c58cee342436a12267961f8c7b34c3a04e566df1972be",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/narrative-writer.md",
+      "sizeBytes": 29709,
+      "sha256": "81fada5ae50263d4a60ee1cf892ccf914e715d7daddf1ce350a545a2ef8c566a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/story-architect.md",
+      "sizeBytes": 11411,
+      "sha256": "a6d0798b84753bbbe4116e48b56c6b12350bca37af49cbb818463eaefb0ba370",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/story-explorer.md",
+      "sizeBytes": 19477,
+      "sha256": "203e682a7aeff91a6a7ebe62980db9e1205d0fe89ee7622e4b4843b59182e12a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/agents/story-researcher.md",
+      "sizeBytes": 12685,
+      "sha256": "ca2868888db5654d7618628399cd27b6a1c4861c677bea11542e0af96c8255de",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/check-prose-after-write.sh",
+      "sizeBytes": 10526,
+      "sha256": "5c5f43f98e0081c62feb9691bfe0c5ad2bfa9ffa151c9512f9329ae81f11005e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/detect-story-gaps.sh",
+      "sizeBytes": 8261,
+      "sha256": "f8d6c3b622c017e4d60c1cfa0ff29b03473dd97a453802d31de9a763fa657663",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/guard-outline-before-prose.sh",
+      "sizeBytes": 6270,
+      "sha256": "3cf87095035b48a3d9f9b05f7dc0a24744c14c7c4a400f4f708fb4f1c7bc6024",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/lib/common.sh",
+      "sizeBytes": 3861,
+      "sha256": "a0748550ba3c2e39c7d63c9a68d6ab59359c87fb7c618d24788fdfbbcc026bfa",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/lib/sentinel.sh",
+      "sizeBytes": 1558,
+      "sha256": "ca74713f51db226aadd0b3d779203c6abf339be8c8d40d6e136fb93b2bdcdd33",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/post-compact.sh",
+      "sizeBytes": 717,
+      "sha256": "d5383c7fd16b479b18b18049ea3764286117ee887cbaf04f0ef5d09500841e56",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/pre-compact.sh",
+      "sizeBytes": 1070,
+      "sha256": "91c14c542a2629b1718f2db65217d3a82282be50f1209bb32408da056837525d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/session-end.sh",
+      "sizeBytes": 969,
+      "sha256": "316e5a805bf66755820c257c3220254d8b6d69e274130fc7bf1d62338d047cd2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/session-start.sh",
+      "sizeBytes": 7045,
+      "sha256": "7efec6dfdd6cd73a78a278beaf57250da20039819db0179a7fcaf5177e23b323",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/hooks/validate-story-commit.sh",
+      "sizeBytes": 6908,
+      "sha256": "e4c565a09788475128d7f67b71f8336a670734d6dd076f16201060359ddcaed3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/rules/story-consistency.md",
+      "sizeBytes": 1880,
+      "sha256": "aad7bb5e3ea481d9799ade28ca0131f67aeaba4d89ab904adee0468d978f6dc2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/rules/story-format.md",
+      "sizeBytes": 3232,
+      "sha256": "498c250cd1c8c64b61693df179243dabb07bca7c48267f32719f2b5af6a25f82",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/rules/story-narrative.md",
+      "sizeBytes": 3221,
+      "sha256": "bd6d8eb153b8c36877f00cb9800e0128aaff3a444837bfbdbcd38f60808fe2d8",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/rules/story-outline.md",
+      "sizeBytes": 3512,
+      "sha256": "c2bc2b7f9c206b566a5fabacb1e1e9d5d110efb3ad979a61140b52177501d262",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/settings-hooks.json",
+      "sizeBytes": 2108,
+      "sha256": "9006b3a10f3122b3fca9d803f569e3eaff42b0701ba930bd8a7614f4eb46fa28",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-setup/references/templates/上下文.md.tmpl",
+      "sizeBytes": 1830,
+      "sha256": "41e9bb09a3b72b3c9eb0d6dcc1aad65acd592f7e9f5d24c453dfd5df0f00c0ff",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/SKILL.md",
+      "sizeBytes": 17974,
+      "sha256": "fda3f235b54d31f8b1f38bc37545dd71fe78f7a7ff899327649148e001df0cf2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/anti-ai-writing.md",
+      "sizeBytes": 21822,
+      "sha256": "ed4b899ede39493c747f5d6fd7cd143b84c7d67e41e8cfefc097a295761032ca",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/character-basics.md",
+      "sizeBytes": 17464,
+      "sha256": "3d019f0eaf538b3eadcf546d3a0c5991d109b5553b8c54227f37f5c5e2df064f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/character-design-methods.md",
+      "sizeBytes": 17277,
+      "sha256": "e35a47622fda4b11032c3e1cbe06459ab21b6088705e0771d6eb41b047ff329d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/character-relations.md",
+      "sizeBytes": 16442,
+      "sha256": "515c69945a1dea17c5c6c23879e52c4ca0d64f00ef1dc1680209ef0d9abf743e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/deconstruction-examples.md",
+      "sizeBytes": 4280,
+      "sha256": "c9140b8668aaa2a298adf38a1425aab6ccb16adcf82a2abc1c183e8c0dbbe435",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/genre-catalog.md",
+      "sizeBytes": 21551,
+      "sha256": "f7554f97c70c3eae0ae462b5f058b4762f08f596dd827c28b226fad249c39e5d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/genre-core-mechanics.md",
+      "sizeBytes": 18362,
+      "sha256": "7d6280a64b22a82e639b2a7591cf2cfbb7527d6383b6576f661119d6274a6fe7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/genre-readers.md",
+      "sizeBytes": 11794,
+      "sha256": "c9884c20146fe1c438a9092db6c8a87cd9a47a0290d54ed13a0a100f09bb78fc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/genre-writing-formulas.md",
+      "sizeBytes": 22125,
+      "sha256": "bfa58bdfe8a6f0ee24f5b872998ab6ca8e6e74f5c74accec752712f6067597bd",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/genre-writing-techniques.md",
+      "sizeBytes": 21275,
+      "sha256": "1762a863d1ea49ebda3cdb4fb0b0ba54d373ba611b99ddc994ed79fd209e203c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/hooks-chapter.md",
+      "sizeBytes": 8857,
+      "sha256": "db7ccb7a8364b0ac8e19e6783f1fc5aaa14b1c377c64173580c8a76f5b905c7e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/hooks-paragraph.md",
+      "sizeBytes": 6994,
+      "sha256": "2b6987682ad63b858bcc69d2c9846fa05a48f5163d19eb9d2a24812cd9a8eb81",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/hooks-suspense.md",
+      "sizeBytes": 15660,
+      "sha256": "e80fd4344f906baaa12daf57daeb7d337d6d33aad6656be52e01e98df717c68d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/material-decomposition.md",
+      "sizeBytes": 36324,
+      "sha256": "12ab211e6242d70bcca780c0e0f57802cb56a193cb07a12d3d2a0e418e2e96d4",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/output-contract.md",
+      "sizeBytes": 9288,
+      "sha256": "919488bcb37644dbdd9f343b9ea4fc4bb264f9d7cb8eb2224098fdc85a4a3396",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/output-templates.md",
+      "sizeBytes": 25831,
+      "sha256": "d32fb595fe25fb3783a987955728a411fa34b05ba18313d18a32e0139a0f3b8c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/quality-checklist.md",
+      "sizeBytes": 11098,
+      "sha256": "375f8d2168ec0835b32e80fac9a8c3849b304f1026b355a00d10057fdbc09b2a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/real-market-data.md",
+      "sizeBytes": 5052,
+      "sha256": "56a032516040bc129f7151c0372419c695f5e9ce89ed792b334b8121fe9a6c51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-analyze/references/zhihu-style.md",
+      "sizeBytes": 2316,
+      "sha256": "51bbac8488a65fb2a1f661d86b410a734298e772cb6fab303a236a967ab294b0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-scan/SKILL.md",
+      "sizeBytes": 9481,
+      "sha256": "b8356644dc7fa6f399567913c7bc547a4ca9520302c12bee5154e0ac61d73e06",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-scan/references/real-market-data.md",
+      "sizeBytes": 5052,
+      "sha256": "56a032516040bc129f7151c0372419c695f5e9ce89ed792b334b8121fe9a6c51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-scan/scripts/cdp-utils.js",
+      "sizeBytes": 2513,
+      "sha256": "6e0cf730a95948619c66fb3677d3f368acac6a9dfd00cf85e736fd732ab2ef30",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-scan/scripts/dz-browse-scraper.js",
+      "sizeBytes": 9566,
+      "sha256": "31dcba6b79119563f14b17e0e1f44bf2f27a01e13c64424ece7853d1253eb325",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-scan/scripts/heiyan-booklist-scraper.js",
+      "sizeBytes": 10281,
+      "sha256": "ba4ed2c10c0e96132cc427ddc9a49f8e88b49f4fe6972c8578bedbaa23cd3471",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/SKILL.md",
+      "sizeBytes": 38786,
+      "sha256": "f85ea64c9b9e653b5fadb9583277e9d7a30f324ecc6914770a723f92481fee05",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/banned-words.md",
+      "sizeBytes": 6092,
+      "sha256": "2c3ed662571efea27cbff4299c43ce8399737ca684206ad5e968203c4819b8d2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/cross-book-recall.md",
+      "sizeBytes": 4299,
+      "sha256": "7822ddcee89399d1b22ef4ccf912f231e499d2b1e190c47bbbe650ede7e84520",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/dialogue-mastery.md",
+      "sizeBytes": 11609,
+      "sha256": "6a9f69691179dcdbc327b12215e4d3bd6204c3af51156943c8b6eae9e23650dc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/emotional-methods.md",
+      "sizeBytes": 7869,
+      "sha256": "49bd7d07cb21cd5a756d44ab8223304377a212e4162ad529deb4746a9164a67b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-styles/复仇打脸.md",
+      "sizeBytes": 14769,
+      "sha256": "45588c8a87ace01c23adf2f9a57044b98e56d9241e0882a4f3abc18766a880fe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-styles/宅斗宫斗.md",
+      "sizeBytes": 15558,
+      "sha256": "daf3b749aa60a386df5b918ada97e7d42b7e06a8f3963f45af3d30c5831d5f34",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-styles/总裁豪门.md",
+      "sizeBytes": 17292,
+      "sha256": "4a9318b51919b8b2ec46408f3deeded148693081cb6359813d86f031fbf7ec02",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-styles/追妻火葬场.md",
+      "sizeBytes": 9716,
+      "sha256": "2ffcd30cc52887ae759feecafcbf7c3e65943b846afddd3a9db59272d93dcf86",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-writing-formulas.md",
+      "sizeBytes": 21538,
+      "sha256": "534dd2aa5faa05f3f8a03ee26e94872e32c7e42f25f126cd8226239b46198192",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/genre-writing-techniques.md",
+      "sizeBytes": 22684,
+      "sha256": "b3487b292a75fc1cfede526d23c38bf586f64764b2d87b62deeb3905ca482d23",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/hooks-chapter.md",
+      "sizeBytes": 8857,
+      "sha256": "db7ccb7a8364b0ac8e19e6783f1fc5aaa14b1c377c64173580c8a76f5b905c7e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/hooks-paragraph.md",
+      "sizeBytes": 6994,
+      "sha256": "2b6987682ad63b858bcc69d2c9846fa05a48f5163d19eb9d2a24812cd9a8eb81",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/hooks-suspense.md",
+      "sizeBytes": 15660,
+      "sha256": "e80fd4344f906baaa12daf57daeb7d337d6d33aad6656be52e01e98df717c68d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/output-contract.md",
+      "sizeBytes": 9288,
+      "sha256": "919488bcb37644dbdd9f343b9ea4fc4bb264f9d7cb8eb2224098fdc85a4a3396",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/quality-checklist.md",
+      "sizeBytes": 9822,
+      "sha256": "072d66880635a1185e55d6f17c9f5588c6a1c5d711986f1b89dde4aac2604724",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/reversal-toolkit.md",
+      "sizeBytes": 16064,
+      "sha256": "d337502ed14e832d291fcaae3bae8da482118eb5d7ec45494a2c4107ca7fe827",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/short-craft.md",
+      "sizeBytes": 12464,
+      "sha256": "37034825b5d60337dc336d1011aca1d89a3322685eb2e23ca0bd4fef88d6f7ed",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/short-deslop.md",
+      "sizeBytes": 7787,
+      "sha256": "f47952207b2155717d5028219ba5968e2480039c33f7aec0554064c14e639d94",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/short-format.md",
+      "sizeBytes": 6924,
+      "sha256": "f5abc48f8601b93e3bba6206b3010c76a8b50fd432693881a1ad9ec0d53fbf11",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/villain-and-reveal.md",
+      "sizeBytes": 6299,
+      "sha256": "15303957a2998b701854efbb0d82afda94f88a6c111be9aa7d25324135c483df",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/references/writing-workflow.md",
+      "sizeBytes": 9930,
+      "sha256": "1d33321f588be6c7f56b48ec609e825c8fe3a6f572a626c239c50eafd2168980",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/scripts/check-ai-patterns.js",
+      "sizeBytes": 15603,
+      "sha256": "5f6e9122ee7a504f2b44ad7fa81f6b234f3670349b36efcf3b6961f10a7045a9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/scripts/check-degeneration.js",
+      "sizeBytes": 14318,
+      "sha256": "42aacda05c78a8b774d6cba277f939bb054096d16fcaba76f35fdf3743dfaa00",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story-short-write/scripts/normalize-punctuation.js",
+      "sizeBytes": 8380,
+      "sha256": "2ffbc9e9530666079256ffd9697ec0b7e9d5989d9feba4554dd174a7ecbcbd1e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story/SKILL.md",
+      "sizeBytes": 8292,
+      "sha256": "a93b61f1f64e5fd4f57a30920750b102d6e5f54e615488443427518f0f702b1f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/01-oh-story-claudecode/原始资料/story/VERSION",
+      "sizeBytes": 8,
+      "sha256": "3d48a21226f87535d4c2cc1fb3cf9f8bf990229c0a438671ced4573569eca806",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/SKILL.md",
+      "sizeBytes": 3365,
+      "sha256": "0d48011260b06dcdf69af94a46eb7790fd2576dde5d0012600635ce71b526740",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase0-initialization.md",
+      "sizeBytes": 1619,
+      "sha256": "984f8a2b17df28162366241fc7c62aba87b704fc0e77e6092ad383e4a09a1676",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase1-layer1-core.md",
+      "sizeBytes": 4305,
+      "sha256": "f2f2836229545b538fbca8ce5345c5c7f65a0be13d5df31ba1da3c21d399be32",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase1-layer2-customize.md",
+      "sizeBytes": 5543,
+      "sha256": "6be9164b873b82976389c793ab566bb2f8771dcbc66c861454f8a43c932621fe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase1-layer3-title.md",
+      "sizeBytes": 3131,
+      "sha256": "7d4c5912fbe8bac1256919eec0c45751fcb406d36db60de47f69fce97c5b9e89",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase2-planning.md",
+      "sizeBytes": 2725,
+      "sha256": "d0a766411a0ecf822917c7f1a719ba58caec2e670b36634eef689e141c75fa62",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase3-writing.md",
+      "sizeBytes": 11411,
+      "sha256": "c42105caaf8f3bd25873137e91240d956b84ea32b8e4485ca4778fe760992ad1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/phase4-validation.md",
+      "sizeBytes": 1832,
+      "sha256": "26da1a5457f2757616b68d9da08c080725aef69670bc6e7b17961645568d8f51",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/flows/shared-infrastructure.md",
+      "sizeBytes": 4859,
+      "sha256": "bba40ed2d76c37d9ffdaec21bd2b82cd612b5a8704b2f7c89a8a6b9c30a753a5",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/chapter-guide.md",
+      "sizeBytes": 31321,
+      "sha256": "0828cd8936a76e5f189cd6638d85378107202408cc7113329f94c8b756ba423a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/chapter-template.md",
+      "sizeBytes": 595,
+      "sha256": "6fd7192c8f6965f5d31c77d4f8fc4c35de978caa6791baf2956dcda319ef7885",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/character-building.md",
+      "sizeBytes": 6584,
+      "sha256": "e734fda78b66b524da16dc009344040f9b7d73997a85e2570c016b89958491b6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/character-template.md",
+      "sizeBytes": 403,
+      "sha256": "603122a7ac354295ca19249f5f212cc8355205445203acc7b2b3fd0a278f0d3d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/content-expansion.md",
+      "sizeBytes": 38578,
+      "sha256": "9b230b87b91e86242f4701f786a0aaea578151bbce7f99176178bd2b4150b6ab",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/dialogue-writing.md",
+      "sizeBytes": 7480,
+      "sha256": "3da80bad131f31f7784c5fd47669731e5fad2f55504858ccf285c71eac9437a2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/hook-techniques.md",
+      "sizeBytes": 20745,
+      "sha256": "15225a9d18ab260c3812f0faaed571cd1d9d43ea00daa0c1fab6a8395acfe074",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/outline-template.md",
+      "sizeBytes": 896,
+      "sha256": "494f3c4dce0e577e8fb4b4ca85426d8e202113e78bad845223a4275696192bad",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/plot-structures.md",
+      "sizeBytes": 6792,
+      "sha256": "920deb68c01d06d0b669f7e6a192f30105046b8250d8539d1661afe907608e95",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/guides/title-guide.md",
+      "sizeBytes": 4732,
+      "sha256": "19cb346263d1e8966e354593bf0487c01e8e10733ac8dbe1d798a7af3d387dbe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/02-chinese-novelist-skill/原始资料/scripts/check_chapter_wordcount.py",
+      "sizeBytes": 5887,
+      "sha256": "39787057595960cf7a92573d9adebd5e70a2a4fed1f906d7bf3ba8c1034477ee",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/context-agent.md",
+      "sizeBytes": 5822,
+      "sha256": "bda1ef74504383b3462405be57bf17ec613b59932e3a718de5a3fd2e56130bf2",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/data-agent.md",
+      "sizeBytes": 6531,
+      "sha256": "ec3f0d9c2d1c62482871bb8531e2640b459003b0ad6d1151d5acb79b5c10596b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/deconstruction-agent.md",
+      "sizeBytes": 11241,
+      "sha256": "ef324a04de627e6db68796c84b9c04d4f31d1709f1e9fafce3777d3700321238",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/evals.json",
+      "sizeBytes": 3094,
+      "sha256": "0e934dadadc16e38a1feeb7569558b1714e50baf04bbe3457362717d06b71de0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/.webnovel/memory_scratchpad.json",
+      "sizeBytes": 1143,
+      "sha256": "4ab92cdd8d8b49b1f9814c1e4b9f95338df2435fbd6b26483cb98858f434354b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/.webnovel/state.json",
+      "sizeBytes": 2619,
+      "sha256": "09806e18c0538ee3065309ec96eb6d8fb209db4a4c7ea24ebe03231b70ff0c5e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/.webnovel/summaries/ch0003.md",
+      "sizeBytes": 709,
+      "sha256": "5ee0ee7dd18fd4f1e1fed951cbc39fffcff4c0576a1e3e15c5c8bfa777f6d0ef",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/大纲/总纲.md",
+      "sizeBytes": 717,
+      "sha256": "bfa2a3ee10cd88f2a66d44521f0b5b7fda259058e7c4dc02a74b573a0327357f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/大纲/第1卷-时间线.md",
+      "sizeBytes": 356,
+      "sha256": "cc61f5fc594246c38639cf24eac2d055c12082f247c40ce862533169dfcb539f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/大纲/第1卷-详细大纲.md",
+      "sizeBytes": 742,
+      "sha256": "9816f65703a311dd8904e92bb2342478404ce6b6d33ea6ed751bc7ec4fbe527d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/正文/第0004章-迦南学院的考验.md",
+      "sizeBytes": 2447,
+      "sha256": "99f34bb3c10f1e92baaf6c3091104f76665dd51f2387b2781ec18b612cdc2516",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/evals/files/test-project/设定集/世界观.md",
+      "sizeBytes": 546,
+      "sha256": "a9314908d7f0162104adb8bba2fd67e470b634f3d096787a253a5605307959fc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/agents/reviewer.md",
+      "sizeBytes": 5898,
+      "sha256": "fae9cabfa09a671d62a11e61ad481973893e6592b9004a09fb2d2fdbbe7a49ed",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/docs-guides/commands.md",
+      "sizeBytes": 9293,
+      "sha256": "da1c157d5634ae39a65141aa122ed43e72116d852a56ca2a0c2afa664b0024a9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/docs-guides/genres.md",
+      "sizeBytes": 1812,
+      "sha256": "9a8bac12e792443311bf874293e179457cc5e475fde583680f1e38fddb061f3b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/docs-guides/rag-and-config.md",
+      "sizeBytes": 1556,
+      "sha256": "01cc67bf21a21fcd1953db6954659277e8f647906d3115ac0af218ac4016fc8a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/README.md",
+      "sizeBytes": 1534,
+      "sha256": "9c9773b80079ac57f68080fe66614ad3473f0ec9ecf3304a58e9dec95ab04ed4",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/author_error_catalog.json",
+      "sizeBytes": 5455,
+      "sha256": "9004ca3db0e545bbfd7532b06c79a20c2e3ab83124b1231ebe59ca34e0b8cd24",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/author_glossary.json",
+      "sizeBytes": 4744,
+      "sha256": "f2785f77fdaa3527a41b8a4741afe965ec253aa4c44dcaec997d53d60524b513",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/README.md",
+      "sizeBytes": 7656,
+      "sha256": "accb5c98be2e6f2a526532a8336dd301ebdb1ea15830f8e4a456f702435cef8a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/genre-canonical.md",
+      "sizeBytes": 14254,
+      "sha256": "06c30a6c213d72628c1d32ea17b67a6dde4cda29c96bcfb9c6a3526b913783bd",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/人设与关系.csv",
+      "sizeBytes": 83620,
+      "sha256": "3c76a12a060d4662dd69a2af36c70b2bcf3cd5fae863fe48a08661028228b6d0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/写作技法.csv",
+      "sizeBytes": 87379,
+      "sha256": "e34e77d412c201763a66fa40dc8b06f530859ffad409961d989e80604bc82317",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/命名规则.csv",
+      "sizeBytes": 56441,
+      "sha256": "bc86d2a422eee806259cf85924ca86cef0efa10f5ab93504474284432089be6c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/场景写法.csv",
+      "sizeBytes": 78063,
+      "sha256": "ed266b1307dbdd3a89050c163e1187919368b13697064796f4b6ce77e8f39c5b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/桥段套路.csv",
+      "sizeBytes": 94139,
+      "sha256": "82437a8c80e40f80c5a3ce044763082f585a8a853186baf37b42cfcf4f570171",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/爽点与节奏.csv",
+      "sizeBytes": 67471,
+      "sha256": "cbc41cbd6ce23ed7355b5ae8be7c5e9683dc33fbed8b06a57af5db77b5020742",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/裁决规则.csv",
+      "sizeBytes": 8821,
+      "sha256": "80d741c74c7e3364bd5ebc6f0c6d466289f05f279f206c35199e1ac45bc3de66",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/金手指与设定.csv",
+      "sizeBytes": 74257,
+      "sha256": "1fc0b11dd54cdb5295151650102efdf27a860d014ab89c27f4b28f5fb26b0880",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/csv/题材与调性推理.csv",
+      "sizeBytes": 22747,
+      "sha256": "4923d10f878cbf58257401d36178becfff64a2f415d13b35015ba6e48d3f4d22",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/genre-profiles.md",
+      "sizeBytes": 18563,
+      "sha256": "2b5c256e3556d9af12f00715f2170208e717cf59ab19928c58c408509dafb9fa",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/index/reference-gap-register.md",
+      "sizeBytes": 8932,
+      "sha256": "505916233c4c86e5559d59fe589f6b2ffd8b2b343ae7597dc4ee72bd36346f67",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/index/reference-loading-map.md",
+      "sizeBytes": 11578,
+      "sha256": "f80ac81aa00142d2f23571b9ffe5ab83ff484a602405735811a67edddf579dcf",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/outlining/plot-signal-vs-spoiler.md",
+      "sizeBytes": 1991,
+      "sha256": "a37a9ccba846397315f5b1221ae048690081478057fa73d0fefdcdeb09df651f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/reading-power-taxonomy.md",
+      "sizeBytes": 12673,
+      "sha256": "c537881debb18522ae9b613ebb64934b06d9cee3a4c34b7f6de79a470fb89abe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/review-schema.md",
+      "sizeBytes": 2197,
+      "sha256": "133d731c513b30767ac76b8a18988b149d99611b9a38dab819a67ccc1102c911",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/review/blocking-override-guidelines.md",
+      "sizeBytes": 1962,
+      "sha256": "929c428f8d2aa6e130d3fa0350b9d3737acaadcd95d25c2e5f59bf367a590d66",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/shared/cool-points-guide.md",
+      "sizeBytes": 8344,
+      "sha256": "64431ca49e69cf2f1f6e5b2a742d8ac0ea9944492c835bda000a73170e82d4b8",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/shared/core-constraints.md",
+      "sizeBytes": 4619,
+      "sha256": "c8b959b1cf1cf52b405d14f57f58ec7d905f20c6b6599a4424b2b7c5192223a7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/shared/naming-and-voice-gaps.md",
+      "sizeBytes": 2877,
+      "sha256": "8f7d6307d77cb21ff10dcf99f49bbc0d0de2d063394b096ec2ba406dba75679a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/shared/strand-weave-pattern.md",
+      "sizeBytes": 3845,
+      "sha256": "385dc7e5b67669c1e0ce283622e6e618b161ef483ba286aa2aad4fb3dc269e31",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/references/taxonomy/genre-index.csv",
+      "sizeBytes": 4208,
+      "sha256": "aaf56dc5da3128293fb02739506765c71cdbee45ad2e9d87d7f396d5a61e4a25",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/修仙.md",
+      "sizeBytes": 4163,
+      "sha256": "4fb01f99ef0c30d99e37da0dfbac170c9bfa2240aa420b656185c034e0a1cd9a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/克苏鲁.md",
+      "sizeBytes": 3669,
+      "sha256": "cdf6acdaa429c674efaddaea6a4ad5e4fe21b3d9046aef69eeb2c8ae2916d284",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/历史古代.md",
+      "sizeBytes": 6030,
+      "sha256": "80a23087cdb49149f2fcfec7a91c137cfe9f07f31ddb046101f344420104b5c6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/历史脑洞.md",
+      "sizeBytes": 6349,
+      "sha256": "b7c40e9b36ead4951faf4a1adee83e95fcf8a3b649ef408ce4612a3901ffec55",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/古言.md",
+      "sizeBytes": 6218,
+      "sha256": "06469a9f9a0e00ae30a3a60c2e46df3eeea6e2e06fb1b6810899805cecb2fde7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/多子多福.md",
+      "sizeBytes": 5151,
+      "sha256": "da9a4736add55d633dd450664fb973739e7aba424cbb8a1dd8253007c25f8786",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/女频悬疑.md",
+      "sizeBytes": 6277,
+      "sha256": "af1eddcac68e2195f3b68efd97d0d82d315b039b16f201e4c10c290b984ffa29",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/宫斗宅斗.md",
+      "sizeBytes": 5832,
+      "sha256": "f6718213e558b573fcac5cc0edc64780de0d150eeadfbe2c119662ef3ca05c44",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/年代.md",
+      "sizeBytes": 5736,
+      "sha256": "628422018d6abdc821179510c70af55c10139d164eaa56c29b7255543097756f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/幻想言情.md",
+      "sizeBytes": 5966,
+      "sha256": "bfb87c73ecd02c4cbca5396bdea1605a9de05bb4ebfd9bbb7a4b896cc8e56651",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/悬疑灵异.md",
+      "sizeBytes": 5462,
+      "sha256": "5e46b639aa3c42d8b171aabc60e88d0ee2e8d16c1c49fcae33f2104349344727",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/悬疑脑洞.md",
+      "sizeBytes": 6209,
+      "sha256": "f5271ec6ad615931ebbf7cc1890eaca6d4e7831672d589334d1e701d789b12a7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/抗战谍战.md",
+      "sizeBytes": 5811,
+      "sha256": "c3de573c6fb4c82cd1eeb68e13930a45143c6b8cb358792fedcb12149e39289c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/无限流.md",
+      "sizeBytes": 6733,
+      "sha256": "591514056db6fd9c0a9ac5dce66aebc9fa3385a33ea3357337ba82cc94ac055a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/替身文.md",
+      "sizeBytes": 3521,
+      "sha256": "6efb0d297189492100cbb21ae8565b271965d9fa4c72c823d15ff412fe9abc67",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/末世.md",
+      "sizeBytes": 6700,
+      "sha256": "b34b188b4e5b1fa3af708d66e1c666bfb9789ffb244632d955d703aee1017163",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/民国言情.md",
+      "sizeBytes": 5967,
+      "sha256": "6ed899543d741bcfc1c241452b235ee69b3fa0b1feccfab4e4ac564fb3c84cea",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/游戏体育.md",
+      "sizeBytes": 5817,
+      "sha256": "b8ac606d36e5dd01ded8144045d3eaa6a1401f80ff0807a26525225cd6a105cc",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/狗血言情.md",
+      "sizeBytes": 5177,
+      "sha256": "de6b96fa4c5011c46c6d66b0907c40b27a5095c8c0e7bad2a05ba585aa41ef6f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/现实题材.md",
+      "sizeBytes": 6144,
+      "sha256": "55a838c3885c2b390e82651071db4134b5726ebe44fc300db756220387c8d20c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/现言脑洞.md",
+      "sizeBytes": 6308,
+      "sha256": "e6748d8033162252baea77ecbe0bb3800084a2f5c9d6201fa6a48a968de7396e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/电竞.md",
+      "sizeBytes": 3900,
+      "sha256": "512527de7d5ad73b297dce4cf6d03d170e2c0b8e109b473128b0ff562e9755e6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/直播文.md",
+      "sizeBytes": 3869,
+      "sha256": "37b62f1d270f0ca4d029371b5519431150739e277ecf20c7cc8405d2eeef9f4d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/知乎短篇.md",
+      "sizeBytes": 6005,
+      "sha256": "13c8ed528fd41d6d99304dc6c9b1b52f7bab0d1016a2afbfe8f8752a6f06a6db",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/种田.md",
+      "sizeBytes": 8326,
+      "sha256": "2a12c8d0e330aaffe2f790a919921968af80b6185f1b84ad18b825a4ca05e730",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/科幻.md",
+      "sizeBytes": 6503,
+      "sha256": "335adf905923fa738723d4d1a9b64486d65fc2586113934b9f2eee26a21a3daf",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/系统流.md",
+      "sizeBytes": 3986,
+      "sha256": "07a9cdee8831e56d32bd3a4c449556417af2a57609269c3d47661e522cd99397",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/职场婚恋.md",
+      "sizeBytes": 6147,
+      "sha256": "dee32b2b9e0a72ef99c83e7e01b1c4d616d48ea5fb0874ca40737e63871f1dd1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/西幻.md",
+      "sizeBytes": 6727,
+      "sha256": "3082615fedb69c3cf6b06b1665474e709a602a31e8d832914b1ebbeb21d8b5e9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/规则怪谈.md",
+      "sizeBytes": 7582,
+      "sha256": "aae701c772032e7d7d613339f6b69695066753f2c9f26500aead2e65fc8a6226",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/豪门总裁.md",
+      "sizeBytes": 5624,
+      "sha256": "e11e396e2a6a9befa2ef12a3e1bd00584496561f1df0d3af526a7faf78d75c68",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/都市异能.md",
+      "sizeBytes": 4041,
+      "sha256": "245c2c9b5df11ac7802704d9796aa70a68bbae94c91b79a156624b6d70e11f08",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/都市日常.md",
+      "sizeBytes": 5496,
+      "sha256": "6f2b761c31f061579ee24d12cf71fb370895113a2ba51589349b0e54686eb951",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/都市脑洞.md",
+      "sizeBytes": 6381,
+      "sha256": "508380776fb91941bd713a164a3aae6934a995d6d2aa2a2bcc53a7e2d35a3223",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/青春甜宠.md",
+      "sizeBytes": 5891,
+      "sha256": "0bb00c591dfabf543e5df4fbe04a5fd72314218cc2ead521b00ded4f08a0ea34",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/高武.md",
+      "sizeBytes": 5902,
+      "sha256": "2c7b1fb09b95a2513013ea9e88f967f5400dc16af5adef4920243258afe691da",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/genres/黑暗题材.md",
+      "sizeBytes": 5045,
+      "sha256": "e9cc52cdd43bdf4e89db39dd1ff5f6805303fc85cd295534936a58f61799c855",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/golden-finger-templates.md",
+      "sizeBytes": 16768,
+      "sha256": "d528d5662c2bcd474dca4bc9be5b323889abf2738959f49d806b29ab8100307c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/index-schema.md",
+      "sizeBytes": 1525,
+      "sha256": "8d46585e147d4f74b88dd904c16294d9aee3f94d799197f495f5cfb81310d975",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/state-schema.md",
+      "sizeBytes": 1890,
+      "sha256": "fc61bd2bed71f05b18c08cec89d04d11d5853d5e90e03e155b30746660faeb5e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/复合题材-融合逻辑.md",
+      "sizeBytes": 683,
+      "sha256": "3f47dcb868a087073bd70832fe394acc4e7613a4cedc940b438a40a8a5090d3d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/大纲-卷时间线.md",
+      "sizeBytes": 1991,
+      "sha256": "eceabd8fef73ed45f53e03eca0e283f24cc5361dbc294e7b101cec7f1d785647",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/大纲-卷节拍表.md",
+      "sizeBytes": 1275,
+      "sha256": "8b553cb72cd2be0c22211f4bc9d5b905599d98a6e38786b856800c4e64c3a04c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/大纲-总纲.md",
+      "sizeBytes": 1061,
+      "sha256": "2cb8fab8b8aba2765c5a98ba1a5e1981ccb0e1563931dc410fbae311a27fbc35",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-世界观.md",
+      "sizeBytes": 1682,
+      "sha256": "78c5ba312b8531b0f19b300986806ed34b633540a6b3a956b29029127ebb3db1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-主角卡.md",
+      "sizeBytes": 1050,
+      "sha256": "56ef0b8a76d2796c2b6755fc91bdf6a90909b37e0ae509484c156c19096240bb",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-主角组.md",
+      "sizeBytes": 700,
+      "sha256": "40dc2629cb37f816173eb6d6e65eef7891391b59bf3e75796c3e7b17ba2b4437",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-力量体系.md",
+      "sizeBytes": 1414,
+      "sha256": "e2e78414f5e806f3786be2fbee2e446913cdde10aff921f477886dde5f26d040",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-反派设计.md",
+      "sizeBytes": 941,
+      "sha256": "e81b01dd2240aadeff2bf15a12e1375c311c18fbe21758ab0564593cbfaadf27",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-女主卡.md",
+      "sizeBytes": 878,
+      "sha256": "41f00f0248643e1d43fefbd420a8606ce92abdc38236b18cb5a3de5b188b83bd",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/templates/output/设定集-金手指.md",
+      "sizeBytes": 1011,
+      "sha256": "f22fcf6a9f842bf86e42eb30a534745cd48e04e6a612678adb73d07f7a187aeb",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-dashboard/SKILL.md",
+      "sizeBytes": 2819,
+      "sha256": "553e89c7650e6a2deb6c85ef81ca288bdeaadb9617445924beed0547a67488e5",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-doctor/SKILL.md",
+      "sizeBytes": 1623,
+      "sha256": "7a265ff09b668ff9bb2fd12d1d59c19d8b0903a5f0119bf25b84a3d7f6d95165",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/SKILL.md",
+      "sizeBytes": 18457,
+      "sha256": "78b1226c98893d38d51161c983aa0e81dc16c8dc934031004a823cc99826d0ca",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/anti-trope-game.md",
+      "sizeBytes": 8648,
+      "sha256": "c23971e2a7abf8a9ab2ed110fdb6f5532c0fa26eadf8fff9876d3613e97ae2f7",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/anti-trope-rules-mystery.md",
+      "sizeBytes": 8490,
+      "sha256": "1c0222adee589e93fbd5a2cd86f829d12d5f76b170c87fa3272ceb1d84bfad2a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/anti-trope-urban.md",
+      "sizeBytes": 9027,
+      "sha256": "b6fa1c695d72af28b2eb995c919bd3294d187ae8bc9b0e052e17130d856da616",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/anti-trope-xianxia.md",
+      "sizeBytes": 6726,
+      "sha256": "53c19e8280b2f7737e2de561fcd700c48510c923e9b7ba0d887e223b94c2d835",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/creative-combination.md",
+      "sizeBytes": 14889,
+      "sha256": "c8b22fc43acf004558cae5dacc6d0ead68b9451e17d6986f9cd3a7dcfdf3dd77",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/creativity-constraints.md",
+      "sizeBytes": 10102,
+      "sha256": "46e375f6b5c95dd08a1a0acc67cc028915e540e5e4ab809b91ba7b18c0877a9b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/inspiration-collection.md",
+      "sizeBytes": 7800,
+      "sha256": "50a6399afad9006eb472e4f74ba3cb214cb905a3ae8dfd5587035dd491a2946d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/market-positioning.md",
+      "sizeBytes": 13116,
+      "sha256": "72e3b860d8f7af3d1301e78e40a66b8c3f05f4ad2e432d80f778fad8c189c46d",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/creativity/selling-points.md",
+      "sizeBytes": 21477,
+      "sha256": "339f7ffd2caf4388f548f53e61148419cc1be8130c84bd21793d3dc43a30985e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/genre-tropes.md",
+      "sizeBytes": 6387,
+      "sha256": "fdf9e4d9e542077b57d0cd686762884beab3a2e07dfefdc14d0ee66901d598ae",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/init-collection-schema.md",
+      "sizeBytes": 2129,
+      "sha256": "3baa86cb0d4692938115b9c0909c0d15de0a5b938b959dc639a79545739ea25f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/system-data-flow.md",
+      "sizeBytes": 1190,
+      "sha256": "f84df3c860d5f1428f3c48104c8dd1ea099180c786371c6e3b0e9616188aaace",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/worldbuilding/character-design.md",
+      "sizeBytes": 4825,
+      "sha256": "dfc6ac659052ceaa2ba27db30338cdec2a92bd42eb1d51f02edd9951b7d8df30",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/worldbuilding/faction-systems.md",
+      "sizeBytes": 5940,
+      "sha256": "1ab8cb7cae15623cda203f59681cf70e77116c649f149626e88e4b84aa86f4c6",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/worldbuilding/power-systems.md",
+      "sizeBytes": 5063,
+      "sha256": "627a35713d25ddd0f41560c21160e6511f75edffde9f2ea112fed383d03f0523",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/worldbuilding/setting-consistency.md",
+      "sizeBytes": 8639,
+      "sha256": "52cd774b1675d9736ac3985498c4e376dbbfa120a775d06aa304f5a58d04b682",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-init/references/worldbuilding/world-rules.md",
+      "sizeBytes": 3431,
+      "sha256": "f2670fbf57584ff3bd6310cc2eb0bf924dc9ae1355e04ccf07afce9b0df4d91c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-learn/SKILL.md",
+      "sizeBytes": 2244,
+      "sha256": "47d203354ff157e01bccfabcceaf626693d05a3c6e456f9461f89f7965d3700f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/SKILL.md",
+      "sizeBytes": 16997,
+      "sha256": "cf92922dfeaeea0065d20e2a58f55d175bacef7145591468e50b3e2d475cd352",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/references/outlining/chapter-planning.md",
+      "sizeBytes": 10019,
+      "sha256": "c5ab274ac0b9bf492732dcc397ba93cfdb0bc8154e8185a192441578b0033336",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/references/outlining/conflict-design.md",
+      "sizeBytes": 8695,
+      "sha256": "8452c014c45e0151806a1cf85ad4ad0dd1dfe5a1028f4f3d0753b51f1c7e6f75",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/references/outlining/genre-volume-pacing.md",
+      "sizeBytes": 3007,
+      "sha256": "ee0fc4cb24438429f745c7150b98ee602abd8624b3c53eead33e55c36625515c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/references/outlining/outline-structure.md",
+      "sizeBytes": 8131,
+      "sha256": "f20a88e845cf01f06a5cd7bfc234d188edc217bfd2d7e46b9ce34b3290c05c2c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-plan/references/outlining/plot-frameworks.md",
+      "sizeBytes": 7690,
+      "sha256": "23c96740068ed9a054984d7fc0d94b218803b56f8161f69d3b98c8c06a5d110f",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-query/SKILL.md",
+      "sizeBytes": 5406,
+      "sha256": "cf9f562950bf945c7d6e01b0005aa0080c9d91ffc6e19e95058a8466382dbd27",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-query/references/advanced/foreshadowing.md",
+      "sizeBytes": 3652,
+      "sha256": "e5f2f7a1ec68e3215be8d294bc15a32f4541508fcd40ecd2d7cae8165a592455",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-query/references/system-data-flow.md",
+      "sizeBytes": 11396,
+      "sha256": "d0391023c9d24a749e9a103a2801d181c4c92c3b4de70080252923cb97cacef1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-query/references/tag-specification.md",
+      "sizeBytes": 5391,
+      "sha256": "4c1f3687b1b96277d7fad1309dec7a6c43da95e0d44bae9cbf73ddd0d6815050",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-review/SKILL.md",
+      "sizeBytes": 8537,
+      "sha256": "c3948ab24021197f05e310afac0492d98423b56fb2983fa23e0f6ab8f7a35171",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-review/evals/evals.json",
+      "sizeBytes": 892,
+      "sha256": "51dce8d4cc58d422846bb093298f845cc025a14007213cdeaaab8852c48e28b1",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-review/references/common-mistakes.md",
+      "sizeBytes": 2699,
+      "sha256": "78f07a46c087dc5b86abc40612bce8d8109278c5549b5d3c16355001fd918a1b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-review/references/pacing-control.md",
+      "sizeBytes": 4181,
+      "sha256": "7ad12d1db83ff5e6141ab40f51c2a648daf62a5ae1687430ba33b4c62e084f08",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/SKILL.md",
+      "sizeBytes": 19026,
+      "sha256": "b38e9bdedb6716a28d909b5f3865fd1ba9323b28df8171e6e4aad7599b30b89e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/evals/evals.json",
+      "sizeBytes": 3107,
+      "sha256": "d19b4b196c1637055371ad64899a74ae3d9b01d568bdb8e63c4f71835c8a16e3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/anti-ai-guide.md",
+      "sizeBytes": 4077,
+      "sha256": "fa60601e0080c47bbac1cf33e6d9372a3aa0725e9a005f155618820b1ce36685",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/polish-guide.md",
+      "sizeBytes": 16698,
+      "sha256": "21d7b821bd656cb477c6fb372719bebc949c332efb551739bff3cca29f71bc83",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/style-adapter.md",
+      "sizeBytes": 3659,
+      "sha256": "4c42f39c5ac486d655531b25233c8d2af4c6c403db8d237a1e45b8d3033049e9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/style-variants.md",
+      "sizeBytes": 1776,
+      "sha256": "2e7672629d0914343cc1fc98ec95e00f7ef64252af71a0e18c4865556b2c321e",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/combat-scenes.md",
+      "sizeBytes": 310,
+      "sha256": "2f91e770609806668b04a91f3b1d56287972cab4a66f9c2fedc460474aec1dc9",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/desire-description.md",
+      "sizeBytes": 7128,
+      "sha256": "9998184cc6044263afe110abd7b342d972ba95cd3829b7ebc00b47298595d9c5",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/dialogue-writing.md",
+      "sizeBytes": 307,
+      "sha256": "155c4fcc4ab458a35fdc52983e41f7deb8e8546e3894e6833806f160e92f6c34",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/emotion-psychology.md",
+      "sizeBytes": 311,
+      "sha256": "8e350ea55c28a40be8e0e341e243e0dc50379400d28562cb9d49a6e570b4b9e3",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/genre-hook-payoff-library.md",
+      "sizeBytes": 3154,
+      "sha256": "5c8bf8c46f4ab0abc17d32d5e7a181500851e35f70c7b38e1ea395b3e465c40a",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/scene-description.md",
+      "sizeBytes": 308,
+      "sha256": "b659559b93e3c9b18492585455be9535b5d5fa9e49fef5eaa56433ce6d859165",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/03-webnovel-writer/原始资料/webnovel-write/references/writing/typesetting.md",
+      "sizeBytes": 2778,
+      "sha256": "9738972615b5b07f775fa7456946c2453b9f782d331a1dd9a00b12175526b123",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/04-webnovel-theory-engine.md",
+      "sizeBytes": 1274,
+      "sha256": "f78d81743b08d8d5bf0827476d668204039f1d661adf0bf25b647ac6420bc2e6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/SKILL.md",
+      "sizeBytes": 5278,
+      "sha256": "ed18602d71d3eb7b6fb2f18d976f03c8be47eec8dfb81a00ce00f89105f146d6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/agents/openai.yaml",
+      "sizeBytes": 207,
+      "sha256": "dc611f41f5c2abd6967d30e3a01601d1196fe21a739e12d711e580ec2ed5100f",
+      "role": "runtime-data"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/chapter-pacing.md",
+      "sizeBytes": 2977,
+      "sha256": "beeccac485fc5596f2746cdc515f2442ba3d3d7aec5dfce7b79f96cf3ff7fab4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/character-network.md",
+      "sizeBytes": 700,
+      "sha256": "1c4f9c36fc393b8e235a87086fde2e4f7986abdd512d445a033b722815fd3ddd",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/core-model.md",
+      "sizeBytes": 940,
+      "sha256": "c86343e77679b88385c533f62dc29b4407bd70f1cd6127b506902a36e38ca796",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/crossbow-theory.md",
+      "sizeBytes": 4101,
+      "sha256": "162838bfe341e9bd1eb5159a42500acf86802f5a15fa7d301651bc07d5cddaf5",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/expectation-loop.md",
+      "sizeBytes": 1458,
+      "sha256": "c598bbb5d2da3d803d2e616d9d529eadea19d389b6cce5adaa9425fd1f24aaa4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/genre-tropes.md",
+      "sizeBytes": 935,
+      "sha256": "5c586dec16249ce36d3b1dd015c1d097e3222b068e04f04b91909edf27b534d5",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/learning-ai.md",
+      "sizeBytes": 806,
+      "sha256": "148f122f32633376822fedf7eaba83bead9bfe1ba89435a2a95f2cde4b482d23",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/lore-to-prose.md",
+      "sizeBytes": 3234,
+      "sha256": "14f9c06f961b1478697b0650931006b4a148504f18641f4f872e01390b0e7427",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/opening-positioning.md",
+      "sizeBytes": 814,
+      "sha256": "8982c4a164ee06970a13e7e062f1d7e1d304b0a4f97e95b995be4f057db6ba3f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/prose-scene.md",
+      "sizeBytes": 973,
+      "sha256": "a6c40be9850925e93a55dfd1d276980a9dcf97460d34481222f8fe107d55e30c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/revision-fusion.md",
+      "sizeBytes": 3659,
+      "sha256": "5b460025dfdd9af47ae9a68eef198f38c799ba3a06d67b58f8bad3e909432fa9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/romance-cp.md",
+      "sizeBytes": 812,
+      "sha256": "967e24b1060313ee5541ed218d867280eccc38504cb48a9e67d4b6b00329daf9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/04-webnovel-theory-engine/references/structure-outline.md",
+      "sizeBytes": 786,
+      "sha256": "e84fb722a7b24b4253a23c021f7f839578fb194e6e2ace3b22d2a8f66b735453",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/创作引导.md",
+      "sizeBytes": 19308,
+      "sha256": "f3d808435ec01e43a02533a4f78d733b834a5cab2126510d8bfcfa7ffe721021",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/99-原始资料索引/原始资料索引.md",
+      "sizeBytes": 1198,
+      "sha256": "bd65e339a00b005e8042445ce31117a0a140655f7b0fe73fe094913f5e276923",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/历史总览/三种小说写作 Skill 冲突分析.md",
+      "sizeBytes": 4630,
+      "sha256": "3ab5809d304e9ab7aef7e5637c3766c1a1aba39a9177bd64d4e533d9156c8fbe",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/历史总览/小说写作 Skill 总览.md",
+      "sizeBytes": 2916,
+      "sha256": "8b36b8c99997f455fe1e576fbac044dbe11f8602c1bcf6525117f14c5fc13f0b",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/历史摘要/chinese-novelist-skill 摘要.md",
+      "sizeBytes": 2079,
+      "sha256": "7117f3625b2dfb240f9ffd0ca171a339b47aa1a406dccd6152db7a4f4866867c",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/历史摘要/oh-story-claudecode 摘要.md",
+      "sizeBytes": 1836,
+      "sha256": "c2df95f8e15d9a975e0f0db9c23a6297b44deae3a5fc451ba4a23a79e3e74dc0",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/原始资料/历史摘要/webnovel-writer 摘要.md",
+      "sizeBytes": 2776,
+      "sha256": "d1bcd1646971cecd81e494e711b1bf532fd8d9348dd521c6208cd905d3e07a04",
+      "role": "reference-only"
+    },
+    {
+      "path": "小说写作技能skill/小说原创化重构skill.md",
+      "sizeBytes": 1796,
+      "sha256": "e13549dff06692e972e28348a5848ab7a86894c6fea6189896bb3f73fb3bb7f7",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/常规推进自检.md",
+      "sizeBytes": 12156,
+      "sha256": "aca57505dd93094e86d9cbd2b9d4b1b96e9e4f91d89f6f9d3ba52d8c4f96c517",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说写作技能skill/强剧情自检.md",
+      "sizeBytes": 13086,
+      "sha256": "21b57dd12ce1830d989d739d6288db752ad2d40203d67a49938bada708a0839b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/SKILL.md",
+      "sizeBytes": 2545,
+      "sha256": "ecb85d79a5dd5998d569a4991f62115c56b88a1fccbc11b053737e3c8a1dd25c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/小说改编短剧剧本skill.md",
+      "sizeBytes": 19701,
+      "sha256": "70b3b15d69b622bfc2588e1b7577006aa7e05d449f5215184364a544f613ce0e",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/小说改编短剧剧本理论.md",
+      "sizeBytes": 61812,
+      "sha256": "1a45aa93920db82a0f32726f2dc257a79d57b6bb8fbf13c60450714754587fc2",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/短剧剧本格式模板.md",
+      "sizeBytes": 9711,
+      "sha256": "fb5ea930dd2a269f6e1c0f2c5e141548a5488da6078125730c657f8ce30ed119",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/短剧剧本自检.md",
+      "sizeBytes": 25798,
+      "sha256": "7918772d5e940c13ddedb95bd51c873253ab89fba48023bf3987cdadf0e5e916",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/短剧简介范例.md",
+      "sizeBytes": 2271,
+      "sha256": "80f939a5a6c03204ccb19657f7d45285704406d1ad9d8202d208a7fea54b9cc6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说改编短剧剧本skill/给AI的使用提示.md",
+      "sizeBytes": 5259,
+      "sha256": "1e119bc82e30cf9ca55e2f3b37cf4f6c9ee1c3ef30d80fe72cacd47d8848bb97",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/hybrid-science-fiction/SKILL.md",
+      "sizeBytes": 6490,
+      "sha256": "e4b1def929f44b901743ff0d508e27b89632e6cf4a0039523e92d197d11cb4ee",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/hybrid-science-fiction/agents/openai.yaml",
+      "sizeBytes": 367,
+      "sha256": "794a6996dff22da955e5b382603681a57de239371bc87180184c40edc90d6bbb",
+      "role": "runtime-data"
+    },
+    {
+      "path": "小说类型理论研究/hybrid-science-fiction/references/theory.md",
+      "sizeBytes": 11118,
+      "sha256": "07008dd48fd1f23ea7da38350003af891984ad386dc875eb07d43bd6cf8f161f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/short-science-fiction/SKILL.md",
+      "sizeBytes": 7458,
+      "sha256": "d3ceed2cd9a37be496cab07e896af72eda336316ca8eb47a1a70a7fcae6cf2c4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/traditional-science-fiction/SKILL.md",
+      "sizeBytes": 5904,
+      "sha256": "f1ade1f13c40bdab0f8fdc5ba7c542fdba59b7d5ab41abb315ed34b61e9c2ce3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/traditional-science-fiction/agents/openai.yaml",
+      "sizeBytes": 323,
+      "sha256": "a8a347e3c5ef543019d91598eef4ddade6faa62142263a956672d11cd753a09e",
+      "role": "runtime-data"
+    },
+    {
+      "path": "小说类型理论研究/traditional-science-fiction/references/theory.md",
+      "sizeBytes": 10771,
+      "sha256": "e6804b724baf47684ad8881bdfd2dc285209884cb1abb8ab38ea879594404980",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/web-novel-science-fiction/SKILL.md",
+      "sizeBytes": 6368,
+      "sha256": "be7916ae5e75b1db593ae4d4d4551a6f2fc1890b7b0d9646781a336349695e56",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/web-novel-science-fiction/agents/openai.yaml",
+      "sizeBytes": 349,
+      "sha256": "ab39cfac28e1e90c609606caf25937433d11f448e97dfcdee964a36e3f9df76f",
+      "role": "runtime-data"
+    },
+    {
+      "path": "小说类型理论研究/web-novel-science-fiction/references/theory.md",
+      "sizeBytes": 11706,
+      "sha256": "851e30ba5be04abcee032def6db3faf2d602b8171e9f528bdbac2132332304f3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/乙女向内容创作概论.md",
+      "sizeBytes": 14816,
+      "sha256": "25384eb2b100e824cdbb6f1a2c86745635d2f906f2d02a316b44c1d2a61458db",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/图录式爽剧结构理论.md",
+      "sizeBytes": 8823,
+      "sha256": "d972e8764811b1ec44d12fb4e5c45f89900ce90efae9298332531549b6f745d5",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/复仇爽剧创作概论.md",
+      "sizeBytes": 8980,
+      "sha256": "455280fe7673692916803d2d5d28aa7daa9d481e4a357b2d87e08952d43380ff",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/女频小说通用理论.md",
+      "sizeBytes": 3464,
+      "sha256": "bd751e8eb4b635736b065dfaf46344d1e26a1e25a6529983c539ce2fa5b26543",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/女频爽文创作概论.md",
+      "sizeBytes": 12876,
+      "sha256": "259ac6ba2276745c57440dc182889680a1dd3dafbb4da7e096c6455ae14757e3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/小说类型理论研究.md",
+      "sizeBytes": 13105,
+      "sha256": "864d467e92b1925f740fff100f7d6081f2ef3922d9ab284d632f926945dfe9f2",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/男频网文创作逻辑研究.md",
+      "sizeBytes": 24934,
+      "sha256": "3b0ef5d7a77195befc345886e4e767a87b3bb14e0010bb4f98e4fe8cb81660ca",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/真假千金剧情创作概论.md",
+      "sizeBytes": 14011,
+      "sha256": "d7d15714502e5a934775cf7f0c0f3e689791345b8ec71de809d969ee2f47f997",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说类型理论研究/绿帽剧情绪拉扯概论.md",
+      "sizeBytes": 9892,
+      "sha256": "6ea84ade6ce7c98d5c83912b81464d5121ea19a9223f5a82acc949decdc58024",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/小说结构化文档管理.md",
+      "sizeBytes": 5587,
+      "sha256": "002cf0b3e0e0f93fa82bf4d1b30845c84540f0ce9cc1fde5cbec093c20fc61bd",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/01_剧情控制/伏笔管理/伏笔总表.md",
+      "sizeBytes": 237,
+      "sha256": "7f334b8efe79460195a4f9eb1470e6ed2553032f716ef61fa9caf3b6c8fc929c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/01_剧情控制/全集大纲.md",
+      "sizeBytes": 1773,
+      "sha256": "336698b3d610ad4a93c63401f4c0fed55e04c403556e07d425ff930909a22020",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/01_剧情控制/卷纲/说明.md",
+      "sizeBytes": 195,
+      "sha256": "c04d535583b22ea97681503b1493497eb5b50d1047db8f3f2f843c1542a73105",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/01_剧情控制/章纲/说明.md",
+      "sizeBytes": 220,
+      "sha256": "a58e26193a9e35a936b390392267e93c92411b5f45c8836bdc6e58f0176bf92f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/世界观/世界舞台.md",
+      "sizeBytes": 190,
+      "sha256": "c5246b2fc1d68fd7f2fa812e2009a9c866ef7e287770f4abe8e589ac72e06c7e",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/事件/说明.md",
+      "sizeBytes": 177,
+      "sha256": "1fb43ecaea68bb12883c9aa85e8bb169388030a3d380235c84ee42291c55b184",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/人物设定/说明.md",
+      "sizeBytes": 153,
+      "sha256": "a6582d6fa70b0809955803dfd0c5db054033310ac2f37f7f9a30123431ba4e2b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/力量体系/说明.md",
+      "sizeBytes": 213,
+      "sha256": "fd65dd546fc0023b4747e18fef95311b3cda9bc7de0ceea78846af1e496c82a0",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/势力设定/说明.md",
+      "sizeBytes": 162,
+      "sha256": "ee7af61727afcce83bab9b3389932407f39cf3076df63023bf8244a35318ac70",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/地图设定/说明.md",
+      "sizeBytes": 174,
+      "sha256": "1cad64d810777ecedc664f710a5cef9f5cd8dc05df07573d35fd2515364c366f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/基础设定/说明.md",
+      "sizeBytes": 189,
+      "sha256": "7a22c19b82583cd69ea4f016aaa39a795f2e77c472d379a053be5e39f93066e3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/时间线/主时间线.md",
+      "sizeBytes": 281,
+      "sha256": "226b00567fb58e950c4bfd86166b7976cbda3fd5587d5e8736446ddcf56cd819",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/术语表.md",
+      "sizeBytes": 86,
+      "sha256": "5d407a013d447d8563d1c4ff81dd8117501babd1fc1e4e867e15d76ee8b481d9",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/概念设定/说明.md",
+      "sizeBytes": 174,
+      "sha256": "94d2cf24c37311366b1807f2e32bb13435e7d44b9bcfd1ac00adb6f7e6f8e805",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/物品设定/说明.md",
+      "sizeBytes": 171,
+      "sha256": "edb8a53dac092518ae4b99b922c53f5fdc904d688f3201d3b25837f9da5036c6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/特殊设定/说明.md",
+      "sizeBytes": 192,
+      "sha256": "941fd4e250c3371820b6e0b79159fb1b7fa7dc3a985bd5d70909f6df70890f6d",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/衍生设定/说明.md",
+      "sizeBytes": 183,
+      "sha256": "c277bb2d17fca0378fe80dd5ef1d9f0e23fca5815cd3f258eb96f2419a8e995f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/02_正史设定/规则设定/说明.md",
+      "sizeBytes": 165,
+      "sha256": "42d64e16666477faab7d12422188c944434dabef3978889193f47a6ffbb9e99c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/04_正文/小说/第001卷-卷名/第001章-标题.md",
+      "sizeBytes": 258,
+      "sha256": "f31c8da0c170d7b9198b3a54dd0f0e9d70ab45ed509955848d8030cee7eaff53",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/04_正文/短剧/图片资产提示词/说明.md",
+      "sizeBytes": 119,
+      "sha256": "cedcf69ec6d835df1ead9eeb3aa1c191fc678bdb937d326b9522ab792e267c84",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/04_正文/短剧/短剧剧本/说明.md",
+      "sizeBytes": 111,
+      "sha256": "c2a1116d397fb7014ff8ee710c1352d854fcbfeb7176740aeb508a9c4455dc9f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/04_正文/短剧/站位线稿图/说明.md",
+      "sizeBytes": 110,
+      "sha256": "136a675ab58e4053353222d8b6cb501673ba8602ccf9db3a2c0271e651b19b2f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/04_正文/短剧/视频提示词/说明.md",
+      "sizeBytes": 119,
+      "sha256": "a6c387add9896b23ed0158d5d67dd70bc2b7bac8af42bb27f05b96ed8bbcb05f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/07_编译报告/剧本自检.md",
+      "sizeBytes": 1151,
+      "sha256": "a933e387c7c411549bced0bea3ea5bc2dd47d96a53789cf16944160e98fa5735",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/07_编译报告/小说自检.md",
+      "sizeBytes": 1102,
+      "sha256": "e0e780d1f3e87c61833f11b6f3a76bf3a63cbb8b4277df5111fc7fd316f4b01b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/08_资料库/说明.md",
+      "sizeBytes": 154,
+      "sha256": "3afe489edbf7a155c533fb89c6f3b63f42603c3b73f16d1bfac6517b77c4b096",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/09_索引/待确认事项.md",
+      "sizeBytes": 247,
+      "sha256": "c9c19ccd6b61b08d05fd2668101938a1f1ede1d4f068b1818efd086b206fe547",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/09_索引/更新日志.md",
+      "sizeBytes": 117,
+      "sha256": "400aea58a097f2effe6e10d127e80e98392a60329655263a9bbfc905542f546c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板/作品模板/10_其他/说明.md",
+      "sizeBytes": 441,
+      "sha256": "8c9ff5efc99f442b37a65df1959be80977a30b1ffb2aed670de3831086b8e021",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板与流程/正文写后同步流程.md",
+      "sizeBytes": 2570,
+      "sha256": "c97c1dc443f26e1993ed47a2d2b9bde94986ee37cd74c5cb6a445069dda0d563",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板与流程/章节记忆与状态模板.md",
+      "sizeBytes": 2099,
+      "sha256": "6d19cce08c9ede0bcb8c7c60c4ee751d5b4c413ba309d53e0e011d8c49c6b944",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板与流程/结构化建档流程.md",
+      "sizeBytes": 3293,
+      "sha256": "7093737aa72a8a02320fd9b604d8ae3aa442ee02f961321ddaf6fc32c2bb12eb",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板与流程/设定拆分与入库流程.md",
+      "sizeBytes": 3086,
+      "sha256": "274fa69db6f3ea46448cfe32a3f715eca5f8173ee9b6589d7b08c96cf286309d",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/模板与流程/链接与日志模板.md",
+      "sizeBytes": 2551,
+      "sha256": "0a22433adb3aa9fe87908a0fdcbd07ef0148a438634493fc49a0198b5c0ea228",
+      "role": "runtime-content"
+    },
+    {
+      "path": "小说结构化管理skill/给AI的使用提示.md",
+      "sizeBytes": 8426,
+      "sha256": "7ebda478c169e5b4d22aac54b503bbdcefacb08f1f64aaf42102d2b190cd1e7c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短剧生产链/短剧精髓保真与爆点增强/SKILL.md",
+      "sizeBytes": 32793,
+      "sha256": "657aec8117bccc6bf1ac42c5db905bebbb548231bbab7c1376f0804dec70a3a7",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短剧生产链/短剧结构对位改编/SKILL.md",
+      "sizeBytes": 44345,
+      "sha256": "974e13af4e400856ade249637299bd8c493be2c58b4a6030b608a0185f2cba58",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短剧生产链/短剧视频逆推剧本/SKILL.md",
+      "sizeBytes": 18013,
+      "sha256": "8e01e10bf136014af19c776cac8a1236ed48f879c125d932b2cd9e52d1c5357b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短视频剧本创作理论/general-short-video-screenwriting/SKILL.md",
+      "sizeBytes": 7952,
+      "sha256": "12a26293ed03e970e1ff2db829f266cf0357cee0b42bcf75ab7664c6f7e5cb90",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短视频剧本创作理论/general-short-video-screenwriting/agents/openai.yaml",
+      "sizeBytes": 369,
+      "sha256": "e387a096f0f1444a0527594aa435fda77af2abe63b594921bf9c95e0c95ae1ef",
+      "role": "runtime-data"
+    },
+    {
+      "path": "短视频剧本创作理论/general-short-video-screenwriting/references/theory.md",
+      "sizeBytes": 16915,
+      "sha256": "0cc4527b83b74c5e8c941c314d60a3138979798dd365bbe52cd8d795a3228db5",
+      "role": "runtime-content"
+    },
+    {
+      "path": "短视频剧本创作理论/短视频剧本创作理论.md",
+      "sizeBytes": 6017,
+      "sha256": "f423e993d880e687236c88442d734a2898e609be114c526149e1eb873fd4f264",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思.md",
+      "sizeBytes": 12241,
+      "sha256": "565fe6617d8249451473a809d22691ea3ff3187dbe81785efce8394b99b6414d",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思使用者说明书.md",
+      "sizeBytes": 7863,
+      "sha256": "3966b45e921c740b2f530e4400bdd03cf4a11bb4607fcc8f62e50b433ebab47c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/任务路由模块.md",
+      "sizeBytes": 898,
+      "sha256": "c0e0f25e036d1164997620bb5dcd466ae2fea0e38953a5a2c63466cbc3ecb981",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/公众号模块.md",
+      "sizeBytes": 4481,
+      "sha256": "b2369fd093bfb8bf99bb9154cd17d4565c25b8af54f5ce5242538298b7976b50",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/创作引导模块.md",
+      "sizeBytes": 3737,
+      "sha256": "30b165ae3a96aee677c1a48876d5af466197a007f051825670a788c9044c43ba",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/剧情控制模块.md",
+      "sizeBytes": 1638,
+      "sha256": "e1a87da529d7d6da40b2f8c39461bae15d51e6f4b16b5682557a439b16bbf9f7",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/正文写作模块.md",
+      "sizeBytes": 2931,
+      "sha256": "ad500fef7329b03fd009fa23092bcf4e818f445ae7ec181230985a6a70009c53",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/漫剧模块.md",
+      "sizeBytes": 2849,
+      "sha256": "763336607ad491b4a0d2ea35b741e969a71522f5772ea0bcbebe0aa6a3467335",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/结构管理模块.md",
+      "sizeBytes": 2762,
+      "sha256": "b0dc617e16ca9edd77e3805d8bd7a5f8b5a57634bc90b1ef30de04b04e0497f3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/自检模块.md",
+      "sizeBytes": 4896,
+      "sha256": "982a01e0522c068750974bc9721973fa18d6ef017d5a1f2c4c568f66164e7dfc",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/推文创作引导.md",
+      "sizeBytes": 6652,
+      "sha256": "4ad23b905055afef9a130988abefc01b884857efc27b47c2672213b36e9ef702",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/提示词创作引导.md",
+      "sizeBytes": 8577,
+      "sha256": "7a6705d1995b425f0900b6cef00c0d180a35043b5c2e1be4085fefae52c73b8b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/短剧剧本创作引导.md",
+      "sizeBytes": 3692,
+      "sha256": "b808b889322966c85f2491311ce5f234929121b7d3758775df2cfe2d9d6ee398",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/短篇小说创作引导.md",
+      "sizeBytes": 7042,
+      "sha256": "c75a08464bf64193ace14a7c2a42d4c58fb99cb0a31c586b409f2d0cfbb8c2d6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/短视频创作引导.md",
+      "sizeBytes": 7136,
+      "sha256": "3df2aae3b6d62b0b292a536703b16277585038cecfcc7527bd87ecafa284274a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-Skill开放平台规则.md",
+      "sizeBytes": 8731,
+      "sha256": "9f11a314bfc308a6ffee2fdc9d011469ed6f8c27a4dbf6478a6b1c6e58504be3",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-humanizer表层扫描清单.md",
+      "sizeBytes": 5994,
+      "sha256": "2770d5759a5d2779f4bf02dbb5f83a7b6ba673cd0288c47f76385fe6ceff806f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-webnovel-writer运行边界规则.md",
+      "sizeBytes": 2745,
+      "sha256": "130795cd15920d2bea008188bdce0d6a6002fefc5220bc6f27b4d70f0a6922b7",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-webnovel同步适配规则.md",
+      "sizeBytes": 1859,
+      "sha256": "8ffb28297e9b48351cd7da2f1da2d758160fc4ebc8af779902b02c8016e553ee",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-wenzhang-write-skill独立接入报告.md",
+      "sizeBytes": 1540,
+      "sha256": "e53ea9d37691826e686f988a03c62426b31268bfdd8db4ba8d376d17379f17dc",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-任务路由规则.md",
+      "sizeBytes": 30145,
+      "sha256": "bc33434e4cd13c6f355db24d852c4932f0568ea7b7e0d8148312e95d60237a49",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-作者化与AI检测风险控制规则.md",
+      "sizeBytes": 18175,
+      "sha256": "8c3a29a05c02826f1852d7046122b46c4b10b2d05d0e8e01f5771b69fdd80058",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-公众号去AI味规则.md",
+      "sizeBytes": 4792,
+      "sha256": "0c48b6673307fcb6a2467a3a346c859f592ef6d61bd46627fcccc3418ea4fc17",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-分级闭环与规则包规则.md",
+      "sizeBytes": 7731,
+      "sha256": "b2af45d22ce8dd5e3e9112d0b541194f7224ee8357bca8862e5bf0c4306c4bfa",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-创作引导双启动规则.md",
+      "sizeBytes": 5080,
+      "sha256": "4a51405653401e793e4d6aeaf01a340aa8f45eeca6fad55741b055572e16f9eb",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-创作效果验收规则.md",
+      "sizeBytes": 3921,
+      "sha256": "446affed5b9eb0f9dbbe4793e29aa0ecffbe66179b49ca8cf70e206e30945080",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-创作核运行卡.md",
+      "sizeBytes": 7370,
+      "sha256": "79cc19c7cf3f4d8872d2737754f8f95242915356ddeabf31d872bbc50aed4abc",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-原创化重构规则.md",
+      "sizeBytes": 6479,
+      "sha256": "e59c3d532a7746a599ec3a775ca4b46048a1e5659421265c989cf736dace32d6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-双核运行规则.md",
+      "sizeBytes": 8639,
+      "sha256": "084f6f5abf8585f2db89c0992621219b1b710a9122b41ba1f36a7d39fa7a7f0b",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-命名去污染规则.md",
+      "sizeBytes": 6260,
+      "sha256": "0fb89061155026aad8db304aa6fea697c0ed16fe7f0fc2f273c227e6efe39807",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-商业判断与自动审稿增强规则.md",
+      "sizeBytes": 15968,
+      "sha256": "f88b274d08ed8f8ac6defd3689812a487ae6e2e52cc8736b13279bb5b36df5f1",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-大纲与章纲规则.md",
+      "sizeBytes": 11516,
+      "sha256": "7ff7d6a1efb56c8532162aafd245051462416e43f03075f8081eb57fe87249f6",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-开场钩子与时间叙述控制规则.md",
+      "sizeBytes": 13437,
+      "sha256": "4d50750abb913a45e754a3665ab56219da186399bda652cbf60d8f7ea5e67bf5",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-执行入口映射表.md",
+      "sizeBytes": 10237,
+      "sha256": "a9a5b83ad4614e962d6d3dd9f1fcfe5ea5a76c007a1077c5acf8e9f10faccbce",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-本章创作合同模板.md",
+      "sizeBytes": 2065,
+      "sha256": "70a706c41ef52cae0f0c2d5023182ce3611366d2f95b188f7fcf3319d6cd0a85",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-框架健康检查规则.md",
+      "sizeBytes": 8091,
+      "sha256": "a6b08bcaa6ae5ec971bc1847060cb96ff882f6a299cb01cca0f8f95fd626942d",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文信息权限规则.md",
+      "sizeBytes": 10757,
+      "sha256": "e84027c4c50ebfeebfc4e5d3ff288fe62d5b720e2e9013fdec7b84cd4ccdafdc",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文信息权限轻量闸门.md",
+      "sizeBytes": 1480,
+      "sha256": "6d47ea5044747c8e4dcca13bb98b04d14b5c3a019bbd168e15ab9b5e343ffcc7",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文写作规则.md",
+      "sizeBytes": 11836,
+      "sha256": "5831288487a7d8e1bc771c4d1512ac02a6ce4d0a99ea917c367d59129aeafd30",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文创作核心卡.md",
+      "sizeBytes": 1983,
+      "sha256": "a2f18f2067fe156f930eea03428cebfaba9edd86d3b9c15af7f6bda1e6e95de0",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文满血自检编排规则.md",
+      "sizeBytes": 11875,
+      "sha256": "c1023546fecf2cb3e2067eef5bb91c29b7be3c12fe00152e3c61160bdc0d4112",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文生产流程.md",
+      "sizeBytes": 5988,
+      "sha256": "c8566ba3f32049153baac065a9a5a6dbef61b42f488ec44812adafc6f0a1b6aa",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文自检共用规则.md",
+      "sizeBytes": 7376,
+      "sha256": "fff94131aba195abb351dfb9c3cf5ef8b7bb9c1da121ba822facdc1ddd0c5a33",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文语言质量规则.md",
+      "sizeBytes": 19554,
+      "sha256": "d4ec2efe8f84b08020568bc12d983e71c9ff0363302f21fb50c15d7e7e9d35b0",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文质量净增益与防退化规则.md",
+      "sizeBytes": 21894,
+      "sha256": "2202c8cfb7b21632fea5641c7e69ffc4363131f78c97a9519ecf941c75589745",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文质量规则.md",
+      "sizeBytes": 13068,
+      "sha256": "2fde245a4b9be178d1fe990bbe3613aa6288beb5de707191ada626c21f8cc1fe",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-正文高频表达限制与语境裁决规则.md",
+      "sizeBytes": 15525,
+      "sha256": "5da67014c9a3b7e5f3ed95b3f7236599ff04b31d0b8720e7f2afee9026048d08",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-短剧与视觉资产规则.md",
+      "sizeBytes": 28466,
+      "sha256": "14bef9cb6a1bab94cb63b3669d12e859a30e5d8986a96c3a4d09c130b38f6cc1",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-结构化入库与回写规则.md",
+      "sizeBytes": 7303,
+      "sha256": "2c26f7b1979f2ed9bdcce74744f0f08aa6f0f10542268b5e365645e9cdf7643c",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-结构化目录模板.md",
+      "sizeBytes": 8379,
+      "sha256": "c948aeff91eed8cd58f6a411678814b0df16f861501aa9945cb6788e618c4e0f",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-结构化管理规则.md",
+      "sizeBytes": 26796,
+      "sha256": "33f6e809fe3afcddd8b58a63da2407ba864ba1c9d6b78eaae456b8566bb055a4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-结构文档链接规则.md",
+      "sizeBytes": 2503,
+      "sha256": "d84495ed38cbef15665416358e9cebf2fc2d7e373839789f7489718afe8ca8bb",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-记忆核运行卡.md",
+      "sizeBytes": 8881,
+      "sha256": "204580bb7affed7f11c4bf7bb44350bee3ae5f04cf586fe8234d0f302d936edb",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-设定生成规则.md",
+      "sizeBytes": 11253,
+      "sha256": "bea0a270b27e4a6c1b80af82f6637103392f94d34937fcf521bfe64a2c52039a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-长篇结构自检规则.md",
+      "sizeBytes": 13362,
+      "sha256": "3a17e3a0f2d1b822909f44acfa8607df2d1a018b787f34a078b9ceab5818f13a",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-非常规大纲执行卡.md",
+      "sizeBytes": 6517,
+      "sha256": "35505be6c5b9ec6410eadd04a2df655cb3e1d117bc6c93c9d34ea013a134fd17",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/规则模块/神思-非常规概念引导规则.md",
+      "sizeBytes": 4923,
+      "sha256": "065d3602f201c6fe3ce37b138c081a2c61f6237ddd56f07ac4dfeb3f7aa7c079",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/设定模块.md",
+      "sizeBytes": 1541,
+      "sha256": "e9a0819eafb0c3605e48d93f147b0125df418bf5e64252f96bdf0f8d592b654c",
+      "role": "runtime-content"
+    }
+  ]
+}
