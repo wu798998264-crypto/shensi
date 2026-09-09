@@ -39,6 +39,7 @@
     "test:planned-folders": "node scripts/test-v310-creative-folder-management.mjs",
     "test:v113-image-editor": "electron scripts/test-v113-image-editor-electron.cjs",
     "test:v124-capability-panel": "node scripts/test-v124-capability-panel.mjs",
+    "test:skill-panel-relation-layout": "node scripts/test-skill-panel-drag-reorder.mjs && node scripts/test-skill-panel-relation-layout.mjs && node scripts/test-skill-panel-relation-layout-ui.mjs",
     "test:v124-batch": "node scripts/test-v124-batch-landing-acceptance.mjs",
     "test:v124-whiteboard-storage": "node scripts/test-v124-whiteboard-storage.mjs",
     "test:video-integrity": "node scripts/test-video-integrity.mjs",
