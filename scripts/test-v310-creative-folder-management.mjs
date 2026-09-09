@@ -207,11 +207,14 @@ assert.equal(normalizeWorkspaceOperationPlan({
 }, { folders: [] }), null, "不存在的文件夹不能进入执行计划");
 assert.equal(looksLikeWorkspaceOperation("根据创作规划给正文文件夹命名"), true);
 assert.equal(looksLikeWorkspaceOperation("暂时不要给正文文件夹命名"), false);
-assert.match(appSource, /explicitStructuralOnlyWorkspaceOperation/u, "明确只调整目录且不修改正文时必须隔离为工作区结构任务");
-assert.match(appSource, /!explicitStructuralOnlyWorkspaceOperation\s*&&/u, "结构任务不得因出现‘正文’二字转成正式创作任务");
-assert.match(appSource, /!generationAndLandingRequested\s*\|\|\s*explicitStructuralOnlyWorkspaceOperation/u, "结构任务中的‘立即落盘’只表示执行操作，不能改路由为生成正文并落盘");
-assert.match(appSource, /landing:\s*!workspaceOperationRequested\s*&&/u, "工作区操作不得携带正式内容落盘路由标记");
-assert.match(appSource, /hasActiveGenerationRuntime\s*&&\s*!explicitStructuralOnlyWorkspaceOperation/u, "章节范围出现在移动命令中时不得创建长篇生成任务");
+const composerDispatch = appSource.slice(
+  appSource.indexOf("const dispatchComposerContent ="),
+  appSource.indexOf("let agentProfileChoiceContext ="),
+);
+assert.match(composerDispatch, /void sendMessage\(content,[\s\S]{0,220}executionSurface: "agent"/u,
+  "目录、正文和其他输入框任务必须统一交给 Agent 判断");
+assert.doesNotMatch(appSource, /explicitStructuralOnlyWorkspaceOperation/u,
+  "不得恢复根据目录或正文字样抢占任务路由的旧关键词分流");
 const safePlanningContext = sanitizeDeletedContentWorkspaceRequest({
   prompt: "根据创作规划给正文文件夹命名",
   documentContext: "## 全集大纲\n第一卷：御兽觉醒\n\n## 已删除内容片段\n不得泄漏",
