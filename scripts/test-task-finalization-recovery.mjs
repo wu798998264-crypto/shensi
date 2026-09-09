@@ -50,7 +50,9 @@ assert.equal(terminal?.payload?.text, "正式正文");
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(appSource, /signal:\s*AbortSignal\.timeout\(90_000\)/u, "工作区落盘必须有有界等待");
-assert.match(appSource, /status:\s*"applying"[\s\S]{0,500}currentStage:\s*"正在自动落盘"/u, "模型结束后必须显示真实落盘阶段");
+const autoLandingSource = appSource.slice(appSource.indexOf("const autoLandCodexAgentCandidate"), appSource.indexOf("const monitorNativeConversation"));
+assert.match(autoLandingSource, /pending\.landingStatus\s*=\s*"saving"/u, "模型结束后必须进入真实落盘阶段");
+assert.match(autoLandingSource, /pending\.execution\s*=\s*\{[\s\S]{0,12000}landingStatus:/u, "真实落盘结果必须回写到任务终态");
 assert.match(appSource, /seconds > 20[\s\S]{0,500}scheduleStaleTextGenerationReconciliation/u, "心跳失联必须自动触发后台终态核对");
 
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
