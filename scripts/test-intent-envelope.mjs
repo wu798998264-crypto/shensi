@@ -171,7 +171,7 @@ const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "
 assert.match(appSource, /const intentEnvelope = execution\.taskRoute\?\.intentEnvelope/u);
 assert.match(appSource, /正式交付自动写入/u);
 assert.match(appSource, /仅对话，不写入/u);
-assert.match(appSource, /必读：\$\{intentRequiredContextText\}/u);
+assert.match(appSource, /读取：\$\{intentRequiredContextText\}/u);
 assert.match(appSource, /requiredContextDocumentIds: taskRoute\.intentEnvelope\?\.requiredContextDocumentIds/u);
 assert.match(serverSource, /contextDomain: String\(body\.contextDomain/u);
 assert.match(serverSource, /taskRoute\.intentEnvelope\?\.requiredContextDocumentIds/u);
