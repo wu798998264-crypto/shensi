@@ -5,7 +5,7 @@ import { getProviderPreset } from "../src/model-presets.js";
 const defaults = normalizeGenerationProfiles({});
 assert.equal(defaults.activeTextConnectionId, "text-public-agent");
 const limited = defaults.textConnections.find((profile) => profile.id === "text-public-agent");
-assert.equal(generationProfileLabel(limited), "限免agent配置");
+assert.equal(generationProfileLabel(limited), "免费模型");
 assert.equal(limited.agentEngine, "codex_api");
 assert.equal(limited.model, getProviderPreset("免费模型").api.model);
 assert.equal(getProviderPreset("免费模型").label, "限免模型");

@@ -153,8 +153,8 @@ const BUILT_IN_PUBLIC_TEXT_PROFILE = {
 
 const BUILT_IN_PUBLIC_AGENT_PROFILE = {
   id: "text-public-agent",
-  name: "限免agent配置",
-  remarkName: "限免agent配置",
+  name: "免费模型",
+  remarkName: "免费模型",
   systemManaged: true,
   adapter: "api",
   provider: "免费模型",
