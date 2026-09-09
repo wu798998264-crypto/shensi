@@ -38196,7 +38196,10 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
     const operation = previous.catch(() => {}).then(async () => {
       const currentGroup = activeConversation()?.candidateBranchGroups?.find((item) => item.id === group.id);
       const currentVersion = currentGroup?.versions?.find((item) => item.id === currentGroup.activeVersionId);
-      const message = candidateMessageForVersion(currentGroup, currentVersion);
+      const message = state.messages.find((entry) => (
+        entry.candidateBranchGroupId === currentGroup?.id
+        && entry.candidateBranchVersionId === currentVersion?.id
+      )) ?? candidateMessageForVersion(currentGroup, currentVersion);
       if (!message?.candidate) throw new Error("所选候选内容已经不可用");
       state.currentCandidate = message.candidate;
       state.currentCandidateTarget = clone(message.target);

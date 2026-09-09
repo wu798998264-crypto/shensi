@@ -55,6 +55,7 @@ assert.match(comparison, /candidateVersionIsAdopted\(\{\s*group,\s*version,\s*me
 assert.match(comparison, /disabled aria-disabled=\\"true\\"/u, "已采用候选的采用按钮必须禁用");
 assert.match(comparison, /已采用/u, "已采用候选必须显示明确状态");
 assert.match(synchronize, /candidateSelectionNeedsNoWrite[\s\S]{0,240}finalizeCandidateAdoptionWithoutWrite/u, "正文完全一致时必须在落盘事务前短路");
+assert.match(synchronize, /state\.messages\.find\(\(entry\) => \([\s\S]{0,180}candidateMessageForVersion/u, "本地采用必须优先更新当前活动消息再同步候选版本");
 assert.match(synchronize, /if \(landed\) recordCandidateAdoption/u, "只有正式落盘验证成功后才能更新采用状态");
 assert.match(synchronize, /if \(landed\) message\.landedDocuments = clone\(landingReply\?\.landedDocuments \?\? \[\]\)/gu, "落盘失败不得清除候选的既有落盘凭证");
 assert.match(app, /所选候选与当前文档一致，未重复写入或创建历史版本/u, "无变化采用必须明确保持零历史版本");
