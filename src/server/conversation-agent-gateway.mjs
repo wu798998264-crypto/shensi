@@ -12,7 +12,7 @@ import { runOpenCodeAgent } from "./opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./claude-code-agent-runner.mjs";
 import { runBundledConversationAgent } from "./bundled-conversation-runtime.mjs";
 import { createShensiCodexAgentRuntime } from "./shensi-codex-agent-runtime.mjs";
-import { agentChildEnvironment, nativeCodexEnvironment } from "./codex-runtime-isolation.mjs";
+import { agentChildEnvironment, nativeCodexEnvironment, shensiCodexEnvironment } from "./codex-runtime-isolation.mjs";
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
 import { imageModelCapabilities, videoModelCapabilities } from "../model-presets.js";
 import { createAgentBrowserService } from "./agent-browser-service.mjs";
@@ -80,8 +80,11 @@ export const createConversationAgentGateway = ({
     if (settings.agentEngine === "codex_api") return runBundledConversationAgent({ ...options, settings, permissionContract, appRoot, machineRoot });
     const processEnvironment = conversationAgentProcessEnvironment();
     if (settings.agentEngine === "codex") {
-      const environment = nativeCodexEnvironment({ environment: processEnvironment });
-      const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: join(machineRoot, "conversation-agent-v1", "external", options.sessionId), environment,
+      const runtimeMachineRoot = join(machineRoot, "conversation-agent-v1", "external", options.sessionId);
+      const environment = shensiOnly
+        ? shensiCodexEnvironment({ machineRoot: runtimeMachineRoot, environment: processEnvironment })
+        : nativeCodexEnvironment({ environment: processEnvironment });
+      const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: runtimeMachineRoot, environment,
         isolateConfig: shensiOnly,
         launchResolver: () => resolveLocalCodexLaunch({ environment: { ...environment, ...(settings.cliPath && settings.cliPath !== "codex" ? { SHENSI_CODEX_EXECUTABLE: settings.cliPath } : {}) } }) });
       try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal, permissionContract, requestApproval: options.requestApproval }); }

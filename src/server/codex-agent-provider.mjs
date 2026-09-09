@@ -26,6 +26,8 @@ import {
   nativeCodexCapabilityPolicy,
   nativeCodexEnvironment,
   nativeCodexProfileRoot,
+  shensiCodexEnvironment,
+  shensiCodexProfileRoot,
 } from "./codex-runtime-isolation.mjs";
 import { createModificationIntent, createPostconditionReport, createUndoTransactionContract } from "../task-execution-domain.js";
 import { agentRuntimeProfile } from "../agent-runtime-profile.js";
@@ -547,6 +549,7 @@ export class CodexAgentProvider {
     this.stderrTail = "";
     this.starting = null;
     this.detectedLaunch = null;
+    this.processPermissionMode = null;
     this.installed = null;
     this.cliVersion = "";
     this.detectedDefaultModel = "";
@@ -895,9 +898,9 @@ export class CodexAgentProvider {
       selfRepairAvailable: existsSync(this.appRoot),
       lastError: this.lastError,
       runtimeIsolation: {
-        active: openCodeEngine,
-        profileRoot: codexApiEngine ? "not_used" : legacyDeepSeekEngine ? "ephemeral-opencode-profile" : agentEngine === "opencode" ? "current-opencode-environment" : claudeCodeEngine ? "current-claude-code-environment" : this.codexProfileRoot,
-        processUsesDedicatedProfile: legacyDeepSeekEngine,
+        active: agentEngine === "codex" ? permissionMode === "shensi_only" : openCodeEngine,
+        profileRoot: codexApiEngine ? "not_used" : legacyDeepSeekEngine ? "ephemeral-opencode-profile" : agentEngine === "opencode" ? "current-opencode-environment" : claudeCodeEngine ? "current-claude-code-environment" : permissionMode === "shensi_only" ? shensiCodexProfileRoot(this.machineRoot) : this.codexProfileRoot,
+        processUsesDedicatedProfile: agentEngine === "codex" ? permissionMode === "shensi_only" : legacyDeepSeekEngine,
         globalPluginsEnabled: permissionContract.capabilities.globalPlugins,
         globalMcpEnabled: permissionContract.capabilities.globalMcp,
         globalSkillsEnabled: permissionContract.capabilities.globalSkills,
@@ -1016,6 +1019,15 @@ export class CodexAgentProvider {
 
   async setAgentPermissionMode(mode) {
     const normalized = normalizeAgentPermissionMode(mode);
+    const current = normalizeAgentPermissionMode(this.state.agentPermissionMode);
+    if (current !== normalized && this.process && this.initialized) {
+      const activeNativeRuns = [...this.runs.values()].some((run) => run.engine === "codex"
+        && ["starting", "running", "waiting_approval", "interrupting"].includes(run.status));
+      if (activeNativeRuns) {
+        throw Object.assign(new Error("当前仍有 Codex Agent 任务运行，任务完成后才能切换权限档位"), { code: "CODEX_AGENT_PERMISSION_PROCESS_BUSY" });
+      }
+      await this.stopProcess();
+    }
     this.state.agentPermissionMode = normalized;
     await this.persistState();
     this.emit("agent_permission_mode_selected", { permissionMode: normalized });
@@ -1177,27 +1189,42 @@ export class CodexAgentProvider {
     return { events, cursor: events.at(-1)?.cursor || after };
   }
 
-  async ensureStarted() {
-    if (this.process && this.initialized) return;
+  async ensureStarted(permissionMode = this.state.agentPermissionMode) {
+    const requestedPermissionMode = normalizeAgentPermissionMode(permissionMode);
+    if (this.process && this.initialized && this.processPermissionMode === requestedPermissionMode) return;
+    if (this.process && this.initialized && this.processPermissionMode !== requestedPermissionMode) {
+      const activeNativeRuns = [...this.runs.values()].some((run) => run.engine === "codex"
+        && ["starting", "running", "waiting_approval", "interrupting"].includes(run.status));
+      if (activeNativeRuns) {
+        throw Object.assign(new Error("当前仍有 Codex Agent 任务运行，不能在同一宿主进程中切换权限档位；请等待任务完成后再切换"), { code: "CODEX_AGENT_PERMISSION_PROCESS_BUSY" });
+      }
+      await this.stopProcess();
+    }
     if (this.starting) return this.starting;
-    this.starting = this.startProcess();
+    this.starting = this.startProcess(requestedPermissionMode);
     try { await this.starting; } finally { this.starting = null; }
   }
 
-  async startProcess() {
+  async startProcess(permissionMode = this.state.agentPermissionMode) {
     if (this.installed !== true) await this.detectInstallation();
     this.closing = false;
     this.lastError = "";
-    const codexEnvironment = nativeCodexEnvironment({ environment: this.environment, profileRoot: this.codexProfileRoot });
+    const normalizedPermissionMode = normalizeAgentPermissionMode(permissionMode);
+    const shensiOnly = normalizedPermissionMode === "shensi_only";
+    const codexEnvironment = shensiOnly
+      ? shensiCodexEnvironment({ machineRoot: this.machineRoot, environment: this.environment })
+      : nativeCodexEnvironment({ environment: this.environment, profileRoot: this.codexProfileRoot });
     const { child, launch } = await spawnLocalCodexAppServer({
       cwd: this.appRoot,
       env: codexEnvironment,
       launchResolver: this.launchResolver,
-      isolateConfig: false,
+      isolateConfig: shensiOnly,
     });
     child.nativeCodexProfileRoot = codexEnvironment.CODEX_HOME;
+    child.shensiPermissionMode = normalizedPermissionMode;
     this.detectedLaunch = launch;
     this.process = child;
+    this.processPermissionMode = normalizedPermissionMode;
     this.stdout = createInterface({ input: child.stdout, crlfDelay: Infinity });
     this.stdout.on("line", (line) => this.handleLine(line));
     child.stderr.on("data", (chunk) => {
@@ -1217,6 +1244,8 @@ export class CodexAgentProvider {
     this.emit("app_server_ready", {
       platform: initialize.platformFamily || initialize.platformOs || process.platform,
       authenticated: Boolean(this.account?.account),
+      permissionMode: normalizedPermissionMode,
+      isolated: shensiOnly,
     });
   }
 
@@ -1262,8 +1291,8 @@ export class CodexAgentProvider {
     }
   }
 
-  async requireConnectedAccount() {
-    await this.ensureStarted();
+  async requireConnectedAccount(permissionMode = this.state.agentPermissionMode) {
+    await this.ensureStarted(permissionMode);
     await this.refreshAccountState();
     if (!this.account?.account) {
       const error = new Error("Codex 未连接，请先登录 Codex；神思不会使用 API Key 或旧账户状态代替当前 CLI 会话");
@@ -1292,6 +1321,42 @@ export class CodexAgentProvider {
     return { ok: true, status: this.status() };
   }
 
+  async stopProcess({ keepClosing = false } = {}) {
+    const previousClosing = this.closing;
+    this.closing = true;
+    const child = this.process;
+    this.process = null;
+    this.initialized = false;
+    this.processPermissionMode = null;
+    this.stdout?.close();
+    this.stdout = null;
+    for (const pending of this.pendingRpc.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("Codex app-server 已切换权限运行环境"));
+    }
+    this.pendingRpc.clear();
+    if (child) {
+      const childPid = child.pid;
+      try { child.stdin.end(); } catch {}
+      await new Promise((resolveClose) => {
+        const timer = setTimeout(resolveClose, 1_000);
+        child.once("exit", () => { clearTimeout(timer); resolveClose(); });
+      });
+      if (child.exitCode === null && childPid) {
+        if (process.platform === "win32") {
+          await new Promise((resolveKill) => {
+            const killer = spawn("taskkill.exe", ["/pid", String(childPid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+            killer.once("error", () => resolveKill());
+            killer.once("exit", () => resolveKill());
+          });
+        } else {
+          try { child.kill("SIGTERM"); } catch {}
+        }
+      }
+    }
+    this.closing = keepClosing ? true : previousClosing;
+  }
+
   handleCrash(error) {
     if (!this.process && this.closing) return;
     this.lastError = safeMessage(error);
@@ -1299,6 +1364,7 @@ export class CodexAgentProvider {
     this.stdout?.close();
     this.stdout = null;
     this.process = null;
+    this.processPermissionMode = null;
     for (const pending of this.pendingRpc.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error(this.lastError));
@@ -2275,6 +2341,7 @@ export class CodexAgentProvider {
       this.emit("workspace_tools_unavailable", { cwd: project.cwd, message: safeMessage(error) });
     }
     const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
+    await this.ensureStarted(permissionMode);
     const permission = codexPermissionConfig(permissionMode);
     const shared = {
       cwd: project.cwd,
@@ -3087,7 +3154,8 @@ export class CodexAgentProvider {
   async startTurnForProject(text, project, { taskRoute = null, contextBlocks = [], taskPacket = null, projectMode = "selected_project", runtimeSettings = {}, signal = null } = {}) {
     throwIfAgentStartCancelled(signal);
     runtimeSettings = this.taskRuntimeSettings({ ...runtimeSettings, agentEngine: "codex" }, project);
-    await this.requireConnectedAccount();
+    const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
+    await this.requireConnectedAccount(permissionMode);
     throwIfAgentStartCancelled(signal);
     const conversationId = String(taskPacket?.conversationId || "").trim();
     const duplicateConversationRun = conversationId && [...this.runs.values()].some((run) => (
@@ -3111,7 +3179,6 @@ export class CodexAgentProvider {
     const expectsFileMutation = workspaceFileMutationIntent(text, taskRoute);
     const expectsFileRead = !expectsFileMutation && workspaceFileReadIntent(text, taskRoute);
     const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
-    const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
     const permission = codexPermissionConfig(permissionMode);
     const permissionContract = permissionContractFor(permissionMode, { runner: "codex" });
     const turnRequestOptions = {
@@ -3760,33 +3827,7 @@ export class CodexAgentProvider {
       ? { action: "cancel", content: null, _meta: null }
       : { answers: {} });
     this.interactions.clear();
-    if (!this.process) {
-      await this.auditWriteQueue.catch(() => {});
-      await this.undoStoreMaintenanceQueue.catch(() => {});
-      return;
-    }
-    const child = this.process;
-    const childPid = child.pid;
-    this.process = null;
-    this.initialized = false;
-    this.stdout?.close();
-    this.stdout = null;
-    try { child.stdin.end(); } catch {}
-    await new Promise((resolveClose) => {
-      const timer = setTimeout(() => resolveClose(), 1_000);
-      child.once("exit", () => { clearTimeout(timer); resolveClose(); });
-    });
-    if (child.exitCode === null && childPid) {
-      if (process.platform === "win32") {
-        await new Promise((resolveKill) => {
-          const killer = spawn("taskkill.exe", ["/pid", String(childPid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-          killer.once("error", () => resolveKill());
-          killer.once("exit", () => resolveKill());
-        });
-      } else {
-        try { child.kill("SIGTERM"); } catch {}
-      }
-    }
+    await this.stopProcess({ keepClosing: true });
     await this.auditWriteQueue.catch(() => {});
     await this.undoStoreMaintenanceQueue.catch(() => {});
   }

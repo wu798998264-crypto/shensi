@@ -165,7 +165,7 @@ export class ShensiCodexAgentRuntime {
 
   sessionInfo(sessionId) {
     const session = this.sessions.get(normalizedId(sessionId));
-    return session ? { sessionId: session.sessionId, threadId: session.threadId, stageCount: session.stageCount, workspaceIsolated: session.permissionMode === "shensi_only", permissionMode: session.permissionMode } : null;
+    return session ? { sessionId: session.sessionId, threadId: session.threadId, stageCount: session.stageCount, workspaceIsolated: session.permissionMode === "shensi_only", permissionMode: session.permissionMode, nativeWebSearchEnabled: session.nativeWebSearchEnabled } : null;
   }
 
   async ensureStarted() {
@@ -379,7 +379,11 @@ export class ShensiCodexAgentRuntime {
     const sessionId = normalizedId(options.shensiRuntime?.sessionId);
     const existing = this.sessions.get(sessionId);
     const requestedPermissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || options.settings?.agentPermissionMode);
-    const requestedWebSearchEnabled = options.nativeWebSearchEnabled === true;
+    const requestedWebSearchEnabled = requestedPermissionMode === "shensi_only"
+      ? false
+      : typeof options.nativeWebSearchEnabled === "boolean"
+        ? options.nativeWebSearchEnabled
+        : options.settings?.webSearchEnabled === true;
     if (existing) {
       if (existing.permissionMode !== requestedPermissionMode) {
         throw runtimeError("当前 Agent 会话权限档位已固定；切换档位后必须启动新会话", "CODEX_AGENT_PERMISSION_CHANGED", false);
@@ -460,14 +464,25 @@ export class ShensiCodexAgentRuntime {
   async executeStage(options) {
     if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("任务已取消");
     const permissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || options.settings?.agentPermissionMode);
-    const nativeWebSearchEnabled = options.settings?.webSearchEnabled === true
-      ? await requestAgentCapabilityApproval({
-        permissionMode,
-        capability: "原生联网搜索",
-        runner: "Codex Agent",
-        requestApproval: options.requestApproval,
-      })
-      : false;
+    // Bundled callers pass the result of the outer capability approval. Keep
+    // that explicit snapshot ahead of settings.webSearchEnabled, which may be
+    // deliberately disabled while the approved state crosses the CLI bridge.
+    const hasNativeWebSearchOverride = typeof options.nativeWebSearchEnabled === "boolean";
+    const requestedWebSearchEnabled = hasNativeWebSearchOverride
+      ? options.nativeWebSearchEnabled
+      : options.settings?.webSearchEnabled === true;
+    const nativeWebSearchEnabled = permissionMode === "shensi_only"
+      ? false
+      : hasNativeWebSearchOverride
+        ? requestedWebSearchEnabled
+        : requestedWebSearchEnabled
+          ? await requestAgentCapabilityApproval({
+            permissionMode,
+            capability: "原生联网搜索",
+            runner: "Codex Agent",
+            requestApproval: options.requestApproval,
+          })
+          : false;
     const session = await this.ensureSession({ ...options, nativeWebSearchEnabled });
     const permission = codexPermissionConfig(session.permissionMode);
     const provisionalId = `starting-${randomUUID()}`;
@@ -564,6 +579,7 @@ export class ShensiCodexAgentRuntime {
           deniedToolCalls: run.deniedToolCalls,
           workspaceIsolated: session.permissionMode === "shensi_only",
           permissionMode: session.permissionMode,
+          nativeWebSearchEnabled: session.nativeWebSearchEnabled,
           permissionContract: permissionContractFor(session.permissionMode, { runner: "codex", taskId: run.turnId }),
         },
       };

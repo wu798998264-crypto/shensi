@@ -118,6 +118,32 @@ try {
   assert.equal(responses.at(-1).result.scope, "turn");
   assert.equal(responses.at(-1).result.permissions.network.enabled, true);
 
+  const capturedNativeSearchOptions = [];
+  const nativeSearchRuntime = createShensiCodexAgentRuntime({ machineRoot: join(root, "native-search-runtime"), appRoot: root });
+  nativeSearchRuntime.ensureSession = async (options) => {
+    capturedNativeSearchOptions.push(options);
+    return { sessionId: options.shensiRuntime.sessionId, threadId: "native-search-thread", stageCount: 0, permissionMode: "full_access", nativeWebSearchEnabled: options.nativeWebSearchEnabled };
+  };
+  nativeSearchRuntime.request = async (method) => {
+    if (method === "turn/start") {
+      queueMicrotask(() => nativeSearchRuntime.handleNotification("item/agentMessage/delta", { threadId: "native-search-thread", turnId: "native-search-turn", delta: "native-search-ok" }));
+      queueMicrotask(() => nativeSearchRuntime.handleNotification("turn/completed", { threadId: "native-search-thread", turnId: "native-search-turn", turn: { id: "native-search-turn", status: "completed" } }));
+      return { turn: { id: "native-search-turn" } };
+    }
+    return {};
+  };
+  const nativeSearchResult = await nativeSearchRuntime.runStage({
+    settings: { provider: "OpenAI", adapter: "cli", cliPath: "codex", model: "gpt-5", webSearchEnabled: false, agentPermissionMode: "full_access" },
+    nativeWebSearchEnabled: true,
+    permissionContract: { mode: "full_access" },
+    prompt: "需要联网状态快照",
+    sessionId: "native-search-explicit",
+    stage: "agent",
+    shensiRuntime: { sessionId: "native-search-explicit", stage: "agent", agentDriven: true },
+  });
+  assert.equal(capturedNativeSearchOptions[0].nativeWebSearchEnabled, true, "显式 nativeWebSearchEnabled 必须优先于关闭的 settings.webSearchEnabled");
+  assert.equal(nativeSearchResult.agentRuntime.nativeWebSearchEnabled, true);
+
   const baseSession = { conversationId: "conversation", branchId: "main", provider: "codex", cwd: root };
   assert.notEqual(
     agentSessionKey({ ...baseSession, permissionMode: "shensi_only" }),

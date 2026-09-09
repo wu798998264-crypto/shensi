@@ -10,14 +10,22 @@ import { requestAgentCapabilityApproval } from "./agent-permission-prompt-tools.
 export const runBundledConversationAgent = async ({ appRoot, machineRoot, ...options }) => {
   const permissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || options.settings?.agentPermissionMode);
   const shensiOnly = permissionMode === "shensi_only";
-  const nativeWebSearchEnabled = options.settings?.webSearchEnabled === true
-    ? await requestAgentCapabilityApproval({
-      permissionMode,
-      capability: "原生联网搜索",
-      runner: "神思运行器",
-      requestApproval: options.requestApproval,
-    })
-    : false;
+  // The outer conversation service may already have resolved this protected
+  // capability. An explicit boolean is an approval-state snapshot, so never
+  // re-open the prompt or fall back to the mutable settings flag.
+  const hasNativeWebSearchOverride = typeof options.nativeWebSearchEnabled === "boolean";
+  const nativeWebSearchEnabled = shensiOnly
+    ? false
+    : hasNativeWebSearchOverride
+      ? options.nativeWebSearchEnabled
+      : options.settings?.webSearchEnabled === true
+        ? await requestAgentCapabilityApproval({
+          permissionMode,
+          capability: "原生联网搜索",
+          runner: "神思运行器",
+          requestApproval: options.requestApproval,
+        })
+        : false;
   const triples = { "win32-x64": "x86_64-pc-windows-msvc", "win32-arm64": "aarch64-pc-windows-msvc", "linux-x64": "x86_64-unknown-linux-musl", "linux-arm64": "aarch64-unknown-linux-musl", "darwin-x64": "x86_64-apple-darwin", "darwin-arm64": "aarch64-apple-darwin" };
   const target = `${process.platform}-${process.arch}`;
   const launcher = join(appRoot, "node_modules", "@openai", `codex-${target}`, "vendor", triples[target] || "unsupported", "bin", process.platform === "win32" ? "codex.exe" : "codex");
