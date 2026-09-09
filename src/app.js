@@ -149,8 +149,7 @@ import { directoryDeletionDocumentIds, orphanTreeReferenceTrashPayload } from ".
 import { findActivityBlockIndex } from "./activity-navigation.js";
 import { batchBaseChapterNumber, candidateTargetDocumentId, chapterNumberValue, explicitlyDefersCandidateLanding, explicitlyRequestsBoundDocument, isGenerationAndLandingRequest, isLandingRequest, isLocalWriteCapabilityQuestion, requestedChapterBatch, requestedChapterTarget, stripCandidateChapterHeading } from "./chapter-target.js?v=1.1.3-direct-replace";
 import { analyzeBatchLanding, analyzeSmartLandingPath, associatedDocumentId, automaticLandingDecision, candidateLandingShouldBeDeferred, continuationDestinationIntent, conversationAssociationDisplayDocumentId, conversationAssociationRoutingAnchorId, conversationAutoAssociationEnabled, createTurnContextSnapshot, explicitNewDocumentIntent, requestsMultipleCandidates, resolveTurnAssociationChange, shouldAutoCreateDocument, splitLabeledCandidateVariants, toggleConversationDocumentAssociation } from "./automatic-landing-policy.js?v=1.1.6-fixed-conversation-binding";
-import { multiCandidateGenerationInstruction } from "./multi-candidate-plan.js";
-import { candidateGenerationRequest, conversationChoiceOverrideFromInstruction, conversationChoiceStepLabel, conversationChoiceUserInstruction, createConversationChoiceState, isCandidateComparisonOpenRequest, selectConversationChoice, structuredCreativeGuidanceChoice, supersedeConversationChoiceInstructions } from "./conversation-choice-panel.js?v=5.4.11-real-uncertainty-only";
+import { conversationChoiceUserInstruction } from "./conversation-choice-panel.js?v=5.4.11-real-uncertainty-only";
 import { resolveConversationFormalContentReference } from "./conversation-formal-content.js";
 import { classifyAssistantOutput } from "./assistant-output-kind.js?v=3.0.10";
 import {
@@ -36766,8 +36765,6 @@ const renderConversationChoicePanel = () => {
     elements.conversationChoicePanel.hidden = false;
     return;
   }
-  const state = pending.state;
-  const options = [];
   if (pending.kind === "agent_guidance") {
     elements.conversationChoiceQuestion.textContent = "";
     elements.conversationChoiceOptions.innerHTML = [
@@ -37234,48 +37231,6 @@ const renderConversationChoicePanel = () => {
       ].join("");
       elements.conversationChoiceHint.textContent = pending.reason || `请选择本次生成${mediaLabel}使用的配置。`;
     }
-  } else if (state) {
-    const question = conversationChoiceStepLabel(state.step);
-    elements.conversationChoiceQuestion.textContent = question;
-    appendConversationChoiceQuestion(pending, question);
-    if (state.step === "writer_mode") {
-      options.push(conversationChoiceButton({ label: "单主笔生成多稿", type: "writer_mode", value: "single", detail: "沿用当前主笔，比较不同差异方向" }));
-      options.push(conversationChoiceButton({ label: "多主笔生成候选", type: "writer_mode", value: "multiple", detail: "从当前可用主笔中选择并分别生成" }));
-    } else if (state.step === "direction") {
-      [["free", "自由发挥"], ["pacing", "节奏差异"], ["emotion", "情绪差异"], ["perspective", "叙事视角差异"]].forEach(([value, label]) => options.push(conversationChoiceButton({ label, type: "direction", value })));
-    } else if (state.step === "candidate_count") {
-      [2, 3, 4].forEach((count) => options.push(conversationChoiceButton({ label: `${count} 份候选稿`, type: "candidate_count", value: String(count), selected: Number(state.count) === count })));
-    } else if (state.step === "writers") {
-      state.writers.forEach((writer) => options.push(conversationChoiceButton({
-        label: writer.name,
-        type: "writer_toggle",
-        value: writer.id,
-        detail: `${writer.role === "secondary" ? "备用主笔" : "主笔"} · ${writer.sourceLabel || "来源已验证"}${writer.version ? ` · ${writer.version}` : ""}`,
-        selected: state.selectedWriterIds.includes(writer.id),
-      })));
-      options.push(conversationChoiceButton({
-        label: "确认主笔",
-        type: "writers_confirm",
-        value: "confirm",
-        detail: state.selectedWriterIds.length ? `已选 ${state.selectedWriterIds.length} 位` : "至少选择一位主笔",
-        disabled: !state.selectedWriterIds.length,
-      }));
-    } else if (state.step === "writer_counts") {
-      state.selectedWriterIds.forEach((writerId) => {
-        const writer = state.writers.find((item) => item.id === writerId);
-        [2, 3, 4].forEach((count) => options.push(conversationChoiceButton({ label: `${writer?.name || writerId}：${count} 份`, type: "writer_count", value: `${writerId}::${count}`, selected: Number(state.countsByWriter?.[writerId]) === count })));
-      });
-      const countsReady = state.selectedWriterIds.every((writerId) => [2, 3, 4].includes(Number(state.countsByWriter?.[writerId])));
-      options.push(conversationChoiceButton({ label: "确认每位主笔的数量", type: "writer_counts_confirm", value: "confirm", detail: countsReady ? "数量已完整" : "请为每位主笔选择数量", disabled: !countsReady }));
-    } else if (state.step === "confirm") {
-      const request = candidateGenerationRequest(state);
-      const summary = request.writerMode === "multiple"
-        ? request.writerIds.map((id) => `${state.writers.find((writer) => writer.id === id)?.name || id} ${request.countsByWriter[id]} 份`).join("；")
-        : `${request.count} 份，${candidateDirectionLabel(request.direction)}`;
-      options.push(conversationChoiceButton({ label: "开始生成候选稿", type: "candidate_confirm", value: "confirm", detail: summary }));
-    }
-    elements.conversationChoiceHint.textContent = "其他要求可以直接在下方对话框中输入。";
-    elements.conversationChoiceOptions.innerHTML = options.join("");
   }
   elements.conversationChoicePanel.hidden = false;
 };
@@ -37821,58 +37776,6 @@ const renderCandidateComparison = () => {
 const closeCandidateComparison = () => {
   ui.candidateComparison.groupId = "";
   if (elements.candidateComparisonDialog.open) elements.candidateComparisonDialog.close();
-};
-
-let pendingMultiCandidateGenerationPrompt = "";
-let pendingCandidateChoiceState = null;
-
-const closeCandidateGenerationDialog = ({ focus = true } = {}) => {
-  pendingMultiCandidateGenerationPrompt = "";
-  pendingCandidateChoiceState = null;
-  closeConversationChoicePanel({ focus });
-};
-
-const openCandidateGenerationDialog = (prompt = "") => {
-  // Candidate count and variation are ordinary task language. The selected
-  // Agent decides whether a choice is needed; never ask for a writer role.
-  return false;
-};
-
-const candidateDirectionLabel = (direction = "free") => ({
-  free: "自由发挥",
-  pacing: "节奏差异",
-  emotion: "情绪差异",
-  perspective: "叙事视角差异",
-}[direction] || "自由发挥");
-
-const startCandidateGeneration = async () => {
-  const source = pendingMultiCandidateGenerationPrompt;
-  if (!source) return;
-  if (codexSubmissionRequiresLogin()) {
-    const panel = document.querySelector("#quickModelPanel");
-    if (panel) panel.hidden = false;
-    document.querySelector("#quickModelButton")?.setAttribute("aria-expanded", "true");
-    renderQuickModelSelector();
-    showToast("Codex 未连接；登录成功后再开始生成候选稿");
-    return;
-  }
-  const request = candidateGenerationRequest(pendingCandidateChoiceState);
-  if (!request) return;
-  const instruction = multiCandidateGenerationInstruction({ ...request, count: request.count || 2, writerIds: request.writerIds, countsByWriter: request.countsByWriter });
-  if (!instruction) return;
-  const displayContent = request.writerMode === "multiple"
-    ? `按已选主笔与候选数量生成候选稿：${request.writerIds.map((id) => {
-      const writer = pendingCandidateChoiceState.writers.find((item) => item.id === id);
-      return `${writer?.name || id} ${request.countsByWriter[id]} 份`;
-    }).join("；")}。`
-    : `由当前主笔按“${candidateDirectionLabel(request.direction)}”方向生成 ${request.count} 份候选稿。`;
-  closeCandidateGenerationDialog({ focus: false });
-  elements.chatInput.value = "";
-  clearActiveComposerDraft();
-  await sendMessage(instruction, {
-    candidateWriterPlan: request.writerMode === "multiple" ? request : null,
-    displayContent,
-  });
 };
 
 const openCandidateComparison = (groupId) => {
@@ -44224,46 +44127,6 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
       return;
     }
   }
-  if (pendingConversationChoice.kind !== "candidate") return;
-  const state = pendingConversationChoice.state;
-  if (type === "writer_toggle") {
-    const writer = state.writers.find((item) => item.id === value);
-    const wasSelected = state.selectedWriterIds.includes(value);
-    const selectedWriterIds = state.selectedWriterIds.includes(value)
-      ? state.selectedWriterIds.filter((id) => id !== value)
-      : [...state.selectedWriterIds, value];
-    pendingConversationChoice.state = { ...state, selectedWriterIds };
-    pendingCandidateChoiceState = pendingConversationChoice.state;
-    appendConversationChoiceInstruction(`${wasSelected ? "取消主笔" : "选择主笔"}：${writer?.name || value}`);
-    renderConversationChoicePanel();
-    return;
-  }
-  if (type === "writer_count") {
-    const [writerId, count] = value.split("::");
-    const writer = state.writers.find((item) => item.id === writerId);
-    pendingConversationChoice.state = { ...state, countsByWriter: { ...state.countsByWriter, [writerId]: Number(count) } };
-    pendingCandidateChoiceState = pendingConversationChoice.state;
-    appendConversationChoiceInstruction(`设置候选数量：${writer?.name || writerId}生成 ${count} 份`);
-    renderConversationChoicePanel();
-    return;
-  }
-  let next = state;
-  if (type === "writers_confirm") {
-    appendConversationChoiceInstruction(`确认主笔：${state.selectedWriterIds.map((id) => state.writers.find((item) => item.id === id)?.name || id).join("、")}`);
-    next = selectConversationChoice(state, { type: "writers", value: state.selectedWriterIds });
-  } else if (type === "writer_counts_confirm") {
-    appendConversationChoiceInstruction("确认以上每位主笔的候选稿数量");
-    next = selectConversationChoice(state, { type: "writer_counts", value: state.countsByWriter });
-  } else if (["writer_mode", "direction", "candidate_count"].includes(type)) {
-    appendConversationChoiceInstruction(choice.querySelector("strong")?.textContent?.trim() || value);
-    next = selectConversationChoice(state, { type, value });
-  } else if (type === "candidate_confirm") {
-    void startCandidateGeneration();
-    return;
-  }
-  pendingConversationChoice.state = next;
-  pendingCandidateChoiceState = next;
-  renderConversationChoicePanel();
 });
 
 elements.memoryReviewButton.addEventListener("click", openMemoryReview);

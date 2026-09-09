@@ -1,47 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  createConversationChoiceState,
-  selectConversationChoice,
-  candidateGenerationRequest,
-  conversationChoiceOverrideFromInstruction,
-  supersedeConversationChoiceInstructions,
   conversationChoiceUserInstruction,
   structuredCreativeGuidanceChoice,
 } from "../src/conversation-choice-panel.js";
 import { conversationMessageEligibleForModel } from "../src/conversation-context.js";
 
-let state = createConversationChoiceState({ prompt: "请给我多候选稿" });
-assert.equal(state.step, "writer_mode");
-state = selectConversationChoice(state, { type: "writer_mode", value: "single" });
-assert.equal(state.step, "direction");
-state = selectConversationChoice(state, { type: "direction", value: "emotion" });
-assert.equal(state.step, "candidate_count");
-state = selectConversationChoice(state, { type: "candidate_count", value: 3 });
-assert.equal(state.step, "confirm");
-assert.equal(candidateGenerationRequest(state).count, 3);
-assert.equal(candidateGenerationRequest(state).direction, "emotion");
-
-let multi = createConversationChoiceState({
-  prompt: "多主笔生成候选",
-  writers: [{ id: "builtin:novel-writer", name: "小说正文主笔" }, { id: "builtin:chinese-novelist-skill", name: "小说原型设计" }],
-});
-multi = selectConversationChoice(multi, { type: "writer_mode", value: "multiple" });
-assert.equal(multi.step, "writers");
-multi = selectConversationChoice(multi, { type: "writers", value: ["builtin:novel-writer", "builtin:chinese-novelist-skill"] });
-assert.equal(multi.step, "writer_counts");
-multi = selectConversationChoice(multi, { type: "writer_counts", value: { "builtin:novel-writer": 2, "builtin:chinese-novelist-skill": 3 } });
-assert.equal(multi.step, "confirm");
-assert.deepEqual(candidateGenerationRequest(multi).countsByWriter, { "builtin:novel-writer": 2, "builtin:chinese-novelist-skill": 3 });
-
-assert.deepEqual(conversationChoiceOverrideFromInstruction("不用之前的 2 份，改为 3 份候选稿"), { candidateCount: 3 });
-const supersededChoices = supersedeConversationChoiceInstructions([
-  { id: "choice-2", role: "user", content: "生成 2 份候选稿", contextEligible: true, conversationChoiceInstruction: true },
-  { id: "reply", role: "assistant", content: "好的", contextEligible: true },
-], "改为 3 份");
-assert.equal(supersededChoices[0].choiceSuperseded, true, "最新自然语言数量必须使旧选项失效");
-assert.equal(conversationMessageEligibleForModel(supersededChoices[0]), false, "已失效选项不得继续进入模型上下文");
-assert.equal(conversationMessageEligibleForModel({ role: "user", content: "改为 3 份", contextEligible: true }), true);
 assert.equal(conversationChoiceUserInstruction({ label: "科幻" }), "科幻", "点选内容必须等同于用户直接输入同一文本");
 assert.equal(conversationChoiceUserInstruction({ label: "", value: "从零开始" }), "从零开始");
 
@@ -70,6 +34,8 @@ assert.match(app, /conversationChoicePanel/u, "选项必须作为对话内面板
 assert.match(app, /data-conversation-choice/u, "对话内选项必须使用统一事件标记");
 assert.doesNotMatch(app, /value="writers" disabled/u, "备用主笔可用后不得硬编码禁用多主笔");
 assert.doesNotMatch(app, /id="candidateGenerationDialog"/u, "候选配置不应再使用独立弹窗");
+assert.doesNotMatch(app, /writer_count|writer_counts|确认主笔|单主笔生成多稿|多主笔生成候选/u,
+  "候选流程不得保留主笔身份或每位主笔数量向导");
 assert.match(app, /conversationChoiceInstruction: true/u, "点选结果必须显示为用户选项指令");
 assert.match(app, /conversationChoiceQuestion: true/u, "神思提出的选项问题必须保留在对话记录中");
 assert.match(app, /const appendPendingConversationTaskInstruction =/u,
@@ -111,7 +77,7 @@ assert.match(app.slice(mediaGenerationStart, mediaGenerationStart + 10_000), /pe
 assert.doesNotMatch(app, /我暂时倾向/u, "选项不得被偷偷改写成暂定倾向或附加特殊权限");
 assert.equal(conversationMessageEligibleForModel({
   role: "user",
-  content: "单主笔生成多稿",
+  content: "重点比较节奏与视角",
   contextEligible: true,
   conversationChoiceInstruction: true,
 }), true, "点选内容必须作为普通用户上下文供后续自然语言覆盖");
