@@ -36,10 +36,14 @@ const { detectShensiRunProfile } = await import("../src/server/shensi-orchestrat
 try {
   const appSource = await readFile(join(process.cwd(), "src", "app.js"), "utf8");
   assert.match(appSource, /const fallbackTimer = setTimeout\(continueOnce, 120\)/, "对话准备阶段必须在动画帧被暂停时继续派发");
+  const composerDispatch = appSource.slice(
+    appSource.indexOf("const dispatchComposerContent ="),
+    appSource.indexOf("let agentProfileChoiceContext ="),
+  );
   assert.match(
-    appSource,
-    /void sendMessage\(content, \{[\s\S]{0,420}immediateInstructionId,[\s\S]{0,420}guidanceDialog: conversationCreativeGuidanceIsActive\(\),[\s\S]{0,420}\}\);/u,
-    "创作引导内层派发必须接管同一条临时指令，避免界面重复显示",
+    composerDispatch,
+    /showImmediateConversationInstruction[\s\S]{0,320}void sendMessage\(content, \{ immediateInstructionId,[\s\S]{0,180}executionSurface: "agent"/u,
+    "统一 Agent 派发必须接管同一条临时指令，避免界面重复显示",
   );
   assert.match(appSource, /payload\.structuredOutput\?\.FormalContent/, "服务端确认的正式内容必须进入候选与落盘链，不能退化成普通聊天文本");
 
@@ -75,10 +79,11 @@ try {
     taskContract: {
       protocol: "shensi_task_contract_v1",
       taskType: "writing",
-      operation: "create",
-      persistence: "commit",
-      targetResolution: "exact",
-      deliverables: [{ id: "chapter-1-prose", kind: "prose", targetDocumentId: "chapter-1", required: true }],
+    operation: "create",
+    persistence: "commit",
+    targetResolution: "exact",
+    semanticSource: "agent",
+    deliverables: [{ id: "chapter-1-prose", kind: "prose", targetDocumentId: "chapter-1", required: true }],
     },
   });
   assert.equal(contractedChapterProfile.production, true, "writing + prose 合同必须保持正文生产链");
@@ -88,10 +93,10 @@ try {
   const guidanceDecisionCommit = "请把这项决定记入当前作品相关设定、大纲和记忆，然后继续按既定结构推进；此时不写正文。";
   assert.equal(hasExplicitFormalAssetWriteIntent({ text: guidanceDecisionCommit }), true, "创作引导中的明确‘记入’动作必须进入正式资产写入链");
   assert.equal(classifyRequestMode({ text: guidanceDecisionCommit, targetDocumentId: "canon-world", targetModuleId: "canon" }).mode, "creative");
-  assert.match(
-    appSource,
-    /const activeGuidanceFlow = Boolean\(effectiveGuidanceDialog && \(guidanceResources\?\.active \|\| ui\.creativeGuidance\?\.active\)\)/u,
-    "引导会话中的明确正式写入必须退出引导态模型调用，使候选进入自动落盘槽",
+  assert.doesNotMatch(
+    composerDispatch,
+    /conversationCreativeGuidanceIsActive|activeGuidanceFlow|hasExplicitFormalAssetWriteIntent/u,
+    "引导会话中的正式写入不得再由本地关键词或旧引导状态机切换执行框架",
   );
 
   const migratedTextSettings = normalizeGenerationProfiles({
