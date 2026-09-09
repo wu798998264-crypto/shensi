@@ -3414,6 +3414,20 @@ const ensureStateSchema = () => {
     recoverConversationTaskQueue(conversation);
     conversation.branchGroups ??= [];
     conversation.candidateBranchGroups ??= [];
+    for (const group of conversation.candidateBranchGroups) {
+      if (!group || typeof group !== "object") continue;
+      group.versions = Array.isArray(group.versions) ? group.versions : [];
+      group.adoptedVersionId ??= "";
+      group.adoptedCandidateId ??= "";
+      group.adoptedContentFingerprint ??= "";
+      group.adoptedAt ??= 0;
+      for (const version of group.versions) {
+        if (!version || typeof version !== "object") continue;
+        version.landedDocuments = Array.isArray(version.landedDocuments) ? version.landedDocuments : [];
+        version.adoptedContentFingerprint ??= "";
+        version.lastAdoptedAt ??= 0;
+      }
+    }
     conversation.references ??= [];
     conversation.workspaceReferences ??= [];
     conversation.skillReferences ??= [];
@@ -38200,7 +38214,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
       const landed = hasVerifiedLandingReceipt(landingReply);
       message.lead = [message.lead, landingReply?.content].filter(Boolean).join(" ");
       message.landingStatus = formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "failed";
-      message.landingManifest = clone(landingReply?.landingManifest ?? null);
+      if (landed || !message.landingManifest) message.landingManifest = clone(landingReply?.landingManifest ?? null);
       if (landed) message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
       if (landed) bindMaterialUpdatePromptToMessage({
         message,
@@ -38276,7 +38290,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
     const landed = hasVerifiedLandingReceipt(landingReply);
     message.lead = [message.lead, landingReply?.content].filter(Boolean).join(" ");
     message.landingStatus = formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "failed";
-    message.landingManifest = clone(landingReply?.landingManifest ?? null);
+    if (landed || !message.landingManifest) message.landingManifest = clone(landingReply?.landingManifest ?? null);
     if (landed) message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
     if (landed) bindMaterialUpdatePromptToMessage({
       message,
@@ -38350,6 +38364,12 @@ const adoptCandidateDraftBranch = (groupId, index = null) => {
   const requestedIndex = Number.isInteger(index)
     ? Math.min(versions.length - 1, Math.max(0, index))
     : Math.max(0, versions.findIndex((version) => version.id === group.activeVersionId));
+  const requestedVersion = versions[requestedIndex];
+  const requestedMessage = candidateMessageForVersion(group, requestedVersion);
+  if (candidateVersionIsAdopted({ group, version: requestedVersion, message: requestedMessage })) {
+    showToast("该候选已经采用，当前文档没有变化");
+    return;
+  }
   switchCandidateDraftBranch(groupId, { index: requestedIndex });
   const refreshedGroup = activeConversation()?.candidateBranchGroups?.find((item) => item.id === groupId);
   const selected = refreshedGroup?.versions?.find((version) => version.id === refreshedGroup.activeVersionId)
