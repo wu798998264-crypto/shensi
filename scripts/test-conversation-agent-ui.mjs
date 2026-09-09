@@ -11,6 +11,7 @@ const dataRoot = join(runtimeRoot, "data");
 const userDataRoot = join(runtimeRoot, "electron-user");
 const artifactRoot = join(root, "artifacts");
 const screenshotPath = join(artifactRoot, "conversation-agent-native.png");
+const permissionScreenshotPath = join(artifactRoot, "agent-permission-levels.png");
 await mkdir(dataRoot, { recursive: true });
 await mkdir(userDataRoot, { recursive: true });
 await mkdir(artifactRoot, { recursive: true });
@@ -148,6 +149,48 @@ try {
   await waitFor("document.querySelector('[data-document=library-memo].active')", "选中链接验收文档");
   const agentLinkTarget = await evaluate(`(() => {const row=document.querySelector('[data-document=library-memo]');return {id:row.dataset.document,title:row.querySelector('.document-label').textContent.trim()};})()`);
   await evaluate(`window.agentLinkTarget=${JSON.stringify(agentLinkTarget)}; true`);
+  await evaluate("document.querySelector('#quickModelButton').click(); true");
+  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false", "权限快捷面板");
+  const defaultPermission = await evaluate(`({
+    labels:[...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')].map((item)=>item.textContent.trim()),
+    selected:document.querySelector('[data-agent-permission-surface="quick"] [data-agent-permission-mode].is-selected')?.dataset.agentPermissionMode,
+    pressed:document.querySelector('[data-agent-permission-surface="quick"] [data-agent-permission-mode="shensi_only"]')?.getAttribute('aria-pressed')
+  })`);
+  assert.deepEqual(defaultPermission.labels, ["仅限神思", "操作需确认", "完全权限"]);
+  assert.equal(defaultPermission.selected, "shensi_only", "新安装必须默认仅限神思");
+  assert.equal(defaultPermission.pressed, "true");
+  const permissionScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  await writeFile(permissionScreenshotPath, Buffer.from(permissionScreenshot.data, "base64"));
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 760, height: 920, deviceScaleFactor: 1, mobile: false });
+  const narrowPermissionLayout = await evaluate(`(() => {
+    const container=document.querySelector('[data-agent-permission-surface="quick"]');
+    const bounds=container.getBoundingClientRect();
+    const buttons=[...container.querySelectorAll('[data-agent-permission-mode]')].map((item)=>item.getBoundingClientRect());
+    return {fits:buttons.every((item)=>item.left>=bounds.left-1&&item.right<=bounds.right+1),overflow:container.scrollWidth-container.clientWidth};
+  })()`);
+  assert.equal(narrowPermissionLayout.fits, true, "窄宽度下三档按钮不得越出面板");
+  assert.ok(narrowPermissionLayout.overflow <= 1, "窄宽度下权限面板不得横向溢出");
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 920, deviceScaleFactor: 1, mobile: false });
+  await evaluate("document.querySelector('[data-agent-permission-mode=approval_required]').click(); true");
+  await waitFor("document.querySelector('[data-agent-permission-mode=approval_required]')?.classList.contains('is-selected') && !document.querySelector('[data-agent-permission-mode=approval_required]')?.disabled", "快捷切换操作需确认");
+  await evaluate("document.querySelector('#closeQuickModel').click(); document.querySelector('#settingsButton').click(); true");
+  await waitFor("document.querySelector('#settingsDialog')?.open && document.querySelector('#settingsDialog')?.getAttribute('aria-busy') !== 'true'", "设置窗口", 45000);
+  await evaluate("document.querySelector('[data-settings-section=model]').click(); true");
+  await waitFor("document.querySelector('[data-settings-page=model]')?.hidden === false", "模型设置");
+  assert.equal(await evaluate("document.querySelector('input[name=agentPermissionMode]:checked')?.value"), "approval_required", "快捷档位必须同步到设置");
+  await evaluate(`(() => {
+    const input=document.querySelector('input[name=agentPermissionMode][value=full_access]');
+    input.checked=true;
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+    document.querySelector('#settingsForm').requestSubmit();
+    return true;
+  })()`);
+  await waitFor("document.querySelector('[data-agent-permission-mode=full_access]')?.classList.contains('is-selected')", "设置同步完全权限", 45000);
+  await evaluate("document.querySelector('#cancelSettings').click(); document.querySelector('#quickModelButton').click(); true");
+  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false && document.querySelector('[data-agent-permission-mode=full_access]')?.classList.contains('is-selected')", "设置同步快捷面板");
+  await evaluate("document.querySelector('[data-agent-permission-mode=shensi_only]').click(); true");
+  await waitFor("document.querySelector('[data-agent-permission-mode=shensi_only]')?.classList.contains('is-selected') && !document.querySelector('[data-agent-permission-mode=shensi_only]')?.disabled", "恢复默认权限");
+  await evaluate("document.querySelector('#closeQuickModel').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='不生成视频，只给三份不同视角的候选故事';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 1", "统一Agent接受");
   await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false", "动态选择框");
@@ -191,7 +234,7 @@ try {
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
-  console.log(JSON.stringify({ok:true,screenshotPath,checks:["raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
   throw error;

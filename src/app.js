@@ -217,6 +217,7 @@ import { classifyPublicTextCapabilityFailure, describePublicTextCapabilityFailur
 import { generatedLandingHistoryDocumentIds } from "./generated-landing-history.js";
 import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFragment, proseParagraphs, stripMatchingLeadingHeadingHtml } from "./prose-format.js";
 import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfileFromExecution } from "./agent-runtime-profile.js";
+import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelBelongsToEngine, agentModelsForEngine, agentProfilesForEngine, isCodexApiCompatibleProvider } from "./agent-engine-registry.js";
 import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js";
 import { executionModeOptionState } from "./model-execution-capabilities.js";
@@ -7421,6 +7422,15 @@ root.innerHTML = `
           </div>
           <div class="quick-agent-fields" id="quickAgentFields">
             <label>文字配置<select id="quickAgentEngine"></select></label>
+            <fieldset class="agent-permission-selector quick-agent-permission-selector">
+              <legend>权限档位</legend>
+              <div class="agent-permission-options" data-agent-permission-surface="quick" role="group" aria-label="新任务权限档位">
+                <button type="button" data-agent-permission-mode="shensi_only">仅限神思</button>
+                <button type="button" data-agent-permission-mode="approval_required">操作需确认</button>
+                <button type="button" data-agent-permission-mode="full_access">完全权限</button>
+              </div>
+              <small class="agent-permission-hint" data-agent-permission-hint>仅影响切换后启动的新任务；当前运行任务保持原权限。</small>
+            </fieldset>
             <label>文字模型<select id="quickAgentModel" class="text-model-state-select"><option value="">当前配置默认模型</option></select></label>
             <div class="quick-text-model-verification" id="quickAgentVerification" data-state="unknown" hidden>
               <span id="quickAgentVerificationStatus" role="status" aria-live="polite">尚未检查当前 Agent</span>
@@ -7429,8 +7439,8 @@ root.innerHTML = `
             <label id="quickAgentReasoningField">推理强度<select id="quickAgentReasoning"></select></label>
             <label id="quickAgentSpeedField">响应速度<select id="quickAgentSpeed"></select></label>
             <div class="quick-agent-project">
-              <span class="codex-agent-cwd" id="codexAgentCwd">完整访问 · 默认从当前文档目录开始</span>
-              <button class="secondary-button codex-project-button" id="selectCodexProject" type="button" title="更换 Agent 的默认操作目录；完整访问范围不会因此缩小">更换目录</button>
+              <span class="codex-agent-cwd" id="codexAgentCwd">仅限神思 · 默认从当前文档目录开始</span>
+              <button class="secondary-button codex-project-button" id="selectCodexProject" type="button" title="更换 Agent 的默认操作目录">更换目录</button>
               <button class="secondary-button codex-project-button" id="resetCodexProject" type="button" title="恢复跟随当前编辑文档所在目录" hidden>恢复默认</button>
               <button class="secondary-button codex-stop-button" id="stopCodexAgent" type="button" hidden>停止</button>
             </div>
@@ -7953,6 +7963,15 @@ root.innerHTML = `
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
                 <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option></select></label>
+                <fieldset class="wide agent-permission-selector settings-agent-permission-selector">
+                  <legend>Agent 权限档位</legend>
+                  <div class="agent-permission-options" data-agent-permission-surface="settings" role="radiogroup" aria-label="Agent 权限档位">
+                    <label><input type="radio" name="agentPermissionMode" value="shensi_only" /><span><strong>仅限神思</strong><small>只使用神思提供的作品、Skill、媒体与交互工具</small></span></label>
+                    <label><input type="radio" name="agentPermissionMode" value="approval_required" /><span><strong>操作需确认</strong><small>完整 Agent 能力；受保护操作逐项确认</small></span></label>
+                    <label><input type="radio" name="agentPermissionMode" value="full_access" /><span><strong>完全权限</strong><small>使用当前系统账户能力，不逐项确认</small></span></label>
+                  </div>
+                  <small class="agent-permission-hint">适用于神思运行器和全部外置运行器；仅影响保存后启动的新任务。</small>
+                </fieldset>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option></select></label>
@@ -24383,6 +24402,17 @@ const quickTextConnectionStatusSuffix = (profile) => {
   return " · 将自动验证";
 };
 
+const renderQuickAgentPermissionMode = () => {
+  const mode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
+  const descriptions = new Map(agentPermissionModeOptions().map((option) => [option.id, option.description]));
+  document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]').forEach((button) => {
+    const selected = button.dataset.agentPermissionMode === mode;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+    button.title = descriptions.get(button.dataset.agentPermissionMode) || "";
+  });
+};
+
 const renderQuickModelSelector = () => {
   const chatProfiles = textGenerationProfilesForMode("agent");
   const configuredActive = activeGenerationProfile(state.settings, "text", state.settings.activeTextAgentConnectionId);
@@ -24405,7 +24435,8 @@ const renderQuickModelSelector = () => {
   const activeAvailable = generationConnectionIsAvailable("text", active);
   const models = ui.temporaryCodexSelected ? (ui.localCodex?.models || []) : modelOptionsForProvider(active.provider, active.adapter);
   const activeModelDisplay = modelPickerDisplayName(models.find((item) => item.slug === active.model) || active.model) || "未选择模型";
-  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${modelPickerDisplayName(selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "默认模型")}`;
+  const permission = agentPermissionModeInfo(state.settings?.agentPermissionMode);
+  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${modelPickerDisplayName(selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "默认模型")} · ${permission.label}`;
   button.title = "点击切换文字配置、运行器和模型";
   if (elements.quickChatModelFields) elements.quickChatModelFields.hidden = isAgent;
   if (elements.quickAgentFields) elements.quickAgentFields.hidden = !isAgent;
@@ -24482,6 +24513,7 @@ const renderQuickModelSelector = () => {
     }
   }
   syncChatModeOptions();
+  renderQuickAgentPermissionMode();
   renderCodexConnectionControls();
   renderQuickAgentVerification();
   renderWhiteboardGenerateControls();
@@ -36831,10 +36863,12 @@ const renderConversationChoicePanel = () => {
     elements.conversationChoiceOptions.innerHTML = (pending.options || []).map((option) => conversationChoiceButton({
       label: option.label,
       type: "native_agent_answer",
-      value: option.label,
-      selected: (pending.selectedValues || []).includes(option.label),
+      value: pending.allowFreeText === false ? option.id : option.label,
+      selected: (pending.selectedValues || []).includes(pending.allowFreeText === false ? option.id : option.label),
     })).join("") + (pending.multiple ? conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length }) : "");
-    elements.conversationChoiceHint.textContent = "也可以直接在下方输入其他想法。";
+    elements.conversationChoiceHint.textContent = pending.allowFreeText === false
+      ? "请选择允许或拒绝；本次决定只作用于当前这一项操作。"
+      : "也可以直接在下方输入其他想法。";
     elements.conversationChoicePanel.hidden = false;
     return;
   }
@@ -58042,13 +58076,17 @@ const renderCodexAgentPanel = () => {
   const automaticCwd = String(ui.codexAgent.documentDirectory || status.defaultProjectRoot || "").trim();
   const cwd = String(customProject ? status.selectedProject?.cwd || "" : automaticCwd || status.selectedProject?.cwd || "").trim();
   const readOnlyRootCount = Math.max(0, Number(status.selectedProject?.readOnlyRootCount) || 0);
-  const fullAccess = status.permissionMode === "danger_full_access";
+  const permissionMode = normalizeAgentPermissionMode(status.permissionMode || state.settings?.agentPermissionMode);
+  const permission = agentPermissionModeInfo(permissionMode);
+  const fullAccess = permissionMode === "full_access";
   elements.codexAgentCwd.textContent = cwd
-    ? `${fullAccess ? "完整访问" : "工作区访问"} · ${customProject ? "自定义操作目录" : ui.codexAgent.documentDirectoryFallback ? "当前工作区目录（文档待落盘）" : "作品根目录（默认）"}：${cwd}${ui.codexAgent.documentPath ? ` · 当前文件：${ui.codexAgent.documentPath}` : ""}${!fullAccess && readOnlyRootCount ? ` · 可只读跨项目 ${readOnlyRootCount} 个目录` : ""}`
+    ? `${permission.label} · ${customProject ? "自定义操作目录" : ui.codexAgent.documentDirectoryFallback ? "当前工作区目录（文档待落盘）" : "作品根目录（默认）"}：${cwd}${ui.codexAgent.documentPath ? ` · 当前文件：${ui.codexAgent.documentPath}` : ""}${permissionMode === "shensi_only" && readOnlyRootCount ? ` · 神思可读取 ${readOnlyRootCount} 个已授权目录` : ""}`
     : "当前文档尚未绑定可用目录";
   elements.codexAgentCwd.title = fullAccess
-    ? `Agent 可访问当前 Windows 用户有权访问的全部本地路径；此处仅表示默认操作目录。${cwd || automaticCwd}`
-    : cwd || automaticCwd;
+    ? `Agent 可使用当前系统账户有权访问的能力；此处仅表示默认操作目录。${cwd || automaticCwd}`
+    : permissionMode === "approval_required"
+      ? `Agent 可申请宿主能力，每项受保护操作都需单独确认；此处仅表示默认操作目录。${cwd || automaticCwd}`
+      : `Agent 只使用神思提供的工具；此处表示当前作品或笔记目录。${cwd || automaticCwd}`;
   elements.resetCodexProject.hidden = !customProject || !automaticCwd;
   const activePendingMessage = codexAgentPendingMessage({ conversationId: state.activeConversationId });
   const latestActiveAgentMessage = [...state.messages].reverse().find((message) => message.execution?.strength === "agent" && message.execution?.agentTurnId);
@@ -58125,6 +58163,17 @@ const renderCodexAgentPanel = () => {
   renderQuickModelSelector();
 };
 
+const requestAgentPermissionModeStatus = async (mode) => {
+  const response = await fetch("/api/codex-agent/permission-mode", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ permissionMode: normalizeAgentPermissionMode(mode) }),
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "Agent 权限档位切换失败");
+  return payload;
+};
+
 const refreshCodexAgentStatus = async ({ refreshAccount = false } = {}) => {
   if (ui.codexAgent.statusPromise) {
     const pendingStatus = await ui.codexAgent.statusPromise;
@@ -58135,8 +58184,12 @@ const refreshCodexAgentStatus = async ({ refreshAccount = false } = {}) => {
   const request = (async () => {
     try {
       const response = await fetch(`/api/codex-agent/status${refreshAccount ? "?refreshAccount=1" : ""}`);
-      const payload = await response.json();
+      let payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Agent 状态读取失败");
+      const desiredPermissionMode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
+      if (normalizeAgentPermissionMode(payload.permissionMode) !== desiredPermissionMode) {
+        payload = await requestAgentPermissionModeStatus(desiredPermissionMode);
+      }
       ui.codexAgent.status = payload;
       syncCodexAgentExecutionFromStatus(payload);
       if ((payload.codexAuthenticated === true || (payload.agentEngine === "codex" && payload.authenticated === true))
@@ -60899,6 +60952,31 @@ elements.codexAgentLogin.addEventListener("click", startCodexLogin);
 elements.codexAgentDisconnect.addEventListener("click", disconnectCodex);
 document.querySelector("#codexSettingsLogin").addEventListener("click", startCodexLogin);
 document.querySelector("#codexSettingsDisconnect").addEventListener("click", disconnectCodex);
+
+document.querySelector('[data-agent-permission-surface="quick"]')?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-agent-permission-mode]");
+  if (!button) return;
+  const previousMode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
+  const nextMode = normalizeAgentPermissionMode(button.dataset.agentPermissionMode);
+  if (nextMode === previousMode) return;
+  const buttons = [...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')];
+  buttons.forEach((item) => { item.disabled = true; });
+  state.settings = { ...state.settings, agentPermissionMode: nextMode };
+  persist();
+  renderQuickModelSelector();
+  try {
+    ui.codexAgent.status = await requestAgentPermissionModeStatus(nextMode);
+    renderCodexAgentPanel();
+    showToast(`已切换为“${agentPermissionModeInfo(nextMode).label}”；仅影响新任务`);
+  } catch (error) {
+    state.settings = { ...state.settings, agentPermissionMode: previousMode };
+    persist();
+    renderQuickModelSelector();
+    showToast(error.message || "Agent 权限档位切换失败");
+  } finally {
+    buttons.forEach((item) => { item.disabled = false; });
+  }
+});
 
 elements.quickAgentEngine?.addEventListener("change", async (event) => {
   const requestedProfileId = String(event.target.value || "");
@@ -71513,14 +71591,21 @@ elements.settingsForm.addEventListener("submit", async (event) => {
   ui.skillSlotBindingsDraft = clone(fixedSlotBindings);
   let saveMessage = globalUiPreferences.uiLanguage === "en-US" ? "Settings saved" : "设置已保存；API Key 仅保留在当前会话";
   try {
+    ui.codexAgent.status = await requestAgentPermissionModeStatus(state.settings.agentPermissionMode);
+  } catch (error) {
+    saveMessage = globalUiPreferences.uiLanguage === "en-US"
+      ? `Settings saved, but the Agent permission level did not sync: ${error.message}`
+      : `设置已保存，但 Agent 权限档位同步失败：${error.message}`;
+  }
+  try {
     const response = await fetch("/api/skills/routes/refresh", { method: "POST" });
     const payload = await response.json();
     if (!response.ok || !payload.ok) throw new Error(payload.message || "路由规则更新失败");
     ui.skillCatalog.routeRevision = Number(payload.routeRevision) || ui.skillCatalog.routeRevision;
   } catch (error) {
     saveMessage = globalUiPreferences.uiLanguage === "en-US"
-      ? `Settings saved, but ${error.message || "route refresh failed"}`
-      : `设置已保存，但${error.message || "路由规则更新失败"}`;
+      ? `${saveMessage}; ${error.message || "route refresh failed"}`
+      : `${saveMessage}；${error.message || "路由规则更新失败"}`;
   }
   ui.generationDraftSettings = normalizeGenerationProfiles(
     clone(state.settings),
