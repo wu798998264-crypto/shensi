@@ -115,7 +115,11 @@ assert.match(appSource, /是否将本轮生成结果写入/u);
 assert.match(appSource, /系统无法确定这次结果是否需要落盘/u);
 assert.match(appSource, /仅保留在对话区/u);
 assert.match(appSource, /选择后直接写入现有正式内容，不会重新调用模型/u);
-assert.match(appSource, /creativeGuidanceWriteConfirmationRequired/u, "创作引导正式推演记录必须进入二次确认门禁");
+assert.match(
+  appSource,
+  /const guidanceRecordConfirmation = pending\.fixedOperation === "append"[\s\S]{0,160}CREATIVE_GUIDANCE_DOCUMENT_ID/u,
+  "创作引导正式推演记录必须进入二次确认门禁",
+);
 assert.match(appSource, /确认写入推演记录/u);
 assert.match(appSource, /只追加已确认或明确委托的作者决策/u);
 assert.match(appSource, /const operation = pending\.fixedOperation \|\| value/u, "创作引导确认不得被切换为覆盖操作");
