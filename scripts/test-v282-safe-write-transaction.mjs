@@ -195,12 +195,21 @@ const workspaceRoute = {
 };
 assert.equal(workspaceFileMutationIntent("修改 src/app.js 并保存", workspaceRoute), true);
 
-const appSource = await (await import("node:fs/promises")).readFile(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(appSource, /automaticLandingDecision\(\{[\s\S]{0,500}taskPolicy:\s*taskRoute\.taskPolicy,[\s\S]{0,300}route:\s*taskRoute/u);
-assert.doesNotMatch(appSource, /const snapshotAiWriteHistory[\s\S]{0,1500}force:\s*true/u);
-assert.match(appSource, /snapshotAiWriteHistory\(\[[\s\S]{0,700}generatedLandingHistoryIds/u);
-assert.match(appSource, /validateFormalWriteAuthorization\(boundReplyAuthorization/u);
-assert.match(appSource, /candidate:\s*""[\s\S]{0,1400}currentCandidateAuthorization\s*=\s*null/u);
-assert.match(appSource, /const execution = \{[\s\S]{0,350}routeReason:\s*taskRoute\.reason,\s*taskRoute:\s*clone\(taskRoute\)/u);
+const [appSource, agentToolsSource] = await Promise.all([
+  (await import("node:fs/promises")).readFile(new URL("../src/app.js", import.meta.url), "utf8"),
+  (await import("node:fs/promises")).readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8"),
+]);
+assert.match(appSource, /const sendMessage = async[\s\S]{0,9000}executeConversationAgentMessage\(/u,
+  "普通对话必须直接进入统一 Agent，不再由旧自动落盘关键词链决定");
+assert.match(agentToolsSource, /state:\s*"commit",\s*action:\s*args\.operation[\s\S]{0,1800}type:\s*args\.operation/u,
+  "Agent 工具选择的明确操作必须同时绑定授权与安全事务");
+assert.doesNotMatch(agentToolsSource, /buildAdaptiveTaskRoute|createFormalWriteAuthorization/u,
+  "Agent 文档工具不得再次用用户措辞做关键词任务分类");
+assert.match(agentToolsSource, /import \{ executeDocumentTransaction \} from "\.\/native-document-transaction-service\.mjs"/u,
+  "Agent 正式写入必须复用带完整历史保护的事务服务");
+assert.match(agentToolsSource, /args\.operation !== "create"[\s\S]{0,120}expectedRevision/u,
+  "覆盖、续写、追加、局部替换和重命名前必须先读取并绑定目标版本");
+assert.match(agentToolsSource, /document\?\.documentKind === "whiteboard"[\s\S]{0,100}对话工具不修改白板/u,
+  "统一对话 Agent 不得绕过原有白板执行面");
 
-console.log("Shensi v2.82 safe write transaction tests passed");
+console.log("Shensi safe write transaction and unified Agent operation tests passed");

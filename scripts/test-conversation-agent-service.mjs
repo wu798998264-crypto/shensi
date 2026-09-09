@@ -24,9 +24,14 @@ try {
   doc = await call('read', { documentId: 'agent-note' });
   assert.match(doc.content, /真实初稿/u);
   await call('write', { operation: 'patch', documentId: 'agent-note', patches: [{ type: 'block', original: '真实初稿', content: '局部修订' }], expectedRevision: doc.revision, operationId: 'patch-one' });
+  doc = await call('read', { documentId: 'agent-note' });
+  await call('write', { operation: 'replace', documentId: 'agent-note', content: '完整覆盖后的正文。', expectedRevision: doc.revision, operationId: 'replace-one' });
   const saved = await loadWorkspaceState({ appRoot: root, requestedPath: workspacePath });
-  assert.ok(saved.state.histories['agent-note'].length >= 2);
-  assert.match(saved.state.documents['agent-note'].markdown, /局部修订/u);
+  assert.equal(saved.state.histories['agent-note'].length, 3);
+  assert.match(saved.state.histories['agent-note'][0].content, /局部修订/u, '覆盖前必须保存完整正文');
+  assert.match(saved.state.histories['agent-note'][1].content, /真实初稿[\s\S]*追加的新段落/u, '局部替换前必须保存完整正文');
+  assert.equal(saved.state.histories['agent-note'][2].content, '这是一段真实初稿。', '续写/追加前必须保存完整正文');
+  assert.equal(saved.state.documents['agent-note'].markdown, '完整覆盖后的正文。');
 
   const waiting = new Map();
   const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime }) => {
@@ -57,7 +62,20 @@ try {
   assert.equal((await service.status(b.id)).status, 'cancelled');
   const restarted = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions') });
   assert.equal((await restarted.status(a.id)).text, '我的其他想法');
-  console.log('Conversation Agent tools, full-history writes, two concurrent conversations, free answers, cancellation and durable status passed');
+
+  const interruptedStorage = join(root, 'interrupted-sessions');
+  const orphaned = createConversationAgentService({ appRoot: root, storageRoot: interruptedStorage, skillCatalog: async () => [], readRoute: async () => 'route', run: async () => new Promise(() => {}) });
+  const orphan = await orphaned.start({ ...request, conversationId: 'conv-orphan', sourceMessageId: 'orphan-message' });
+  for (let index = 0; index < 100; index += 1) {
+    const status = await orphaned.status(orphan.id);
+    if (status.events.some((event) => event.type === 'started')) break;
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  const recovered = createConversationAgentService({ appRoot: root, storageRoot: interruptedStorage });
+  assert.equal((await recovered.status(orphan.id)).status, 'interrupted');
+  const recoveredAgain = createConversationAgentService({ appRoot: root, storageRoot: interruptedStorage });
+  assert.equal((await recoveredAgain.status(orphan.id)).status, 'interrupted', '服务重启恢复状态必须真正持久化');
+  console.log('Conversation Agent tools, exact full-history writes, two concurrent conversations, free answers, cancellation and durable restart status passed');
 } finally {
   const rel = relative(resolve(tmpdir()), resolve(root));
   assert.ok(rel && !rel.startsWith('..') && !isAbsolute(rel));

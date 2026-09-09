@@ -22,14 +22,26 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
 });
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
 
-export const createConversationAgentGateway = ({ appRoot, machineRoot, shensiRoot, apiRuntime, codexRuntime, resolveRuntimeSettings, apiRequest }) => createConversationAgentService({
+export const createConversationAgentGateway = ({
+  appRoot,
+  machineRoot,
+  shensiRoot,
+  apiRuntime,
+  codexRuntime,
+  resolveRuntimeSettings,
+  apiRequest,
+  externalRunners = {},
+  startMcp = startConversationAgentMcp,
+}) => createConversationAgentService({
   appRoot,
   storageRoot: join(machineRoot, "conversation-agent-v1", "runs"),
   skillCatalog: async () => {
     const catalog = await listManagedSkills({ shensiRoot });
     return [...catalog.builtins, ...catalog.user].filter((skill) => skill.disabled !== true && skill.testStatus !== "failed").map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
   },
-  readRoute: () => readFile(join(shensiRoot, "神思模块", "任务路由模块.md"), "utf8"),
+  readRoute: async () => (await Promise.all([
+    ["任务路由模块.md"], ["规则模块", "神思-任务路由规则.md"], ["规则模块", "神思-执行入口映射表.md"],
+  ].map(async (parts) => `# ${parts.at(-1)}\n${await readFile(join(shensiRoot, "神思模块", ...parts), "utf8")}`))).join("\n\n"),
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
     const settings = await resolveRuntimeSettings(options.settings);
@@ -41,11 +53,15 @@ export const createConversationAgentGateway = ({ appRoot, machineRoot, shensiRoo
       try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal }); }
       finally { await runtime.close(); }
     }
-    const nativeHost = await startConversationAgentMcp({ tools: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, signal: options.signal });
+    const nativeHost = await startMcp({ tools: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, signal: options.signal });
     const cwd = join(machineRoot, "conversation-agent-v1", "scratch", options.sessionId);
     await mkdir(cwd, { recursive: true });
     try {
-      const run = settings.agentEngine === "claude_code" ? runClaudeCodeAgentTurn : ["opencode", "deepseek_opencode"].includes(settings.agentEngine) ? runOpenCodeAgent : null;
+      const run = settings.agentEngine === "claude_code"
+        ? externalRunners.claudeCode || runClaudeCodeAgentTurn
+        : ["opencode", "deepseek_opencode"].includes(settings.agentEngine)
+          ? externalRunners.openCode || runOpenCodeAgent
+          : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
       return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: false });
     } finally { await nativeHost.close(); }

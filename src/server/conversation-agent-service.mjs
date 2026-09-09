@@ -37,9 +37,11 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     if (runs.has(id)) return runs.get(id);
     let record;
     try { record = JSON.parse(await readFile(recordPath(id), "utf8")); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
-    if (!terminal(record.status)) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
+    const recoveredInterruptedRun = !terminal(record.status);
+    if (recoveredInterruptedRun) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
     const entry = { record, controller: new AbortController(), supplements: [], pending: new Map() };
     runs.set(id, entry);
+    if (recoveredInterruptedRun) await persist(entry);
     return entry;
   };
   const execute = async (entry, request) => {
