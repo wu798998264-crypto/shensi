@@ -105,7 +105,7 @@ try {
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
           { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: true, allowFreeText: true } },
         ];
-        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '' });
+        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentLinkTarget : null, workspacePath: request.workspacePath });
         return Response.json({ok:true,id,status:'running'});
       }
       if (path.startsWith('/api/conversation-agent/')) {
@@ -115,8 +115,15 @@ try {
           const answer = JSON.parse(init.body).answer;
           run.events.push({sequence:3,type:'answer',payload:{decisionId:JSON.parse(init.body).decisionId,answer}});
           run.events.push({sequence:4,type:'candidates',payload:{variants:[{title:'节奏方案',content:'第一份完整候选稿。'},{title:'视角方案',content:'第二份完整候选稿。'},{title:'融合方案',content:'第三份完整候选稿。'}]}});
-          run.events.push({sequence:5,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
-          run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=5;
+          let sequence = 5;
+          if (run.linkTarget) {
+            const hash = 'a'.repeat(64);
+            const result = {targetDocumentId:run.linkTarget.id,requestedTitle:run.linkTarget.title,targetDirectoryId:'manuscript',verified:true,writtenHash:hash,verifiedHash:hash};
+            const landingManifest = {schemaVersion:2,nativeAgentDocumentSave:true,workspaceKind:'project',workspacePath:run.workspacePath,workspaceName:'Agent界面隔离验收',segments:[{documentId:run.linkTarget.id,title:run.linkTarget.title,requestedTitle:run.linkTarget.title,moduleId:'manuscript',receiptVerified:true,navigationTarget:{documentId:run.linkTarget.id,moduleId:'manuscript',workspaceKind:'project',workspacePath:run.workspacePath,workspaceName:'Agent界面隔离验收'}}],batchLandingReceipt:{verified:true,failed:0,results:[result]}};
+            run.events.push({sequence:sequence++,type:'document_saved',payload:{documentId:run.linkTarget.id,title:run.linkTarget.title,trustedDocumentSave:true,landingManifest}});
+          }
+          run.events.push({sequence,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
+          run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=sequence;
           return Response.json({ok:true,accepted:true});
         }
         if (path.endsWith('/cancel')) { run.status='cancelled'; run.events.push({sequence:run.events.length+1,type:'cancelled',payload:{message:'已取消测试任务'}}); run.lastSequence=run.events.length; return Response.json({ok:true,accepted:true}); }
@@ -135,6 +142,12 @@ try {
   await evaluate(`(() => {document.querySelector('#textDialogInput').value='Agent界面隔离验收';document.querySelector('#textDialogForm').requestSubmit();return true;})()`);
   await waitFor("document.querySelector('#projectButton')?.textContent.includes('Agent界面隔离验收')", "工作区创建");
   await evaluate("if(document.querySelector('#creativeStartWelcomeDialog')?.open)document.querySelector('#dismissCreativeStartWelcome')?.click(); true");
+  await evaluate("document.querySelector('[data-module=library]').click(); true");
+  await waitFor("document.querySelector('[data-document=library-memo]')", "内置资料文档");
+  await evaluate("document.querySelector('[data-document=library-memo]').click(); true");
+  await waitFor("document.querySelector('[data-document=library-memo].active')", "选中链接验收文档");
+  const agentLinkTarget = await evaluate(`(() => {const row=document.querySelector('[data-document=library-memo]');return {id:row.dataset.document,title:row.querySelector('.document-label').textContent.trim()};})()`);
+  await evaluate(`window.agentLinkTarget=${JSON.stringify(agentLinkTarget)}; true`);
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='不生成视频，只给三份不同视角的候选故事';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 1", "统一Agent接受");
   await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false", "动态选择框");
@@ -166,11 +179,19 @@ try {
   await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
   await waitFor("window.nativeAgentAnswers.length === 2", "多选回答");
   assert.equal(await evaluate("window.nativeAgentAnswers[1].answer"), "节奏；视角");
+  await waitFor("document.querySelector('[data-open-landed-document]')", "Agent 文档标题链接");
+  assert.equal(await evaluate("document.querySelector('[data-open-landed-document]').textContent.trim()"), agentLinkTarget.title, "链接文字必须与文档显示标题一致");
+  await evaluate("document.querySelector('[data-module=memory]').click(); true");
+  await waitFor("document.querySelector('[data-document=memory-snapshot]')", "跳转前文档");
+  await evaluate("document.querySelector('[data-document=memory-snapshot]').click(); true");
+  await waitFor("document.querySelector('[data-document=memory-snapshot].active')", "切换离开链接目标");
+  await evaluate("document.querySelector('[data-open-landed-document]').click(); true");
+  await waitFor(`document.querySelector('[data-document].active')?.dataset.document === ${JSON.stringify(agentLinkTarget.id)}`, "点击标题链接跳回文档");
   await evaluate("if(document.querySelector('#creativeStartWelcomeDialog')?.open)document.querySelector('#dismissCreativeStartWelcome')?.click(); true");
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
-  console.log(JSON.stringify({ok:true,screenshotPath,checks:["raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,checks:["raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
   throw error;

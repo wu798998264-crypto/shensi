@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
@@ -12,6 +12,87 @@ const runIdFor = (request) => {
 };
 const terminal = (status) => ["completed", "failed", "cancelled", "interrupted"].includes(status);
 const safeRequest = (value) => JSON.parse(JSON.stringify(value, (key, entry) => /api.?key|password|secret|access.?token|refresh.?token/iu.test(key) ? undefined : entry));
+const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
+
+const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
+  const prompt = String(question || "").trim();
+  if (!prompt) throw new Error("问题不能为空");
+  const seen = new Set();
+  const choices = (Array.isArray(options) ? options : []).flatMap((option) => {
+    const label = String(option || "").trim();
+    if (!label || seen.has(label)) return [];
+    seen.add(label);
+    return [{ id: String(seen.size), label }];
+  });
+  if (choices.length < 2) throw new Error("选择问题必须提供至少两个不同选项；普通提问请直接回复文字");
+  return {
+    id,
+    question: prompt,
+    options: choices,
+    multiple: multiple === true,
+    allowFreeText: true,
+    ...(presentation ? { presentation: String(presentation).slice(0, 80) } : {}),
+    ...(metadata && typeof metadata === "object" ? { metadata: JSON.parse(JSON.stringify(metadata)) } : {}),
+  };
+};
+
+const trustedDocumentSavedPayload = ({ payload = {}, request = {}, trustedToolRuntime = false } = {}) => {
+  const original = payload && typeof payload === "object" ? payload : {};
+  const receipt = original.receipt;
+  const results = Array.isArray(receipt?.results) ? receipt.results : [];
+  const documentId = String(original.documentId || "").trim();
+  const result = results.find((item) => String(item?.targetDocumentId || "").trim() === documentId);
+  const workspacePath = String(request.workspacePath || "").trim();
+  const allResultsVerified = results.length > 0 && results.every((item) => (
+    item?.verified === true
+    && String(item.writtenHash || "")
+    && item.writtenHash === item.verifiedHash
+  ));
+  const verified = trustedToolRuntime
+    && documentId
+    && workspacePath
+    && receipt?.type === "shensi_batch_landing_receipt"
+    && receipt?.status === "completed"
+    && receipt?.verified === true
+    && Number(receipt?.failed) === 0
+    && allResultsVerified
+    && result;
+  const title = String(result?.requestedTitle || result?.title || "").trim();
+  if (!verified || !title) return { ...original, trustedDocumentSave: false };
+  const workspaceKind = request.workspaceKind === "notebook" ? "notebook" : "project";
+  const workspaceName = String(request.workspaceName || request.projectName || "").trim()
+    || basename(resolve(workspacePath));
+  const navigationTarget = {
+    documentId,
+    moduleId: String(result.targetDirectoryId || result.navigationTarget?.moduleId || "").trim(),
+    workspaceKind,
+    workspacePath,
+    workspaceName,
+  };
+  return {
+    ...original,
+    title,
+    trustedDocumentSave: true,
+    landingManifest: {
+      schemaVersion: 2,
+      kind: "native_agent_document_save",
+      nativeAgentDocumentSave: true,
+      workspaceKind,
+      workspacePath,
+      workspaceName,
+      segments: [{
+        documentId,
+        title,
+        requestedTitle: title,
+        moduleId: navigationTarget.moduleId,
+        targetDirectoryId: navigationTarget.moduleId,
+        receiptVerified: true,
+        navigationTarget,
+      }],
+      batchLandingReceipt: receipt,
+    },
+  };
+};
 
 export const createConversationAgentService = ({ appRoot, storageRoot, run, skillCatalog, readSkill, readRoute, media, mediaStatus, toolsFactory = createConversationAgentTools } = {}) => {
   const runs = new Map(), lanes = new Map();
@@ -49,10 +130,10 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     try {
       const catalog = await skillCatalog(request);
       const route = await readRoute(request);
+      const trustedToolRuntime = toolsFactory === createConversationAgentTools;
       const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request),
-        ask: async ({ question, options = [], multiple = false }) => {
-          if (!String(question || "").trim()) throw new Error("问题不能为空");
-          const decision = { id: randomUUID(), question: String(question), options: options.map((label, index) => ({ id: String(index + 1), label: String(label) })), multiple, allowFreeText: true };
+        ask: async ({ question, options = [], multiple = false, presentation = "", metadata = null }) => {
+          const decision = normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
           const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));
           void answer.catch(() => {});
           record.status = "waiting_input";
@@ -65,12 +146,14 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         candidates: async (variants) => { record.candidates = variants; await event(entry, "candidates", { variants }); return { delivered: variants.length, savedToDocument: false }; },
         media: (args) => media(args, { request, runId: record.id, signal: controller.signal, emit: (type, payload) => event(entry, type, payload) }),
         mediaStatus: (jobId, archive = false) => mediaStatus(jobId, { request, archive, emit: (type, payload) => event(entry, type, payload) }),
-        emit: (type, payload) => event(entry, type, payload),
+        emit: (type, payload) => event(entry, type, type === "document_saved"
+          ? trustedDocumentSavedPayload({ payload, request, trustedToolRuntime })
+          : payload),
       });
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model])).digest("hex");
-      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "任务路由文档", text: route }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), request });
+      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), request });
       record.text = result.text || "";
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");

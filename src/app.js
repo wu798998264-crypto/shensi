@@ -19180,6 +19180,25 @@ const renderLandingDocumentLinks = (message = {}) => {
   )).join("")}</nav>`;
 };
 
+const renderNativeAgentDocumentLinks = (message = {}) => {
+  const references = (message.execution?.agentResultReferences ?? [])
+    .filter((reference) => reference?.type === "document_saved"
+      && reference.trustedDocumentSave === true
+      && reference.landingManifest?.nativeAgentDocumentSave === true);
+  if (!references.length) return "";
+  const links = references.flatMap((reference) => verifiedLandingDocumentLinksForManifest({
+    manifest: reference.landingManifest,
+    documents: state.documents,
+  })).filter((item, index, items) => items.findIndex((candidate) => (
+    candidate.documentId === item.documentId
+      && String(candidate.workspacePath || "").toLowerCase() === String(item.workspacePath || "").toLowerCase()
+  )) === index);
+  if (!links.length) return "";
+  return `<nav class="landing-document-links native-agent-document-links" aria-label="Agent 已写入文档">${links.map((item) => (
+    `<button type="button" data-open-landed-document="${escapeHtml(item.documentId)}" data-landed-workspace-kind="${escapeHtml(item.workspaceKind || state.workspaceKind)}" data-landed-workspace-path="${escapeHtml(item.workspacePath || state.settings.workspacePath || "")}" data-landed-workspace-name="${escapeHtml(item.workspaceName || "")}">${escapeHtml(item.title)}</button>`
+  )).join("")}</nav>`;
+};
+
 const renderVerifiedLandedContent = (message = {}) => {
   if (message.pending || message.candidate || message.landingStatus !== "complete") return "";
   const documents = Array.isArray(message.landedDocuments) ? message.landedDocuments : [];
@@ -19657,6 +19676,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedImages(message)}
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
+      ${renderNativeAgentDocumentLinks(message)}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
     </section>`;
@@ -35899,6 +35919,7 @@ const executeConversationAgentMessage = async (content, options) => {
     const started = await conversationAgentRequest("/api/conversation-agent/start", {
       sourceMessageId, conversationId: conversation.id, branchId: activeCandidateThreadScope(conversation, taskMessages),
       workspaceKind: taskContextSnapshot.workspaceKind, workspacePath: taskContextSnapshot.workspacePath, targetDocumentId,
+      workspaceName: taskContextSnapshot.workspaceName || workspaceState.projectName || workspaceState.settings?.projectName || "",
       selection: options.inlineEdit ? { documentId: options.inlineEdit.documentId, originalText: options.inlineEdit.originalText } : null,
       contentOnly: Boolean(options.inlineEdit),
       messages: taskMessages.filter((message) => !message.pending && ["user", "assistant"].includes(message.role)).map((message) => ({

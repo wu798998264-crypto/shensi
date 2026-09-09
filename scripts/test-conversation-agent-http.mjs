@@ -47,7 +47,13 @@ try {
   assert.equal(status.status, "completed", status.error);
   assert.equal(status.text, "HTTP_NATIVE_AGENT_OK");
   assert.equal(modelCalls, 2);
-  assert.ok(status.events.some((item) => item.type === "document_saved"));
+  const savedEvent = status.events.find((item) => item.type === "document_saved");
+  assert.ok(savedEvent, "原生 Agent 文档工具必须发出 document_saved 回执");
+  assert.equal(savedEvent.payload.trustedDocumentSave, true, "只有完整磁盘验收回执才能标记为可信落盘");
+  assert.equal(savedEvent.payload.landingManifest?.nativeAgentDocumentSave, true);
+  assert.equal(savedEvent.payload.landingManifest?.segments?.[0]?.title, "Agent输出");
+  assert.equal(savedEvent.payload.landingManifest?.segments?.[0]?.navigationTarget?.documentId, "agent-created");
+  assert.equal(savedEvent.payload.landingManifest?.workspacePath, workspacePath);
   const duplicate = await api("/api/conversation-agent/start", request);
   assert.equal(duplicate.id, started.id); assert.equal(duplicate.reused, true);
   const loaded = await api("/api/workspace/load", { workspacePath });
