@@ -90,10 +90,11 @@ assert.deepEqual(unintendedMaterialDocumentChanges({ before: { a: "1", b: "2" },
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const extractor = await readFile(new URL("../src/formal-artifact-extractor.js", import.meta.url), "utf8");
 const mutationPlan = await readFile(new URL("../src/creative-mutation-plan.js", import.meta.url), "utf8");
-assert.match(app, /materialUpdateInspectionProjectContext\(materialUpdateInspection, taskWorkspaceState\)/u, "确认后必须从发起任务的工作区读取来源与资料基线");
+assert.match(app, /const workspaceState = pending\.workspaceState \|\| state/u, "确认后必须绑定发起任务的工作区");
+assert.match(app, /sendMessage\(instruction,[\s\S]{0,520}workspaceState,[\s\S]{0,120}taskContextSnapshot/u, "资料检查 Agent 必须继承发起任务的工作区与快照");
 assert.match(app, /materialMutationPlans\.set\(document\.documentId, mutation\)/u, "正式资料写入必须绑定可信增量计划");
 assert.match(app, /unintendedMaterialDocumentChanges/u, "批量写入必须检查计划外资料守恒");
-assert.match(app, /nextHash === currentHash/u, "没有变化的状态投影不得重复改写");
+assert.match(app, /nextHash === integrity\.currentHash/u, "没有变化的状态投影不得重复改写");
 assert.match(extractor, /insertBeforeHeading/u, "模型提供的中间插入锚点必须保留到落盘事务");
 assert.match(mutationPlan, /materialUpdateOutputContract/u, "资料更新必须使用专门的增量输出合同");
 
