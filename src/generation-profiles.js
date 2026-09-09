@@ -1173,9 +1173,15 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       const codexCollapse = collapseDuplicateCodexCliProfiles(profiles, settings);
       profiles = codexCollapse.profiles;
       const remapCodexId = (value) => codexCollapse.aliases.get(String(value || "").trim()) || value;
-      next.activeTextConnectionId = remapCodexId(remapOpenCodeId(settings.activeTextConnectionId));
-      next.activeTextChatConnectionId = remapCodexId(remapOpenCodeId(settings.activeTextChatConnectionId));
-      next.activeTextAgentConnectionId = remapCodexId(remapOpenCodeId(settings.activeTextAgentConnectionId));
+      // Accept an old Chat pointer only as an upgrade input when the unified
+      // or Agent pointer did not yet exist. All three fields are collapsed to
+      // one Agent configuration below; this preserves the user's selection
+      // without reviving an independently selectable Chat mode.
+      const requestedTextId = settings.activeTextAgentConnectionId || settings.activeTextConnectionId || settings.activeTextChatConnectionId;
+      const remappedRequestedTextId = remapCodexId(remapOpenCodeId(requestedTextId));
+      next.activeTextConnectionId = remappedRequestedTextId;
+      next.activeTextChatConnectionId = remappedRequestedTextId;
+      next.activeTextAgentConnectionId = remappedRequestedTextId;
       profiles = normalizeDeepSeekTextModes(profiles);
       profiles = profiles.map(normalizeTextRuntimeModelFields).map(normalizeOpenCodeProfileLabel);
       const previousPublic = profiles.find((profile) => profile.id === BUILT_IN_PUBLIC_AGENT_PROFILE.id && profile.provider === "免费模型")
@@ -1199,7 +1205,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       next.activeTextChatConnectionId = remapCleanedTextId(next.activeTextChatConnectionId);
       next.activeTextAgentConnectionId = remapCleanedTextId(next.activeTextAgentConnectionId);
       const legacyConnectionSelected = !Array.isArray(settings.textConnections) && Boolean(settings.provider || settings.model || settings.adapter);
-      if (!legacyConnectionSelected && !(settings.activeTextAgentConnectionId || settings.activeTextConnectionId)
+      if (!legacyConnectionSelected && !(settings.activeTextAgentConnectionId || settings.activeTextConnectionId || settings.activeTextChatConnectionId)
         || ![next.activeTextConnectionId, next.activeTextAgentConnectionId].some((id) => retainedIds.has(id))) {
         const defaultId = legacyConnectionSelected && retainedIds.has(source[0]?.id) ? source[0].id : BUILT_IN_PUBLIC_AGENT_PROFILE.id;
         next.activeTextConnectionId = next.activeTextAgentConnectionId = defaultId;

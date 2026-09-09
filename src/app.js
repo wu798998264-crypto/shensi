@@ -6615,10 +6615,10 @@ const captureGenerationFormProfile = (channel) => {
       patch.protocol = "responses";
       patch.baseUrl ||= patch.provider === "OpenAI" ? "https://api.openai.com/v1" : "";
       patch.credentialSource = "shensi";
-      patch.executionMode = patch.executionMode === "chat" ? "chat" : "both";
-      patch.executionModes = patch.executionMode === "chat" ? ["chat"] : ["chat", "agent"];
+      patch.executionMode = "agent";
+      patch.executionModes = ["agent"];
       patch.agentModelId = patch.model;
-      patch.chatModelId = patch.model;
+      patch.chatModelId = "";
       patch.cliPath = "";
       patch.cliArgs = "";
     } else if (isGenericOpenCode) {
@@ -6637,10 +6637,9 @@ const captureGenerationFormProfile = (channel) => {
         patch.protocol ||= "chat_completions";
         patch.model = qualifiedOpenCodeModel(patch.model, patch.provider);
         patch.agentModelId = patch.model;
-        patch.chatModelId = patch.model.split("/").slice(1).join("/");
-        patch.executionModes = patch.executionMode === "both"
-          ? ["chat", "agent"]
-          : [patch.executionMode === "agent" ? "agent" : "chat"];
+        patch.chatModelId = "";
+        patch.executionMode = "agent";
+        patch.executionModes = ["agent"];
       }
       Object.assign(patch, openCodeRunnerDefaults("opencode"));
       delete patch.requiresQualifiedModel;
@@ -6651,10 +6650,9 @@ const captureGenerationFormProfile = (channel) => {
       patch.credentialSource = patch.credentialSource === "shensi" ? "shensi" : "claude";
       if (patch.credentialSource === "shensi") {
         patch.protocol = "anthropic_messages";
-        patch.chatModelId = patch.model;
-        patch.executionModes = patch.executionMode === "both"
-          ? ["chat", "agent"]
-          : [patch.executionMode === "agent" ? "agent" : "chat"];
+        patch.chatModelId = "";
+        patch.executionMode = "agent";
+        patch.executionModes = ["agent"];
       } else {
         patch.executionMode = "agent";
         patch.executionModes = ["agent"];

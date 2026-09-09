@@ -52,6 +52,13 @@ assert.match(appSource, /id="chatProviderSelect" hidden aria-hidden="true"[^>]*>
 assert.match(appSource, /id="whiteboardTextExecutionSurface"[^>]*hidden[^>]*><option value="agent" selected>/u);
 assert.doesNotMatch(appSource, /chatAgentGuidance\(content\)/u, "普通发送不得再经过关键词式 Chat→Agent 提示门禁");
 assert.match(appSource, /dispatchComposerContent\(content\);/u);
+const profileCaptureStart = appSource.indexOf("const captureGenerationFormProfile =");
+const profileCaptureEnd = appSource.indexOf("const generationConnectionSummary =", profileCaptureStart);
+const profileCapture = appSource.slice(profileCaptureStart, profileCaptureEnd);
+assert.match(profileCapture, /patch\.executionMode = "agent";[\s\S]{0,80}patch\.executionModes = \["agent"\]/u,
+  "保存任意文字配置时只能保留 Agent 执行模式");
+assert.doesNotMatch(profileCapture, /patch\.executionModes\s*=\s*\[[^\]]*"chat"/u,
+  "设置界面不得重新写入 Chat 或 Chat+Agent 配置");
 assert.match(serverSource, /submittedBody\.executionSurface = "agent"/u);
 assert.match(serverSource, /runUnifiedAgentEntryDecision\(\{/u);
 assert.match(serverSource, /lane: "direct_reply"/u);
@@ -102,8 +109,8 @@ assert.match(serverSource, /agentDecision\.lane === "task_execution" && agentDec
   "高影响操作必须来自统一 Agent 的结构化语义决定");
 assert.match(serverSource, /AGENT_SELF_REPAIR_AUTHORIZATION_REQUIRED/u,
   "原生 Agent 端点必须拒绝未经过高影响确认的旁路请求");
-assert.match(appSource, /presentAgentOperationProposalFromDecision\(\{[\s\S]{0,240}kind: semanticOperationKind/u,
-  "前端只能消费结构化操作类型来建立确认提案");
+assert.doesNotMatch(appSource.slice(composerStart, composerEnd), /presentAgentOperationProposalFromDecision/u,
+  "普通文字任务不得在 Agent 执行前进入旧高影响操作分类器");
 
 const repairConfirmStart = appSource.indexOf("const executeAgentOperationProposal = async");
 const repairConfirmEnd = appSource.indexOf("const presentAgentOperationProposalFromDecision", repairConfirmStart);
