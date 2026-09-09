@@ -442,10 +442,9 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 const verifierSource = await readFile(new URL("../src/server/server-context-verifier.mjs", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 const stylesSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-const sendMessageSource = appSource.slice(appSource.indexOf("const executeMessage"), appSource.indexOf("const sendMessage"));
-assert.ok(
-  sendMessageSource.indexOf('const requestId = uid("run")') < sendMessageSource.indexOf("inferExactReplacementEditPlan({"),
-  "本轮 Request ID 必须在任何局部替换规划器使用前创建，避免 Chat 在请求模型前触发暂时性死区",
+const exactReplacementPlannerSource = appSource.slice(appSource.indexOf("const localEditPlan"), appSource.indexOf("const contextualReplacementPlan"));
+assert.match(exactReplacementPlannerSource, /inferExactReplacementEditPlan\(\{[\s\S]{0,700}requestId:\s*candidateTarget\?\.generationAttemptRequestId\s*\|\|\s*uid\("local-patch"\)/u,
+  "局部替换规划器必须使用本轮候选或独立生成的 Request ID，不能依赖已移除的 Chat 变量",
 );
 assert.doesNotMatch(appSource, /compileContextSections\([\s\S]{0,900}maxCharacters:\s*Number\.POSITIVE_INFINITY/u);
 assert.doesNotMatch(verifierSource, /maxCharacters:\s*Number\.POSITIVE_INFINITY/u);
