@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "bundleId": "shensi-capability-bundle",
-  "bundleVersion": "sha256:5d944a2567a4cd90",
-  "bundleSha256": "5d944a2567a4cd901c06c8000439ce4b356a0916d7dee54b12fea0aafbd52a57",
+  "bundleVersion": "sha256:cda1a3182f013566",
+  "bundleSha256": "cda1a3182f0135663def1ee29ba3e80dfc5ae6a9f64b3fe4fb8c909eedde93c1",
   "entry": "神思.md",
   "fileCount": 598,
-  "totalBytes": 19166519,
+  "totalBytes": 19167180,
   "contentSummary": {
     "runtime-content": 176,
     "runtime-data": 25,
@@ -105,20 +105,20 @@
     },
     {
       "path": "bestseller-ranking-scan/SKILL.md",
-      "sizeBytes": 3562,
-      "sha256": "a9369f67574ec3fca1cefcbffbd4aa7935ac40cf7bcf35f89c806e1cc43ea093",
+      "sizeBytes": 4061,
+      "sha256": "42134c3a40b0916b24b5e8a7c540f00436e750eb2a19fb9bcc44d15fa4632036",
       "role": "runtime-content"
     },
     {
       "path": "bestseller-ranking-scan/agents/openai.yaml",
-      "sizeBytes": 318,
-      "sha256": "0ba3db6289be997a22e1ad209630e8dff05fa84fe7212aba2e9080575c5f730c",
+      "sizeBytes": 417,
+      "sha256": "65d4e2519ff7075c17812b4ede13b60460b594ae7b292a063cc5ed10ede803f4",
       "role": "runtime-data"
     },
     {
       "path": "bestseller-ranking-scan/references/data-quality.md",
-      "sizeBytes": 476,
-      "sha256": "bf3d47f431d02558243304cfe41f2b189a6d9b699a85a6019b5cca536454208b",
+      "sizeBytes": 502,
+      "sha256": "b4bb1d9d54e722eec526002aef3f476cf87f7506c6213ee6304c8f39a66e8b25",
       "role": "runtime-content"
     },
     {
@@ -135,8 +135,8 @@
     },
     {
       "path": "bestseller-ranking-scan/references/short-scan-framework.md",
-      "sizeBytes": 418,
-      "sha256": "3a47a10ad5e8b661282c13b4dbddf8e5549963c3bdb974d07f15039a49dde72e",
+      "sizeBytes": 430,
+      "sha256": "bb6cc594a42c4972aca74594f9d7f24f3e9fff60e9e509c07dad9dfd9d9b3897",
       "role": "runtime-content"
     },
     {
@@ -3291,8 +3291,8 @@
     },
     {
       "path": "神思.md",
-      "sizeBytes": 12241,
-      "sha256": "565fe6617d8249451473a809d22691ea3ff3187dbe81785efce8394b99b6414d",
+      "sizeBytes": 12266,
+      "sha256": "e8a44eff0ae590f55a4a9866a6936170a4472c903f24b621534e580c6a49620a",
       "role": "runtime-content"
     },
     {
