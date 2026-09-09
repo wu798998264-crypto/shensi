@@ -28,9 +28,11 @@ async function sourceWindow(marker, count = 180) {
   return collected.join("\n");
 }
 
-const inspectionRouting = await sourceWindow("if (materialInspectionActive) {", 10);
-assert.match(inspectionRouting, /materialUpdateInspectionProjectContext\(materialUpdateInspection, taskWorkspaceState\)/u,
-  "资料检查上下文必须显式使用发送时工作区");
+const inspectionRouting = await sourceWindow("const executeConversationAgentMessage =", 60);
+assert.match(inspectionRouting, /workspaceState, taskContextSnapshot/u,
+  "资料检查与其他 Agent 任务必须继承发送时工作区快照");
+assert.match(inspectionRouting, /workspaceKind: taskContextSnapshot\.workspaceKind, workspacePath: taskContextSnapshot\.workspacePath/u,
+  "原生 Agent 请求必须显式锁定发送时工作区");
 
 const memorySync = await sourceWindow("const memorySyncRuntimeKey =", 95);
 assert.match(memorySync, /state === syncWorkspaceState/u,
@@ -61,10 +63,10 @@ assert.match(choiceFlow, /materialUpdateRunPromptStatus\(completed\)/u);
 assert.match(choiceFlow, /stillActive \? "failed" : "pending"/u,
   "后台切换导致的异常必须回到待处理状态");
 
-const longFormCompletion = await sourceWindow("if (completionMessage && rawReply.materialUpdatePrompt", 20);
-assert.match(longFormCompletion, /bindMaterialUpdatePromptToMessage/u);
-assert.match(longFormCompletion, /conversationId: conversation\.id/u,
-  "长篇任务最终资料提示必须绑定完成消息和原对话");
+const longFormCompletion = await sourceWindow("if (!job.selfCheckRequested) {", 28);
+assert.match(longFormCompletion, /materialUpdatePromptFor/u);
+assert.match(longFormCompletion, /workspaceState: taskWorkspaceState\(\)/u,
+  "长篇任务最终资料提示必须绑定原任务工作区");
 
 const inlineEditCompletion = await sourceWindow("const materialUpdateMessage = [...state.messages]", 25);
 assert.match(inlineEditCompletion, /message\.inlineEditResult\?\.id === inlineEditId/u);
