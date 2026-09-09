@@ -548,6 +548,7 @@ export class CodexAgentProvider {
     this.lastError = "";
     this.stderrTail = "";
     this.starting = null;
+    this.startingPermissionMode = null;
     this.detectedLaunch = null;
     this.processPermissionMode = null;
     this.installed = null;
@@ -1019,8 +1020,7 @@ export class CodexAgentProvider {
 
   async setAgentPermissionMode(mode) {
     const normalized = normalizeAgentPermissionMode(mode);
-    const current = normalizeAgentPermissionMode(this.state.agentPermissionMode);
-    if (current !== normalized && this.process && this.initialized) {
+    if (this.process && this.initialized && this.processPermissionMode !== normalized) {
       const activeNativeRuns = [...this.runs.values()].some((run) => run.engine === "codex"
         && ["starting", "running", "waiting_approval", "interrupting"].includes(run.status));
       if (activeNativeRuns) {
@@ -1200,9 +1200,18 @@ export class CodexAgentProvider {
       }
       await this.stopProcess();
     }
-    if (this.starting) return this.starting;
+    if (this.starting) {
+      if (this.startingPermissionMode !== requestedPermissionMode) {
+        throw Object.assign(new Error("Codex Agent 正在以另一权限档位启动，请等待当前启动完成后再切换"), { code: "CODEX_AGENT_PERMISSION_PROCESS_BUSY" });
+      }
+      return this.starting;
+    }
+    this.startingPermissionMode = requestedPermissionMode;
     this.starting = this.startProcess(requestedPermissionMode);
-    try { await this.starting; } finally { this.starting = null; }
+    try { await this.starting; } finally {
+      this.starting = null;
+      this.startingPermissionMode = null;
+    }
   }
 
   async startProcess(permissionMode = this.state.agentPermissionMode) {

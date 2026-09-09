@@ -45,6 +45,11 @@ try {
   provider.runs.clear();
   provider.process = null;
   provider.initialized = false;
+  provider.startingPermissionMode = "shensi_only";
+  provider.starting = Promise.resolve();
+  await assert.rejects(() => provider.ensureStarted("full_access"), (error) => error?.code === "CODEX_AGENT_PERMISSION_PROCESS_BUSY");
+  provider.starting = null;
+  provider.startingPermissionMode = null;
   console.log("Codex permission process isolation passed");
 } finally {
   await provider.close().catch(() => {});
