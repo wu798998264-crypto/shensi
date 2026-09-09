@@ -13268,6 +13268,7 @@ const MEDIA_JOB_ATTENTION_STATUSES = new Set(["waiting_credentials", "waiting_st
 const MEDIA_JOB_POLL_STOP_STATUSES = new Set(["complete", "cancelled", ...MEDIA_JOB_ATTENTION_STATUSES]);
 const mediaConversationProgressSaves = new Map();
 const mediaDocumentArtifactProgressSaves = new Map();
+const mediaRecoveryMessageSignatures = new Map();
 const conversationMediaApplyQueues = new Map();
 const mediaGenerationActionFlights = new Map();
 const whiteboardMediaSubmissionLocks = new Map();
@@ -14769,14 +14770,33 @@ const showInterruptedConversationMediaJob = (job) => {
   const taskLabel = batchTotal > 1 ? `第 ${batchIndex}/${batchTotal} ${batchUnit}${batchItemLabel ? `「${batchItemLabel}」` : ""}` : mediaLabel;
   const message = target.messages[target.index];
   const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped);
+  const nextStatus = userStopped ? "cancelled" : job.status;
+  const nextContent = userStopped ? `${taskLabel}生成已停止。` : `${taskLabel}生成未完成：${mediaGenerationErrorText(job) || mediaGenerationPhaseText(job)}`;
+  const recoverySignature = JSON.stringify({
+    status: job.status,
+    userStopped,
+    content: nextContent,
+    error: job.error || "",
+    providerErrorCode: job.providerErrorCode || "",
+    providerTaskId: job.providerTaskId || "",
+    submissionState: job.submissionState || "",
+    desiredAction: job.desiredAction || "run",
+    availableActions: job.availableActions ?? {},
+  });
+  const previousExecution = message.execution ?? {};
+  if (mediaRecoveryMessageSignatures.get(job.id) === recoverySignature
+    && message.pending === false
+    && message.content === nextContent
+    && previousExecution.status === nextStatus
+    && previousExecution.mediaJobStatus === job.status) return false;
   const endedAt = executionTimestampMilliseconds(job.userStoppedAt) || Date.now();
   const startedAt = executionTimestampMilliseconds(message.execution?.startedAt || job.startedAt || job.createdAt) || endedAt;
   Object.assign(message, {
     pending: false,
-    content: userStopped ? `${taskLabel}生成已停止。` : `${taskLabel}生成未完成：${mediaGenerationErrorText(job) || mediaGenerationPhaseText(job)}`,
+    content: nextContent,
     execution: {
       ...(message.execution ?? {}),
-      status: userStopped ? "cancelled" : job.status,
+      status: nextStatus,
       mediaJobStatus: job.status,
       progressPercent: Number(job.progressPercent) || Number(message.execution?.progressPercent) || 1,
       generationJobId: job.id,
@@ -14793,6 +14813,7 @@ const showInterruptedConversationMediaJob = (job) => {
       result: userStopped ? `${taskLabel}：已停止` : `${taskLabel}：${mediaGenerationPhaseText(job)}`,
     },
   });
+  mediaRecoveryMessageSignatures.set(job.id, recoverySignature);
   target.conversation.messages = clone(target.messages);
   if (target.conversation.id === state.activeConversationId) renderMessages();
   persist();
@@ -15340,19 +15361,26 @@ const openMediaRecoveryDialog = async () => {
   await readMediaRecoveryJobsForDialog();
 };
 
+let mediaRecoveryFullScanKey = "";
+
 const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = false, manual = false } = {}) => {
   if (manual) showMediaRecoveryBanner("正在重新读取本机媒体任务与厂商续接状态…", { checking: true });
+  const recoveryScanKey = `${state.workspaceKind}:${normalizedWorkspacePath(state.settings.workspacePath)}`;
+  const fullScan = manual || mediaRecoveryFullScanKey !== recoveryScanKey;
   try {
-    // Include applied jobs so a lost canvas asset ledger can be rebuilt from
-    // the durable job receipt without resubmitting or charging the provider.
-    // Desktop startup can briefly race the local service. Retry that transport
-    // window before presenting a durable-task warning to the user.
+    // The first scan for a workspace (and every manual check) includes applied
+    // jobs so a lost canvas asset ledger can be rebuilt from the durable job
+    // receipt without resubmitting or charging the provider. Later visible
+    // heartbeats only inspect unapplied jobs to keep the UI responsive.
     const { response, globalResponse, smokeResponse, payload, globalPayload, smokePayload } = await fetchMediaRecoveryJobs({
       fetchFn: fetch.bind(window),
       workspacePath: state.settings.workspacePath,
+      includeApplied: fullScan,
+      includeSmoke: fullScan,
     });
     if (!response.ok || !payload.ok) throw new Error(payload.message || "生成任务恢复失败");
     if (!globalResponse.ok || !globalPayload.ok) throw new Error(globalPayload.message || "跨工作区生成任务恢复失败");
+    if (fullScan && smokeResponse.ok && smokePayload.ok) mediaRecoveryFullScanKey = recoveryScanKey;
     const jobs = [...new Map([
       ...(payload.jobs ?? []),
       ...(globalPayload.jobs ?? []),
@@ -15494,10 +15522,10 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
 
 const mediaRecoveryReconciler = createMediaRecoveryReconciler({
   recover: recoverWhiteboardGenerationJobsOnce,
-  // Keep durable result reconciliation alive while the desktop window is in
-  // the background. Chromium may throttle the interval, but focus and
-  // visibility events still force an immediate pass without user recovery.
-  shouldRun: () => true,
+  // A hidden window cannot present recovery UI and the full applied-job scan
+  // is expensive. Visibility/focus events still trigger an immediate pass
+  // when the user returns.
+  shouldRun: () => document.visibilityState !== "hidden",
 });
 
 const recoverWhiteboardGenerationJobs = (options = {}) => mediaRecoveryReconciler.run(options);
@@ -34226,7 +34254,7 @@ const scheduleConversationQueueDrain = (conversationId, { delayMs = 0 } = {}) =>
       // browser turn. If this wake-up observes the old busy state, retry at a
       // bounded interval instead of dropping the only queue notification.
       if (hasReadyItem && (dispatching || landingBlocked || running)) {
-        scheduleConversationQueueDrain(id, { delayMs: 250 });
+        scheduleConversationQueueDrain(id, { delayMs: 1_000 });
       }
       if (!hasReadyItem && !dispatching && !landingBlocked && !running && state.activeConversationId === id) {
         queueMicrotask(() => openPendingMaterialUpdateChoiceForConversation(id));

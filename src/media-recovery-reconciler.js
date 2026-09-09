@@ -1,7 +1,7 @@
 // Keep the eventual recovery loop close to the provider poller so a result
 // already present in the asset store is rebound to its card without a visible
 // multi-second "后台完成、卡片未完成" gap.
-export const DEFAULT_MEDIA_RECOVERY_INTERVAL_MS = 2_000;
+export const DEFAULT_MEDIA_RECOVERY_INTERVAL_MS = 15_000;
 export const DEFAULT_MEDIA_RECOVERY_FETCH_ATTEMPTS = 4;
 
 const responsePayload = async (response, fallback = {}) => {
@@ -20,19 +20,24 @@ export const isMediaRecoveryTransportError = (error) => error?.code === "MEDIA_R
 export const fetchMediaRecoveryJobs = async ({
   fetchFn = globalThis.fetch?.bind(globalThis),
   workspacePath,
+  includeApplied = true,
+  includeSmoke = true,
   attempts = DEFAULT_MEDIA_RECOVERY_FETCH_ATTEMPTS,
   delayFn = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
 } = {}) => {
   if (typeof fetchFn !== "function") throw new TypeError("媒体恢复缺少 fetch 实现");
   const totalAttempts = Math.max(1, Math.min(8, Math.trunc(Number(attempts) || 1)));
   const workspaceQuery = encodeURIComponent(String(workspacePath || ""));
+  const emptySmokeResponse = { ok: true, status: 200, json: async () => ({ ok: true, jobs: [] }) };
   let lastError = null;
   for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
     try {
       const [response, globalResponse, smokeResponse] = await Promise.all([
-        fetchFn(`/api/generation/jobs?workspacePath=${workspaceQuery}&includeApplied=true`, { cache: "no-store" }),
+        fetchFn(`/api/generation/jobs?workspacePath=${workspaceQuery}&includeApplied=${includeApplied ? "true" : "false"}`, { cache: "no-store" }),
         fetchFn("/api/generation/jobs?includeApplied=false", { cache: "no-store" }),
-        fetchFn("/api/generation/jobs?includeApplied=true&targetType=capability-smoke", { cache: "no-store" }),
+        includeSmoke
+          ? fetchFn("/api/generation/jobs?includeApplied=true&targetType=capability-smoke", { cache: "no-store" })
+          : Promise.resolve(emptySmokeResponse),
       ]);
       const [payload, globalPayload, smokePayload] = await Promise.all([
         responsePayload(response, { ok: false, jobs: [], message: "生成任务恢复响应无效" }),
