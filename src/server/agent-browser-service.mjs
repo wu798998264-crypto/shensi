@@ -52,7 +52,7 @@ const needsInteractivePage = (snapshot) => {
 };
 
 const answerCancels = (answer) => /(?:^(?:取消|不用|不继续|停止|cancel|no)\b|取消.{0,12}(?:读取|任务|网页|本次)|(?:cancel|stop).{0,20}(?:read|task|page)?)/iu.test(String(answer || "").trim());
-const answerContinues = (answer) => /(?:完成|继续|重试|done|continue|retry)/iu.test(String(answer || "").trim());
+const answerContinues = (answer) => /(?:完成|好了|可以|已登录|已验证|继续|重试|done|continue|retry|proceed|ready)/iu.test(String(answer || "").trim());
 
 const bridgeRead = async ({
   action,

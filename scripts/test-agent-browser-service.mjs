@@ -61,6 +61,10 @@ assert.ok(bridgeCalls.every((entry) => entry.options.headers.authorization === "
 assert.equal(questions[0]?.presentation, "browser_login");
 assert.equal(questions[0]?.metadata?.sessionId, "browser-session-a");
 assert.deepEqual(questions[0]?.options, ["已完成登录或验证，继续读取", "取消本次网页读取"]);
+const naturalContinue = await renderedBrowser("open", { url: "https://example.com/rank" }, {
+  ask: async () => ({ answer: "我已经登录好了，可以读取" }),
+});
+assert.equal(naturalContinue.text, "登录后可见榜单", "自然语言确认应继续读取网页");
 
 const searchBridgeCalls = [];
 let fallbackSearchCalls = 0;
