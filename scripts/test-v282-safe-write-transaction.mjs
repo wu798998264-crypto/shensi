@@ -13,7 +13,7 @@ import {
   formalArtifactCommitEligibility,
   formalArtifactContentAssessment,
 } from "../src/formal-artifact-extractor.js";
-import { workspaceFileMutationIntent } from "../src/server/codex-agent-provider.mjs";
+import { workspaceFileMutationIntent, workspaceFileReadIntent, workspaceSelfRepairIntent } from "../src/server/codex-agent-provider.mjs";
 import { latestRecoverableCandidate } from "../src/candidate-chapters.js";
 
 const original = {
@@ -190,10 +190,29 @@ const workspaceRoute = {
   mode: "workspace_operation",
   candidatePreviewRequired: false,
   action: "operate",
+  executionOwner: "workspace_agent",
   commitOwner: "workspace_agent",
   commitDisposition: "no_artifact",
 };
 assert.equal(workspaceFileMutationIntent("修改 src/app.js 并保存", workspaceRoute), true);
+assert.equal(workspaceFileMutationIntent("继续执行刚才已经确认的方案", workspaceRoute), true,
+  "源码写入权限必须来自结构化任务合同，不能依赖修改关键词");
+assert.equal(workspaceSelfRepairIntent("继续", workspaceRoute), true,
+  "已确认的自修复合同必须直接定位源码工作区，不能再次猜测目标关键词");
+assert.equal(workspaceFileMutationIntent("修改 src/app.js 并保存", { ...workspaceRoute, action: "analyze", commitOwner: "none" }), false,
+  "文字中的修改关键词不能越过只读任务合同");
+const workspaceReadRoute = {
+  mode: "general",
+  action: "analyze",
+  executionOwner: "workspace_agent",
+  commitOwner: "none",
+  workspaceReadRequired: true,
+  workspaceReadTargets: ["src/app.js"],
+};
+assert.equal(workspaceFileReadIntent("继续核对", workspaceReadRoute), true,
+  "文件读取要求必须来自结构化任务合同，不能依赖读取关键词");
+assert.equal(workspaceFileReadIntent("读取 src/app.js", null), false,
+  "裸关键词不得自行取得文件读取权限");
 
 const [appSource, agentToolsSource] = await Promise.all([
   (await import("node:fs/promises")).readFile(new URL("../src/app.js", import.meta.url), "utf8"),

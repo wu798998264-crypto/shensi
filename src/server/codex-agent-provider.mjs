@@ -145,55 +145,33 @@ const codexApiFunctionToolsSupported = (settings = {}) => (
   || (Array.isArray(settings.toolCapabilities) && settings.toolCapabilities.includes("function_tools"))
 );
 
-const FILE_MUTATION_VERB = /(?:修改|微调|改写|润色|调整|修复|替换|改成|改为|写入|保存|落盘|创建|新建|新增|添加|删除|移除|重命名|移动|剪切|粘贴|清空|更新|edit|modify|rewrite|polish|adjust|fix|patch|replace|write|save|create|add|delete|remove|rename|move|update)/iu;
-const NEGATED_FILE_MUTATION = /(?:不(?:要|会|需|必)?|禁止|不得|只读|仅(?:查看|读取|分析|检查))[^。！？；;\n]{0,28}(?:修改|微调|改写|润色|调整|修复|替换|写入|保存|落盘|创建|新建|新增|添加|删除|移除|重命名|移动|剪切|粘贴|清空|更新|edit|modify|rewrite|write|save|create|delete|remove|rename|move|update)/iu;
-const ENGLISH_NEGATED_FILE_ACTION_LIST = /\b(?:do\s+not|don't|never|without)\b[^.!?\n]{0,160}\b(?:read|inspect|open|check|search|find|edit|modify|rewrite|write|save|create|add|delete|remove|rename|move|update)\b/iu;
-const PLAN_ONLY_FILE_MUTATION = /(?:如何|怎么|怎样|建议|方案|思路|是否应该|能否)[^。！？；;\n]{0,28}(?:修改|微调|改写|润色|调整|修复|替换|写入|保存|落盘|创建|新建|新增|添加|删除|移除|重命名|移动|剪切|粘贴|清空|更新|edit|modify|rewrite|write|save|create|delete|remove|rename|move|update)/iu;
-const FILE_READ_VERB = /(?:读取|查看|打开|检查|核对|分析|总结|搜索|查找|检索|read|inspect|open|check|analy[sz]e|summari[sz]e|search|find)/iu;
-const NEGATED_FILE_READ = /(?:不要|无需|不必|禁止|不得|不可)[^。！？；;\n]{0,20}(?:读取|查看|打开|检查|核对|分析|搜索|查找|检索|read|inspect|open|check|search|find)/iu;
-const EXPLICIT_FILE_REFERENCE = /(?:^|[\s"'“”‘’（(])([A-Za-z0-9_\-\u4e00-\u9fff]+(?:[.][A-Za-z0-9_\-\u4e00-\u9fff]+)+)(?=$|[\s"'“”‘’）)，,。！？；;])/gu;
-const CAPABILITY_ONLY_FILE_MUTATION = /(?:可以|能|可否|是否(?:能|可以)?|有没有办法|具不具备).{0,28}(?:修改|微调|改写|调整|修复|写入|保存|创建|删除|移动|更新)|(?:修改|微调|改写|调整|修复|写入|保存|创建|删除|移动|更新).{0,20}(?:可以吗|能吗|可否|是否可行|有没有权限)/iu;
-const SHENSI_SOFTWARE_TARGET = /(?:神思|本软件|这个软件|当前软件|软件版|客户端|桌面版|应用程序|程序|界面|页面|按钮|面板|弹窗|窗口|组件|快捷键|安装包|源码|代码|server\.mjs|src[\\/])/iu;
 const WORKSPACE_SCAN_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules", ".next", ".cache", "dist", "build", "release", "out"]);
 const MAX_BASELINE_FILES = 20_000;
 const MAX_BASELINE_HASH_BYTES = 64 * 1024 * 1024;
 
-const explicitFileReferences = (prompt) => {
-  const values = [];
-  for (const match of String(prompt || "").matchAll(EXPLICIT_FILE_REFERENCE)) {
-    const value = String(match[1] || "").trim();
-    if (value && !values.some((item) => item.toLowerCase() === value.toLowerCase())) values.push(value);
-  }
-  return values.slice(0, 16);
-};
+const structuredWorkspaceReadTargets = (taskRoute = null) => [...new Set((Array.isArray(taskRoute?.workspaceReadTargets)
+  ? taskRoute.workspaceReadTargets
+  : Array.isArray(taskRoute?.taskPolicy?.workspaceReadTargets)
+    ? taskRoute.taskPolicy.workspaceReadTargets
+    : [])
+  .map((value) => String(value || "").trim())
+  .filter(Boolean))].slice(0, 16);
 
-export const workspaceFileMutationIntent = (prompt, taskRoute = null) => {
+export const workspaceFileMutationIntent = (_prompt, taskRoute = null) => {
   const route = publicTaskRoute(taskRoute);
-  if (route?.commitOwner !== "workspace_agent") return false;
-  if (ENGLISH_NEGATED_FILE_ACTION_LIST.test(String(prompt || ""))) return false;
-  const clauses = String(prompt || "").split(/[。！？；;，,\n]+/u).map((item) => item.trim()).filter(Boolean);
-  return clauses.some((clause) => (
-    FILE_MUTATION_VERB.test(clause)
-    && !NEGATED_FILE_MUTATION.test(clause)
-    && !PLAN_ONLY_FILE_MUTATION.test(clause)
-    && !CAPABILITY_ONLY_FILE_MUTATION.test(clause)
-  ));
+  return route?.executionOwner === "workspace_agent"
+    && route?.commitOwner === "workspace_agent"
+    && route?.action === "operate";
 };
 
-export const workspaceFileReadIntent = (prompt, taskRoute = null) => {
+export const workspaceFileReadIntent = (_prompt, taskRoute = null) => {
   const route = publicTaskRoute(taskRoute);
-  if (route?.shensiLed) return false;
-  const text = String(prompt || "");
-  if (ENGLISH_NEGATED_FILE_ACTION_LIST.test(text)) return false;
-  return FILE_READ_VERB.test(text)
-    && !NEGATED_FILE_READ.test(text)
-    && explicitFileReferences(text).length > 0;
+  return route?.executionOwner === "workspace_agent"
+    && route?.commitOwner === "none"
+    && route?.workspaceReadRequired === true;
 };
 
-export const workspaceSelfRepairIntent = (prompt, taskRoute = null) => (
-  workspaceFileMutationIntent(prompt, taskRoute)
-  && SHENSI_SOFTWARE_TARGET.test(String(prompt || ""))
-);
+export const workspaceSelfRepairIntent = (prompt, taskRoute = null) => workspaceFileMutationIntent(prompt, taskRoute);
 
 const publicTaskRoute = (taskRoute = null) => taskRoute && typeof taskRoute === "object" ? {
   shensiLed: taskRoute.shensiLed === true,
@@ -221,6 +199,8 @@ const publicTaskRoute = (taskRoute = null) => taskRoute && typeof taskRoute === 
   targetDocumentId: String(taskRoute.targetDocumentId || ""),
   targetRevision: String(taskRoute.targetRevision || ""),
   candidateOnly: taskRoute.candidateOnly === true,
+  workspaceReadRequired: taskRoute.workspaceReadRequired === true || taskRoute.taskPolicy?.workspaceReadRequired === true,
+  workspaceReadTargets: structuredWorkspaceReadTargets(taskRoute),
   intentEnvelope: taskRoute.intentEnvelope ? normalizeIntentEnvelope(taskRoute.intentEnvelope) : null,
   // Creative model context is current-version-only. History restoration is a
   // separate explicit UI operation and must never authorize Agent reads.
@@ -1702,10 +1682,6 @@ export class CodexAgentProvider {
         return { ok: false, reason: `TaskContract 仍缺少 ${missing.length}/${requiredDeliverables.length} 个正式交付物：${missing.map((item) => item.title || item.targetDocumentId).join("、")}` };
       }
     }
-    const formalLength = extracted.artifacts.reduce((total, artifact) => total + String(artifact.content || "").replace(/\s+/gu, "").length, 0);
-    if (/(?:续写|继续写|接着写|承接.{0,8}写)/u.test(String(run.originalPrompt || "")) && formalLength < 80) {
-      return { ok: false, reason: "续写正文不足 80 字" };
-    }
     return { ok: true, artifacts: extracted.artifacts };
   }
 
@@ -2452,7 +2428,7 @@ export class CodexAgentProvider {
       && taskRoute?.deliverableType === "market_scan_report"
       && taskRoute?.authorizationState === "candidate_only"
       && expectsFileMutation !== true;
-    const readTargets = expectsFileRead ? explicitFileReferences(text) : [];
+    const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
     const runId = `${claudeCode ? "claude" : genericOpenCode ? "opencode" : "deepseek"}_${randomUUID()}`;
     if (expectsFileMutation && this.lastUndoStoreMaintenance?.overCapacity) {
       throw Object.assign(new Error("Agent 撤销快照对象库已超过保护容量；为避免产生不可安全撤销的新修改，已停止任务。"), { code: "UNDO_STORE_CAPACITY_REQUIRED" });
@@ -2994,7 +2970,7 @@ export class CodexAgentProvider {
       && taskRoute?.deliverableType === "market_scan_report"
       && taskRoute?.authorizationState === "candidate_only"
       && expectsFileMutation !== true;
-    const readTargets = expectsFileRead ? explicitFileReferences(text) : [];
+    const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
     const turnRequestOptions = {
       threadId,
       cwd: project.cwd,
