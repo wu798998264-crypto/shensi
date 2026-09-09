@@ -187,7 +187,11 @@ export const normalizeChapterNumbering = (targetState) => {
   return changed;
 };
 
-const documents = Object.fromEntries(Object.entries(MODULE_ITEMS).flatMap(([moduleId, items]) => items.map(([id, title, metadata = {}]) => [id, { title, html: "", markdown: "", moduleId, ...metadata }])));
+const documents = Object.fromEntries(Object.entries(MODULE_ITEMS).flatMap(([moduleId, items]) => items
+  .filter(([, , metadata]) => !metadata?.alias)
+  .map(([id, title, metadata = {}]) => [id, { title, html: "", markdown: "", moduleId, ...metadata,
+    ...(id === "report-compile" ? { derived: true } : {}), ...(id === "library-memo" ? { userFacingReference: true } : {}),
+  }])));
 
 export const createInitialState = () => ({
   schemaVersion: 19,
@@ -232,6 +236,8 @@ export const createInitialState = () => ({
   trash: [],
   selectedText: "",
   settings: {
+    activeTextConnectionId: "text-public-agent",
+    activeTextAgentConnectionId: "text-public-agent",
     adapter: "api",
     provider: "OpenAI",
     protocol: "responses",
