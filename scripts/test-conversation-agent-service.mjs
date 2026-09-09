@@ -34,7 +34,9 @@ try {
   assert.equal(saved.state.documents['agent-note'].markdown, '完整覆盖后的正文。');
 
   const waiting = new Map();
-  const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime }) => {
+  let choiceProtocol = '';
+  const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime, contextBlocks }) => {
+    choiceProtocol = contextBlocks.find((block) => block.name === '动态选择交互')?.text || '';
     waiting.set(sessionId, true);
     const result = await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'ask', arguments: { question: '方向？', options: ['方向甲', '方向乙'] } });
     return { text: JSON.parse(result.contentItems[0].text).answer };
@@ -53,6 +55,9 @@ try {
     throw new Error('Question timeout');
   };
   const [qa, qb] = await Promise.all([question(a), question(b)]);
+  assert.match(choiceProtocol, /必须调用 interaction\.ask/u, '有限选择必须使用结构化选择工具');
+  assert.match(choiceProtocol, /1\/2\/3\/4[\s\S]*不是选择题[\s\S]*不得调用 interaction\.ask/u, '普通编号说明不得误转为选择框');
+  assert.match(choiceProtocol, /不要用正文关键词、编号或固定模板推断选择框/u, '不得退回正文关键词解析');
   assert.equal(waiting.size, 2, 'two conversations must execute concurrently');
   await assert.rejects(service.answer(a.id, qb.id, '串线'), /过期/u);
   await service.answer(a.id, qa.id, '我的其他想法');
