@@ -50105,14 +50105,27 @@ const primeWhiteboardGenerationDialog = (dialog, nodeId, { centered = false } = 
 };
 
 const scheduleUiInitializationAfterPaint = (callback, { timeout = 160 } = {}) => {
-  requestAnimationFrame(() => {
+  let dispatched = false;
+  let fallbackTimer = null;
+  const dispatch = () => {
+    if (dispatched) return;
+    dispatched = true;
+    if (fallbackTimer !== null) {
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    }
     scheduleUiBackgroundTask(callback, {
       timeout: Math.max(300, timeout),
       // UI initialization is user-requested and should start quickly, while
       // still yielding if a second click/key is already being processed.
       interactionGrace: 56,
     });
-  });
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(dispatch);
+  // A hidden/throttled window may not receive a paint callback at all. The
+  // dialog is already modal and inert at this point, so leaving initialization
+  // behind an unbounded RAF would make every control in the app appear dead.
+  fallbackTimer = setTimeout(dispatch, Math.max(0, Number(timeout) || 160));
 };
 
 const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {

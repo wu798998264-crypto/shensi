@@ -45,8 +45,15 @@ export const conversationCompletionStatus = (status = "") => {
 
 export const conversationTaskMessageIsRunning = (message = null) => {
   if (message?.role !== "assistant") return false;
-  const status = String(message.execution?.status || message.execution?.mediaJobStatus || "");
-  if (TERMINAL_TASK_STATUSES.has(status) || message.execution?.executionStatus === "terminal") return false;
+  const statuses = [message.execution?.status, message.execution?.mediaJobStatus]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  // Provider/media status can be newer than the generic execution status. A
+  // terminal status must win over a stale `running` placeholder, otherwise one
+  // old retry-required job can keep waking the queue forever.
+  if (statuses.some((status) => TERMINAL_TASK_STATUSES.has(status))
+    || message.execution?.executionStatus === "terminal") return false;
+  const status = statuses.find((candidate) => ACTIVE_TASK_STATUSES.has(candidate)) || statuses[0] || "";
   // A completed reply can retain a provider's last active status even after
   // the UI has recorded its terminal timestamp. That stale status must not
   // keep every later instruction in the conversation queue forever.
@@ -100,8 +107,14 @@ export const repairConversationTaskMessages = (messages = []) => {
     if (conversationTaskIsRunning(messages.slice(index))) continue;
     message.pending = false;
     const execution = message.execution ??= {};
-    const status = String(execution.status || execution.mediaJobStatus || "");
-    if (ACTIVE_TASK_STATUSES.has(status) && (execution.endedAt || execution.completedAt)) {
+    const statuses = [execution.status, execution.mediaJobStatus]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+    const terminalStatus = statuses.find((status) => TERMINAL_TASK_STATUSES.has(status));
+    if (terminalStatus && ACTIVE_TASK_STATUSES.has(String(execution.status || ""))) {
+      execution.status = terminalStatus;
+    } else if (!terminalStatus && ACTIVE_TASK_STATUSES.has(String(execution.status || execution.mediaJobStatus || ""))
+      && (execution.endedAt || execution.completedAt)) {
       execution.status = "complete";
     }
     repaired += 1;

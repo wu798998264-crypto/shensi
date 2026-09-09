@@ -55,6 +55,11 @@ assert.equal(supersededRunning[0].pending, false);
 const endedRunning = [{ role: "assistant", pending: true, execution: { status: "running", endedAt: 100 } }];
 assert.equal(repairConversationTaskMessages(endedRunning), 1);
 assert.equal(endedRunning[0].execution.status, "complete", "a returned intermediate provider status must be normalized when repairing old state");
+const staleRunningRetryRequired = [{ role: "assistant", pending: true, execution: { status: "running", mediaJobStatus: "retry_required" } }];
+assert.equal(conversationTaskMessageIsRunning(staleRunningRetryRequired[0]), false, "a terminal media status must override a stale generic running status");
+assert.equal(repairConversationTaskMessages(staleRunningRetryRequired), 1, "mixed running and terminal media states must be repaired during hydration");
+assert.equal(staleRunningRetryRequired[0].pending, false);
+assert.equal(staleRunningRetryRequired[0].execution.status, "retry_required", "the durable attention state must be retained");
 const releasedQueue = { queue: [{ id: "next-after-completion", state: "queued", content: "继续修改剧情" }] };
 const releasedItem = dequeueReadyConversationInstruction({
   conversation: releasedQueue,
