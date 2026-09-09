@@ -56,7 +56,11 @@ import { ensureConversationDispatchDurability } from "../src/conversation-dispat
 }
 
 const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(app, /await onPersist\(\)[\s\S]{0,250}flushWorkspaceSave\(\{ throwOnError: true \}\)/u, "Agent 对话先持久化用户消息；写入失败不能虚假报告已发送");
+assert.match(app, /await onPersist\(\)[\s\S]{0,600}renderNativeConversation\(runtime, true\)[\s\S]{0,250}yieldAfterImmediateInstructionRender[\s\S]{0,250}conversationAgentRequest\("\/api\/conversation-agent\/start"/u,
+  "Agent 对话应先把用户消息和任务卡显示出来，再启动模型");
+const nativePersistence = app.slice(app.indexOf("const persistNativeConversation ="), app.indexOf("const renderNativeConversation ="));
+assert.match(nativePersistence, /persistWorkspaceStateOnly\(\{ saveDelay: 180 \}\)/u, "Agent 进度应交给状态自动保存");
+assert.doesNotMatch(nativePersistence, /await flushWorkspaceSave/u, "Agent 问题和回答不得等待完整工作区保存");
 assert.doesNotMatch(app, /if \(!landingOnlyRequested\) await protectConversationDispatchBeforeModel\(\);/u, "完整保存不得再阻塞模型调用");
 const integration = app.slice(
   app.indexOf("const protectConversationDispatchBeforeModel ="),

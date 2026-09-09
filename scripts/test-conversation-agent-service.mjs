@@ -60,7 +60,14 @@ try {
   assert.match(choiceProtocol, /不要用正文关键词、编号或固定模板推断选择框/u, '不得退回正文关键词解析');
   assert.equal(waiting.size, 2, 'two conversations must execute concurrently');
   await assert.rejects(service.answer(a.id, qb.id, '串线'), /过期/u);
-  await service.answer(a.id, qa.id, '我的其他想法');
+  const [firstAnswer, duplicateAnswer] = await Promise.all([
+    service.answer(a.id, qa.id, '我的其他想法'),
+    service.answer(a.id, qa.id, '第二次点击不应重复接受'),
+  ]);
+  assert.deepEqual(firstAnswer, { accepted: true });
+  assert.deepEqual(duplicateAnswer, { accepted: true }, '同一决策的快速重复回答应共享一次接受结果');
+  const acceptedEvents = (await service.status(a.id)).events.filter((event) => event.type === 'answer_accepted' && event.payload.decisionId === qa.id);
+  assert.equal(acceptedEvents.length, 1, '同一决策只能写入一条 answer_accepted 事件');
   await service.cancel(b.id);
   await new Promise((done) => setTimeout(done, 40));
   assert.equal((await service.status(a.id)).text, '我的其他想法');

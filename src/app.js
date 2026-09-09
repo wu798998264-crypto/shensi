@@ -35782,8 +35782,10 @@ const persistNativeConversation = async (runtime) => {
   conversation.messages = messages;
   if (workspaceTargetIsActive(workspaceScope.workspaceKind, workspaceScope.workspacePath)) {
     mergeAgentRuntimeConversationState(state, runtime);
-    persistWorkspaceStateOnly({ saveDelay: 0 });
-    await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+    // Keep the conversation durable through the normal state-only autosave,
+    // but never make a question, answer, or progress event wait for a full
+    // workspace clone/write on the interaction stack.
+    persistWorkspaceStateOnly({ saveDelay: 180 });
     return;
   }
   if (!workspaceScope.workspacePath) { persist(); return; }
@@ -35947,7 +35949,6 @@ const executeConversationAgentMessage = async (content, options) => {
   if (conversation.id === state.activeConversationId) clearActiveComposerDraft();
   try {
     await onPersist();
-    if (workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)) await flushWorkspaceSave({ throwOnError: true });
     renderNativeConversation(runtime, true);
     await yieldAfterImmediateInstructionRender();
     const started = await conversationAgentRequest("/api/conversation-agent/start", {
@@ -42264,13 +42265,12 @@ const createConversation = () => {
   syncActiveConversationBusyState();
   restoreComposerDraftToInput(conversation);
   ui.panel = null;
-  // A just-created empty conversation must be durable before a restart or an
-  // application update can restore an older history entry for this document.
-  // This is navigation state only and never marks the document body as edited.
-  persistWorkspaceStateOnly({ saveDelay: 0 });
-  void saveWorkspace({ recoverConflict: true });
+  // This is navigation state only. Let the state-only autosave persist it
+  // after the new conversation has painted; constructing a full workspace
+  // snapshot here made the toolbar click block on large trash/history data.
   renderAll();
   elements.chatInput.focus();
+  persistWorkspaceStateOnly({ saveDelay: 180 });
 };
 
 const createConversationFromToolbar = () => {

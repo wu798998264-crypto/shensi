@@ -120,7 +120,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     try { record = JSON.parse(await readFile(recordPath(id), "utf8")); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
     const recoveredInterruptedRun = !terminal(record.status);
     if (recoveredInterruptedRun) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
-    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map() };
+    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
     runs.set(id, entry);
     if (recoveredInterruptedRun) await persist(entry);
     return entry;
@@ -181,7 +181,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       let existing;
       try { existing = await get(id); } catch (error) { lanes.delete(key); throw error; }
       if (existing) { lanes.delete(key); return { id, status: existing.record.status, reused: true }; }
-      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map() };
+      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
       lanes.set(key, id); runs.set(id, entry);
       try { await persist(entry); } catch (error) { lanes.delete(key); runs.delete(id); throw error; }
       entry.task = execute(entry, request);
@@ -195,12 +195,27 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [] };
     },
     async answer(id, decisionId, answer) {
-      const entry = await get(id), pending = entry?.pending.get(decisionId);
-      if (!pending || terminal(entry.record.status)) throw new Error("选项已过期，请直接发送新的要求");
-      if (!String(answer || "").trim()) throw new Error("回答不能为空");
-      await event(entry, "answer_accepted", { decisionId, answer: String(answer) });
-      entry.pending.delete(decisionId); pending.resolve(String(answer));
-      return { accepted: true };
+      const entry = await get(id);
+      if (!entry) throw new Error("选项已过期，请直接发送新的要求");
+      entry.answerFlights ??= new Map();
+      const existingFlight = entry.answerFlights.get(decisionId);
+      if (existingFlight) return existingFlight;
+      const operation = (async () => {
+        const pending = entry.pending.get(decisionId);
+        if (!pending || terminal(entry.record.status)) throw new Error("选项已过期，请直接发送新的要求");
+        if (!String(answer || "").trim()) throw new Error("回答不能为空");
+        const value = String(answer);
+        await event(entry, "answer_accepted", { decisionId, answer: value });
+        entry.pending.delete(decisionId);
+        pending.resolve(value);
+        return { accepted: true };
+      })();
+      entry.answerFlights.set(decisionId, operation);
+      try {
+        return await operation;
+      } finally {
+        if (entry.answerFlights.get(decisionId) === operation) entry.answerFlights.delete(decisionId);
+      }
     },
     async supplement(id, content) {
       const entry = await get(id);
