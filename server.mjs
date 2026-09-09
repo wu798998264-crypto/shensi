@@ -75,13 +75,6 @@ import {
 } from "./src/server/experience-store.mjs";
 import { validateTrustedActionRequest } from "./src/server/trusted-capability-contracts.mjs";
 import { runBookDeconstruction } from "./src/server/book-deconstruction.mjs";
-import { createRankingScanContract } from "./src/ranking-scan-contract.js";
-import { rankingSourceCatalog } from "./src/server/ranking-source-registry.mjs";
-import { createRankingCollectors } from "./src/server/ranking-collectors.mjs";
-import { verifyRankingSourceSignature } from "./src/server/ranking-source-signature.mjs";
-import { RankingSnapshotStore } from "./src/server/ranking-snapshot-store.mjs";
-import { RankingScanRunner } from "./src/server/ranking-scan-runner.mjs";
-import { createRankingAgentExecutor } from "./src/server/ranking-agent-executor.mjs";
 import { planLongFormFoundation, planVolumeChapterOutlines, runLongFormStructureAudit } from "./src/server/long-form-orchestrator.mjs";
 import { planWorkspaceOperations } from "./src/server/workspace-operation-planner.mjs";
 import { planSmartLanding } from "./src/server/smart-landing-planner.mjs";
@@ -462,32 +455,6 @@ if (Object.keys(detectedProxyEnvironment).length) {
 }
 const globalFetchProxy = await configureGlobalFetchProxy();
 await initializeConfiguredDataRoot();
-const rankingFixtureRoot = process.env.SHENSI_RANKING_FIXTURE_MODE === "test"
-  ? resolve(String(process.env.SHENSI_RANKING_FIXTURE_ROOT || ""))
-  : "";
-const rankingSnapshotStore = new RankingSnapshotStore({ root: join(appDataRoot(), "market-scan", "snapshots") });
-let rankingAgentExecutor = null;
-const rankingScanRunner = new RankingScanRunner({
-  snapshotStore: rankingSnapshotStore,
-  collectors: createRankingCollectors({ fixtureRoot: rankingFixtureRoot }),
-  verifyCollector: verifyRankingSourceSignature,
-  skillLoader: async () => {
-    const context = await loadAgentSkillContext({
-      selectedSkills: [{ id: "official:bestseller-ranking-scan", requestedRole: "method", source: "explicit" }],
-      loadSkills: loadSelectedSkills,
-      shensiRoot: defaultShensiRoot,
-    });
-    const skill = context.loadedSkills.find((item) => item.fullText === true);
-    const contextBlock = context.contextBlocks.find((item) => item.id === skill?.id)
-      || context.contextBlocks[0]
-      || null;
-    return skill ? { ...skill, contextBlock } : null;
-  },
-  agentExecutor: (options) => {
-    if (!rankingAgentExecutor) throw new Error("当前 Agent 尚未完成启动，无法接管扫榜任务");
-    return rankingAgentExecutor(options);
-  },
-});
 const startupUpdateRecovery = await recoverInterruptedDataUpdate({ dataRoot: appDataRoot() });
 const startupVersionGuard = desktopRuntime
   ? await runIsolatedDesktopStartupDataVersionGuard({
@@ -783,18 +750,6 @@ const workspaceToolContextForModelRequest = ({ requestedPath = "", workspaceKind
   };
 };
 
-rankingAgentExecutor = createRankingAgentExecutor({
-  provider: codexAgentProvider,
-  defaultProjectCwd: root,
-  resolveRuntimeSettings: async (settings = {}) => {
-    const engine = requiredRuntimeContract({ settings, surface: "agent" }).engine;
-    if (engine === "deepseek_opencode") return resolveDeepSeekAgentSettings(settings);
-    if (engine === "opencode") return resolveOpenCodeAgentSettings(settings);
-    if (engine === "claude_code") return resolveClaudeCodeAgentSettings(settings);
-    if (engine === "codex_api") return resolveCodexApiAgentSettings(settings);
-    return {};
-  },
-});
 
 const runModelAdapter = async (options = {}) => {
   const agentPreferred = options.shensiRuntime?.agentPreferred === true;
@@ -1959,15 +1914,6 @@ const rateLimits = new Map([
   ["/api/media/capabilities/probe", { limit: 20, windowMs: 60_000 }],
   ["/api/models/list", { limit: 12, windowMs: 60_000 }],
   ["/api/opencode/models", { limit: 20, windowMs: 60_000 }],
-  ["/api/ranking-scan/sources", { limit: 30, windowMs: 60_000 }],
-  ["/api/ranking-scan/start", { limit: 6, windowMs: 60_000 }],
-  ["/api/ranking-scan/status", { limit: 120, windowMs: 60_000 }],
-  ["/api/ranking-scan/result", { limit: 60, windowMs: 60_000 }],
-  ["/api/ranking-scan/cancel", { limit: 12, windowMs: 60_000 }],
-  ["/api/ranking-scan/auth/start", { limit: 6, windowMs: 60_000 }],
-  ["/api/ranking-scan/auth/status", { limit: 30, windowMs: 60_000 }],
-  ["/api/ranking-scan/auth/cancel", { limit: 12, windowMs: 60_000 }],
-  ["/api/ranking-scan/report/land", { limit: 6, windowMs: 60_000 }],
   ["/api/update/check", { limit: 12, windowMs: 60_000 }],
   ["/api/update/history", { limit: 12, windowMs: 60_000 }],
   ["/api/update/download", { limit: 3, windowMs: 60_000 }],
@@ -2625,96 +2571,6 @@ const handleApiRequest = async (request, response, pathname) => {
     } catch (error) {
       return sendJson(response, 503, { ok: false, available: false, message: String(error?.message || error).slice(0, 1_000) });
     }
-  }
-
-  if (pathname === "/api/ranking-scan/sources" && request.method === "GET") {
-    return sendJson(response, 200, { ok: true, sources: rankingSourceCatalog() });
-  }
-
-  if (pathname === "/api/ranking-scan/start" && request.method === "POST") {
-    const body = await readJsonBody(request, 512 * 1024);
-    if (body.userStarted !== true) return sendJson(response, 400, { ok: false, message: "扫榜任务必须由用户明确点击开始" });
-    const requestedAgentProfileId = String(body.requestedAgentProfileId || "").trim();
-    const requestedAgentEngine = String(body.requestedAgentEngine || "").trim();
-    const agentSettings = body.agentSettings && typeof body.agentSettings === "object" ? body.agentSettings : {};
-    const activeAgentProfileId = String(agentSettings.activeTextAgentConnectionId || "").trim();
-    const activeAgentEngine = String(agentSettings.agentEngine || "").trim();
-    if (!requestedAgentProfileId || !requestedAgentEngine) {
-      return sendJson(response, 400, { ok: false, message: "请先明确选择一个 Agent 配置；系统不会自动改用其他配置" });
-    }
-    if (activeAgentProfileId !== requestedAgentProfileId || activeAgentEngine !== requestedAgentEngine) {
-      return sendJson(response, 409, { ok: false, message: "Agent 配置与本轮明确选择不一致，已阻止跨配置执行" });
-    }
-    const selectedAgentProfile = (Array.isArray(agentSettings.textConnections) ? agentSettings.textConnections : [])
-      .find((profile) => String(profile?.id || "") === requestedAgentProfileId);
-    if (!selectedAgentProfile) {
-      return sendJson(response, 409, { ok: false, message: "所选 Agent 配置已不存在，请重新选择或前往模型设置核验" });
-    }
-    const selectedExecutionModes = Array.isArray(selectedAgentProfile.executionModes)
-      ? selectedAgentProfile.executionModes.map((mode) => String(mode || "").trim())
-      : [String(selectedAgentProfile.executionMode || "").trim()].filter(Boolean);
-    if (!selectedExecutionModes.includes("agent")) {
-      return sendJson(response, 409, { ok: false, message: "所选配置不具备 Agent 执行模式，已阻止使用 Chat 配置扫榜" });
-    }
-    const contract = createRankingScanContract({
-      ...body,
-      requestedAt: body.requestedAt || new Date().toISOString(),
-      allowBrowserAccess: body.allowBrowserAccess === true,
-      allowAuthenticatedPageAccess: false,
-      allowSnapshotWrite: body.allowSnapshotWrite === true,
-      allowReportLanding: false,
-    });
-    try {
-      const task = rankingScanRunner.start(contract, {
-        agentExecution: {
-          agentSettings,
-          projectCwd: String(body.projectCwd || "").trim(),
-        },
-      });
-      return sendJson(response, 202, { ok: true, task });
-    } catch (error) {
-      return sendJson(response, 400, { ok: false, message: String(error?.message || error).slice(0, 1_000) });
-    }
-  }
-
-  if (pathname === "/api/ranking-scan/status" && request.method === "GET") {
-    const task = rankingScanRunner.status(requestUrl.searchParams.get("taskId"));
-    return task
-      ? sendJson(response, 200, { ok: true, task })
-      : sendJson(response, 404, { ok: false, message: "扫榜任务不存在或本地运行时已重启" });
-  }
-
-  if (pathname === "/api/ranking-scan/result" && request.method === "GET") {
-    const task = rankingScanRunner.status(requestUrl.searchParams.get("taskId"));
-    if (!task) return sendJson(response, 404, { ok: false, message: "扫榜任务不存在或本地运行时已重启" });
-    if (!new Set(["completed", "partial", "failed", "cancelled"]).has(task.status)) {
-      return sendJson(response, 202, { ok: true, task, message: "任务尚未把报告返回界面" });
-    }
-    return sendJson(response, 200, { ok: true, task });
-  }
-
-  if (pathname === "/api/ranking-scan/cancel" && request.method === "POST") {
-    const body = await readJsonBody(request, 16 * 1024);
-    const task = rankingScanRunner.cancel(body.taskId);
-    return task
-      ? sendJson(response, 200, { ok: true, task })
-      : sendJson(response, 404, { ok: false, message: "扫榜任务不存在" });
-  }
-
-  if (pathname === "/api/ranking-scan/auth/start" && request.method === "POST") {
-    return sendJson(response, 409, { ok: false, message: "扫榜默认不读取登录态；当前没有通过安全核验的隔离认证通道" });
-  }
-
-  if (pathname === "/api/ranking-scan/auth/status" && request.method === "GET") {
-    return sendJson(response, 200, { ok: true, status: "unavailable", authenticated: false, message: "没有活动的隔离扫榜认证会话" });
-  }
-
-  if (pathname === "/api/ranking-scan/auth/cancel" && request.method === "POST") {
-    return sendJson(response, 200, { ok: true, status: "cancelled", authenticated: false, message: "没有保留任何扫榜认证状态" });
-  }
-
-  if (pathname === "/api/ranking-scan/report/land" && request.method === "POST") {
-    return sendJson(response, 409, { ok: false, code: "FORMAL_WRITE_AUTHORIZATION_REQUIRED", message: "扫榜报告默认为候选研究资料；请明确选择目标并重新取得正式写入授权" });
   }
 
   if (pathname === "/api/update/status" && request.method === "GET") {

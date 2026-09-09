@@ -20,6 +20,7 @@ import {
   solidifyMutationUndoManifest,
 } from "./mutation-transaction.mjs";
 import {
+  agentChildEnvironment,
   nativeCodexCapabilityPolicy,
   nativeCodexEnvironment,
   nativeCodexProfileRoot,
@@ -502,7 +503,7 @@ export class CodexAgentProvider {
     this.claudeCodeAgentRunner = claudeCodeAgentRunner;
     this.apiAgentRuntime = apiAgentRuntime;
     this.workspaceReadBrokerFactory = workspaceReadBrokerFactory;
-    this.environment = environment;
+    this.environment = agentChildEnvironment(environment);
     this.systemReadRoots = Array.isArray(systemReadRoots) ? systemReadRoots : [
       resolve(this.appRoot, "packaging", "bundled", "skill"),
     ];
@@ -2423,11 +2424,6 @@ export class CodexAgentProvider {
     throwIfAgentStartCancelled(signal);
     const expectsFileMutation = workspaceFileMutationIntent(text, taskRoute);
     const expectsFileRead = !expectsFileMutation && workspaceFileReadIntent(text, taskRoute);
-    const trustedReadOnlyNetwork = taskPacket?.rankingScan === true
-      && taskPacket?.trustedReadOnlyNetwork === true
-      && taskRoute?.deliverableType === "market_scan_report"
-      && taskRoute?.authorizationState === "candidate_only"
-      && expectsFileMutation !== true;
     const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
     const runId = `${claudeCode ? "claude" : genericOpenCode ? "opencode" : "deepseek"}_${randomUUID()}`;
     if (expectsFileMutation && this.lastUndoStoreMaintenance?.overCapacity) {
@@ -2571,7 +2567,11 @@ export class CodexAgentProvider {
         ...((genericOpenCode || claudeCode) ? { cliPath: runtimeSettings?.cliPath } : {}),
         reasoningEffort: requestOptions.reasoningEffort || String(runtimeSettings?.reasoningEffort || "high"),
         allowEdits: expectsFileMutation,
-        allowNetwork: trustedReadOnlyNetwork,
+        // Network access is intentionally disabled for the model process.
+        // Public web reads go through the unified Agent browser tool, which
+        // applies the HTTPS/public-host boundary and keeps page instructions
+        // as untrusted data.
+        allowNetwork: false,
         contextBlocks: [
           ...(hostContract ? [{ type: "host_contract", name: "神思任务路由与交付合同", text: hostContract }] : []),
           ...run.contextBlocks,
@@ -2965,11 +2965,6 @@ export class CodexAgentProvider {
     throwIfAgentStartCancelled(signal);
     const expectsFileMutation = workspaceFileMutationIntent(text, taskRoute);
     const expectsFileRead = !expectsFileMutation && workspaceFileReadIntent(text, taskRoute);
-    const trustedReadOnlyNetwork = taskPacket?.rankingScan === true
-      && taskPacket?.trustedReadOnlyNetwork === true
-      && taskRoute?.deliverableType === "market_scan_report"
-      && taskRoute?.authorizationState === "candidate_only"
-      && expectsFileMutation !== true;
     const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
     const turnRequestOptions = {
       threadId,
@@ -2982,9 +2977,7 @@ export class CodexAgentProvider {
       approvalsReviewer: "user",
       sandboxPolicy: expectsFileMutation
         ? CODEX_FULL_ACCESS_SANDBOX_POLICY
-        : trustedReadOnlyNetwork
-          ? { type: "readOnly", networkAccess: true }
-          : CODEX_READ_ONLY_SANDBOX_POLICY,
+        : CODEX_READ_ONLY_SANDBOX_POLICY,
     };
     this.emit("git_status_checked", { cwd: project.cwd, dirtyPaths: [...dirtyPaths], conversationId, requestId: String(taskPacket?.requestId || "") });
     const runId = `run_${randomUUID()}`;

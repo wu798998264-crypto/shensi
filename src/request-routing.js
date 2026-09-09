@@ -6,7 +6,6 @@ import { createHistoryReadAuthorization } from "./history-read-policy.js";
 import { hasFormalAssetWriteIntent } from "./artifact-ontology.js";
 import { createFormalWriteAuthorization } from "./formal-write-authorization.js";
 import { shouldSuppressAutomaticFormalLanding } from "./formal-write-confirmation.js";
-import { rankingScanIntent } from "./ranking-scan-contract.js";
 import { normalizeTaskContract, validateTaskContractForExecution } from "./task-contract.js";
 import { buildIntentEnvelope } from "./intent-envelope.js";
 import { isImageAssetSourceExtractionRequest } from "./image-asset-routing.js";
@@ -640,21 +639,6 @@ export const classifyRequestMode = ({
   workspaceKind = "project",
 } = {}) => {
   const source = String(text).trim();
-  const scanIntent = rankingScanIntent(source);
-  if (scanIntent.kind === "knowledge") {
-    return { mode: "general", reason: "用户在了解扫榜能力，不启动采集任务", shensiLed: false };
-  }
-  if (scanIntent.kind === "scan") {
-    return {
-      mode: "market_research",
-      reason: "已识别用户主动发起的爆款扫榜任务；进入受控采集与报告链，不进入小说正文生成链",
-      shensiLed: false,
-      deliverableType: "market_scan_report",
-      deliverableLabel: CREATIVE_DELIVERABLE_LABELS.market_scan_report,
-      requiresToolTask: true,
-      rankingScanIntent: scanIntent,
-    };
-  }
   const deliverableType = creativeDeliverableType({ text: source, targetDocumentId });
   const deliverableLabel = creativeDeliverableLabel(deliverableType);
   const deliverableMeta = deliverableType ? { deliverableType, deliverableLabel } : {};

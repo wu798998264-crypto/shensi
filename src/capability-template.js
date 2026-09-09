@@ -552,7 +552,7 @@ export const createInitialCapabilityTemplate = () => {
       triggerRules: "仅在用户明确 @ 或满足 Skill 自身受控触发规则时启用。",
       relation: "parallel",
       slots: [
-        skillSlot({ id: "slot:bestseller-ranking-scan", name: "爆款扫榜", skillId: "user:shensi.bestseller-ranking-scan", sourceLegacySlotId: "bestseller-ranking-scan", capabilities: ["market_research", "ranking_scan", "knowledge_reference"], workspaceModes: ["general"], triggerKeywords: ["爆款扫榜", "扫榜", "榜单分析", "市场榜单"], official: true }),
+        skillSlot({ id: "slot:bestseller-ranking-scan", name: "爆款扫榜", skillId: "user:shensi.bestseller-ranking-scan", sourceLegacySlotId: "bestseller-ranking-scan", capabilities: ["market_research", "ranking_scan", "knowledge_reference"], workspaceModes: ["general"], triggerRules: "由 Agent 结合任务路由、用户目标和本 Skill 能力边界自主判断是否需要公开榜单研究；普通提及不自动启动采集。", official: true }),
         skillSlot({ id: "slot:book-deconstruction", name: "爆款拆书", skillId: "user:shensi.book-deconstruction", sourceLegacySlotId: "book-deconstruction", capabilities: ["knowledge_reference"], workspaceModes: ["general"], triggerKeywords: ["拆书", "拆文", "爆款拆书", "逆向分析作品"], official: true }),
         skillSlot({ id: "slot:style-distillation", name: "文风蒸馏", skillId: "user:shensi.style-distillation", capabilities: ["style_reference"], workspaceModes: ["general"], triggerKeywords: ["@文风蒸馏"], triggerRules: "只接受用户明确 @文风蒸馏。", official: true }),
         fixedSlot("builtin:short-drama-script-reconstructor", "短剧视频逆推剧本", {

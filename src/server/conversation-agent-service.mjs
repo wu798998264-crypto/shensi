@@ -94,7 +94,7 @@ const trustedDocumentSavedPayload = ({ payload = {}, request = {}, trustedToolRu
   };
 };
 
-export const createConversationAgentService = ({ appRoot, storageRoot, run, skillCatalog, readSkill, readRoute, media, mediaStatus, toolsFactory = createConversationAgentTools } = {}) => {
+export const createConversationAgentService = ({ appRoot, storageRoot, run, skillCatalog, readSkill, readRoute, media, mediaStatus, browser, toolsFactory = createConversationAgentTools } = {}) => {
   const runs = new Map(), lanes = new Map();
   const recordPath = (id) => {
     if (!/^agent-[a-f0-9-]{36}$/u.test(String(id))) throw new Error("无效 Agent 任务ID");
@@ -131,7 +131,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const catalog = await skillCatalog(request);
       const route = await readRoute(request);
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
-      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request),
+      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
         ask: async ({ question, options = [], multiple = false, presentation = "", metadata = null }) => {
           const decision = normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
           const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));

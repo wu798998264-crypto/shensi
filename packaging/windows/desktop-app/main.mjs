@@ -1,10 +1,11 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safeStorage, screen, session, shell, Tray } from "electron";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { lookup } from "node:dns/promises";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
-import { request } from "node:http";
+import { createServer, isIP } from "node:net";
+import { createServer as createHttpServer, request } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -166,6 +167,10 @@ let desktopStartupComplete = false;
 let lastMediaSaveDirectory = "";
 let externalMarkdownRendererReady = false;
 let externalMarkdownDrainPromise = null;
+let agentBrowserBridgeServer = null;
+let agentBrowserBridgeOrigin = "";
+let agentBrowserBridgeToken = "";
+const agentBrowserSessions = new Map();
 const pendingExternalMarkdownPaths = [];
 const pendingExternalMarkdownPayloads = [];
 const expectedBackendStops = new WeakSet();
@@ -207,6 +212,349 @@ const queueExternalMarkdownArguments = (argumentsList, workingDirectory = proces
 queueExternalMarkdownArguments(process.argv.slice(1), process.cwd());
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+
+const AGENT_BROWSER_MAX_TEXT = 120_000;
+const AGENT_BROWSER_LOAD_TIMEOUT_MS = 30_000;
+const AGENT_BROWSER_LOGIN_SIGNAL = /(?:请先登录|立即登录|登录后|sign\s*in|log\s*in)/iu;
+const AGENT_BROWSER_BLOCKING_SIGNAL = /(?:验证码|人机验证|访问受限|captcha|verify\s+you\s+are\s+human|access\s+denied|unusual\s+traffic)/iu;
+const AGENT_BROWSER_EMPTY_PAGE_SIGNAL = /(?:enable\s+javascript|开启\s*javascript|javascript\s+required)/iu;
+const agentBrowserPublicHostChecks = new Map();
+
+const agentBrowserPrivateIpv4 = (address) => {
+  const parts = String(address).split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  return parts[0] === 0 || parts[0] === 10 || parts[0] === 127 || parts[0] >= 224
+    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+    || (parts[0] === 169 && parts[1] === 254)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 198 && parts[1] >= 18 && parts[1] <= 19);
+};
+
+const agentBrowserPrivateIp = (address = "") => {
+  const normalized = String(address).toLowerCase().replace(/^\[|\]$/gu, "");
+  if (isIP(normalized) === 4) return agentBrowserPrivateIpv4(normalized);
+  if (isIP(normalized) !== 6) return true;
+  if (normalized.startsWith("::ffff:")) return agentBrowserPrivateIpv4(normalized.slice(7));
+  return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") || normalized.startsWith("fd") || /^fe[89ab]/u.test(normalized);
+};
+
+const safeAgentBrowserUrl = (value) => {
+  let url;
+  try { url = new URL(String(value || "")); } catch { throw new Error("内置浏览器网页地址无效"); }
+  if (url.protocol !== "https:" || url.username || url.password) throw new Error("内置浏览器只允许读取 HTTPS 公网页面");
+  const host = url.hostname.toLowerCase();
+  if (!host || host === "localhost" || host === "localhost.localdomain" || host === "::1"
+    || /^(?:0|10|127)\./u.test(host) || /^192\.168\./u.test(host) || /^172\.(?:1[6-9]|2\d|3[01])\./u.test(host)) {
+    throw new Error("内置浏览器不允许访问本机或内网地址");
+  }
+  url.hash = "";
+  return url;
+};
+
+const assertAgentBrowserPublicHost = async (hostname) => {
+  const host = String(hostname || "").toLowerCase();
+  const literal = isIP(host);
+  if (literal) {
+    if (agentBrowserPrivateIp(host)) throw new Error("内置浏览器不允许访问本机或内网地址");
+    return true;
+  }
+  if (agentBrowserPublicHostChecks.has(host)) return agentBrowserPublicHostChecks.get(host);
+  const check = lookup(host, { all: true }).then((records) => {
+    if (!records?.length || records.some((record) => agentBrowserPrivateIp(record.address))) throw new Error("内置浏览器网页解析到了本机或内网地址");
+    return true;
+  });
+  agentBrowserPublicHostChecks.set(host, check);
+  const expiry = setTimeout(() => agentBrowserPublicHostChecks.delete(host), 60_000);
+  expiry.unref?.();
+  try { return await check; }
+  catch (error) { agentBrowserPublicHostChecks.delete(host); throw error; }
+};
+
+const validateAgentBrowserNetworkUrl = async (value, { topLevel = false } = {}) => {
+  let url;
+  try { url = new URL(String(value || "")); } catch { throw new Error("内置浏览器网页地址无效"); }
+  if (["data:", "blob:"].includes(url.protocol) && !topLevel) return url;
+  if (!(topLevel ? url.protocol === "https:" : ["https:", "wss:"].includes(url.protocol)) || url.username || url.password) {
+    throw new Error("内置浏览器只允许读取 HTTPS 公网页面");
+  }
+  safeAgentBrowserUrl(url.protocol === "wss:" ? `https://${url.host}${url.pathname}${url.search}` : url.href);
+  await assertAgentBrowserPublicHost(url.hostname);
+  return url;
+};
+
+const clearAgentBrowserStorage = async (record) => {
+  if (!record?.browserSession) return;
+  await Promise.allSettled([
+    record.browserSession.clearStorageData(),
+    record.browserSession.clearCache(),
+  ]);
+};
+
+const readAgentBrowserBody = async (requestMessage, maximum = 256 * 1024) => {
+  let source = "";
+  for await (const chunk of requestMessage) {
+    source += chunk;
+    if (Buffer.byteLength(source, "utf8") > maximum) throw new Error("内置浏览器请求过大");
+  }
+  try { return JSON.parse(source || "{}"); } catch { throw new Error("内置浏览器请求格式无效"); }
+};
+
+const agentBrowserDomSnapshot = async (browserWindow, maximum = AGENT_BROWSER_MAX_TEXT, { mode = "open", maxResults = 4 } = {}) => {
+  if (!browserWindow || browserWindow.isDestroyed()) throw new Error("内置浏览器窗口已关闭");
+  const result = await browserWindow.webContents.executeJavaScript(`(() => ({
+    url: location.href,
+    title: document.title || "网页资料",
+    text: String(document.body?.innerText || "").slice(0, ${Math.max(4_000, Math.min(AGENT_BROWSER_MAX_TEXT, Number(maximum) || AGENT_BROWSER_MAX_TEXT))}),
+    hasPasswordField: Boolean(document.querySelector("input[type='password']")),
+    links: Array.from(document.querySelectorAll("a[href]")).slice(0, 300).map((anchor) => ({
+      url: String(anchor.href || ""),
+      title: String(anchor.innerText || anchor.textContent || anchor.getAttribute("aria-label") || "").replace(/\\s+/g, " ").trim().slice(0, 240),
+      snippet: String(anchor.closest(".result, article, li, section")?.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 600),
+      searchResult: anchor.matches(".result__a, [data-testid='result-title-a']") || Boolean(anchor.closest(".result, [data-testid='result']"))
+    })).filter((item) => item.url && item.title)
+  }))()`, true);
+  const text = String(result?.text || "").trim();
+  const requiresLogin = !text
+    || result?.hasPasswordField === true
+    || AGENT_BROWSER_BLOCKING_SIGNAL.test(text)
+    || (text.length < 4_000 && (AGENT_BROWSER_LOGIN_SIGNAL.test(text) || AGENT_BROWSER_EMPTY_PAGE_SIGNAL.test(text)));
+  const pageUrl = String(result?.url || browserWindow.webContents.getURL() || "");
+  const rawLinks = Array.isArray(result?.links) ? result.links : [];
+  const candidates = (mode === "search"
+    ? (rawLinks.some((item) => item.searchResult) ? rawLinks.filter((item) => item.searchResult) : rawLinks)
+    : rawLinks).slice(0, mode === "search" ? Math.max(4, Math.min(24, Number(maxResults) * 3 || 12)) : 40);
+  const settledLinks = await Promise.allSettled(candidates.map(async (item) => {
+    let target = new URL(String(item.url || ""), pageUrl);
+    if ((target.hostname === "duckduckgo.com" || target.hostname.endsWith(".duckduckgo.com")) && target.pathname === "/l/") {
+      const redirected = target.searchParams.get("uddg");
+      if (redirected) target = new URL(redirected);
+    }
+    const safe = await validateAgentBrowserNetworkUrl(target.href, { topLevel: true });
+    return { title: String(item.title || safe.hostname).slice(0, 240), url: safe.href, snippet: String(item.snippet || "").slice(0, 600) };
+  }));
+  const links = [];
+  const seen = new Set();
+  for (const entry of settledLinks) {
+    if (entry.status !== "fulfilled" || seen.has(entry.value.url)) continue;
+    seen.add(entry.value.url);
+    links.push(entry.value);
+  }
+  return {
+    url: pageUrl,
+    title: String(result?.title || "网页资料"),
+    text,
+    links: links.slice(0, 40),
+    ...(mode === "search" ? { results: links.slice(0, Math.max(1, Math.min(8, Number(maxResults) || 4))) } : {}),
+    requiresLogin,
+  };
+};
+
+const publishAgentBrowserState = (payload = {}) => {
+  if (mainWindow && !mainWindow.isDestroyed() && !recoveryPageActive) mainWindow.webContents.send("shensi:agent-browser-state", payload);
+};
+
+const closeAgentBrowserSession = async (sessionId, reason = "closed") => {
+  const record = agentBrowserSessions.get(String(sessionId || ""));
+  if (!record) return false;
+  agentBrowserSessions.delete(String(sessionId));
+  try { if (!record.window.isDestroyed()) record.window.destroy(); } catch {}
+  await clearAgentBrowserStorage(record);
+  publishAgentBrowserState({ sessionId: String(sessionId), status: "closed", reason: String(reason || "closed") });
+  return true;
+};
+
+const loadAgentBrowserUrl = async (browserWindow, url, signal) => {
+  let timeout;
+  let abort;
+  const timeoutPromise = new Promise((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      try { browserWindow.webContents.stop(); } catch {}
+      reject(new Error("内置浏览器页面加载超时"));
+    }, AGENT_BROWSER_LOAD_TIMEOUT_MS);
+    timeout.unref?.();
+  });
+  const abortPromise = new Promise((_resolve, reject) => {
+    abort = () => {
+      try { browserWindow.webContents.stop(); } catch {}
+      reject(Object.assign(new Error("任务已取消"), { name: "AbortError" }));
+    };
+    if (signal?.aborted) abort();
+    else signal?.addEventListener?.("abort", abort, { once: true });
+  });
+  try {
+    await Promise.race([browserWindow.loadURL(url), timeoutPromise, abortPromise]);
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener?.("abort", abort);
+  }
+};
+
+const createAgentBrowserSession = async ({ url, maxCharacters = AGENT_BROWSER_MAX_TEXT, mode = "open", query = "", maxResults = 4 } = {}, { signal } = {}) => {
+  const safeUrl = await validateAgentBrowserNetworkUrl(url, { topLevel: true });
+  const sessionId = `browser-${randomBytes(12).toString("hex")}`;
+  const partition = `agent-browser-${sessionId}`;
+  const browserSession = session.fromPartition(partition, { cache: false });
+  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  browserSession.on("will-download", (event) => event.preventDefault());
+  const browserWindow = new BrowserWindow({
+    show: false,
+    width: 1180,
+    height: 820,
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    title: "神思内置浏览器",
+    autoHideMenuBar: true,
+    webPreferences: {
+      session: browserSession,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      devTools: false,
+    },
+  });
+  browserWindow.setMenuBarVisibility(false);
+  browserWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const guardAgentBrowserNavigation = (event, nextUrl) => {
+    try { safeAgentBrowserUrl(nextUrl); }
+    catch { event.preventDefault(); }
+  };
+  browserWindow.webContents.on("will-navigate", guardAgentBrowserNavigation);
+  browserWindow.webContents.on("will-redirect", guardAgentBrowserNavigation);
+  const record = { sessionId, window: browserWindow, browserSession, url: safeUrl.href, maxCharacters, mode: mode === "search" ? "search" : "open", query: String(query || "").slice(0, 500), maxResults: Math.max(1, Math.min(8, Number(maxResults) || 4)), interactive: false, createdAt: Date.now() };
+  agentBrowserSessions.set(sessionId, record);
+  browserSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+    const method = String(details.method || "GET").toUpperCase();
+    if (!record.interactive && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+      callback({ cancel: true });
+      return;
+    }
+    void validateAgentBrowserNetworkUrl(details.url, { topLevel: details.resourceType === "mainFrame" })
+      .then(() => callback({ cancel: false }), () => callback({ cancel: true }));
+  });
+  browserWindow.once("closed", () => {
+    if (agentBrowserSessions.get(sessionId) === record) {
+      agentBrowserSessions.delete(sessionId);
+      void clearAgentBrowserStorage(record);
+      publishAgentBrowserState({ sessionId, status: "closed", reason: "user_closed" });
+    }
+  });
+  try {
+    await loadAgentBrowserUrl(browserWindow, safeUrl.href, signal);
+    const snapshot = await agentBrowserDomSnapshot(browserWindow, maxCharacters, record);
+    if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
+    if (snapshot.requiresLogin) {
+      record.interactive = true;
+      record.url = snapshot.url;
+      record.title = snapshot.title;
+      browserWindow.show();
+      browserWindow.setAlwaysOnTop(true, "floating");
+      browserWindow.focus();
+      publishAgentBrowserState({ sessionId, status: "waiting_login", url: snapshot.url, title: snapshot.title });
+      return { ok: true, status: "waiting_user", sessionId, url: snapshot.url, title: snapshot.title, text: snapshot.text, ...(record.mode === "search" ? { query: record.query } : {}) };
+    }
+    const result = { ok: true, status: "ready", sessionId, url: snapshot.url, title: snapshot.title, text: snapshot.text, links: snapshot.links, ...(record.mode === "search" ? { query: record.query, results: snapshot.results } : {}) };
+    await closeAgentBrowserSession(sessionId, "completed");
+    return result;
+  } catch (error) {
+    await closeAgentBrowserSession(sessionId, "error");
+    throw error;
+  }
+};
+
+const createAgentBrowserSearchSession = async ({ query, maxResults = 4, maxCharacters = AGENT_BROWSER_MAX_TEXT } = {}, options = {}) => {
+  const normalizedQuery = String(query || "").replace(/\s+/gu, " ").trim().slice(0, 500);
+  if (!normalizedQuery) throw new Error("内置浏览器搜索词不能为空");
+  const url = new URL("/html/", "https://html.duckduckgo.com");
+  url.searchParams.set("q", normalizedQuery);
+  return createAgentBrowserSession({ url: url.href, maxCharacters, mode: "search", query: normalizedQuery, maxResults }, options);
+};
+
+const continueAgentBrowserSession = async ({ sessionId, maxCharacters = AGENT_BROWSER_MAX_TEXT } = {}, { signal } = {}) => {
+  const record = agentBrowserSessions.get(String(sessionId || ""));
+  if (!record) throw new Error("内置浏览器会话不存在或已关闭");
+  if (signal?.aborted) {
+    await closeAgentBrowserSession(record.sessionId, "cancelled");
+    throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
+  }
+  let snapshot;
+  try {
+    snapshot = await agentBrowserDomSnapshot(record.window, maxCharacters || record.maxCharacters, record);
+    if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
+  } catch (error) {
+    if (signal?.aborted) await closeAgentBrowserSession(record.sessionId, "cancelled");
+    throw error;
+  }
+  if (snapshot.requiresLogin) {
+    record.url = snapshot.url;
+    record.title = snapshot.title;
+    if (!record.window.isVisible()) record.window.show();
+    record.window.setAlwaysOnTop(true, "floating");
+    publishAgentBrowserState({ sessionId: record.sessionId, status: "waiting_login", url: snapshot.url, title: snapshot.title });
+    return { ok: true, status: "waiting_user", sessionId: record.sessionId, url: snapshot.url, title: snapshot.title, text: snapshot.text, ...(record.mode === "search" ? { query: record.query } : {}) };
+  }
+  record.interactive = false;
+  const result = { ok: true, status: "ready", sessionId: record.sessionId, url: snapshot.url, title: snapshot.title, text: snapshot.text, links: snapshot.links, ...(record.mode === "search" ? { query: record.query, results: snapshot.results } : {}) };
+  await closeAgentBrowserSession(record.sessionId, "completed");
+  return result;
+};
+
+const startAgentBrowserBridge = async () => {
+  if (agentBrowserBridgeServer) return { url: agentBrowserBridgeOrigin, token: agentBrowserBridgeToken };
+  agentBrowserBridgeToken = randomBytes(32).toString("hex");
+  agentBrowserBridgeServer = createHttpServer(async (requestMessage, response) => {
+    const auth = String(requestMessage.headers.authorization || "");
+    const expected = `Bearer ${agentBrowserBridgeToken}`;
+    if (auth.length !== expected.length || !timingSafeEqual(Buffer.from(auth), Buffer.from(expected))) { response.writeHead(403); response.end(); return; }
+    response.setHeader("content-type", "application/json; charset=utf-8");
+    const requestController = new AbortController();
+    const abortRequest = () => requestController.abort();
+    const abortIfResponseClosed = () => { if (!response.writableEnded) abortRequest(); };
+    requestMessage.once("aborted", abortRequest);
+    response.once("close", abortIfResponseClosed);
+    try {
+      if (requestMessage.method !== "POST") throw Object.assign(new Error("内置浏览器桥接只接受 POST"), { statusCode: 405 });
+      const body = await readAgentBrowserBody(requestMessage);
+      let result;
+      if (requestMessage.url === "/open") result = await createAgentBrowserSession(body, { signal: requestController.signal });
+      else if (requestMessage.url === "/search") result = await createAgentBrowserSearchSession(body, { signal: requestController.signal });
+      else if (requestMessage.url === "/continue") result = await continueAgentBrowserSession(body, { signal: requestController.signal });
+      else if (requestMessage.url === "/close") result = { ok: true, status: (await closeAgentBrowserSession(body.sessionId, "cancelled")) ? "closed" : "missing" };
+      else throw Object.assign(new Error("未知内置浏览器桥接路径"), { statusCode: 404 });
+      if (response.destroyed) {
+        if (result?.status === "waiting_user" && result.sessionId) await closeAgentBrowserSession(result.sessionId, "client_disconnected");
+      } else {
+        response.writeHead(200); response.end(JSON.stringify(result));
+      }
+    } catch (error) {
+      if (!response.destroyed) {
+        response.writeHead(Number(error?.statusCode) || 400);
+        response.end(JSON.stringify({ ok: false, code: error?.code || "BROWSER_BRIDGE_FAILED", message: String(error?.message || error).slice(0, 1_000) }));
+      }
+    } finally {
+      requestMessage.removeListener("aborted", abortRequest);
+      response.removeListener("close", abortIfResponseClosed);
+    }
+  });
+  await new Promise((resolveBridge, rejectBridge) => {
+    agentBrowserBridgeServer.once("error", rejectBridge);
+    agentBrowserBridgeServer.listen(0, LOOPBACK_HOST, () => resolveBridge());
+  });
+  agentBrowserBridgeOrigin = `http://${LOOPBACK_HOST}:${agentBrowserBridgeServer.address().port}`;
+  return { url: agentBrowserBridgeOrigin, token: agentBrowserBridgeToken };
+};
+
+const stopAgentBrowserBridge = async () => {
+  for (const sessionId of [...agentBrowserSessions.keys()]) await closeAgentBrowserSession(sessionId, "shutdown");
+  if (!agentBrowserBridgeServer) return;
+  const server = agentBrowserBridgeServer;
+  agentBrowserBridgeServer = null;
+  agentBrowserBridgeOrigin = "";
+  agentBrowserBridgeToken = "";
+  server.closeAllConnections?.();
+  await new Promise((resolveBridge) => server.close(() => resolveBridge()));
+};
 
 // Chromium's child surface does not receive the final WM_SIZE event when a
 // hidden frameless BrowserWindow is maximized before it is shown on Windows.
@@ -500,6 +848,7 @@ const writeDiagnosticLog = (message) => {
 
 const startBackend = async () => {
   const port = await reserveLoopbackPort();
+  const browserBridge = await startAgentBrowserBridge();
   backendOrigin = `http://${LOOPBACK_HOST}:${port}`;
   backendStartupNonce = randomBytes(32).toString("base64url");
   sessionToken = "";
@@ -521,6 +870,8 @@ const startBackend = async () => {
       SHENSI_INSTALL_ROOT: installRoot,
       SHENSI_AGENT_PROJECT_ROOT: agentProjectRoot,
       SHENSI_MACHINE_DATA_ROOT: serverMachineDataRoot,
+      SHENSI_BROWSER_BRIDGE_URL: browserBridge.url,
+      SHENSI_BROWSER_BRIDGE_TOKEN: browserBridge.token,
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -863,6 +1214,12 @@ const installWindowBridge = () => {
     await postBackendJson("/api/sync/nutstore/session-credentials", { account: "", password: "" }).catch(() => {});
     return { ok: true, stored: false };
   }));
+  ipcMain.handle("shensi:agent-browser:current-state", trustedIpcHandler("shensi:agent-browser:current-state", () => ({
+    ok: true,
+    sessions: [...agentBrowserSessions.values()]
+      .filter((record) => record.interactive === true && record.window && !record.window.isDestroyed())
+      .map((record) => ({ sessionId: record.sessionId, status: "waiting_login", url: record.window.webContents.getURL() || record.url, title: record.title || "网页资料" })),
+  })));
   ipcMain.handle("shensi:window:minimize", trustedIpcHandler("shensi:window:minimize", (event) => {
     const target = windowForEvent(event);
     target?.minimize();
@@ -1583,6 +1940,7 @@ app.on("before-quit", (event) => {
   void (async () => {
     await persistWindowState();
     await stopBackend();
+    await stopAgentBrowserBridge();
     tray?.destroy();
     tray = null;
     app.exit(0);
@@ -1632,6 +1990,7 @@ if (singleInstance) {
       console.error("[shensi-desktop-startup]", error);
       await showStartupFailure(error);
       await stopBackend();
+      await stopAgentBrowserBridge();
       quitting = true;
       app.exit(1);
     }

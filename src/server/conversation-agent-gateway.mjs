@@ -11,9 +11,10 @@ import { runOpenCodeAgent } from "./opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./claude-code-agent-runner.mjs";
 import { runBundledConversationAgent } from "./bundled-conversation-runtime.mjs";
 import { createShensiCodexAgentRuntime } from "./shensi-codex-agent-runtime.mjs";
-import { nativeCodexEnvironment } from "./codex-runtime-isolation.mjs";
+import { agentChildEnvironment, nativeCodexEnvironment } from "./codex-runtime-isolation.mjs";
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
 import { imageModelCapabilities, videoModelCapabilities } from "../model-presets.js";
+import { createAgentBrowserService } from "./agent-browser-service.mjs";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -22,6 +23,31 @@ const sleep = (ms, signal) => new Promise((resolve, reject) => {
   signal?.addEventListener("abort", abort, { once: true });
 });
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
+
+export const conversationAgentProcessEnvironment = (environment = process.env) => agentChildEnvironment(environment);
+
+const routeDocumentCandidates = [
+  { label: "任务路由模块.md", parts: ["任务路由模块.md"], required: false },
+  { label: "神思-任务路由规则.md", parts: ["规则模块", "神思-任务路由规则.md"], required: false },
+  { label: "神思-执行入口映射表.md", parts: ["规则模块", "神思-执行入口映射表.md"], required: false },
+];
+
+const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
+  const requestedLabels = new Set((Array.isArray(requested) ? requested : []).map((item) => String(item || "").trim()).filter(Boolean));
+  const candidates = requestedLabels.size
+    ? routeDocumentCandidates.filter((candidate) => requestedLabels.has(candidate.label))
+    : routeDocumentCandidates;
+  const blocks = [];
+  for (const candidate of candidates) {
+    try {
+      const text = await readFile(join(shensiRoot, "神思模块", ...candidate.parts), "utf8");
+      if (String(text).trim()) blocks.push(`# ${candidate.label}\n${text}`);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return blocks.join("\n\n") || "当前没有可用的任务路由附录；请根据用户原始指令和可用 Skill 自主判断，空白路由资料不是阻断条件。";
+};
 
 export const createConversationAgentGateway = ({
   appRoot,
@@ -33,6 +59,7 @@ export const createConversationAgentGateway = ({
   apiRequest,
   externalRunners = {},
   startMcp = startConversationAgentMcp,
+  browser = null,
 }) => createConversationAgentService({
   appRoot,
   storageRoot: join(machineRoot, "conversation-agent-v1", "runs"),
@@ -40,15 +67,14 @@ export const createConversationAgentGateway = ({
     const catalog = await listManagedSkills({ shensiRoot });
     return [...catalog.builtins, ...catalog.user].filter((skill) => skill.disabled !== true && skill.testStatus !== "failed").map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
   },
-  readRoute: async () => (await Promise.all([
-    ["任务路由模块.md"], ["规则模块", "神思-任务路由规则.md"], ["规则模块", "神思-执行入口映射表.md"],
-  ].map(async (parts) => `# ${parts.at(-1)}\n${await readFile(join(shensiRoot, "神思模块", ...parts), "utf8")}`))).join("\n\n"),
+  readRoute: async (request = {}) => readAvailableRoute({ shensiRoot, requested: request.routeDocuments }),
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
     const settings = await resolveRuntimeSettings(options.settings);
     if (settings.agentEngine === "codex_api") return runBundledConversationAgent({ ...options, settings, appRoot, machineRoot });
+    const processEnvironment = conversationAgentProcessEnvironment();
     if (settings.agentEngine === "codex") {
-      const environment = nativeCodexEnvironment();
+      const environment = nativeCodexEnvironment({ environment: processEnvironment });
       const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: join(machineRoot, "conversation-agent-v1", "external", options.sessionId), environment,
         launchResolver: () => resolveLocalCodexLaunch({ environment: { ...environment, ...(settings.cliPath && settings.cliPath !== "codex" ? { SHENSI_CODEX_EXECUTABLE: settings.cliPath } : {}) } }) });
       try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal }); }
@@ -64,7 +90,7 @@ export const createConversationAgentGateway = ({
           ? externalRunners.openCode || runOpenCodeAgent
           : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
-      return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: false });
+      return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: false, environment: processEnvironment });
     } finally { await nativeHost.close(); }
   },
   mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {
@@ -79,6 +105,7 @@ export const createConversationAgentGateway = ({
     return { id: job.id, status: job.status, attachment: job.result?.attachment, error: job.error || "", backedUpToAllAssets: archive };
   },
   media: createConversationMediaExecutor({ appRoot, apiRequest }),
+  browser: browser || createAgentBrowserService(),
 });
 
 export const createConversationMediaExecutor = ({ appRoot, apiRequest }) => {

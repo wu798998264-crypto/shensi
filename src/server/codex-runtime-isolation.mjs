@@ -50,8 +50,12 @@ export const shensiCodexProfileRoot = (machineRoot) => resolve(
   "shensi-codex-profile-v1",
 );
 
+export const agentChildEnvironment = (environment = process.env) => Object.fromEntries(
+  Object.entries(environment).filter(([key]) => !/^SHENSI_BROWSER_BRIDGE_(?:URL|TOKEN)$/iu.test(key)),
+);
+
 export const shensiCodexEnvironment = ({ machineRoot, environment = process.env } = {}) => ({
-  ...environment,
+  ...agentChildEnvironment(environment),
   CODEX_HOME: shensiCodexProfileRoot(machineRoot),
 });
 
@@ -68,7 +72,7 @@ export const nativeCodexEnvironment = ({
   homeDirectory = homedir(),
   profileRoot = "",
 } = {}) => ({
-  ...environment,
+  ...agentChildEnvironment(environment),
   CODEX_HOME: nativeCodexProfileRoot({ environment, homeDirectory, profileRoot }),
 });
 

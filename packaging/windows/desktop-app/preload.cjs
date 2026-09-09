@@ -26,6 +26,15 @@ contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
     }),
     clearNutstore: () => ipcRenderer.invoke("shensi:credentials:nutstore-clear"),
   }),
+  agentBrowser: Object.freeze({
+    state: () => ipcRenderer.invoke("shensi:agent-browser:current-state"),
+    onState: (listener) => {
+      if (typeof listener !== "function") return () => {};
+      const handler = (_event, payload) => listener(payload || {});
+      ipcRenderer.on("shensi:agent-browser-state", handler);
+      return () => ipcRenderer.removeListener("shensi:agent-browser-state", handler);
+    },
+  }),
   path: Object.freeze({
     reveal: (payload) => ipcRenderer.invoke("shensi:path:reveal", {
       targetPath: String(payload?.targetPath || ""),

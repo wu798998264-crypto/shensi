@@ -2,6 +2,7 @@ import { MODULES, MODULE_ITEMS, MODULE_VIEWS, clone, createBlankNotebookState, c
 import { selectPendingAgentMessage } from "./codex-agent-event-routing.js";
 import { conversationAgentRequest, watchConversationAgent, snapshotAgentConfiguration } from "./conversation-agent-client.js";
 import { generationResultMayDefaultLand, terminalGenerationAttempt, waitForGenerationAttemptTerminal } from "./generation-attempt-client.js?v=1.0.0-live-task-recovery-2";
+import { candidateLandingProofsForVersion, candidateVersionIsAdopted as candidateVersionStoredAdoption, candidateVersionMatchesCurrentLanding as candidateVersionMatchesStoredLanding, recordCandidateAdoption as recordCandidateAdoptionState } from "./candidate-adoption.js?v=1.0.0";
 import { dreaminaConfigSyncProposal, applyDreaminaConfigSync } from "./dreamina-config-sync-policy.js?v=1.0.0-manual-profile";
 import { dreaminaProfileSwitchMessage } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
 import { candidateBatchCoversRequestedTargets, mergeAgentExecutionTaskRoute } from "./agent-task-route-merge.js?v=5.4.11-semantic-contract-lock";
@@ -165,7 +166,6 @@ import { requestedArtifactTarget, requestedArtifactTargets } from "./artifact-ta
 import { reviewDeliveryPolicy, reviewIncludesContentMutation, reviewReportTarget, reviewScopeFromInstruction } from "./review-delivery-policy.js";
 import { formalLandingResolutionReason } from "./formal-write-confirmation.js";
 import { classifyFormalWriteFailure, formalWritePendingReply, formalWriteVerificationPending } from "./formal-write-outcome.js";
-import { rankingScanIntent } from "./ranking-scan-contract.js";
 import { bindConversationToCreatedDocument, chapterInsertionIndex, createMissingChapterDocument, novelChapterCreationSpec, sortNotebookChapterItems } from "./chapter-document.js";
 import { documentMatchesPlannedFolder, ensurePlannedChapterFolder } from "./creative-folder-management.js?v=3.0.10-planned-folders";
 import { continuitySurrogateDocumentIds } from "./continuity-surrogate.js";
@@ -1546,7 +1546,6 @@ let ui = {
   projectCompilationStatusCache: null,
   projectCompilationStatusPending: false,
   generating: false,
-  rankingScan: { taskId: "", task: null, sources: [], selectedCandidate: null, selectedAgentProfileId: "", activeTab: "data" },
   conversationDispatchGate: createConversationDispatchGate(),
   conversationPreparations: createConversationPreparationRegistry(),
   conversationQueueDrainScheduled: new Set(),
@@ -7129,6 +7128,11 @@ root.innerHTML = `
       <button class="icon-button bare media-recovery-dismiss" id="dismissMediaRecovery" type="button" title="暂时关闭提示" aria-label="暂时关闭媒体恢复提示">${icon("\uE711", "暂时关闭提示")}</button>
     </section>
 
+    <section class="agent-browser-confirmation" id="agentBrowserConfirmation" role="status" aria-live="assertive" hidden>
+      <span class="agent-browser-confirmation-icon" aria-hidden="true">${icon("\uE774", "内置浏览器")}</span>
+      <div><strong>内置浏览器等待用户确认</strong><p id="agentBrowserConfirmationCopy">请在临时浏览器窗口完成必要登录或验证，然后在对话区选择继续。</p></div>
+    </section>
+
     <dialog class="text-dialog media-recovery-dialog" id="mediaRecoveryDialog" aria-labelledby="mediaRecoveryDialogTitle">
       <form method="dialog">
         <header><div><h2 id="mediaRecoveryDialogTitle">待处理媒体任务</h2><p>这里只显示正在阻塞软件操作的既有任务；处理后会自动隐藏并恢复正常操作。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭待处理媒体任务">${icon("\uE711", "关闭")}</button></header>
@@ -8539,34 +8543,6 @@ root.innerHTML = `
     </form>
   </dialog>
 
-  <dialog class="ranking-scan-dialog" id="rankingScanDialog" aria-labelledby="rankingScanTitle">
-    <section class="ranking-scan-shell">
-      <header><div><small>辅助能力 · 公开榜单研究</small><h2 id="rankingScanTitle">爆款扫榜</h2><p>只读取本轮获准的公开榜单；不登录、不读取浏览器账号，不自动写入作品。</p></div><button class="icon-button bare" id="rankingScanClose" type="button" title="关闭" aria-label="关闭">${icon("\uE711", "关闭")}</button></header>
-      <div class="ranking-scan-layout">
-        <form class="ranking-scan-controls" id="rankingScanForm">
-          <label><span>扫描类型</span><select id="rankingScanType"><option value="long">长篇榜</option><option value="short">短篇榜</option><option value="cross_platform">跨平台比较</option></select></label>
-          <fieldset><legend>平台</legend><div id="rankingScanPlatforms" class="ranking-scan-platforms"><small>正在读取可信来源目录…</small></div></fieldset>
-          <label><span>榜单</span><select id="rankingScanRanking"><option value="new-book">新书榜</option><option value="monthly">月票榜</option><option value="hot">热榜</option><option value="gold">金榜</option></select></label>
-          <div class="ranking-scan-pair"><label><span>频道</span><select id="rankingScanChannel"><option value="all">全部</option><option value="male">男频</option><option value="female">女频</option></select></label><label><span>Top N</span><input id="rankingScanTopN" type="number" min="1" max="100" value="30" /></label></div>
-          <label><span>题材筛选（可选）</span><input id="rankingScanGenre" type="text" maxlength="80" placeholder="例如：悬疑、古言" /></label>
-          <div class="ranking-scan-pair"><label><span>采集方式</span><select id="rankingScanAcquisition"><option value="direct">公开页面直读</option><option value="controlled_browser">隔离受控浏览器</option><option value="user_supplied">用户提供数据</option></select></label><label><span>登录</span><select id="rankingScanLogin" disabled><option value="no">默认不登录</option></select></label></div>
-          <label><span>结果目标</span><select id="rankingScanResultTarget" disabled><option value="candidate_only">候选研究报告（默认不落盘）</option></select></label>
-          <label class="ranking-scan-browser-consent"><input id="rankingScanBrowserAccess" type="checkbox" /><span>允许本轮使用隔离受控浏览器（不会读取 Cookie 或登录态）</span></label>
-          <div class="ranking-scan-agent-status" id="rankingScanAgentStatus" role="status"></div>
-          <small class="ranking-scan-boundary">可信采集器优先；需要 Agent 接管时，仅使用本轮明确选择的 Agent 配置。系统不会自动切换配置。快照只保存公开字段、来源、覆盖账本和校验哈希；结构化报告返回前不算完成。</small>
-          <footer><button class="secondary-button" id="rankingScanCancel" type="button" disabled>取消任务</button><button class="primary-button" id="rankingScanStart" type="submit">开始扫榜</button></footer>
-        </form>
-        <section class="ranking-scan-results">
-          <div class="ranking-scan-progress" id="rankingScanProgress" role="status" aria-live="polite">等待用户开始</div>
-          <nav class="ranking-scan-tabs" aria-label="扫榜结果"><button class="active" id="rankingScanDataTab" type="button" data-ranking-scan-tab="data">榜单数据</button><button id="rankingScanReportTab" type="button" data-ranking-scan-tab="report">趋势报告</button><button id="rankingScanCandidatesTab" type="button" data-ranking-scan-tab="candidates">候选作品</button></nav>
-          <div class="ranking-scan-result-tools"><label><span class="sr-only">筛选结果</span><input id="rankingScanResultFilter" type="search" placeholder="筛选当前页" /></label><label><span class="sr-only">结果排序</span><select id="rankingScanResultSort"><option value="rank">按榜单名次</option><option value="title">按书名</option></select></label></div>
-          <div class="ranking-scan-output" id="rankingScanOutput"><p class="panel-empty">开始后将在这里显示逐平台状态、数据质量和报告。</p></div>
-          <footer><span class="ranking-scan-export-actions"><button class="secondary-button compact" type="button" data-ranking-scan-export="markdown" disabled>导出 Markdown</button><button class="secondary-button compact" type="button" data-ranking-scan-export="csv" disabled>导出 CSV</button><button class="secondary-button compact" type="button" data-ranking-scan-export="json" disabled>导出 JSON</button></span><button class="secondary-button" id="rankingScanContinueDeconstruction" type="button" disabled>继续拆书</button><button class="secondary-button" id="rankingScanSaveReport" type="button" disabled>保存报告</button></footer>
-        </section>
-      </div>
-    </section>
-  </dialog>
-
   <dialog class="text-dialog agent-profile-choice-dialog" id="agentProfileChoiceDialog" aria-labelledby="agentProfileChoiceTitle">
     <form id="agentProfileChoiceForm">
       <header><h2 id="agentProfileChoiceTitle">选择 Agent 配置</h2><p>这里只显示具备 Agent 执行模式的配置，不会列出 Chat 配置。</p></header>
@@ -8905,6 +8881,8 @@ const elements = {
   openMediaRecovery: document.querySelector("#openMediaRecovery"),
   retryMediaRecovery: document.querySelector("#retryMediaRecovery"),
   dismissMediaRecovery: document.querySelector("#dismissMediaRecovery"),
+  agentBrowserConfirmation: document.querySelector("#agentBrowserConfirmation"),
+  agentBrowserConfirmationCopy: document.querySelector("#agentBrowserConfirmationCopy"),
   mediaRecoveryDialog: document.querySelector("#mediaRecoveryDialog"),
   mediaRecoveryList: document.querySelector("#mediaRecoveryList"),
   refreshMediaRecoveryList: document.querySelector("#refreshMediaRecoveryList"),
@@ -31580,6 +31558,9 @@ const materializeCandidateDraftBranches = ({ conversation, messages, messageInde
       currentCandidateTarget: clone(message.target ?? null),
       currentCandidateMemoryUpdate: clone(message.memoryUpdate ?? null),
       currentCandidateAuthorization: clone(message.writeAuthorization ?? message.execution?.taskRoute?.writeAuthorization ?? null),
+      landedDocuments: [],
+      adoptedContentFingerprint: "",
+      lastAdoptedAt: 0,
       updatedAt: Date.now(),
     };
   });
@@ -31590,6 +31571,10 @@ const materializeCandidateDraftBranches = ({ conversation, messages, messageInde
     requestId,
     sourceMessageId: String(baseMessage.execution?.sourceMessageId || ""),
     activeVersionId,
+    adoptedVersionId: "",
+    adoptedCandidateId: "",
+    adoptedContentFingerprint: "",
+    adoptedAt: 0,
     createdAt: Date.now(),
     versions,
   };
@@ -34242,8 +34227,11 @@ const scheduleConversationQueueDrain = (conversationId, { delayMs = 0 } = {}) =>
         taskRuntime.workspaceScope?.workspaceKind,
         taskRuntime.workspaceScope?.workspacePath,
       );
-    if (!taskWorkspaceIsActive && queuedUsesAgent && !taskRuntime && !queuedWorkspace?.workspacePath) {
-      nackQueuedConversationItem(conversation, nextQueuedItem, "missing_task_workspace");
+    if (!taskWorkspaceIsActive || !queuedUsesAgent) {
+      // A queued task is bound to the workspace captured when it was sent.
+      // Do not dispatch it through the currently visible workspace after the
+      // user switches projects; activation will wake this queue again.
+      nackQueuedConversationItem(conversation, nextQueuedItem, "waiting_for_owned_workspace");
       return;
     }
     const dispatchContent = nextQueuedItem.runtimeSupplement === true
@@ -35790,6 +35778,10 @@ const monitorNativeConversation = (runtime, pending) => {
             pendingConversationChoice = conversation.agentQuestion;
             renderConversationChoicePanel();
           }
+          if (event.payload?.presentation === "browser_login"
+            && closedAgentBrowserSessions.has(String(event.payload?.metadata?.sessionId || ""))) {
+            void answerNativeConversationQuestion(conversation.agentQuestion, "取消本次网页读取");
+          }
         } else if (event.type === "open_candidates") {
           if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) openLatestCandidateComparison();
         } else if (event.type === "answer" || event.type === "answer_accepted") {
@@ -36624,6 +36616,8 @@ const saveCreativeContractObservation = async (proposal = null) => {
 };
 
 let pendingConversationChoice = null;
+const activeAgentBrowserSessions = new Map();
+const closedAgentBrowserSessions = new Set();
 
 const conversationChoiceIsCurrent = (pending = pendingConversationChoice) => {
   if (!pending) return false;
@@ -37787,11 +37781,18 @@ const renderCandidateComparison = () => {
   if (!group || !elements.candidateComparisonDialog.open) return;
   const versions = group.versions ?? [];
   const activeIndex = Math.max(0, versions.findIndex((version) => version.id === group.activeVersionId));
-  elements.candidateComparisonSummary.textContent = `当前使用第 ${activeIndex + 1} 稿，共 ${versions.length} 稿；未选中的稿件不会进入后续上下文。`;
+  const adoptedIndex = versions.findIndex((version) => {
+    const message = candidateMessageForVersion(group, version);
+    return candidateVersionIsAdopted({ group, version, message });
+  });
+  elements.candidateComparisonSummary.textContent = adoptedIndex >= 0
+    ? `当前显示第 ${activeIndex + 1} 稿，共 ${versions.length} 稿；已采用第 ${adoptedIndex + 1} 稿，未选中的稿件不会进入后续上下文。`
+    : `当前显示第 ${activeIndex + 1} 稿，共 ${versions.length} 稿；尚未采用候选，未选中的稿件不会进入后续上下文。`;
   elements.candidateComparisonBody.innerHTML = versions.map((version, index) => {
     const message = candidateMessageForVersion(group, version);
     if (!message) return "";
     const active = version.id === group.activeVersionId;
+    const adopted = candidateVersionIsAdopted({ group, version, message });
     const documents = Array.isArray(message.candidateDocuments) ? message.candidateDocuments : [];
     const title = documents.length === 1
       ? documents[0].heading || targetLabel(documents[0].target)
@@ -37801,10 +37802,10 @@ const renderCandidateComparison = () => {
     const copy = documents.length > 1
       ? documents.map((document) => `<section class="candidate-comparison-document"><h4>${escapeHtml(document.heading || targetLabel(document.target))}</h4>${proseToHtml(document.content)}</section>`).join("")
       : proseToHtml(message.candidate);
-    return `<article class="candidate-comparison-card${active ? " is-active" : ""}" data-candidate-comparison-version="${escapeHtml(version.id)}">
-      <header><div><span>候选 ${index + 1}${writerLabel ? ` · 主笔：${escapeHtml(writerLabel)}` : ""}</span><strong>${escapeHtml(title || `第 ${index + 1} 稿`)}</strong></div>${active ? "<em>当前显示</em>" : ""}</header>
+    return `<article class="candidate-comparison-card${active ? " is-active" : ""}${adopted ? " is-adopted" : ""}" data-candidate-comparison-version="${escapeHtml(version.id)}">
+      <header><div><span>候选 ${index + 1}${writerLabel ? ` · 主笔：${escapeHtml(writerLabel)}` : ""}</span><strong>${escapeHtml(title || `第 ${index + 1} 稿`)}</strong></div>${adopted ? "<em>已采用</em>" : active ? "<em>当前显示</em>" : ""}</header>
       <div class="candidate-comparison-copy">${copy}</div>
-      <footer><button class="${active ? "secondary-button" : "primary-button"}" type="button" data-adopt-candidate-branch="${escapeHtml(group.id)}" data-candidate-branch-index="${index}">${active ? "采用当前稿" : "采用此稿"}</button></footer>
+      <footer><button class="${adopted ? "secondary-button" : "primary-button"}" type="button" data-adopt-candidate-branch="${escapeHtml(group.id)}" data-candidate-branch-index="${index}"${adopted ? " disabled aria-disabled=\"true\"" : ""}>${adopted ? "已采用" : "采用此稿"}</button></footer>
     </article>`;
   }).join("");
 };
@@ -38078,6 +38079,100 @@ const runExplicitPostLandingMaterialsUpdate = async ({ executionSurface = "chat"
   return completed;
 };
 
+const candidateVersionMatchesCurrentLanding = ({ version = {}, message = null } = {}) => {
+  return candidateVersionMatchesStoredLanding({
+    version,
+    message,
+    documents: state.documents,
+    documentContent: (documentState) => stripHtml(documentState?.html || documentState?.markdown || documentState?.text || ""),
+  });
+};
+
+const candidateDirectReplaceProofs = (message = null) => {
+  if (!message?.candidate) return [];
+  const candidateDocuments = Array.isArray(message.candidateDocuments) && message.candidateDocuments.length
+    ? message.candidateDocuments
+    : Array.isArray(message.target?.chapterDocuments) && message.target.chapterDocuments.length
+      ? message.target.chapterDocuments
+      : message.target?.documentId
+        ? [{ content: message.candidate, target: message.target }]
+        : [];
+  const proofs = [];
+  for (const document of candidateDocuments) {
+    const target = document?.target ?? message.target ?? {};
+    const documentId = String(target.documentId || document.documentId || "").trim();
+    const current = state.documents?.[documentId];
+    if (!documentId || !current) return [];
+    const requestedOperation = String(document.requestedOperation || target.requestedOperation || message.target?.requestedOperation || "").trim();
+    if (["append", "continuation", "insert", "patch", "partial-replace"].includes(requestedOperation)) return [];
+    const plannedTitle = String(target.chapterTitle || target.episodeTitle || "").trim();
+    if (plannedTitle && plannedTitle !== "未命名") {
+      const nextTitle = freeDocumentTitle({
+        documentId,
+        title: plannedTitle,
+        language: current.titleLanguage || state.structureLanguage || "zh-CN",
+      });
+      if (nextTitle && nextTitle !== current.title) return [];
+    }
+    const candidateHtml = compactGeneratedLandingHtml(stripMatchingLeadingHeadingHtml(
+      proseToHtml(document.content ?? message.candidate),
+      [current.title, documentItem(documentId)?.item?.[1]],
+    ));
+    proofs.push({ documentId, title: current.title || "", content: stripHtml(candidateHtml) });
+  }
+  return proofs;
+};
+
+const candidateSelectionNeedsNoWrite = ({ version = {}, message = null } = {}) => {
+  if (candidateVersionMatchesCurrentLanding({ version, message })) return true;
+  const directProofs = candidateDirectReplaceProofs(message);
+  return directProofs.length > 0 && candidateVersionMatchesStoredLanding({
+    version: { landedDocuments: directProofs },
+    documents: state.documents,
+    documentContent: (documentState) => stripHtml(documentState?.html || documentState?.markdown || documentState?.text || ""),
+  });
+};
+
+const candidateVersionIsAdopted = ({ group = {}, version = {}, message = null } = {}) => {
+  return candidateVersionStoredAdoption({
+    group,
+    version,
+    message,
+    documents: state.documents,
+    documentContent: (documentState) => stripHtml(documentState?.html || documentState?.markdown || documentState?.text || ""),
+  });
+};
+
+const recordCandidateAdoption = ({ group, version, message, landingReply = null } = {}) => {
+  if (!group || !version) return;
+  const replyProofs = Array.isArray(landingReply?.landedDocuments) && landingReply.landedDocuments.length
+    ? landingReply.landedDocuments
+    : candidateLandingProofsForVersion(version, message);
+  recordCandidateAdoptionState({ group, version, landedDocuments: replyProofs });
+};
+
+const finalizeCandidateAdoptionWithoutWrite = ({ group, version, message } = {}) => {
+  if (!group || !version || !message) return false;
+  if (!candidateLandingProofsForVersion(version, message).length) {
+    version.landedDocuments = clone(candidateDirectReplaceProofs(message));
+  }
+  recordCandidateAdoption({ group, version, message });
+  message.landingStatus = "complete";
+  message.execution = {
+    ...(message.execution ?? {}),
+    status: "complete",
+    landingStatus: "complete",
+    result: "所选候选与当前落盘内容一致，未重复写入或创建历史版本",
+  };
+  Object.assign(version, branchVersionPayload());
+  persist();
+  renderAll();
+  renderCandidateComparison();
+  closeCandidateComparison();
+  showToast("所选候选与当前文档一致，未重复写入或创建历史版本");
+  return true;
+};
+
 const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
   const requestId = String(group?.requestId || "");
   const candidateId = String(version?.candidateId || "");
@@ -38093,6 +38188,10 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
       state.currentCandidateTarget = clone(message.target);
       state.currentCandidateMemoryUpdate = clone(message.memoryUpdate ?? null);
       state.currentCandidateAuthorization = clone(message.writeAuthorization ?? message.execution?.taskRoute?.writeAuthorization ?? null);
+      if (candidateSelectionNeedsNoWrite({ version: currentVersion, message })) {
+        finalizeCandidateAdoptionWithoutWrite({ group: currentGroup, version: currentVersion, message });
+        return;
+      }
       const landingReply = await assistantReplyFor("落盘", message.target, {
         conversation: activeConversation(),
         messages: state.messages,
@@ -38102,7 +38201,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
       message.lead = [message.lead, landingReply?.content].filter(Boolean).join(" ");
       message.landingStatus = formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "failed";
       message.landingManifest = clone(landingReply?.landingManifest ?? null);
-      message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
+      if (landed) message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
       if (landed) bindMaterialUpdatePromptToMessage({
         message,
         prompt: landingReply?.materialUpdatePrompt,
@@ -38114,6 +38213,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
         landingStatus: formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "not_requested",
         result: landed ? "所选候选已自动落盘" : landingReply?.content || "所选候选仍待检查",
       };
+      if (landed) recordCandidateAdoption({ group: currentGroup, version: currentVersion, message, landingReply });
       Object.assign(currentVersion, branchVersionPayload());
       persist();
       renderAll();
@@ -38164,6 +38264,10 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
     persist();
     renderMessages();
     renderCandidateComparison();
+    if (candidateSelectionNeedsNoWrite({ version: currentVersion, message })) {
+      finalizeCandidateAdoptionWithoutWrite({ group: currentGroup, version: currentVersion, message });
+      return;
+    }
     const landingReply = await assistantReplyFor("落盘", message.target, {
       conversation: activeConversation(),
       messages: state.messages,
@@ -38173,7 +38277,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
     message.lead = [message.lead, landingReply?.content].filter(Boolean).join(" ");
     message.landingStatus = formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "failed";
     message.landingManifest = clone(landingReply?.landingManifest ?? null);
-    message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
+    if (landed) message.landedDocuments = clone(landingReply?.landedDocuments ?? []);
     if (landed) bindMaterialUpdatePromptToMessage({
       message,
       prompt: landingReply?.materialUpdatePrompt,
@@ -38185,6 +38289,7 @@ const synchronizeSelectedCandidateAttempt = ({ group, version } = {}) => {
       landingStatus: formalWriteVerificationPending(landingReply) ? landingReply.engineExecution.status : landed ? "complete" : "not_requested",
       result: landed ? "所选候选已自动落盘" : landingReply?.content || "所选候选仍待检查",
     };
+    if (landed) recordCandidateAdoption({ group: currentGroup, version: currentVersion, message, landingReply });
     Object.assign(currentVersion, branchVersionPayload());
     persist();
     renderAll();
@@ -60571,11 +60676,13 @@ const exactAgentProfile = (profileId = "") => {
     : null;
 };
 
+const agentProfileElement = (id) => document.querySelector(`#${id}`);
+
 const openAgentProfileChoiceDialog = ({ purpose = "guidance", selectedProfileId = "" } = {}) => {
-  const dialog = rankingScanElement("agentProfileChoiceDialog");
-  const select = rankingScanElement("agentProfileChoiceSelect");
-  const empty = rankingScanElement("agentProfileChoiceEmpty");
-  const confirm = rankingScanElement("agentProfileChoiceConfirm");
+  const dialog = agentProfileElement("agentProfileChoiceDialog");
+  const select = agentProfileElement("agentProfileChoiceSelect");
+  const empty = agentProfileElement("agentProfileChoiceEmpty");
+  const confirm = agentProfileElement("agentProfileChoiceConfirm");
   if (!dialog || !select || !empty || !confirm) return false;
   const profiles = availableAgentProfiles();
   const labels = generationConnectionOptionLabels("text", profiles);
@@ -60639,373 +60746,6 @@ const handleChatAgentGuidanceAction = async (action = "") => {
   if (pendingConversationChoice?.kind === "agent_guidance") closeConversationChoicePanel({ focus: false });
   return true;
 };
-
-let rankingScanTaskInFlight = false;
-let rankingScanPollTimer = 0;
-const rankingScanElement = (id) => document.querySelector(`#${id}`);
-const rankingScanTerminalStatuses = new Set(["completed", "partial", "failed", "cancelled"]);
-const currentRankingScanAgentProfile = () => {
-  const explicitlySelected = exactAgentProfile(ui.rankingScan.selectedAgentProfileId);
-  if (explicitlySelected) return explicitlySelected;
-  if (ui.codexAgent.status?.provider !== "codex_agent") return null;
-  const activeProfile = exactAgentProfile(state.settings.activeTextAgentConnectionId);
-  if (!activeProfile || agentEngineForProfile(activeProfile) !== activeAgentEngine()) return null;
-  return activeProfile;
-};
-const renderRankingScanAgentStatus = () => {
-  const target = rankingScanElement("rankingScanAgentStatus");
-  if (!target) return;
-  const profile = currentRankingScanAgentProfile();
-  if (!profile) {
-    target.textContent = "当前配置不能执行真实联网扫榜；开始前请选择 Agent 配置。";
-    target.dataset.state = "required";
-    return;
-  }
-  target.textContent = `本轮 Agent 配置：${generationProfileLabel(profile, "text")}。任务只会使用这一个配置。`;
-  target.dataset.state = "ready";
-};
-
-rankingScanElement("agentProfileChoiceCancel")?.addEventListener("click", () => {
-  agentProfileChoiceContext = null;
-  rankingScanElement("agentProfileChoiceDialog")?.close("cancel");
-});
-rankingScanElement("agentProfileChoiceDialog")?.addEventListener("close", () => {
-  agentProfileChoiceContext = null;
-});
-rankingScanElement("agentProfileChoiceForm")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const dialog = rankingScanElement("agentProfileChoiceDialog");
-  const confirm = rankingScanElement("agentProfileChoiceConfirm");
-  const profile = exactAgentProfile(rankingScanElement("agentProfileChoiceSelect")?.value);
-  const context = agentProfileChoiceContext;
-  if (!profile || !context) {
-    showToast("所选 Agent 配置已不可用，请先到模型设置创建或核验");
-    return;
-  }
-  if (context.purpose === "ranking_scan") {
-    ui.rankingScan.selectedAgentProfileId = profile.id;
-    renderRankingScanAgentStatus();
-    dialog?.close("selected");
-    showToast("Agent 配置已选定；确认扫榜条件后再次点击“开始扫榜”");
-    return;
-  }
-  confirm.disabled = true;
-  try {
-    await activateExplicitAgentProfile(profile);
-    dialog?.close("selected");
-    showToast(`已选择 Agent 配置“${generationProfileLabel(profile, "text")}”；请确认后再次发送原任务`);
-    renderMessages({ forceScrollToBottom: true });
-  } catch (error) {
-    showToast(error.message || "Agent 配置切换失败");
-    await refreshCodexAgentStatus();
-  } finally {
-    confirm.disabled = false;
-  }
-});
-
-const rankingScanStageLabel = (stage = "") => ({
-  loading_skill: "正在加载爆款扫榜 Skill 全文",
-  connecting: "正在建立受控任务",
-  reading_ranking: "正在读取公开榜单",
-  agent_fallback: "可信采集器未完成，本轮已选 Agent 正在接管",
-  quality_check: "正在核验数据质量",
-  saving_snapshot: "正在保存不可变快照",
-  analyzing: "正在生成市场观察报告",
-  agent_analysis: "本轮已选 Agent 正在分析已校验证据",
-  report_returned: "报告已返回界面",
-  failed: "任务失败",
-  cancelled: "任务已取消",
-}[stage] || "等待用户开始");
-
-const renderRankingScanSources = () => {
-  const host = rankingScanElement("rankingScanPlatforms");
-  if (!host) return;
-  host.replaceChildren();
-  for (const source of ui.rankingScan.sources) {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = source.id;
-    input.checked = source.id === "qidian" || source.id === "jjwxc";
-    const copy = document.createElement("span");
-    const stateLabel = source.fixtureVerified
-      ? "可信采集器已核验"
-      : source.acquisitionMode === "user_supplied" ? "受限时可上传合法资料" : "由本轮已选 Agent 接管";
-    copy.textContent = `${source.name} · ${stateLabel}`;
-    label.title = source.liveVerified ? "实时来源已核验" : "可信采集器未实时核验时，将由本轮已选 Agent 读取公开页面并返回证据";
-    label.append(input, copy);
-    host.append(label);
-  }
-};
-
-const loadRankingScanSources = async () => {
-  if (ui.rankingScan.sources.length) return;
-  const response = await fetch("/api/ranking-scan/sources");
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.message || "可信榜单来源目录读取失败");
-  ui.rankingScan.sources = Array.isArray(payload.sources) ? payload.sources : [];
-  renderRankingScanSources();
-};
-
-const rankingScanOutputLine = (label, value) => {
-  const line = document.createElement("p");
-  const strong = document.createElement("strong");
-  strong.textContent = `${label}：`;
-  line.append(strong, document.createTextNode(String(value || "—")));
-  return line;
-};
-
-const renderRankingScanResult = () => {
-  const task = ui.rankingScan.task;
-  const output = rankingScanElement("rankingScanOutput");
-  const progress = rankingScanElement("rankingScanProgress");
-  if (!output || !progress) return;
-  progress.textContent = task
-    ? `${rankingScanStageLabel(task.stage)} · ${task.progress?.completed || 0}/${task.progress?.total || 0}`
-    : "等待用户开始";
-  output.replaceChildren();
-  if (!task) {
-    output.append(rankingScanOutputLine("状态", "尚未开始"));
-    return;
-  }
-  const report = task.report || null;
-  if (ui.rankingScan.activeTab === "data") {
-    const sourceSummary = (task.sourceLedger || []).length
-      ? task.sourceLedger.map((item) => `${item.platformId}：${item.route === "trusted_collector" ? "可信采集器" : "当前 Agent"}${item.status === "success" ? "成功" : `失败（${item.reason || "未知原因"}）`}`).join("；")
-      : "尚未返回来源账本";
-    const readChapterSummary = (task.sourceLedger || []).flatMap((item) => (item.chapterEvidence || []).map((chapter) => `${item.platformId} · ${chapter.title}（${chapter.wordCount || 0} 字）`));
-    const citationCount = (task.sourceLedger || []).reduce((sum, item) => sum + (item.citations?.length || item.sourceUrls?.length || 0), 0);
-    const coverage = task.coverageLedger || report?.coverage || {};
-    output.append(
-      rankingScanOutputLine("任务状态", task.status),
-      rankingScanOutputLine("Skill", task.skillReceipt?.fullText ? `全文已加载并校验 · ${task.skillReceipt.ruleFiles?.length || 0} 个必读规则文件` : "尚未完成全文校验"),
-      rankingScanOutputLine("执行来源", sourceSummary),
-      rankingScanOutputLine("快照", task.snapshotIds?.length ? `${task.snapshotIds.length} 份，均已独立校验` : "尚无有效快照"),
-      rankingScanOutputLine("正文覆盖", `${coverage.analysisLevel || "none"} · ${coverage.readChapters || 0}/${coverage.requestedChapters || 0} 章 · ${coverage.bodyCoverageRate || 0}%`),
-      rankingScanOutputLine("实际读取章节", readChapterSummary.length ? readChapterSummary.join("；") : "未取得可校验正文，当前只允许榜单或简介分析"),
-      rankingScanOutputLine("引用证据", `${citationCount} 项，详细来源保留在任务账本中`),
-      rankingScanOutputLine("失败平台", task.failedPlatforms?.length ? task.failedPlatforms.map((item) => `${item.platformId}：${item.reason}`).join("；") : "无"),
-      rankingScanOutputLine("分析状态", task.analysisFailure ? `Agent 最终分析失败：${task.analysisFailure}` : task.analysisExecution ? `${task.analysisExecution.engine || "当前 Agent"} · ${task.analysisExecution.model || "默认模型"}` : "等待当前 Agent"),
-      rankingScanOutputLine("完成标准", report ? "来源、覆盖、快照和结构化报告均已返回" : "结构化报告尚未返回，任务不算完成"),
-    );
-  } else if (ui.rankingScan.activeTab === "report") {
-    if (!report) output.append(rankingScanOutputLine("报告", "尚未返回"));
-    else output.append(
-      rankingScanOutputLine("样本", `${report.sampleCount || 0} 条`),
-      rankingScanOutputLine("采集时间", report.collectedAt),
-      rankingScanOutputLine("数据质量", report.dataQuality),
-      rankingScanOutputLine("分析依据", report.coverage?.mayClaimFullText ? "完整正文覆盖已校验" : report.coverage?.bodyEvidenceCount ? "仅限已读取的公开章节" : "仅限榜单或简介，不含正文结论"),
-      rankingScanOutputLine("市场观察", report.marketOverview),
-      rankingScanOutputLine("边界", report.boundary),
-      rankingScanOutputLine("建议", report.nextScanSuggestion),
-    );
-  } else {
-    const filter = String(rankingScanElement("rankingScanResultFilter")?.value || "").trim().toLowerCase();
-    const sortMode = rankingScanElement("rankingScanResultSort")?.value || "rank";
-    const candidates = [...(report?.candidates || [])]
-      .filter((item) => !filter || `${item.title || ""} ${item.author || ""} ${item.platformId || ""}`.toLowerCase().includes(filter))
-      .sort(sortMode === "title"
-        ? (left, right) => String(left.title || "").localeCompare(String(right.title || ""), "zh-CN")
-        : (left, right) => Number(left.rank || Number.MAX_SAFE_INTEGER) - Number(right.rank || Number.MAX_SAFE_INTEGER));
-    if (!candidates.length) output.append(rankingScanOutputLine("候选作品", "没有可用候选"));
-    for (const item of candidates) {
-      const row = document.createElement("div");
-      row.className = "ranking-scan-candidate-row";
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "ranking-scan-candidate";
-      button.textContent = `${item.rank ? `${item.rank}. ` : ""}${item.title || "未命名"}${item.author ? ` · ${item.author}` : ""}`;
-      button.setAttribute("aria-pressed", String(ui.rankingScan.selectedCandidate === item));
-      button.addEventListener("click", () => {
-        ui.rankingScan.selectedCandidate = item;
-        renderRankingScanResult();
-      });
-      row.append(button);
-      const sourceUrl = String(item.bookUrl || item.sourceUrl || "");
-      if (/^https:\/\//iu.test(sourceUrl)) {
-        const link = document.createElement("a");
-        link.href = sourceUrl;
-        link.target = "_blank";
-        link.rel = "noopener noreferrer";
-        link.textContent = "查看来源";
-        row.append(link);
-      }
-      output.append(row);
-    }
-  }
-  rankingScanElement("rankingScanSaveReport").disabled = !report;
-  rankingScanElement("rankingScanContinueDeconstruction").disabled = !ui.rankingScan.selectedCandidate;
-  document.querySelectorAll("[data-ranking-scan-export]").forEach((button) => { button.disabled = !report; });
-};
-
-const setRankingScanBusy = (busy) => {
-  rankingScanTaskInFlight = busy;
-  rankingScanElement("rankingScanStart").disabled = busy;
-  rankingScanElement("rankingScanCancel").disabled = !busy;
-};
-
-const pollRankingScanTask = async (taskId) => {
-  window.clearTimeout(rankingScanPollTimer);
-  try {
-    const response = await fetch(`/api/ranking-scan/status?taskId=${encodeURIComponent(taskId)}`);
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.message || "扫榜状态读取失败");
-    if (ui.rankingScan.taskId !== taskId) return;
-    ui.rankingScan.task = payload.task;
-    renderRankingScanResult();
-    if (rankingScanTerminalStatuses.has(payload.task.status)) {
-      setRankingScanBusy(false);
-      if (payload.task.report) sessionStorage.removeItem("shensi:ranking-scan-task");
-      return;
-    }
-    rankingScanPollTimer = window.setTimeout(() => void pollRankingScanTask(taskId), 700);
-  } catch (error) {
-    setRankingScanBusy(false);
-    sessionStorage.removeItem("shensi:ranking-scan-task");
-    showToast(error.message || "扫榜任务恢复失败");
-  }
-};
-
-const openRankingScanDialog = async (intent = {}) => {
-  const dialog = rankingScanElement("rankingScanDialog");
-  if (!dialog) return;
-  if (intent.scanType) rankingScanElement("rankingScanType").value = intent.scanType;
-  if (intent.channel) rankingScanElement("rankingScanChannel").value = intent.channel;
-  if (intent.rankings?.[0]) rankingScanElement("rankingScanRanking").value = intent.rankings[0];
-  renderRankingScanAgentStatus();
-  dialog.showModal();
-  try {
-    await loadRankingScanSources();
-    if (intent.platforms?.length) {
-      dialog.querySelectorAll('#rankingScanPlatforms input[type="checkbox"]').forEach((input) => { input.checked = intent.platforms.includes(input.value); });
-    }
-  } catch (error) { showToast(error.message || "榜单来源读取失败"); }
-};
-
-rankingScanElement("rankingScanForm")?.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  if (rankingScanTaskInFlight) return showToast("上一个扫榜任务返回报告前，不能重复提交");
-  const agentProfile = currentRankingScanAgentProfile();
-  if (!agentProfile) {
-    openAgentProfileChoiceDialog({
-      purpose: "ranking_scan",
-      selectedProfileId: String(ui.rankingScan.selectedAgentProfileId || state.settings.activeTextAgentConnectionId || ""),
-    });
-    return;
-  }
-  const agentEngine = agentEngineForProfile(agentProfile);
-  const agentSettings = generationSettingsForAgentEngine(state.settings, {
-    agentEngine,
-    agentConnectionId: agentProfile.id,
-  });
-  if (String(agentSettings.activeTextAgentConnectionId || "") !== String(agentProfile.id || "")
-    || String(agentSettings.agentEngine || "") !== String(agentEngine || "")) {
-    showToast("Agent 配置绑定发生变化，已阻止自动改用其他配置");
-    ui.rankingScan.selectedAgentProfileId = "";
-    renderRankingScanAgentStatus();
-    return;
-  }
-  const platforms = [...rankingScanElement("rankingScanPlatforms").querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
-  if (!platforms.length) return showToast("请至少选择一个平台");
-  setRankingScanBusy(true);
-  ui.rankingScan.selectedCandidate = null;
-  try {
-    const response = await fetch("/api/ranking-scan/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userStarted: true,
-        sourceMessageId: `ranking-scan-${Date.now()}`,
-        workspaceId: `${state.workspaceKind}:${state.projectId || state.notebookId || "current"}`,
-        scanType: rankingScanElement("rankingScanType").value,
-        platforms,
-        rankings: [rankingScanElement("rankingScanRanking").value],
-        channel: rankingScanElement("rankingScanChannel").value,
-        genre: rankingScanElement("rankingScanGenre").value.trim(),
-        topN: Number(rankingScanElement("rankingScanTopN").value),
-        acquisitionMode: rankingScanElement("rankingScanAcquisition").value,
-        allowBrowserAccess: rankingScanElement("rankingScanBrowserAccess").checked,
-        allowSnapshotWrite: true,
-        requestedAgentProfileId: agentProfile.id,
-        requestedAgentEngine: agentEngine,
-        agentSettings,
-        projectCwd: String(ui.codexAgent.status?.selectedProject?.cwd || state.settings.workspacePath || ""),
-      }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.message || "扫榜任务启动失败");
-    ui.rankingScan.taskId = payload.task.taskId;
-    ui.rankingScan.task = payload.task;
-    sessionStorage.setItem("shensi:ranking-scan-task", payload.task.taskId);
-    renderRankingScanResult();
-    void pollRankingScanTask(payload.task.taskId);
-  } catch (error) {
-    setRankingScanBusy(false);
-    showToast(error.message || "扫榜任务启动失败");
-  }
-});
-
-rankingScanElement("rankingScanCancel")?.addEventListener("click", async () => {
-  if (!ui.rankingScan.taskId) return;
-  const response = await fetch("/api/ranking-scan/cancel", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId: ui.rankingScan.taskId }) });
-  const payload = await response.json();
-  if (payload.task) ui.rankingScan.task = payload.task;
-  setRankingScanBusy(false);
-  renderRankingScanResult();
-});
-rankingScanElement("rankingScanClose")?.addEventListener("click", () => rankingScanElement("rankingScanDialog")?.close());
-document.querySelectorAll("[data-ranking-scan-tab]").forEach((button) => button.addEventListener("click", () => {
-  ui.rankingScan.activeTab = button.dataset.rankingScanTab;
-  document.querySelectorAll("[data-ranking-scan-tab]").forEach((item) => item.classList.toggle("active", item === button));
-  renderRankingScanResult();
-}));
-rankingScanElement("rankingScanResultFilter")?.addEventListener("input", renderRankingScanResult);
-rankingScanElement("rankingScanResultSort")?.addEventListener("change", renderRankingScanResult);
-rankingScanElement("rankingScanAcquisition")?.addEventListener("change", (event) => {
-  const browser = event.target.value === "controlled_browser";
-  rankingScanElement("rankingScanBrowserAccess").checked = browser;
-  rankingScanElement("rankingScanLogin").innerHTML = `<option value="no">${browser ? "仅在平台明确要求时询问" : "默认不登录"}</option>`;
-});
-rankingScanElement("rankingScanContinueDeconstruction")?.addEventListener("click", async () => {
-  const item = ui.rankingScan.selectedCandidate;
-  if (!item) return;
-  rankingScanElement("rankingScanDialog")?.close();
-  ui.referenceTarget = "conversation";
-  ui.referenceMode = "books";
-  ui.referenceQuery = String(item.title || "").trim();
-  ui.bookSearch = { ...ui.bookSearch, query: ui.referenceQuery, results: [], selectedId: "", selectedBook: null, directory: null, selectedChapterIds: [], error: "" };
-  ui.panel = "references";
-  renderUtilityPanelState();
-  await refreshBookSources();
-  renderReferencePanel();
-  if (ui.referenceQuery.length >= 2) void searchBookReferences();
-});
-rankingScanElement("rankingScanSaveReport")?.addEventListener("click", async () => {
-  const response = await fetch("/api/ranking-scan/report/land", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ taskId: ui.rankingScan.taskId }) });
-  const payload = await response.json();
-  showToast(payload.message || "保存报告需要明确的正式写入授权");
-});
-document.querySelectorAll("[data-ranking-scan-export]").forEach((button) => button.addEventListener("click", async () => {
-  const report = ui.rankingScan.task?.report;
-  if (!report) return;
-  const format = button.dataset.rankingScanExport;
-  const candidates = report.candidates || [];
-  const markdown = `# 爆款扫榜报告\n\n- 采集时间：${report.collectedAt || ""}\n- 样本数：${report.sampleCount || 0}\n- 数据质量：${report.dataQuality || ""}\n\n## 市场观察\n\n${report.marketOverview || ""}\n\n## 候选作品\n\n${candidates.map((item) => `- ${item.title || "未命名"}${item.author ? ` · ${item.author}` : ""}`).join("\n")}\n\n> ${report.boundary || ""}\n`;
-  const csv = ["rank,title,author,platform,source", ...candidates.map((item) => [item.rank, item.title, item.author, item.platformId, item.bookUrl || item.sourceUrl].map((value) => `"${String(value || "").replaceAll('"', '""')}"`).join(","))].join("\n");
-  const content = format === "json" ? JSON.stringify(report, null, 2) : format === "csv" ? csv : markdown;
-  const mimeType = format === "json" ? "application/json" : format === "csv" ? "text/csv" : "text/markdown";
-  const extension = format === "json" ? ".json" : format === "csv" ? ".csv" : ".md";
-  await saveBlobLocally({ blob: new Blob([content], { type: `${mimeType};charset=utf-8` }), fileName: `爆款扫榜报告${extension}`, mimeType, extension });
-}));
-
-try {
-  const recoveredRankingTaskId = sessionStorage.getItem("shensi:ranking-scan-task");
-  if (recoveredRankingTaskId) {
-    ui.rankingScan.taskId = recoveredRankingTaskId;
-    setRankingScanBusy(true);
-    void pollRankingScanTask(recoveredRankingTaskId);
-  }
-} catch {}
 
 document.querySelector("#chatForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -72648,6 +72388,56 @@ const queueExternalMarkdownActivation = (payload) => {
   return externalMarkdownActivationQueue;
 };
 
+const cancelNativeBrowserQuestion = (sessionId) => {
+  const id = String(sessionId || "").trim();
+  if (!id) return false;
+  let cancelled = false;
+  for (const conversation of state.conversations || []) {
+    const question = conversation.agentQuestion;
+    if (question?.kind !== "native_agent" || String(question.metadata?.sessionId || "") !== id) continue;
+    cancelled = true;
+    void answerNativeConversationQuestion(question, "取消本次网页读取");
+  }
+  return cancelled;
+};
+
+const renderAgentBrowserConfirmation = () => {
+  const element = elements.agentBrowserConfirmation;
+  if (!element) return;
+  const sessions = [...activeAgentBrowserSessions.values()]
+    .filter((item) => item.status === "waiting_login")
+    .sort((left, right) => Number(left.updatedAt || 0) - Number(right.updatedAt || 0));
+  if (!sessions.length) {
+    element.hidden = true;
+    return;
+  }
+  const current = sessions.at(-1);
+  const title = String(current.title || "网页资料").trim();
+  let hostname = "";
+  try { hostname = new URL(String(current.url || "")).hostname; } catch {}
+  const count = sessions.length > 1 ? `当前有 ${sessions.length} 个网页读取任务等待确认。` : "";
+  elements.agentBrowserConfirmationCopy.textContent = `请在临时浏览器窗口完成“${title}”${hostname ? `（${hostname}）` : ""}的必要登录或验证，再回到对话区选择继续；关闭窗口会取消本次读取。${count}`;
+  element.hidden = false;
+};
+
+const applyAgentBrowserState = (payload = {}) => {
+  const sessionId = String(payload.sessionId || "").trim();
+  if (!sessionId) return;
+  const status = String(payload.status || "");
+  if (status === "waiting_login") {
+    closedAgentBrowserSessions.delete(sessionId);
+    activeAgentBrowserSessions.set(sessionId, { ...payload, status, updatedAt: Date.now() });
+  } else if (status === "closed") {
+    activeAgentBrowserSessions.delete(sessionId);
+    if (payload.reason === "user_closed") {
+      closedAgentBrowserSessions.add(sessionId);
+      cancelNativeBrowserQuestion(sessionId);
+      window.setTimeout(() => closedAgentBrowserSessions.delete(sessionId), 60_000);
+    }
+  }
+  renderAgentBrowserConfirmation();
+};
+
 const connectDesktopExternalMarkdown = async () => {
   const bridge = window.shensiDesktop?.externalMarkdown;
   if (!bridge || typeof bridge.ready !== "function") return false;
@@ -72660,6 +72450,16 @@ const connectDesktopExternalMarkdown = async () => {
     showToast(`Markdown 打开桥接失败：${error.message}`);
     return false;
   }
+};
+
+const connectDesktopAgentBrowser = () => {
+  const bridge = window.shensiDesktop?.agentBrowser;
+  if (!bridge || typeof bridge.onState !== "function") return false;
+  bridge.onState(applyAgentBrowserState);
+  void bridge.state?.().then((result) => {
+    for (const payload of result?.sessions || []) applyAgentBrowserState(payload);
+  }).catch(() => {});
+  return true;
 };
 
 const scheduleExternalWorkspaceRefresh = () => {
@@ -72911,6 +72711,7 @@ const bootstrap = async () => {
   // draft only after the final startup workspace and its whiteboard DOM exist;
   // job reconciliation below cannot recreate an unsubmitted draft by itself.
   restoreActiveWhiteboardGenerationDialog();
+  connectDesktopAgentBrowser();
   await connectDesktopExternalMarkdown();
   mediaRecoveryReconciler.start();
   requestAnimationFrame(() => recoverWhiteboardGenerationJobs());
