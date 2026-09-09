@@ -95,8 +95,8 @@ const [appSource, styles] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   readFile(new URL("../src/styles.css", import.meta.url), "utf8"),
 ]);
-assert.match(appSource, /workspaceOperationRequested[\s\S]*?requestWorkspaceOperationPlan\(\{ prompt: messageContent, requestId, taskContextSnapshot: turnContextSnapshot, workspaceState: taskWorkspaceState \}\)/u,
-  "本地结构操作必须使用发送时工作区快照生成原子操作计划");
+assert.match(appSource, /conversationAgentRequest\("\/api\/conversation-agent\/start", \{[\s\S]*?workspaceKind: taskContextSnapshot\.workspaceKind,[\s\S]*?workspacePath: taskContextSnapshot\.workspacePath,[\s\S]*?messages: taskMessages/u,
+  "本地结构操作必须使用发送时工作区快照启动原生 Agent");
 assert.match(appSource, /processedAtomicTextDocuments/u);
 assert.match(appSource, /verifiedLandingDocumentLinksForManifest\(\{ manifest: message\.landingManifest, documents: state\.documents \}\)/u);
 assert.doesNotMatch(appSource, /data-history-diff-side=/u);
