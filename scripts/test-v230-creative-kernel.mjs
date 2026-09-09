@@ -442,7 +442,9 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 const verifierSource = await readFile(new URL("../src/server/server-context-verifier.mjs", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 const stylesSource = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-const exactReplacementPlannerSource = appSource.slice(appSource.indexOf("const localEditPlan"), appSource.indexOf("const contextualReplacementPlan"));
+const exactReplacementStart = appSource.indexOf("const localEditPlan");
+const contextualReplacementStart = appSource.indexOf("const contextualReplacementPlan", exactReplacementStart);
+const exactReplacementPlannerSource = appSource.slice(exactReplacementStart, contextualReplacementStart);
 assert.match(exactReplacementPlannerSource, /inferExactReplacementEditPlan\(\{[\s\S]{0,700}requestId:\s*candidateTarget\?\.generationAttemptRequestId\s*\|\|\s*uid\("local-patch"\)/u,
   "局部替换规划器必须使用本轮候选或独立生成的 Request ID，不能依赖已移除的 Chat 变量",
 );
