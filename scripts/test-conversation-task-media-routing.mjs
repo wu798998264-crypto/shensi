@@ -252,7 +252,7 @@ assert.equal((app.match(/conversationHasRunningTask\(conversation, \{ immediateI
 assert.match(app, /conversationHasLiveSupplementTarget/u);
 assert.doesNotMatch(app, /imagePromptKind === "ambiguous_image_prompt"/u, "模糊图片文字不得再弹生成选择");
 assert.doesNotMatch(app, /imagePromptKind === "image_prompt"/u, "结构化图片提示词不得自动执行生成");
-assert.match(app, /profileId: queuedMediaDispatch\?\.profileId/u);
+assert.match(app, /mediaDispatch: queuedMediaDispatch/u, "队列必须把已归一化且保留 profileId/model/参数的完整媒体配置交给执行入口");
 assert.match(app, /mediaDispatch: lockedMediaDispatch/u);
 assert.match(app, /当前对话第一次生成/u);
 assert.match(app, /lastSuccessfulMediaSelections/u);
