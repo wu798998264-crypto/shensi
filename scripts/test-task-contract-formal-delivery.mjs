@@ -172,7 +172,7 @@ const route = buildAdaptiveTaskRoute({
   targetDocumentIds: plan.primaryTargets.map((item) => item.documentId),
   expectedRevisions: Object.fromEntries(plan.primaryTargets.map((item) => [item.documentId, ""])),
   targetExists: false,
-  taskContract: plan.taskContract,
+  taskContract: { ...plan.taskContract, semanticSource: "agent" },
 }, { executionSurface: "agent" });
 
 assert.equal(route.writeAuthorization.state, "commit", "排除内容不能否定 TaskContract 的正式写入授权");
@@ -293,28 +293,22 @@ for (const landingInstruction of ["落盘", "落盘落盘", "将上一次完整�
 
 const appSource = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
 const queuedDispatchSource = appSource.slice(
-  appSource.indexOf("const queuedLandingOnly = isLandingRequest(nextQueuedItem.content)"),
+  appSource.indexOf("const scheduleConversationQueueDrain ="),
   appSource.indexOf("const enqueueMessage ="),
 );
-assert.ok(
-  queuedDispatchSource.indexOf("const queuedLandingOnly =")
-    < queuedDispatchSource.indexOf("runtimeSupplement === true && !queuedLandingOnly"),
-  "排队恢复不得把纯落盘包装成补充生成任务",
-);
-assert.match(queuedDispatchSource, /const queuedUsesAgent = !queuedLandingOnly/u,
-  "队列应先识别纯落盘，再决定是否需要完整 Agent 执行");
+assert.match(queuedDispatchSource, /const queuedUsesAgent = true/u,
+  "统一运行框架下的所有排队任务都必须交给 Agent");
+assert.doesNotMatch(queuedDispatchSource, /queuedLandingOnly|isLandingRequest\(nextQueuedItem\.content\)/u,
+  "排队恢复不得再用落盘关键词切换执行框架");
+assert.match(queuedDispatchSource, /nextQueuedItem\.runtimeSupplement === true[\s\S]{0,300}: nextQueuedItem\.content/u,
+  "只有显式补充任务才能被包装为补充说明");
 assert.match(queuedDispatchSource, /else \{\s+void sendMessage\(dispatchContent/u,
   "统一 Agent 模式下的排队项必须回到同一发送入口，不能被旧模式分支截走");
-const composerDispatch = appSource.slice(appSource.indexOf("const dispatchComposerContent ="), appSource.indexOf("const switchToAgentFromGuidance ="));
-assert.ok(composerDispatch.indexOf("const landingOnly =") < composerDispatch.indexOf("resolveTaskContractRetryContext"), "纯落盘必须先于失败合同重试判定");
-assert.doesNotMatch(composerDispatch.slice(composerDispatch.indexOf("if (landingOnly)"), composerDispatch.indexOf("resolveTaskContractRetryContext")), /runBoundedExternalWorkspaceRefresh/u, "已有候选的纯落盘不得等待外部工作区刷新");
-assert.match(appSource, /if \(!landingOnlyRequested\) void protectConversationDispatchBeforeModel\(\)/u, "生成任务应后台启动保存，纯落盘不应重复触发生成前保护");
-assert.match(appSource, /const requestAdaptiveEvidence = !landingOnlyRequested/u, "纯落盘不得再编译动态取证范围");
-assert.match(appSource, /let requestProjectContext = landingOnlyRequested\s+\? ""/u, "纯落盘不得再编译模型项目上下文");
-assert.doesNotMatch(appSource, /const landingLanguageViolations/u, "用户授权的批量落盘不得重复执行未参与决策的跨章语言扫描");
-assert.match(appSource, /const activeCandidateReady = Boolean\([\s\S]{0,260}const recovered = activeCandidateReady\s+\? null\s+: latestRecoverableCandidate/u, "当前候选、目标与授权齐全时不得重复扫描整段历史对话");
-assert.match(appSource, /if \(!parsedCandidateBatch && explicitNewDocumentRequest\.create && smartLandingHint\.action === "create_and_land"\)/u,
-  "TaskContract 已拆分的多文档候选不得被‘创建文档’字样重定向到单个临时文档");
+const composerDispatch = appSource.slice(appSource.indexOf("const dispatchComposerContent ="), appSource.indexOf("let agentProfileChoiceContext ="));
+assert.match(composerDispatch, /void sendMessage\(content,[\s\S]{0,220}executionSurface: "agent"/u,
+  "输入框任务必须在文字发出后直接进入统一 Agent 入口");
+assert.doesNotMatch(composerDispatch, /isLandingRequest|resolveTaskContractRetryContext|landingOnly/u,
+  "普通输入框不得再用关键词或旧合同重试逻辑选择执行框架");
 const formalLandingMemoryStage = appSource.slice(
   appSource.indexOf("const memoryPendingDocumentIds = markMaterialUpdatePending"),
   appSource.indexOf("aiWritingMetricChanges.forEach", appSource.indexOf("const memoryPendingDocumentIds = markMaterialUpdatePending")),
