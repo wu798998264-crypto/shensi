@@ -5,6 +5,14 @@ import { join } from "node:path";
 import { resolveLocalOpenCodeLaunch } from "../cli/opencode-launch.mjs";
 import { deepSeekAgentContextText, deepSeekOpenCodeAgentPermissions } from "./deepseek-opencode-agent-runner.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
+import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
+import {
+  allocateOpenCodePermissionPort,
+  monitorOpenCodePermissions,
+  openCodePermissionPrompt,
+  openCodePermissionServerAuth,
+  replyToOpenCodePermission,
+} from "./opencode-permission-bridge.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -19,6 +27,8 @@ const safeError = (value = "") => String(value || "OpenCode Agent 调用失败")
   .slice(0, 4_000);
 
 const eventError = (event = {}) => event?.error?.data?.message || event?.error?.message || event?.message || "OpenCode 返回错误事件";
+
+export { openCodePermissionPrompt, replyToOpenCodePermission };
 
 export const opencodeReportedProviderModel = (event = {}) => {
   const queue = [{ value: event, depth: 0 }];
@@ -99,15 +109,26 @@ export const runOpenCodeAgent = async ({
   onEvent = null,
   onProcess = null,
   nativeHost = null,
+  agentPermissionMode = "",
+  permissionContract = null,
+  requestApproval = null,
+  fetchImpl = globalThis.fetch,
+  allocatePermissionPort = allocateOpenCodePermissionPort,
 } = {}) => {
+  const accessMode = normalizeAgentPermissionMode(permissionContract?.mode || agentPermissionMode);
   const requestedModel = String(model || "").trim();
   if (!validModelId(requestedModel)) throw new Error("OpenCode Agent 模型必须是完整 provider/model ID");
   const task = String(prompt || "").trim();
   if (!task) throw new Error("OpenCode Agent 没有收到任务指令");
   const projectDirectory = String(cwd || "").trim();
   if (!projectDirectory) throw new Error("OpenCode Agent 没有可用的项目目录");
+  if (accessMode === "approval_required" && typeof requestApproval !== "function") {
+    throw new Error("操作需确认模式缺少神思审批通道");
+  }
   const resources = deepSeekAgentContextText(contextBlocks);
-  const nativeInstructions = "You own the complete user task. Use the shensi MCP tools to discover documents, load Skills, write with full history protection, generate candidates/media and ask the user. No fixed creative stages or keyword routes. Work only in the authorized workspace exposed by the tools.";
+  const nativeInstructions = accessMode === "shensi_only"
+    ? "You own the complete user task. Use only the shensi MCP tools to discover documents, load Skills, write with full history protection, generate candidates/media and ask the user. No fixed creative stages or keyword routes. Host filesystem, shell, web, ambient plugins, Skills and subagents are unavailable."
+    : `You own the complete user task. Native OpenCode tools and ambient configuration are available under the ${accessMode} permission contract. Use shensi MCP tools for every mutation to Shensi-managed documents and assets so history, revision and transaction protection remain authoritative. ${accessMode === "approval_required" ? "Wait for each requested operation approval; approval applies once only." : "Use authorized native capabilities autonomously while preserving unrelated work."}`;
   const input = [nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }), task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(input) > MAX_INPUT_BYTES) throw new Error("OpenCode Agent 输入超过 8MB，已停止本次调用");
   const executionSourceReceipt = buildExecutionSourceReceiptFromContextBlocks({
@@ -125,50 +146,64 @@ export const runOpenCodeAgent = async ({
   ];
   const variant = String(reasoningEffort || "").trim().toLowerCase();
   if (["high", "max"].includes(variant)) args.push("--variant", variant);
-  const permissions = deepSeekOpenCodeAgentPermissions({ allowEdits, allowNetwork });
-  if (nativeHost) Object.assign(permissions, { read: "deny", glob: "deny", grep: "deny", list: "deny", shensi_: "allow", "shensi_*": "allow" });
+  const permissions = deepSeekOpenCodeAgentPermissions({ allowEdits, allowNetwork, agentPermissionMode: accessMode });
+  if (nativeHost && accessMode === "shensi_only") Object.assign(permissions, { read: "deny", glob: "deny", grep: "deny", list: "deny", shensi_: "allow", "shensi_*": "allow" });
   let tempRoot = "";
   const managedCredential = credentialSource === "shensi";
+  const isolateHostConfiguration = accessMode === "shensi_only";
   const secret = managedCredential ? String(apiKey || "").trim() : "";
   if (managedCredential && !secret) throw new Error(`${String(provider || "模型服务商").trim()} Agent 缺少安全凭据`);
   let isolatedEnvironment = {};
-  if (managedCredential) {
+  if (managedCredential || isolateHostConfiguration) {
     tempRoot = await mkdtemp(join(tmpdir(), "shensi-opencode-managed-"));
     const xdgConfig = join(tempRoot, "xdg-config");
     const xdgData = join(tempRoot, "xdg-data");
     const xdgCache = join(tempRoot, "xdg-cache");
     const xdgState = join(tempRoot, "xdg-state");
-    await Promise.all([xdgConfig, xdgData, xdgCache, xdgState].map((path) => mkdir(path, { recursive: true })));
+    const isolatedDirectories = [xdgConfig, xdgCache, xdgState, ...(managedCredential ? [xdgData] : [])];
+    await Promise.all(isolatedDirectories.map((path) => mkdir(path, { recursive: true })));
     const config = {
-      ...managedProviderConfig({ provider, baseUrl, model: requestedModel }),
+      ...(managedCredential ? managedProviderConfig({ provider, baseUrl, model: requestedModel }) : {}),
       share: "disabled",
       snapshot: false,
-      default_agent: "shensi",
       permission: permissions,
-      agent: {
+      ...(managedCredential ? { default_agent: "shensi", agent: {
         shensi: {
           description: "Shensi isolated OpenCode workspace agent",
           mode: "primary",
           prompt: nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }),
           permission: permissions,
         },
-      },
+      } } : {}),
       mcp: nativeHost ? { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } : {},
-      plugin: [],
+      ...(isolateHostConfiguration ? { plugin: [] } : {}),
     };
     isolatedEnvironment = {
-      SHENSI_OPENCODE_API_KEY: secret,
+      ...(managedCredential ? { SHENSI_OPENCODE_API_KEY: secret } : {}),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-      XDG_CONFIG_HOME: xdgConfig,
-      XDG_DATA_HOME: xdgData,
-      XDG_CACHE_HOME: xdgCache,
-      XDG_STATE_HOME: xdgState,
+      ...(isolateHostConfiguration ? {
+        XDG_CONFIG_HOME: xdgConfig,
+        // A runner-managed login may live in its data store. Keep that store
+        // only when the selected credential source is OpenCode itself; --pure,
+        // the empty config root and the deny matrix still block ambient tools.
+        ...(managedCredential ? { XDG_DATA_HOME: xdgData } : {}),
+        XDG_CACHE_HOME: xdgCache,
+        XDG_STATE_HOME: xdgState,
+      } : {}),
     };
-    const insertAt = args.indexOf("--model");
-    if (insertAt >= 0) args.splice(insertAt, 0, "--agent", "shensi");
+    if (managedCredential) {
+      const insertAt = args.indexOf("--model");
+      if (insertAt >= 0) args.splice(insertAt, 0, "--agent", "shensi");
+    }
   }
-  if (nativeHost && !managedCredential) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
-  if (nativeHost) { const pureIndex = args.indexOf("--pure"); if (pureIndex >= 0) args.splice(pureIndex, 1); }
+  if (nativeHost && !managedCredential && !isolateHostConfiguration) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
+  if (accessMode !== "shensi_only") { const pureIndex = args.indexOf("--pure"); if (pureIndex >= 0) args.splice(pureIndex, 1); }
+  if (accessMode === "full_access") args.splice(args.indexOf("run") + 1, 0, "--auto");
+  const permissionPort = accessMode === "approval_required" ? await allocatePermissionPort() : 0;
+  const permissionServerAuth = permissionPort ? openCodePermissionServerAuth() : null;
+  const permissionServerPassword = permissionServerAuth?.password || "";
+  const permissionServerHeaders = permissionServerAuth?.headers || {};
+  if (permissionPort) args.push("--port", String(permissionPort));
   if (Buffer.byteLength(input) <= 24_000) args.push(input);
   else {
     if (!tempRoot) tempRoot = await mkdtemp(join(tmpdir(), "shensi-opencode-agent-"));
@@ -189,6 +224,7 @@ export const runOpenCodeAgent = async ({
         ...launchEnvironment,
         OPENCODE_DISABLE_AUTOUPDATE: "true",
         OPENCODE_PERMISSION: JSON.stringify(permissions),
+        ...(permissionServerPassword ? { OPENCODE_SERVER_PASSWORD: permissionServerPassword } : {}),
         ...isolatedEnvironment,
       },
       shell: false,
@@ -205,9 +241,11 @@ export const runOpenCodeAgent = async ({
     let actualModel = "";
     let settled = false;
     let aborted = false;
+    const permissionMonitorController = new AbortController();
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
+      permissionMonitorController.abort();
       clearTimeout(timer);
       signal?.removeEventListener?.("abort", abort);
       if (error) rejectRun(error);
@@ -235,6 +273,15 @@ export const runOpenCodeAgent = async ({
     };
     if (signal?.aborted) abort();
     else signal?.addEventListener?.("abort", abort, { once: true });
+    if (permissionPort) void monitorOpenCodePermissions({
+      baseUrl: `http://127.0.0.1:${permissionPort}`,
+      directory: projectDirectory,
+      requestApproval,
+      fetchImpl,
+      headers: permissionServerHeaders,
+      signal: permissionMonitorController.signal,
+      onEvent,
+    });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -271,6 +318,7 @@ export const runOpenCodeAgent = async ({
         model: actualModel ? `${actualProvider || requestedProvider}/${actualModel}` : requestedModel,
         providerModelReported: Boolean(actualProvider && actualModel),
         executionSourceReceipt,
+        permissionMode: accessMode,
       });
     });
     const timer = setTimeout(() => {

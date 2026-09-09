@@ -30,8 +30,47 @@ const result = await runClaudeCodeAgentTurn({
 });
 assert.equal(launched.command, "claude");
 assert.equal(launched.options.shell, false);
+assert.equal(launched.args[launched.args.indexOf("--permission-mode") + 1], "dontAsk");
+assert.equal(launched.args[launched.args.indexOf("--setting-sources") + 1], "", "仅限神思必须隔离用户、项目和本地设置");
+assert.equal(launched.args.includes("--safe-mode"), false, "safe-mode 会连同显式神思 MCP 一起禁用");
+assert.ok(launched.args.includes("--disable-slash-commands"), "仅限神思必须禁用环境 Skill");
 assert.equal(result.text, "OK");
 assert.equal(result.sessionId, "session-1");
+assert.equal(result.permissionMode, "shensi_only");
+
+let approvalLaunch;
+const approvalResult = await runClaudeCodeAgentTurn({
+  prompt: "只回复 APPROVAL_OK",
+  model: "claude-sonnet-5",
+  cwd: process.cwd(),
+  agentPermissionMode: "approval_required",
+  requestApproval: async () => ({ answer: "deny" }),
+  launch: async (command, args, options) => {
+    approvalLaunch = { command, args, options };
+    return { exitCode: 0, stdout: JSON.stringify({ result: "APPROVAL_OK", session_id: "approval-session" }), stderr: "" };
+  },
+});
+assert.equal(approvalLaunch.args[approvalLaunch.args.indexOf("--permission-mode") + 1], "default", "操作需确认必须使用 Claude Code 支持的默认审批模式");
+assert.equal(approvalLaunch.args[approvalLaunch.args.indexOf("--permission-prompt-tool") + 1], "mcp__shensi__permission_prompt");
+assert.equal(approvalLaunch.args.includes("--setting-sources"), false, "操作需确认必须保留运行器环境能力");
+assert.equal(approvalLaunch.args.includes("--allowedTools"), false, "操作需确认不得自动放行神思写入工具");
+assert.equal(approvalResult.permissionMode, "approval_required");
+
+let fullAccessLaunch;
+const fullAccessResult = await runClaudeCodeAgentTurn({
+  prompt: "只回复 FULL_OK",
+  model: "claude-sonnet-5",
+  cwd: process.cwd(),
+  agentPermissionMode: "full_access",
+  launch: async (command, args, options) => {
+    fullAccessLaunch = { command, args, options };
+    return { exitCode: 0, stdout: JSON.stringify({ result: "FULL_OK", session_id: "full-session" }), stderr: "" };
+  },
+});
+assert.equal(fullAccessLaunch.args[fullAccessLaunch.args.indexOf("--permission-mode") + 1], "bypassPermissions");
+assert.ok(fullAccessLaunch.args.includes("--dangerously-skip-permissions"));
+assert.equal(fullAccessLaunch.args.includes("--allowedTools"), false, "完全权限不需要额外自动放行名单");
+assert.equal(fullAccessResult.permissionMode, "full_access");
 
 const managed = await runClaudeCodeAgentTurn({
   prompt: "只回复 SHENSI_CLAUDE_DEEPSEEK_OK",

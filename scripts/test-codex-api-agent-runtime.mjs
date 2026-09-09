@@ -41,9 +41,10 @@ const shensiRuntimeProfile = agentRuntimeProfile({
 assert.equal(shensiRuntimeProfile.capabilities.openCodeToolsEnabled, false, "神思运行器不得继承 OpenCode 工具能力");
 assert.match(agentCapabilitySummary(shensiRuntimeProfile), /神思工作区工具/u);
 assert.doesNotMatch(agentCapabilitySummary(shensiRuntimeProfile), /OpenCode/u, "神思任务详情不得串入 OpenCode 能力标签");
-assert.match(agentCapabilitySummary(agentRuntimeProfile({ engine: "opencode" })), /OpenCode 工具/u);
-assert.match(agentCapabilitySummary(agentRuntimeProfile({ engine: "claude_code" })), /Claude Code 工具/u);
-assert.doesNotMatch(agentCapabilitySummary(agentRuntimeProfile({ engine: "claude_code" })), /OpenCode/u, "Claude Code 任务也不得串入 OpenCode 能力标签");
+assert.doesNotMatch(agentCapabilitySummary(agentRuntimeProfile({ engine: "opencode" })), /OpenCode 原生工具/u, "仅限神思时不得暴露 OpenCode 宿主工具");
+assert.match(agentCapabilitySummary(agentRuntimeProfile({ engine: "opencode", capabilities: { permissionMode: "approval_required" } })), /OpenCode 原生工具/u);
+assert.match(agentCapabilitySummary(agentRuntimeProfile({ engine: "claude_code", capabilities: { permissionMode: "full_access" } })), /Claude Code 原生工具/u);
+assert.doesNotMatch(agentCapabilitySummary(agentRuntimeProfile({ engine: "claude_code", capabilities: { permissionMode: "full_access" } })), /OpenCode/u, "Claude Code 任务也不得串入 OpenCode 能力标签");
 
 const compatibleProfile = {
   ...profile,
@@ -88,6 +89,11 @@ const result = await runtime.runStage({
 assert.equal(result.text, "API Agent OK");
 assert.equal(result.protocol, "responses");
 assert.equal(result.providerResponseId, "resp_test");
+assert.equal(result.permissionMode, "shensi_only");
+assert.equal(result.permissionContract.mode, "shensi_only");
+assert.equal(result.permissionContract.runner, "codex_api");
+assert.equal(result.permissionContract.taskId, "session-test");
+assert.equal(result.agentRuntime.permissionMode, "shensi_only");
 assert.equal(requested.url, "https://api.openai.com/v1/responses");
 assert.match(requested.options.headers.authorization, /^Bearer test-key$/u);
 const body = JSON.parse(requested.options.body);
@@ -96,16 +102,19 @@ assert.equal(body.reasoning.effort, "high");
 assert.equal(body.service_tier, "fast");
 assert.match(body.instructions, /主角是剑修/u);
 assert.match(body.instructions, /神思运行器/u);
+assert.match(body.instructions, /仅限神思/u);
 assert.equal(body.tools, undefined, "联网关闭时不得向 Responses API 暴露网页工具");
 
-let webRequest;
+const webRequests = [];
 const webRuntime = createCodexApiAgentRuntime({
   fetchImpl: async (url, options) => {
-    webRequest = { url: String(url), options };
+    const requestBody = JSON.parse(options.body);
+    webRequests.push({ url: String(url), options, body: requestBody });
+    const webSearchAvailable = requestBody.tools?.some((tool) => tool?.type === "web_search") === true;
     return {
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({
+      text: async () => JSON.stringify(webSearchAvailable ? {
         id: "resp_web",
         output: [{
           type: "web_search_call",
@@ -116,20 +125,90 @@ const webRuntime = createCodexApiAgentRuntime({
           type: "message",
           content: [{ type: "output_text", text: "联网结果" }],
         }],
-      }),
+      } : { id: "resp_offline", output_text: "未联网结果" }),
     };
   },
 });
+let fullAccessApprovalCalls = 0;
 const webResult = await webRuntime.runStage({
-  settings: { ...profile, webSearchEnabled: true },
+  settings: { ...profile, agentPermissionMode: "full_access", webSearchEnabled: true },
   prompt: "查询最新资料",
   sessionId: "web-session-test",
   stage: "agent",
+  requestApproval: async () => {
+    fullAccessApprovalCalls += 1;
+    return { answer: "deny" };
+  },
 });
-const webBody = JSON.parse(webRequest.options.body);
+const webBody = webRequests.at(-1).body;
 assert.deepEqual(webBody.tools, [{ type: "web_search" }]);
 assert.equal(webResult.webSearchUsed, true);
 assert.deepEqual(webResult.sources, [{ url: "https://example.com/source", title: "来源页" }]);
+assert.equal(webResult.permissionMode, "full_access");
+assert.equal(webResult.permissionContract.capabilities.network, true);
+assert.equal(fullAccessApprovalCalls, 0, "完全权限不得请求神思逐项确认");
+
+let restrictedApprovalCalls = 0;
+const restrictedWebResult = await webRuntime.runStage({
+  settings: { ...profile, agentPermissionMode: "full_access", webSearchEnabled: true },
+  permissionContract: { mode: "shensi_only" },
+  prompt: "不要联网查询",
+  sessionId: "restricted-web-session-test",
+  stage: "agent",
+  requestApproval: async () => {
+    restrictedApprovalCalls += 1;
+    return { answer: "allow" };
+  },
+});
+assert.equal(webRequests.at(-1).body.tools, undefined, "仅限神思不得暴露原生联网工具");
+assert.equal(restrictedWebResult.webSearchUsed, false);
+assert.equal(restrictedWebResult.permissionMode, "shensi_only", "权限合同快照必须优先于可变设置");
+assert.equal(restrictedWebResult.permissionContract.taskId, "restricted-web-session-test");
+assert.equal(restrictedApprovalCalls, 0, "仅限神思应直接拒绝原生能力，不得弹出可放行的确认");
+
+const approvalPrompts = [];
+const approvedWebResult = await webRuntime.runStage({
+  settings: { ...profile, agentPermissionMode: "approval_required", webSearchEnabled: true },
+  prompt: "确认后查询最新资料",
+  sessionId: "approved-web-session-test",
+  stage: "agent",
+  requestApproval: async (details) => {
+    approvalPrompts.push(details);
+    return { answer: "allow" };
+  },
+});
+assert.deepEqual(webRequests.at(-1).body.tools, [{ type: "web_search" }]);
+assert.equal(approvedWebResult.permissionMode, "approval_required");
+assert.equal(approvedWebResult.permissionContract.confirmation.scope, "per_operation");
+assert.deepEqual(approvalPrompts[0].options.map((option) => option.id), ["allow", "deny"]);
+assert.equal(approvalPrompts[0].detail.operation, "network_exfiltration");
+assert.equal(approvalPrompts[0].detail.action, "web_search");
+
+const deniedWebResult = await webRuntime.runStage({
+  settings: { ...profile, agentPermissionMode: "approval_required", webSearchEnabled: true },
+  prompt: "被拒绝的联网请求",
+  sessionId: "denied-web-session-test",
+  stage: "agent",
+  requestApproval: async (details) => {
+    approvalPrompts.push(details);
+    return { answer: "deny" };
+  },
+});
+assert.equal(webRequests.at(-1).body.tools, undefined, "用户拒绝后不得向模型暴露联网工具");
+assert.equal(deniedWebResult.webSearchUsed, false);
+assert.equal(approvalPrompts.length, 2, "每次受保护联网操作都必须单独确认");
+
+const requestsBeforeMissingApproval = webRequests.length;
+await assert.rejects(
+  webRuntime.runStage({
+    settings: { ...profile, agentPermissionMode: "approval_required", webSearchEnabled: true },
+    prompt: "缺少审批通道",
+    sessionId: "missing-approval-session-test",
+    stage: "agent",
+  }),
+  (error) => error?.code === "CODEX_API_APPROVAL_CHANNEL_REQUIRED",
+);
+assert.equal(webRequests.length, requestsBeforeMissingApproval, "缺少审批通道时不得先发出联网工具请求");
 webRuntime.close();
 
 const workspaceInvocations = [];

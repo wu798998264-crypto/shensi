@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { resolveLocalOpenCodeLaunch } from "../cli/opencode-launch.mjs";
 import { deepSeekOpenCodeProviderConfig, qualifiedDeepSeekOpenCodeModel } from "../cli/deepseek-opencode-config.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
+import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
+import {
+  allocateOpenCodePermissionPort,
+  monitorOpenCodePermissions,
+  openCodePermissionServerAuth,
+} from "./opencode-permission-bridge.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -32,24 +38,48 @@ const eventError = (event = {}) => event?.error?.data?.message
   || event?.error?.name
   || "OpenCode 返回错误事件";
 
-const agentPermissions = ({ allowEdits = false, allowNetwork = false } = {}) => ({
-  "*": "deny",
-  read: "allow",
-  glob: "allow",
-  grep: "allow",
-  list: "allow",
-  todowrite: "allow",
-  edit: allowEdits ? "allow" : "deny",
-  bash: "deny",
-  task: "deny",
-  external_directory: "deny",
-  webfetch: allowNetwork ? "allow" : "deny",
-  websearch: allowNetwork ? "allow" : "deny",
-  lsp: "deny",
-  skill: "deny",
-  question: "deny",
-  doom_loop: "deny",
-});
+const agentPermissions = ({ allowEdits = false, allowNetwork = false, agentPermissionMode = "" } = {}) => {
+  const explicitMode = String(agentPermissionMode || "").trim();
+  if (explicitMode) {
+    const mode = normalizeAgentPermissionMode(explicitMode);
+    if (mode === "full_access") return {
+      "*": "allow", read: "allow", glob: "allow", grep: "allow", list: "allow", todowrite: "allow",
+      edit: "allow", bash: "allow", task: "allow", external_directory: "allow", webfetch: "allow",
+      websearch: "allow", lsp: "allow", skill: "allow", question: "allow", doom_loop: "allow",
+    };
+    if (mode === "approval_required") return {
+      "*": "ask",
+      read: { "*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow" },
+      glob: "allow", grep: "allow", list: "allow", todowrite: "allow", edit: "ask", bash: "ask",
+      task: "ask", external_directory: "ask", webfetch: "ask", websearch: "ask", lsp: "allow",
+      skill: "allow", question: "allow", doom_loop: "ask",
+    };
+    return {
+      "*": "deny", read: "deny", glob: "deny", grep: "deny", list: "deny", todowrite: "deny",
+      edit: "deny", bash: "deny", task: "deny", external_directory: "deny", webfetch: "deny",
+      websearch: "deny", lsp: "deny", skill: "deny", question: "deny", doom_loop: "deny",
+      shensi_: "allow", "shensi_*": "allow",
+    };
+  }
+  return {
+    "*": "deny",
+    read: "allow",
+    glob: "allow",
+    grep: "allow",
+    list: "allow",
+    todowrite: "allow",
+    edit: allowEdits ? "allow" : "deny",
+    bash: "deny",
+    task: "deny",
+    external_directory: "deny",
+    webfetch: allowNetwork ? "allow" : "deny",
+    websearch: allowNetwork ? "allow" : "deny",
+    lsp: "deny",
+    skill: "deny",
+    question: "deny",
+    doom_loop: "deny",
+  };
+};
 
 const agentPrompt = ({ allowEdits = false, allowNetwork = false } = {}) => [
   "You are the DeepSeek workspace agent embedded in Shensi Creative Engine.",
@@ -89,6 +119,8 @@ export const runDeepSeekOpenCodeAgent = async ({
   reasoningEffort = "",
   allowEdits = false,
   allowNetwork = false,
+  agentPermissionMode = "",
+  permissionContract = null,
   contextBlocks = [],
   timeoutMs = DEFAULT_TIMEOUT_MS,
   environment = process.env,
@@ -96,15 +128,26 @@ export const runDeepSeekOpenCodeAgent = async ({
   signal = null,
   onEvent = null,
   onProcess = null,
+  nativeHost = null,
+  requestApproval = null,
+  fetchImpl = globalThis.fetch,
+  allocatePermissionPort = allocateOpenCodePermissionPort,
 } = {}) => {
+  const accessMode = normalizeAgentPermissionMode(permissionContract?.mode || agentPermissionMode);
   const secret = String(apiKey || "").trim();
   if (!secret) throw Object.assign(new Error("DeepSeek Agent 缺少 API Key；请先在神思模型设置中完成 DeepSeek 真实连接测试"), { code: "MISSING_DEEPSEEK_API_KEY" });
   const task = String(prompt || "").trim();
   if (!task) throw new Error("DeepSeek Agent 没有收到任务指令");
   const projectDirectory = String(cwd || "").trim();
   if (!projectDirectory) throw new Error("DeepSeek Agent 没有可用的项目目录");
+  if (accessMode === "approval_required" && typeof requestApproval !== "function") {
+    throw new Error("操作需确认模式缺少神思审批通道");
+  }
   const resources = deepSeekAgentContextText(contextBlocks);
-  const input = resources ? `${task}\n\n以下内容包含神思提供的只读资料，以及用户明确选中并由服务端验真的 Skill 执行说明：\n${resources}` : task;
+  const nativeInstructions = accessMode === "shensi_only"
+    ? "You own the complete user task. Use only the shensi MCP tools to discover and read Shensi material. Host filesystem, shell, web, ambient plugins, Skills and subagents are unavailable."
+    : `You own the complete user task. Native OpenCode tools and ambient configuration are available under the ${accessMode} permission contract. Use shensi MCP tools for Shensi-managed workspace reads and preserve Shensi history and revision authority for managed writes. ${accessMode === "approval_required" ? "Wait for each requested operation approval; approval applies once only." : "Use authorized native capabilities autonomously while preserving unrelated work."}`;
+  const input = [nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }), task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(input) > MAX_INPUT_BYTES) throw new Error("DeepSeek Agent 输入超过 8MB，已停止本次调用");
   const executionSourceReceipt = buildExecutionSourceReceiptFromContextBlocks({
     finalInput: input,
@@ -112,16 +155,17 @@ export const runDeepSeekOpenCodeAgent = async ({
     stage: "deepseek_opencode_agent_final_input",
   });
 
-  const tempRoot = await mkdtemp(join(tmpdir(), "shensi-deepseek-agent-"));
-  const xdgConfig = join(tempRoot, "xdg-config");
-  const xdgData = join(tempRoot, "xdg-data");
-  const xdgCache = join(tempRoot, "xdg-cache");
-  const xdgState = join(tempRoot, "xdg-state");
-  await Promise.all([xdgConfig, xdgData, xdgCache, xdgState].map((path) => mkdir(path, { recursive: true })));
+  const isolateHostConfiguration = accessMode === "shensi_only";
+  const tempRoot = isolateHostConfiguration ? await mkdtemp(join(tmpdir(), "shensi-deepseek-agent-")) : "";
+  const xdgConfig = tempRoot ? join(tempRoot, "xdg-config") : "";
+  const xdgData = tempRoot ? join(tempRoot, "xdg-data") : "";
+  const xdgCache = tempRoot ? join(tempRoot, "xdg-cache") : "";
+  const xdgState = tempRoot ? join(tempRoot, "xdg-state") : "";
+  if (tempRoot) await Promise.all([xdgConfig, xdgData, xdgCache, xdgState].map((path) => mkdir(path, { recursive: true })));
 
   try {
     const launch = await launchResolver({ environment });
-    const permissions = agentPermissions({ allowEdits, allowNetwork });
+    const permissions = agentPermissions({ allowEdits, allowNetwork, agentPermissionMode: accessMode });
     const config = {
       ...deepSeekOpenCodeProviderConfig([model]),
       share: "disabled",
@@ -132,12 +176,12 @@ export const runDeepSeekOpenCodeAgent = async ({
         shensi: {
           description: "Shensi isolated DeepSeek workspace agent",
           mode: "primary",
-          prompt: agentPrompt({ allowEdits, allowNetwork }),
+          prompt: nativeHost ? nativeInstructions : agentPrompt({ allowEdits, allowNetwork }),
           permission: permissions,
         },
       },
-      mcp: {},
-      plugin: [],
+      mcp: nativeHost ? { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } : {},
+      ...(isolateHostConfiguration ? { plugin: [] } : {}),
     };
     const args = [
       ...(Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : []),
@@ -152,6 +196,16 @@ export const runDeepSeekOpenCodeAgent = async ({
       "--title",
       "Shensi DeepSeek Agent",
     ];
+    if (accessMode !== "shensi_only") {
+      const pureIndex = args.indexOf("--pure");
+      if (pureIndex >= 0) args.splice(pureIndex, 1);
+    }
+    if (accessMode === "full_access") args.splice(args.indexOf("run") + 1, 0, "--auto");
+    const permissionPort = accessMode === "approval_required" ? await allocatePermissionPort() : 0;
+    const permissionServerAuth = permissionPort ? openCodePermissionServerAuth() : null;
+    const permissionServerPassword = permissionServerAuth?.password || "";
+    const permissionServerHeaders = permissionServerAuth?.headers || {};
+    if (permissionPort) args.push("--port", String(permissionPort));
     const variant = String(reasoningEffort || "").trim().toLowerCase();
     if (["high", "max"].includes(variant)) args.push("--variant", variant);
 
@@ -162,11 +216,15 @@ export const runDeepSeekOpenCodeAgent = async ({
           ...environment,
           DEEPSEEK_API_KEY: secret,
           OPENCODE_DISABLE_AUTOUPDATE: "true",
+          OPENCODE_PERMISSION: JSON.stringify(permissions),
+          ...(permissionServerPassword ? { OPENCODE_SERVER_PASSWORD: permissionServerPassword } : {}),
           OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-          XDG_CONFIG_HOME: xdgConfig,
-          XDG_DATA_HOME: xdgData,
-          XDG_CACHE_HOME: xdgCache,
-          XDG_STATE_HOME: xdgState,
+          ...(isolateHostConfiguration ? {
+            XDG_CONFIG_HOME: xdgConfig,
+            XDG_DATA_HOME: xdgData,
+            XDG_CACHE_HOME: xdgCache,
+            XDG_STATE_HOME: xdgState,
+          } : {}),
         },
         shell: false,
         windowsHide: true,
@@ -180,9 +238,11 @@ export const runDeepSeekOpenCodeAgent = async ({
       let sessionId = "";
       let settled = false;
       let aborted = false;
+      const permissionMonitorController = new AbortController();
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
+        permissionMonitorController.abort();
         clearTimeout(timer);
         signal?.removeEventListener?.("abort", abort);
         if (error) rejectRun(error);
@@ -207,6 +267,15 @@ export const runDeepSeekOpenCodeAgent = async ({
       };
       if (signal?.aborted) abort();
       else signal?.addEventListener?.("abort", abort, { once: true });
+      if (permissionPort) void monitorOpenCodePermissions({
+        baseUrl: `http://127.0.0.1:${permissionPort}`,
+        directory: projectDirectory,
+        requestApproval,
+        fetchImpl,
+        headers: permissionServerHeaders,
+        signal: permissionMonitorController.signal,
+        onEvent,
+      });
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
       child.stdout.on("data", (chunk) => {
@@ -253,7 +322,7 @@ export const runDeepSeekOpenCodeAgent = async ({
           finish(new Error("OpenCode Agent 已结束，但没有返回可用文本"));
           return;
         }
-      finish(null, { text, sessionId, executionSourceReceipt });
+      finish(null, { text, sessionId, executionSourceReceipt, permissionMode: accessMode });
       });
       const timer = setTimeout(() => {
         try { child.kill(); } catch {}
@@ -263,7 +332,7 @@ export const runDeepSeekOpenCodeAgent = async ({
       child.stdin.end(input);
     });
   } finally {
-    await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
   }
 };
 

@@ -4,6 +4,8 @@ import { basename, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { resolveLocalCodexLaunch, spawnLocalCodexAppServer } from "../cli/codex-launch.mjs";
 import { shensiCodexEnvironment, shensiCodexProfileRoot } from "./codex-runtime-isolation.mjs";
+import { codexPermissionConfig, normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
+import { requestAgentCapabilityApproval } from "./agent-permission-prompt-tools.mjs";
 
 const RPC_TIMEOUT_MS = 30_000;
 const MIN_CREATIVE_STAGE_TIMEOUT_MS = 600_000;
@@ -24,6 +26,36 @@ const safeMessage = (error) => String(error?.message || error || "未知错误")
 const runtimeError = (message, code, safeToFallback = false) => Object.assign(new Error(message), { code, safeToFallback });
 const normalizedId = (value, fallback = "") => String(value || fallback).trim().slice(0, 200);
 const sessionHash = (value) => createHash("sha256").update(String(value)).digest("hex").slice(0, 32);
+
+const deniedApprovalResult = (method) => method === "item/permissions/requestApproval"
+  ? { permissions: { fileSystem: { read: [], write: [], entries: [] }, network: { enabled: false } }, scope: "turn", strictAutoReview: true }
+  : { decision: "decline" };
+
+const acceptedApprovalResult = (method, params = {}) => method === "item/permissions/requestApproval"
+  ? { permissions: params.permissions || {}, scope: "turn", strictAutoReview: true }
+  : { decision: "accept" };
+
+const approvalDetail = (method, params = {}) => ({
+  method,
+  command: String(params.command || "").slice(0, 2_000),
+  cwd: String(params.cwd || "").slice(0, 1_000),
+  reason: String(params.reason || "").slice(0, 2_000),
+  files: (Array.isArray(params.files) ? params.files : []).map((value) => String(value).slice(0, 1_000)).slice(0, 32),
+  permissions: {
+    read: (params.permissions?.fileSystem?.read || []).map(String).slice(0, 32),
+    write: (params.permissions?.fileSystem?.write || []).map(String).slice(0, 32),
+    network: params.permissions?.network?.enabled === true,
+  },
+});
+
+const approvalQuestion = (detail) => {
+  const kind = detail.method.includes("command") || detail.method === "execCommandApproval" ? "运行命令"
+    : detail.method.includes("fileChange") || detail.method === "applyPatchApproval" ? "修改文件"
+      : "扩展权限";
+  const target = detail.command || detail.files.join("、") || detail.permissions.write.join("、")
+    || detail.permissions.read.join("、") || (detail.permissions.network ? "访问网络" : "未提供目标详情");
+  return `Agent 请求${kind}：${String(target).slice(0, 1_500)}。是否允许本次操作？`;
+};
 
 export const effectiveShensiCodexAgentStageTimeoutMs = (settings = {}) => Math.min(
   MAX_CREATIVE_STAGE_TIMEOUT_MS,
@@ -96,12 +128,14 @@ export class ShensiCodexAgentRuntime {
     launchResolver = resolveLocalCodexLaunch,
     idleShutdownMs = 90_000,
     environment = null,
+    isolateConfig = true,
   } = {}) {
     this.machineRoot = resolve(machineRoot);
     this.appRoot = resolve(appRoot);
     this.appVersion = appVersion;
     this.launchResolver = launchResolver;
     this.environment = environment;
+    this.isolateConfig = isolateConfig !== false;
     this.root = resolve(this.machineRoot, "machine-sessions", "shensi-codex-runtime-v1");
     this.codexProfileRoot = shensiCodexProfileRoot(this.machineRoot);
     this.sandboxRoot = resolve(this.root, "isolated-workspaces");
@@ -125,14 +159,13 @@ export class ShensiCodexAgentRuntime {
       normalizedId(options.shensiRuntime?.sessionId)
       && normalizedId(options.shensiRuntime?.stage)
       && codexCliSettings(options.settings)
-      && options.settings?.webSearchEnabled !== true
       && supportedAttachments(options.attachments),
     );
   }
 
   sessionInfo(sessionId) {
     const session = this.sessions.get(normalizedId(sessionId));
-    return session ? { sessionId: session.sessionId, threadId: session.threadId, stageCount: session.stageCount, workspaceIsolated: true } : null;
+    return session ? { sessionId: session.sessionId, threadId: session.threadId, stageCount: session.stageCount, workspaceIsolated: session.permissionMode === "shensi_only", permissionMode: session.permissionMode } : null;
   }
 
   async ensureStarted() {
@@ -156,6 +189,7 @@ export class ShensiCodexAgentRuntime {
         cwd: this.appRoot,
         env: this.environment || shensiCodexEnvironment({ machineRoot: this.machineRoot }),
         launchResolver: this.launchResolver,
+        isolateConfig: this.isolateConfig,
       }));
     } catch (error) {
       throw runtimeError(`Codex Agent 启动失败：${safeMessage(error)}`, "CODEX_AGENT_RUNTIME_UNAVAILABLE", true);
@@ -232,17 +266,45 @@ export class ShensiCodexAgentRuntime {
       }
       if (APPROVAL_METHODS.has(message.method)) {
         const run = this.findRun(message.params || {});
-        if (run) run.deniedToolCalls += 1;
-        const result = message.method === "item/permissions/requestApproval"
-          ? { permissions: { fileSystem: { read: [], write: [], entries: [] }, network: { enabled: false } }, scope: "turn", strictAutoReview: true }
-          : { decision: "decline" };
-        this.respond(message.id, result);
+        void this.resolveRuntimeApproval(message, run);
       } else {
         this.respond(message.id, { error: { code: -32601, message: `神思创作运行时不支持请求：${message.method}` } });
       }
       return;
     }
     if (message.method) this.handleNotification(message.method, message.params || {});
+  }
+
+  async resolveRuntimeApproval(message, run) {
+    if (!run || run.permissionMode === "shensi_only") {
+      if (run) run.deniedToolCalls += 1;
+      this.respond(message.id, deniedApprovalResult(message.method));
+      return;
+    }
+    if (run.permissionMode === "full_access") {
+      this.respond(message.id, acceptedApprovalResult(message.method, message.params));
+      return;
+    }
+    const detail = approvalDetail(message.method, message.params || {});
+    run.onToolEvent?.({ phase: "approval_requested", kind: "permission", name: message.method, input: detail, callId: String(message.id) });
+    try {
+      const response = await run.requestApproval?.({
+        question: approvalQuestion(detail),
+        options: [
+          { id: "allow", label: "允许本次操作" },
+          { id: "deny", label: "拒绝本次操作" },
+        ],
+        detail,
+      });
+      const answer = String(response?.answer || response || "").trim().toLowerCase();
+      const allowed = answer === "allow" || answer.includes("允许本次操作");
+      if (!allowed) run.deniedToolCalls += 1;
+      this.respond(message.id, allowed ? acceptedApprovalResult(message.method, message.params) : deniedApprovalResult(message.method));
+      run.onToolEvent?.({ phase: "approval_resolved", kind: "permission", name: message.method, success: allowed, callId: String(message.id) });
+    } catch {
+      run.deniedToolCalls += 1;
+      this.respond(message.id, deniedApprovalResult(message.method));
+    }
   }
 
   findRun(params = {}) {
@@ -316,10 +378,40 @@ export class ShensiCodexAgentRuntime {
   async ensureSession(options) {
     const sessionId = normalizedId(options.shensiRuntime?.sessionId);
     const existing = this.sessions.get(sessionId);
-    if (existing) return existing;
+    const requestedPermissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || options.settings?.agentPermissionMode);
+    const requestedWebSearchEnabled = options.nativeWebSearchEnabled === true;
+    if (existing) {
+      if (existing.permissionMode !== requestedPermissionMode) {
+        throw runtimeError("当前 Agent 会话权限档位已固定；切换档位后必须启动新会话", "CODEX_AGENT_PERMISSION_CHANGED", false);
+      }
+      if (existing.nativeWebSearchEnabled !== requestedWebSearchEnabled) {
+        throw runtimeError("当前 Agent 会话联网搜索状态已固定；切换联网状态后必须启动新会话", "CODEX_AGENT_WEB_SEARCH_CHANGED", false);
+      }
+      return existing;
+    }
     await this.ensureStarted();
     const cwd = join(this.sandboxRoot, sessionHash(sessionId));
     await mkdir(cwd, { recursive: true });
+    const permissionMode = requestedPermissionMode;
+    const permission = codexPermissionConfig(permissionMode);
+    const enhanced = permissionMode !== "shensi_only";
+    const developerInstructions = options.shensiRuntime?.agentDriven === true
+      ? [
+          String(options.system || ""),
+          enhanced
+            ? "Use native Agent tools when the task needs them. Shensi document, outline, canon, index, memory, conversation, and asset mutations must still use the supplied Shensi workspace tools so history snapshots, revisions, and transactions remain authoritative. Never alter provider credentials or configuration unless the user explicitly asks."
+            : "Only the supplied Shensi workspace tools are available. Do not inspect the host filesystem, run commands, access the network, load ambient extensions, or spawn subagents.",
+          permissionMode === "approval_required"
+            ? "When a protected operation needs approval, request it through the runtime and wait for the user's one-operation decision. A previous approval never authorizes a later operation."
+            : "",
+        ].filter(Boolean).join("\n\n")
+      : [
+          "You are a model worker inside the trusted Shensi creative orchestrator.",
+          "Use only the stage envelope supplied in each turn.",
+          "Do not inspect files, run commands, access the network, call plugins, load skills, spawn agents, or modify state.",
+          "If evidence is missing, report it only through the schema required by the current stage.",
+          "Return only the current stage result.",
+        ].join("\n");
     let response;
     try {
       response = await this.request("thread/start", {
@@ -327,27 +419,24 @@ export class ShensiCodexAgentRuntime {
         ...(options.settings?.speedMode && options.settings.speedMode !== "default" ? { serviceTier: String(options.settings.speedMode) } : {}),
         cwd,
         runtimeWorkspaceRoots: [cwd],
-        approvalPolicy: "never",
+        approvalPolicy: permission.approvalPolicy,
         approvalsReviewer: "user",
-        sandbox: "read-only",
-        environments: [],
+        sandbox: permission.sandbox,
+        sandboxPolicy: permission.sandboxPolicy,
+        ...(!enhanced ? { environments: [] } : {}),
         dynamicTools: options.shensiRuntime?.agentDriven === true ? options.workspaceToolRuntime?.dynamicTools || [] : [],
-        selectedCapabilityRoots: [],
-        ...(options.shensiRuntime?.agentDriven ? { config: { "features.shell_tool": false, "features.unified_exec": false, "features.apply_patch_freeform": false, "features.remote_models": false, "web_search": "disabled" } } : {}),
-        developerInstructions: options.shensiRuntime?.agentDriven === true ? String(options.system || "") : [
-          "You are a model worker inside the trusted Shensi creative orchestrator.",
-          "Use only the stage envelope supplied in each turn.",
-          "Do not inspect files, run commands, access the network, call plugins, load skills, spawn agents, or modify state.",
-          "If evidence is missing, report it only through the schema required by the current stage.",
-          "Return only the current stage result.",
-        ].join("\n"),
+        ...(!enhanced ? { selectedCapabilityRoots: [] } : {}),
+        ...(options.shensiRuntime?.agentDriven ? { config: enhanced
+          ? { "features.shell_tool": true, "features.unified_exec": true, "features.apply_patch_freeform": true, "features.remote_models": true, "web_search": requestedWebSearchEnabled ? "live" : "disabled" }
+          : { "features.shell_tool": false, "features.unified_exec": false, "features.apply_patch_freeform": false, "features.remote_models": false, "web_search": "disabled" } } : {}),
+        developerInstructions,
         ephemeral: true,
       }, { timeoutMs: 30_000 });
     } catch (error) {
       if (error?.code === "CODEX_AGENT_RUNTIME_UNAVAILABLE") throw error;
       throw runtimeError(`Codex Agent 会话启动失败：${safeMessage(error)}`, "CODEX_AGENT_RUNTIME_UNAVAILABLE", true);
     }
-    const session = { sessionId, threadId: response?.thread?.id || "", cwd, stageCount: 0 };
+    const session = { sessionId, threadId: response?.thread?.id || "", cwd, stageCount: 0, permissionMode, nativeWebSearchEnabled: requestedWebSearchEnabled };
     if (!session.threadId) throw runtimeError("Codex Agent 未返回 thread ID", "CODEX_AGENT_RUNTIME_UNAVAILABLE", true);
     this.sessions.set(sessionId, session);
     return session;
@@ -370,7 +459,17 @@ export class ShensiCodexAgentRuntime {
 
   async executeStage(options) {
     if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new Error("任务已取消");
-    const session = await this.ensureSession(options);
+    const permissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || options.settings?.agentPermissionMode);
+    const nativeWebSearchEnabled = options.settings?.webSearchEnabled === true
+      ? await requestAgentCapabilityApproval({
+        permissionMode,
+        capability: "原生联网搜索",
+        runner: "Codex Agent",
+        requestApproval: options.requestApproval,
+      })
+      : false;
+    const session = await this.ensureSession({ ...options, nativeWebSearchEnabled });
+    const permission = codexPermissionConfig(session.permissionMode);
     const provisionalId = `starting-${randomUUID()}`;
     let resolveRun;
     let rejectRun;
@@ -387,6 +486,8 @@ export class ShensiCodexAgentRuntime {
       status: "starting",
       terminal: false,
       deniedToolCalls: 0,
+      permissionMode: session.permissionMode,
+      requestApproval: options.requestApproval,
       workspaceToolRuntime: options.shensiRuntime?.agentDriven === true ? options.workspaceToolRuntime : null,
       onToolEvent: options.onToolEvent,
       outputLimit: outputCharacterLimit(options.settings),
@@ -403,10 +504,10 @@ export class ShensiCodexAgentRuntime {
         input: turnInput(options),
         cwd: session.cwd,
         runtimeWorkspaceRoots: [session.cwd],
-        approvalPolicy: "never",
+        approvalPolicy: permission.approvalPolicy,
         approvalsReviewer: "user",
-        sandboxPolicy: { type: "readOnly", networkAccess: false },
-        environments: [],
+        sandboxPolicy: permission.sandboxPolicy,
+        ...(session.permissionMode === "shensi_only" ? { environments: [] } : {}),
         ...(options.settings?.model ? { model: String(options.settings.model) } : {}),
         ...(options.settings?.reasoningEffort ? { effort: String(options.settings.reasoningEffort) } : {}),
         ...(options.settings?.speedMode && options.settings.speedMode !== "default" ? { serviceTier: String(options.settings.speedMode) } : {}),
@@ -461,7 +562,9 @@ export class ShensiCodexAgentRuntime {
           turnId: run.turnId,
           stageCount: session.stageCount,
           deniedToolCalls: run.deniedToolCalls,
-          workspaceIsolated: true,
+          workspaceIsolated: session.permissionMode === "shensi_only",
+          permissionMode: session.permissionMode,
+          permissionContract: permissionContractFor(session.permissionMode, { runner: "codex", taskId: run.turnId }),
         },
       };
     } catch (error) {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
+import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
 const laneFor = (request) => keyFor({ ...request, branchId: "conversation-lane" });
@@ -131,18 +132,30 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const catalog = await skillCatalog(request);
       const route = await readRoute(request);
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
+      const requestUserInput = async ({ question, options = [], multiple = false, presentation = "", metadata = null, kind = "question", detail = null }) => {
+        const decision = kind === "agent_permission"
+          ? {
+              id: randomUUID(),
+              kind: "agent_permission",
+              question: String(question || "").trim(),
+              options: options.map((option, index) => ({ id: String(option?.id || index + 1), label: String(option?.label || option) })),
+              multiple: multiple === true,
+              allowFreeText: false,
+              ...(detail && typeof detail === "object" ? { detail } : {}),
+            }
+          : normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
+        if (!decision.question) throw new Error("问题不能为空");
+        const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));
+        void answer.catch(() => {});
+        record.status = "waiting_input";
+        await event(entry, "question", decision);
+        const value = await answer;
+        record.status = "running";
+        await event(entry, "answer", { decisionId: decision.id, answer: value });
+        return { answer: value };
+      };
       const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
-        ask: async ({ question, options = [], multiple = false, presentation = "", metadata = null }) => {
-          const decision = normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
-          const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));
-          void answer.catch(() => {});
-          record.status = "waiting_input";
-          await event(entry, "question", decision);
-          const value = await answer;
-          record.status = "running";
-          await event(entry, "answer", { decisionId: decision.id, answer: value });
-          return { answer: value };
-        },
+        ask: requestUserInput,
         candidates: async (variants) => { record.candidates = variants; await event(entry, "candidates", { variants }); return { delivered: variants.length, savedToDocument: false }; },
         media: (args) => media(args, { request, runId: record.id, signal: controller.signal, emit: (type, payload) => event(entry, type, payload) }),
         mediaStatus: (jobId, archive = false) => mediaStatus(jobId, { request, archive, emit: (type, payload) => event(entry, type, payload) }),
@@ -151,9 +164,9 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           : payload),
       });
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
-      await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model });
-      const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model])).digest("hex");
-      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), request });
+      await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model, permissionMode: request.settings.agentPermissionMode });
+      const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
+      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request });
       record.text = result.text || "";
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");
@@ -173,6 +186,13 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
   return {
     async start(request) {
       if (!request.conversationId || !request.messages?.length) throw new Error("缺少对话或用户消息");
+      request = {
+        ...request,
+        settings: {
+          ...(request.settings || {}),
+          agentPermissionMode: normalizeAgentPermissionMode(request.settings?.agentPermissionMode),
+        },
+      };
       const key = laneFor(request), id = runIdFor(request);
       const busy = lanes.get(key);
       if (busy && busy !== id) throw Object.assign(new Error("同一对话已有运行任务，请排队或补充"), { code: "AGENT_CONVERSATION_BUSY", runId: busy });
@@ -181,7 +201,8 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       let existing;
       try { existing = await get(id); } catch (error) { lanes.delete(key); throw error; }
       if (existing) { lanes.delete(key); return { id, status: existing.record.status, reused: true }; }
-      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
+      const permissionContract = permissionContractFor(request.settings.agentPermissionMode, { runner: request.settings.agentEngine, taskId: id });
+      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", permissionContract, request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
       lanes.set(key, id); runs.set(id, entry);
       try { await persist(entry); } catch (error) { lanes.delete(key); runs.delete(id); throw error; }
       entry.task = execute(entry, request);
@@ -192,7 +213,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (!entry) throw Object.assign(new Error("任务不存在"), { statusCode: 404 });
       const { record } = entry;
       await entry.saving;
-      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [] };
+      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [], permissionContract: record.permissionContract || null };
     },
     async answer(id, decisionId, answer) {
       const entry = await get(id);

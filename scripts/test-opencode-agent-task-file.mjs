@@ -7,6 +7,7 @@ import { runOpenCodeAgent } from "../src/server/opencode-agent-runner.mjs";
 
 const temporary = await mkdtemp(join(tmpdir(), "shensi-opencode-task-file-test-"));
 const mockRunner = join(temporary, "mock-opencode.mjs");
+const permissionRunner = join(temporary, "mock-opencode-permissions.mjs");
 const marker = "SHENSI_OPENCODE_LONG_TASK_OK";
 
 try {
@@ -42,6 +43,80 @@ process.stdout.write(JSON.stringify({ type: "text", text: ${JSON.stringify(marke
 
   assert.equal(result.text, marker);
   assert.equal(result.model, "deepseek/deepseek-test");
+
+  await writeFile(permissionRunner, `
+const args = process.argv.slice(2);
+const permission = JSON.parse(process.env.OPENCODE_PERMISSION || "{}");
+const config = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || "{}");
+process.stdout.write(JSON.stringify({ type: "text", text: JSON.stringify({
+  args,
+  permission,
+  config,
+  xdgConfig: process.env.XDG_CONFIG_HOME || "",
+  xdgData: process.env.XDG_DATA_HOME || "",
+}) }) + "\\n");
+`, "utf8");
+  const runMode = async (agentPermissionMode) => {
+    const modeResult = await runOpenCodeAgent({
+      prompt: "Inspect the permission arguments only.",
+      cwd: temporary,
+      model: "provider/model",
+      credentialSource: "opencode",
+      agentPermissionMode,
+      nativeHost: { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" } },
+      requestApproval: async () => ({ answer: "deny" }),
+      launchResolver: async () => ({ executable: process.execPath, prefixArgs: [permissionRunner] }),
+      allocatePermissionPort: async () => 49999,
+      fetchImpl: async () => { throw new Error("mock permission server not started"); },
+      timeoutMs: 30_000,
+    });
+    return JSON.parse(modeResult.text);
+  };
+  const restricted = await runMode("shensi_only");
+  assert.equal(restricted.permission.bash, "deny");
+  assert.equal(restricted.permission.read, "deny");
+  assert.equal(restricted.args.includes("--auto"), false);
+  assert.notEqual(restricted.xdgConfig, "", "仅限神思必须隔离 OpenCode 宿主配置");
+  assert.equal(restricted.xdgData, "", "复用 OpenCode 登录时应保留其凭据数据入口");
+  assert.deepEqual(restricted.config.plugin, []);
+  const approval = await runMode("approval_required");
+  assert.equal(approval.permission.bash, "ask");
+  assert.equal(approval.permission.task, "ask");
+  assert.equal(approval.args.includes("--pure"), false, "操作需确认必须加载运行器原有扩展环境");
+  assert.equal(approval.args[approval.args.indexOf("--port") + 1], "49999");
+  const fullAccess = await runMode("full_access");
+  assert.equal(fullAccess.permission.bash, "allow");
+  assert.equal(fullAccess.permission.task, "allow");
+  assert.ok(fullAccess.args.includes("--auto"));
+  assert.equal(fullAccess.args.includes("--pure"), false, "完全权限必须保留运行器原有扩展环境");
+
+  await assert.rejects(() => runOpenCodeAgent({
+    prompt: "检查权限",
+    cwd: temporary,
+    model: "provider/model",
+    agentPermissionMode: "approval_required",
+    launchResolver: async () => ({ executable: process.execPath, prefixArgs: [permissionRunner] }),
+  }), /缺少神思审批通道/u);
+
+  const ambientConfig = "C:/ambient/opencode/config";
+  const managedFullAccess = await runOpenCodeAgent({
+    prompt: "Inspect the managed-provider full-access environment.",
+    cwd: temporary,
+    model: "provider/model",
+    provider: "Managed Provider",
+    baseUrl: "https://example.invalid/v1",
+    apiKey: "test-managed-secret",
+    credentialSource: "shensi",
+    agentPermissionMode: "full_access",
+    nativeHost: { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" } },
+    environment: { ...process.env, XDG_CONFIG_HOME: ambientConfig },
+    launchResolver: async () => ({ executable: process.execPath, prefixArgs: [permissionRunner] }),
+    timeoutMs: 30_000,
+  });
+  const managedEnvironment = JSON.parse(managedFullAccess.text);
+  assert.equal(managedEnvironment.xdgConfig, ambientConfig, "增强档位下神思凭据不得隔离运行器全局配置");
+  assert.equal(Object.hasOwn(managedEnvironment.config, "plugin"), false, "增强档位不得清空全局插件");
+  assert.ok(managedEnvironment.args.includes("--auto"));
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

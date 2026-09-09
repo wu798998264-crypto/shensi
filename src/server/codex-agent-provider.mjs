@@ -12,6 +12,8 @@ import { probeDeepSeekOpenCodeSessionCapabilities, runDeepSeekOpenCodeAgent } fr
 import { createCodexApiAgentRuntime } from "./codex-api-agent-runtime.mjs";
 import { probeOpenCodeSessionCapabilities, runOpenCodeAgent } from "./opencode-agent-runner.mjs";
 import { probeClaudeCodeSessionCapabilities, runClaudeCodeAgentTurn } from "./claude-code-agent-runner.mjs";
+import { startConversationAgentMcp } from "./conversation-agent-mcp.mjs";
+import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
 import {
   captureMutationCandidateBaseline,
   maintainMutationTransactionStore,
@@ -27,6 +29,7 @@ import {
 } from "./codex-runtime-isolation.mjs";
 import { createModificationIntent, createPostconditionReport, createUndoTransactionContract } from "../task-execution-domain.js";
 import { agentRuntimeProfile } from "../agent-runtime-profile.js";
+import { codexPermissionConfig, normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { agentTaskLifecycle } from "../agent-task-lifecycle.js";
 import { extractFormalArtifacts, formalArtifactCommitEligibility } from "../formal-artifact-extractor.js";
 import { appendModelTextEvent, normalizeSingleCandidateOutput } from "../formal-candidate-normalization.js";
@@ -63,11 +66,6 @@ const APPROVAL_METHODS = new Set([
   "execCommandApproval",
   "applyPatchApproval",
 ]);
-const CODEX_FULL_ACCESS_APPROVAL_POLICY = "never";
-const CODEX_FULL_ACCESS_SANDBOX_POLICY = Object.freeze({ type: "dangerFullAccess" });
-const CODEX_READ_ONLY_SANDBOX_POLICY = Object.freeze({ type: "readOnly", networkAccess: false });
-const CODEX_FULL_ACCESS_MODE = "danger_full_access";
-
 const samePath = (left, right) => process.platform === "win32"
   ? String(left).toLowerCase() === String(right).toLowerCase()
   : String(left) === String(right);
@@ -473,6 +471,7 @@ const defaultState = () => ({
   schemaVersion: STATE_SCHEMA_VERSION,
   activeProvider: "gpt_cli",
   agentEngine: "codex",
+  agentPermissionMode: "shensi_only",
   agentModel: "",
   agentModels: { codex: "", codex_api: "", deepseek_opencode: "deepseek-v4-pro", opencode: "", claude_code: "" },
   agentReasoningEffort: "",
@@ -490,7 +489,7 @@ const defaultState = () => ({
 });
 
 export class CodexAgentProvider {
-  constructor({ machineRoot, appRoot, defaultProjectRoot = appRoot, appVersion = "1.0.0", launchResolver = resolveLocalCodexLaunch, openCodeLaunchResolver = resolveLocalOpenCodeLaunch, claudeCodeLaunchResolver = resolveLocalClaudeCodeLaunch, deepSeekAgentRunner = runDeepSeekOpenCodeAgent, openCodeAgentRunner = runOpenCodeAgent, claudeCodeAgentRunner = runClaudeCodeAgentTurn, apiAgentRuntime = createCodexApiAgentRuntime(), workspaceReadBrokerFactory = createAgentWorkspaceReadBroker, systemReadRoots = null, finalResponseGraceMs = 15_000, mutationRetryLimit = 1, evidenceRetryLimit = mutationRetryLimit, creativeOutputRetryLimit = 1, terminalRunLimit = DEFAULT_TERMINAL_RUN_LIMIT, nativeCodexHome = "", environment = process.env } = {}) {
+  constructor({ machineRoot, appRoot, defaultProjectRoot = appRoot, appVersion = "1.0.0", launchResolver = resolveLocalCodexLaunch, openCodeLaunchResolver = resolveLocalOpenCodeLaunch, claudeCodeLaunchResolver = resolveLocalClaudeCodeLaunch, deepSeekAgentRunner = runDeepSeekOpenCodeAgent, openCodeAgentRunner = runOpenCodeAgent, claudeCodeAgentRunner = runClaudeCodeAgentTurn, apiAgentRuntime = createCodexApiAgentRuntime(), workspaceReadBrokerFactory = createAgentWorkspaceReadBroker, startMcp = startConversationAgentMcp, systemReadRoots = null, finalResponseGraceMs = 15_000, mutationRetryLimit = 1, evidenceRetryLimit = mutationRetryLimit, creativeOutputRetryLimit = 1, terminalRunLimit = DEFAULT_TERMINAL_RUN_LIMIT, nativeCodexHome = "", environment = process.env } = {}) {
     this.machineRoot = resolve(machineRoot);
     this.appRoot = resolve(appRoot);
     this.defaultProjectRoot = resolve(defaultProjectRoot || appRoot);
@@ -503,6 +502,7 @@ export class CodexAgentProvider {
     this.claudeCodeAgentRunner = claudeCodeAgentRunner;
     this.apiAgentRuntime = apiAgentRuntime;
     this.workspaceReadBrokerFactory = workspaceReadBrokerFactory;
+    this.startMcp = startMcp;
     this.environment = agentChildEnvironment(environment);
     this.systemReadRoots = Array.isArray(systemReadRoots) ? systemReadRoots : [
       resolve(this.appRoot, "packaging", "bundled", "skill"),
@@ -570,6 +570,7 @@ export class CodexAgentProvider {
         ...raw,
         schemaVersion: STATE_SCHEMA_VERSION,
         agentEngine: ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(raw?.agentEngine) ? raw.agentEngine : "codex",
+        agentPermissionMode: normalizeAgentPermissionMode(raw?.agentPermissionMode),
         agentModels: {
           ...defaultState().agentModels,
           ...(raw?.agentModels && typeof raw.agentModels === "object" ? raw.agentModels : {}),
@@ -743,6 +744,7 @@ export class CodexAgentProvider {
     const saved = this.state.agentRequestOptions?.[agentEngine] || {};
     return {
       ...settings, agentEngine,
+      agentPermissionMode: normalizeAgentPermissionMode(settings.agentPermissionMode || this.state.agentPermissionMode),
       model: String(settings.agentModelId || settings.model || (agentEngine === "codex" ? project?.model : "")
         || this.state.agentModels?.[agentEngine] || (agentEngine === "codex" ? this.state.agentModel : agentEngine === "deepseek_opencode" ? "deepseek-v4-pro" : "") || ""),
       reasoningEffort: String(settings.reasoningEffort ?? saved.reasoningEffort ?? (agentEngine === "codex" ? this.state.agentReasoningEffort : "high") ?? ""),
@@ -800,7 +802,8 @@ export class CodexAgentProvider {
       networkRequested: access.network,
       requestedAt: approval.requestedAt,
       dangerous: ["destructive_command", "dependency_command", "network_command", "permission"].includes(approval.category),
-      sessionAllowable: approval.category === "command" || (approval.category === "permission" && access.write.length === 0 && !access.network),
+      sessionAllowable: approval.method !== "external/permission/requestApproval"
+        && (approval.category === "command" || (approval.category === "permission" && access.write.length === 0 && !access.network)),
       preexistingFiles: approval.preexistingFiles || [],
     };
   }
@@ -826,6 +829,9 @@ export class CodexAgentProvider {
   status() {
     const selected = this.selectedProject();
     const agentEngine = this.activeAgentEngine();
+    const permissionMode = normalizeAgentPermissionMode(this.state.agentPermissionMode);
+    const permissionContract = permissionContractFor(permissionMode, { runner: agentEngine });
+    const permissionConfig = codexPermissionConfig(permissionMode);
     const openCodeEngine = ["deepseek_opencode", "opencode"].includes(agentEngine);
     const codexApiEngine = agentEngine === "codex_api";
     const claudeCodeEngine = agentEngine === "claude_code";
@@ -846,11 +852,12 @@ export class CodexAgentProvider {
       provider: this.state.activeProvider,
       agentEngine,
       agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : codexApiEngine ? "神思运行器" : "Codex Agent",
-      permissionMode: agentEngine === "codex" ? CODEX_FULL_ACCESS_MODE : "workspace_scoped",
-      permissionLabel: agentEngine === "codex" ? "完整访问（与 Codex 最高权限一致）" : codexApiEngine ? "神思受控上下文" : "工作区访问",
-      filesystemAccess: agentEngine === "codex" ? "os_user_full" : "workspace_only",
-      networkCapability: ["codex", "claude_code"].includes(agentEngine),
-      approvalPolicy: agentEngine === "codex" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "task_scoped",
+      permissionMode,
+      permissionLabel: permissionContract.label,
+      permissionContract,
+      filesystemAccess: permissionContract.capabilities.filesystem,
+      networkCapability: permissionContract.capabilities.network,
+      approvalPolicy: permissionConfig.approvalPolicy,
       agentEngines: [
         { id: "codex", label: "Codex Agent", installed: this.process ? true : this.installed, requiresApiKey: false },
         { id: "codex_api", label: "神思运行器", installed: true, requiresApiKey: true, credentialsManagedBy: "shensi" },
@@ -891,18 +898,18 @@ export class CodexAgentProvider {
         active: openCodeEngine,
         profileRoot: codexApiEngine ? "not_used" : legacyDeepSeekEngine ? "ephemeral-opencode-profile" : agentEngine === "opencode" ? "current-opencode-environment" : claudeCodeEngine ? "current-claude-code-environment" : this.codexProfileRoot,
         processUsesDedicatedProfile: legacyDeepSeekEngine,
-        globalPluginsEnabled: agentEngine === "codex",
-        globalMcpEnabled: agentEngine === "codex",
-        globalSkillsEnabled: agentEngine === "codex",
-        appsEnabled: agentEngine === "codex",
-        hooksEnabled: agentEngine === "codex",
-        skillSearchEnabled: agentEngine === "codex",
-        multiAgentEnabled: agentEngine === "codex",
+        globalPluginsEnabled: permissionContract.capabilities.globalPlugins,
+        globalMcpEnabled: permissionContract.capabilities.globalMcp,
+        globalSkillsEnabled: permissionContract.capabilities.globalSkills,
+        appsEnabled: permissionContract.capabilities.apps,
+        hooksEnabled: permissionContract.capabilities.hooks,
+        skillSearchEnabled: permissionContract.capabilities.skillSearch,
+        multiAgentEnabled: permissionContract.capabilities.multiAgent,
         providerConfigurationMutableByShensi: false,
       },
-      workspaceToolsAvailable: agentEngine === "codex",
-      workspaceToolsProtocol: agentEngine === "codex" ? "shensi_workspace_tools_v1" : "unavailable",
-      workspaceToolsUnavailableReason: agentEngine === "codex" ? "" : codexApiEngine ? "runtime_profile_required" : "provider_dynamic_tools_unsupported",
+      workspaceToolsAvailable: true,
+      workspaceToolsProtocol: agentEngine === "codex" ? "shensi_workspace_tools_v1" : "shensi_conversation_agent_v1",
+      workspaceToolsUnavailableReason: "",
       undoSnapshotStore: this.lastUndoStoreMaintenance,
       activeRun: activeRun ? this.publicRun(activeRun) : null,
       activeRuns: activeRuns.map((run) => this.publicRun(run)),
@@ -946,6 +953,8 @@ export class CodexAgentProvider {
       startedAt: run.startedAt,
       endedAt: run.endedAt || "",
       error: run.error || "",
+      permissionMode: normalizeAgentPermissionMode(run.permissionMode || runtimeProfile.capabilities.permissionMode),
+      permissionContract: run.permissionContract || null,
       taskRoute: publicTaskRoute(run.taskRoute),
       conversationId: String(run.taskPacket?.conversationId || ""),
       threadScopeId: String(run.taskPacket?.threadScopeId || ""),
@@ -1002,6 +1011,14 @@ export class CodexAgentProvider {
     this.state.agentRequestOptions ||= defaultState().agentRequestOptions;
     await this.persistState();
     this.emit("agent_engine_selected", { engine: normalized });
+    return this.status();
+  }
+
+  async setAgentPermissionMode(mode) {
+    const normalized = normalizeAgentPermissionMode(mode);
+    this.state.agentPermissionMode = normalized;
+    await this.persistState();
+    this.emit("agent_permission_mode_selected", { permissionMode: normalized });
     return this.status();
   }
 
@@ -1432,6 +1449,38 @@ export class CodexAgentProvider {
     this.emit("approval_requested", this.publicApproval(approval));
   }
 
+  requestExternalApproval(run, details = {}) {
+    if (!run || run.permissionMode === "shensi_only") return Promise.resolve({ answer: "deny" });
+    if (run.permissionMode === "full_access") return Promise.resolve({ answer: "allow" });
+    return new Promise((resolveApproval) => {
+      const detail = details.detail && typeof details.detail === "object" ? details.detail : {};
+      const id = `approval_${randomUUID()}`;
+      const approval = {
+        id,
+        rpcId: null,
+        method: "external/permission/requestApproval",
+        params: {
+          threadId: run.threadId || "",
+          turnId: run.turnId || run.id,
+          itemId: "",
+          command: String(details.question || detail.command || detail.action || detail.toolName || "").slice(0, 4_000),
+          cwd: String(detail.cwd || run.cwd || ""),
+          reason: String(details.question || detail.reason || "外置 Agent 请求执行受保护操作"),
+        },
+        category: "permission",
+        diff: run.diff || "",
+        files: Array.isArray(detail.files) ? detail.files.map(String) : [],
+        preexistingFiles: [],
+        requestedAt: new Date().toISOString(),
+        resolveApproval,
+      };
+      this.approvals.set(id, approval);
+      run.status = "waiting_approval";
+      run.phase = "permission";
+      this.emit("approval_requested", this.publicApproval(approval));
+    });
+  }
+
   captureInteraction(message) {
     const params = message.params || {};
     const run = this.runForTurn(params.turnId, params.threadId);
@@ -1488,6 +1537,13 @@ export class CodexAgentProvider {
 
   completeRun(run, { status = "completed", phase = status, error = "" } = {}) {
     if (!run || !["starting", "running", "waiting_approval", "interrupting"].includes(run.status)) return false;
+    for (const [approvalId, approval] of this.approvals) {
+      if (approval.method !== "external/permission/requestApproval") continue;
+      if (String(approval.params?.turnId || "") !== String(run.turnId || run.id)) continue;
+      this.approvals.delete(approvalId);
+      approval.resolveApproval?.({ answer: "deny" });
+      this.emit("approval_resolved", { id: approvalId, decision: "deny", category: approval.category, turnId: run.turnId || run.id });
+    }
     this.clearFinalResponseTimer(run);
     const interruptTimerKey = run.activeAttemptTurnId || run.turnId || run.id;
     const interruptTimer = this.interruptTimers.get(interruptTimerKey);
@@ -1947,6 +2003,17 @@ export class CodexAgentProvider {
       throw new Error("文件修改和高风险操作必须逐项确认，不能设置为本次任务始终允许");
     }
     const run = this.runForTurn(approval.params.turnId, approval.params.threadId);
+    if (approval.method === "external/permission/requestApproval") {
+      if (decision === "allow_task") throw new Error("外置 Agent 的受保护操作必须逐项确认");
+      this.approvals.delete(id);
+      approval.resolveApproval?.({ answer: decision === "deny" ? "deny" : "allow" });
+      if (run) {
+        run.status = "running";
+        run.phase = "executing";
+      }
+      this.emit("approval_resolved", { id, decision, category: approval.category, turnId: approval.params.turnId || "" });
+      return this.status();
+    }
     if (decision !== "deny" && approval.category === "file_change") {
       await this.queueUndoSnapshot(run, approval.files);
       if (run) run.fileChangeApprovalsAllowed += 1;
@@ -1955,7 +2022,7 @@ export class CodexAgentProvider {
     }
     let result;
     if (approval.method === "item/permissions/requestApproval") {
-      if (decision !== "deny" && permission.write.length > 0) {
+      if (decision !== "deny" && permission.write.length > 0 && run?.permissionMode === "shensi_only") {
         throw new Error("当前请求包含主项目目录之外的写权限；请先把该目录明确选择为 Agent 项目，避免无边界跨目录写入");
       }
       if (decision === "deny") {
@@ -2207,18 +2274,34 @@ export class CodexAgentProvider {
     } catch (error) {
       this.emit("workspace_tools_unavailable", { cwd: project.cwd, message: safeMessage(error) });
     }
+    const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
+    const permission = codexPermissionConfig(permissionMode);
     const shared = {
       cwd: project.cwd,
       ...(selectedModel ? { model: selectedModel } : {}),
       ...(selectedSpeedMode !== "default" ? { serviceTier: selectedSpeedMode } : {}),
       runtimeWorkspaceRoots,
-      approvalPolicy: CODEX_FULL_ACCESS_APPROVAL_POLICY,
+      approvalPolicy: permission.approvalPolicy,
       approvalsReviewer: "user",
-      sandbox: "danger-full-access",
-      sandboxPolicy: CODEX_FULL_ACCESS_SANDBOX_POLICY,
+      sandbox: permission.sandbox,
+      sandboxPolicy: permission.sandboxPolicy,
+      ...(permissionMode === "shensi_only" ? { environments: [], selectedCapabilityRoots: [] } : {}),
+      ...(permissionMode === "shensi_only" ? {
+        config: {
+          plugins: {},
+          marketplaces: {},
+          mcp_servers: {},
+          apps: { _default: { enabled: false } },
+          hooks: {},
+          skill_search: false,
+          multi_agent: false,
+          web_search: "disabled",
+        },
+      } : {}),
       developerInstructions: [
-        "You are the full-capability Codex Agent embedded in Shensi. The current working directory is the task's default operating location, not a filesystem permission boundary.",
-        "You may read, search, create, edit, move, and delete any local path that the current operating-system user can access, and may use network access and ordinary Codex tools when the user's task requires them.",
+        permissionMode === "shensi_only" ? "You are the Shensi-only Agent embedded in Shensi. Only supplied Shensi tools are available; do not inspect host files, run commands, access network, load ambient extensions, or spawn subagents." : "You are the Agent embedded in Shensi. Use the current permission contract and native tools when needed.",
+        permissionMode === "shensi_only" ? "Use Shensi workspace tools for all document, asset, Skill and interaction operations." : "Use native tools for tasks outside Shensi-managed documents; mutations to Shensi-managed documents and assets must use Shensi workspace tools.",
+        permissionMode === "approval_required" ? "Protected operations require one-operation user approval; never reuse an approval." : permissionMode === "full_access" ? "The user selected full access for this task; preserve unrelated work and explicit scope." : "",
         "The trusted Shensi task route embedded in each turn is authoritative for domain ownership: Shensi-led creative work belongs to the trusted orchestration loop; tasks outside that domain remain native workspace-Agent work.",
         "For tasks outside the active Shensi template and creative domain, use high autonomy. Choose tools, investigation depth, implementation method, and verification from the actual task and approval boundary without forcing a creative workflow.",
         "Shensi's built-in templates, Skills, references, memory, and route contracts are additive task context; they do not reduce native Codex tool choice or filesystem capability outside a Shensi-owned creative transaction.",
@@ -2236,9 +2319,9 @@ export class CodexAgentProvider {
     const normalizedConversationId = String(conversationId || "").trim();
     const normalizedThreadScopeId = String(threadScopeId || "").trim() || "main";
     const requiredToolVersion = workspaceToolRuntime?.protocolVersion || "unavailable";
-    const expected = { provider: "codex", model: selectedModel, cwd: project.cwd, toolVersion: requiredToolVersion };
-    const sessionKey = agentSessionKey({ conversationId: normalizedConversationId, branchId: normalizedThreadScopeId, provider: "codex", cwd: project.cwd });
-    const mainSessionKey = agentSessionKey({ conversationId: normalizedConversationId, branchId: "main", provider: "codex", cwd: project.cwd });
+    const expected = { provider: "codex", model: selectedModel, cwd: project.cwd, toolVersion: requiredToolVersion, permissionMode };
+    const sessionKey = agentSessionKey({ conversationId: normalizedConversationId, branchId: normalizedThreadScopeId, provider: "codex", cwd: project.cwd, permissionMode });
+    const mainSessionKey = agentSessionKey({ conversationId: normalizedConversationId, branchId: "main", provider: "codex", cwd: project.cwd, permissionMode });
     project.conversationThreadSessions ||= {};
     project.conversationThreads ||= {};
     project.conversationThreadToolVersions ||= {};
@@ -2404,8 +2487,10 @@ export class CodexAgentProvider {
     if (!genericOpenCode && !claudeCode && String(runtimeSettings?.provider || "DeepSeek").toLowerCase() !== "deepseek") throw new Error("DeepSeek Agent 收到的凭据不属于 DeepSeek 连接");
     const conversationId = String(taskPacket?.conversationId || "").trim();
     const deepSeekBranchId = String(taskPacket?.threadScopeId || "").trim() || "main";
-    const deepSeekSessionKey = agentSessionKey({ conversationId, branchId: deepSeekBranchId, provider: engine, cwd: project.cwd });
-    const deepSeekMainSessionKey = agentSessionKey({ conversationId, branchId: "main", provider: engine, cwd: project.cwd });
+    const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
+    const permissionContract = permissionContractFor(permissionMode, { runner: engine });
+    const deepSeekSessionKey = agentSessionKey({ conversationId, branchId: deepSeekBranchId, provider: engine, cwd: project.cwd, permissionMode });
+    const deepSeekMainSessionKey = agentSessionKey({ conversationId, branchId: "main", provider: engine, cwd: project.cwd, permissionMode });
     project.conversationThreadSessions ||= {};
     const priorDeepSeekSession = project.conversationThreadSessions[deepSeekSessionKey] || null;
     const deepSeekBranchSource = deepSeekBranchId !== "main" ? project.conversationThreadSessions[deepSeekMainSessionKey] || null : null;
@@ -2459,18 +2544,68 @@ export class CodexAgentProvider {
     const controller = new AbortController();
     const model = String(runtimeSettings.model || "").trim();
     if (genericOpenCode && !/^[^/\s]+\/[^/\s]+$/u.test(model)) throw new Error("OpenCode Agent 需要完整 provider/model 模型 ID");
+    let workspaceToolRuntime = null;
+    try {
+      workspaceToolRuntime = await this.createWorkspaceToolRuntime(
+        project,
+        taskPacket?.workspaceToolContext || {},
+        { exposeAbsolutePaths: false },
+      );
+    } catch (error) {
+      this.emit("workspace_tools_unavailable", { cwd: project.cwd, message: safeMessage(error) });
+    }
+    const unavailableWorkspaceTools = {
+      dynamicTools: [],
+      invoke: async () => ({
+        success: false,
+        contentItems: [{ type: "inputText", text: "Shensi workspace tools are unavailable for this request." }],
+      }),
+    };
+    let run = null;
+    const requestApproval = (details) => this.requestExternalApproval(run, details);
+    const mcpTools = claudeCode && permissionMode === "approval_required"
+      ? toolsWithPermissionPrompt(workspaceToolRuntime || unavailableWorkspaceTools, requestApproval, { runner: "claude_code" })
+      : workspaceToolRuntime || unavailableWorkspaceTools;
+    let nativeHost = null;
+    try {
+      nativeHost = await this.startMcp({
+        tools: mcpTools,
+        signal: controller.signal,
+        onToolEvent: (event = {}) => {
+          if (!run) return;
+          run.phase = event.phase === "started" ? "running_workspace_tool" : "workspace_tool_completed";
+          this.emit(event.phase === "started" ? "tool_started" : "tool_completed", {
+            turnId: run.turnId,
+            itemId: String(event.callId || ""),
+            itemType: "dynamicToolCall",
+            tool: "dynamic_tool",
+            title: String(event.name || "神思工作区工具"),
+            toolName: String(event.name || ""),
+            input: event.input ?? null,
+            status: event.phase === "started" ? "in_progress" : event.success === true ? "completed" : "failed",
+          });
+        },
+      });
+    } catch (error) {
+      mutationLaneRelease?.();
+      throw error;
+    }
     const runtimeProfile = agentRuntimeProfile({
       engine,
       model,
       capabilities: {
-        workspaceToolsAvailable: false,
-        workspaceToolsProtocol: "unavailable",
-        workspaceToolsUnavailableReason: "provider_dynamic_tools_unsupported",
+        permissionMode,
+        permissionLabel: permissionContract.label,
+        filesystemAccess: permissionContract.capabilities.filesystem,
+        networkCapability: permissionContract.capabilities.network,
+        workspaceToolsAvailable: Boolean(workspaceToolRuntime),
+        workspaceToolsProtocol: workspaceToolRuntime?.protocolVersion || "unavailable",
+        workspaceToolsUnavailableReason: workspaceToolRuntime ? "" : "workspace_tool_runtime_initialization_failed",
         nativeSessionResume: deepSeekSessionCapabilities.resume === true,
         nativeSessionFork: deepSeekSessionCapabilities.fork === true,
       },
     });
-    const run = {
+    run = {
       id: runId,
       engine,
       model: runtimeProfile.model,
@@ -2492,6 +2627,8 @@ export class CodexAgentProvider {
       startedAt: new Date().toISOString(),
       endedAt: "",
       error: "",
+      permissionMode,
+      permissionContract: permissionContractFor(permissionMode, { runner: engine, taskId: runId }),
       taskRoute: publicTaskRoute(taskRoute),
       taskPacket: taskPacket && typeof taskPacket === "object" ? structuredClone(taskPacket) : null,
       contextBlocks: normalizedAgentContextBlocks(contextBlocks),
@@ -2504,6 +2641,7 @@ export class CodexAgentProvider {
           model: runtimeProfile.model,
           cwd: project.cwd,
           toolVersion: "unavailable",
+          permissionMode,
           status: "active",
         },
         recovery: deepSeekSessionRecoveryReason ? "capsule_recovery" : "",
@@ -2567,11 +2705,11 @@ export class CodexAgentProvider {
         ...((genericOpenCode || claudeCode) ? { cliPath: runtimeSettings?.cliPath } : {}),
         reasoningEffort: requestOptions.reasoningEffort || String(runtimeSettings?.reasoningEffort || "high"),
         allowEdits: expectsFileMutation,
-        // Network access is intentionally disabled for the model process.
-        // Public web reads go through the unified Agent browser tool, which
-        // applies the HTTPS/public-host boundary and keeps page instructions
-        // as untrusted data.
-        allowNetwork: false,
+        allowNetwork: permissionContract.capabilities.network,
+        agentPermissionMode: permissionMode,
+        permissionContract: run.permissionContract,
+        requestApproval,
+        nativeHost,
         contextBlocks: [
           ...(hostContract ? [{ type: "host_contract", name: "神思任务路由与交付合同", text: hostContract }] : []),
           ...run.contextBlocks,
@@ -2624,6 +2762,7 @@ export class CodexAgentProvider {
           model: run.model || runtimeProfile.model,
           cwd: project.cwd,
           toolVersion: "unavailable",
+          permissionMode,
           status: "active",
           updatedAt: new Date().toISOString(),
         });
@@ -2668,6 +2807,7 @@ export class CodexAgentProvider {
       });
     }).finally(() => {
       this.deepSeekProcesses.delete(runId);
+      void nativeHost?.close?.().catch(() => {});
     });
     return this.publicRun(run);
   }
@@ -2702,10 +2842,13 @@ export class CodexAgentProvider {
       engine: "codex_api",
       model,
       capabilities: {
-        permissionMode: "workspace_scoped",
-        permissionLabel: functionToolsSupported ? "神思受控只读工具" : "神思受控上下文",
-        filesystemAccess: "workspace_only",
-        networkCapability: String(runtimeSettings.provider || "").trim() === "OpenAI" && String(runtimeSettings.protocol || "").trim() === "responses",
+        permissionMode: normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode),
+        codexToolsEnabled: false,
+        shellEnabled: false,
+        filesystemAccess: "shensi_workspace_tools",
+        networkCapability: normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode) !== "shensi_only"
+          && String(runtimeSettings.provider || "").trim() === "OpenAI"
+          && String(runtimeSettings.protocol || "").trim() === "responses",
         workspaceToolsAvailable: Boolean(workspaceToolRuntime),
         workspaceToolsProtocol: workspaceToolRuntime?.protocolVersion || "unavailable",
         workspaceToolsUnavailableReason: workspaceToolRuntime ? "" : functionToolsSupported ? "workspace_tool_runtime_initialization_failed" : "api_function_tools_unconfirmed",
@@ -2735,6 +2878,8 @@ export class CodexAgentProvider {
       startedAt: new Date().toISOString(),
       endedAt: "",
       error: "",
+      permissionMode: normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode),
+      permissionContract: permissionContractFor(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode, { runner: "codex_api", taskId: runId }),
       taskRoute: publicTaskRoute(taskRoute),
       taskPacket: taskPacket && typeof taskPacket === "object" ? structuredClone(taskPacket) : null,
       contextBlocks: normalizedAgentContextBlocks(contextBlocks),
@@ -2966,6 +3111,9 @@ export class CodexAgentProvider {
     const expectsFileMutation = workspaceFileMutationIntent(text, taskRoute);
     const expectsFileRead = !expectsFileMutation && workspaceFileReadIntent(text, taskRoute);
     const readTargets = expectsFileRead ? structuredWorkspaceReadTargets(taskRoute) : [];
+    const permissionMode = normalizeAgentPermissionMode(runtimeSettings.agentPermissionMode || this.state.agentPermissionMode);
+    const permission = codexPermissionConfig(permissionMode);
+    const permissionContract = permissionContractFor(permissionMode, { runner: "codex" });
     const turnRequestOptions = {
       threadId,
       cwd: project.cwd,
@@ -2973,11 +3121,11 @@ export class CodexAgentProvider {
       ...(runtimeSettings.reasoningEffort ? { effort: runtimeSettings.reasoningEffort } : {}),
       ...(runtimeSettings.speedMode && runtimeSettings.speedMode !== "default" ? { serviceTier: runtimeSettings.speedMode } : {}),
       runtimeWorkspaceRoots,
-      approvalPolicy: CODEX_FULL_ACCESS_APPROVAL_POLICY,
+      approvalPolicy: permission.approvalPolicy,
       approvalsReviewer: "user",
-      sandboxPolicy: expectsFileMutation
-        ? CODEX_FULL_ACCESS_SANDBOX_POLICY
-        : CODEX_READ_ONLY_SANDBOX_POLICY,
+      sandboxPolicy: permissionMode === "shensi_only"
+        ? { type: "readOnly", networkAccess: false }
+        : permission.sandboxPolicy,
     };
     this.emit("git_status_checked", { cwd: project.cwd, dirtyPaths: [...dirtyPaths], conversationId, requestId: String(taskPacket?.requestId || "") });
     const runId = `run_${randomUUID()}`;
@@ -3015,6 +3163,10 @@ export class CodexAgentProvider {
       engine: "codex",
       model: String(turnRequestOptions.model || this.detectedDefaultModel || "").trim(),
       capabilities: {
+        permissionMode,
+        permissionLabel: permissionContract.label,
+        filesystemAccess: permissionContract.capabilities.filesystem,
+        networkCapability: permissionContract.capabilities.network,
         workspaceToolsAvailable: this.workspaceToolRuntimes.has(threadId),
         workspaceToolsProtocol: this.workspaceToolRuntimes.has(threadId) ? "shensi_workspace_tools_v1" : "unavailable",
         workspaceToolsUnavailableReason: this.workspaceToolRuntimes.has(threadId) ? "" : "workspace_tool_runtime_initialization_failed",
@@ -3043,6 +3195,8 @@ export class CodexAgentProvider {
       endedAt: "",
       error: "",
       taskRoute: publicTaskRoute(taskRoute),
+      permissionMode,
+      permissionContract: permissionContractFor(permissionMode, { runner: "codex", taskId: runId }),
       taskPacket: taskPacket && typeof taskPacket === "object" ? structuredClone(taskPacket) : null,
       contextBlocks: normalizedAgentContextBlocks(contextBlocks),
       nativeSession: this.threadSessionMetadata.get(threadId) || null,
@@ -3427,6 +3581,13 @@ export class CodexAgentProvider {
     run.phase = "interrupting";
     if (["codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(run.engine)) {
       run.controller?.abort?.();
+      for (const [approvalId, approval] of this.approvals) {
+        if (approval.method !== "external/permission/requestApproval"
+          || String(approval.params?.turnId || "") !== String(run.turnId || run.id)) continue;
+        this.approvals.delete(approvalId);
+        approval.resolveApproval?.({ answer: "deny" });
+        this.emit("approval_resolved", { id: approvalId, decision: "deny", category: approval.category, turnId: run.turnId || run.id });
+      }
       if (run.engine === "codex_api") {
         this.emit("run_interrupting", this.publicRun(run));
         this.completeRun(run, { status: "interrupted", phase: "interrupted", error: "用户已停止任务" });

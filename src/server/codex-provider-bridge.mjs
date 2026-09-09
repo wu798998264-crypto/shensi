@@ -2,17 +2,21 @@ import { createServer } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { gunzipSync, inflateSync, zstdDecompressSync } from "node:zlib";
 import { fetchProvider } from "./network-proxy.mjs";
+import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
 
 const contentText = (content) => typeof content === "string" ? content : (Array.isArray(content) ? content : []).map((part) => part.text || "").join("\n");
 export const responsesInputToChat = (input = [], instructions = "", names = new Map()) => {
   const messages = instructions ? [{ role: "system", content: instructions }] : [];
   for (const item of typeof input === "string" ? [{ role: "user", content: input }] : input) {
-    if (item.type === "function_call") {
+    if (item.type === "function_call" || item.type === "custom_tool_call") {
       const name = item.namespace ? `${item.namespace}_${item.name}` : item.name;
-      const call = { id: item.call_id, type: "function", function: { name, arguments: item.arguments } };
+      const args = item.type === "custom_tool_call"
+        ? JSON.stringify({ input: String(item.input || "") })
+        : item.arguments;
+      const call = { id: item.call_id, type: "function", function: { name, arguments: args } };
       if (messages.at(-1)?.role === "assistant" && messages.at(-1).tool_calls) messages.at(-1).tool_calls.push(call);
       else messages.push({ role: "assistant", content: null, tool_calls: [call] });
-    } else if (item.type === "function_call_output") messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
+    } else if (item.type === "function_call_output" || item.type === "custom_tool_call_output") messages.push({ role: "tool", tool_call_id: item.call_id, content: typeof item.output === "string" ? item.output : JSON.stringify(item.output) });
     else if (item.role) {
       const images = Array.isArray(item.content) && item.content.some((part) => part.type === "input_image");
       const content = images ? item.content.map((part) => part.type === "input_image" ? { type: "image_url", image_url: { url: part.image_url, detail: part.detail || "auto" } } : { type: "text", text: part.text || "" }) : contentText(item.content);
@@ -22,10 +26,120 @@ export const responsesInputToChat = (input = [], instructions = "", names = new 
   return messages;
 };
 
-export const startCodexProviderBridge = async ({ settings, tools, fetchImpl = globalThis.fetch, signal, onRequest = () => {} }) => {
+const providerToolsFor = (requestedTools = [], shensiTools = []) => {
+  const shensiByName = new Map(shensiTools.map((tool) => [String(tool?.name || ""), tool]));
+  const includedShensi = new Set();
+  const merged = [];
+  for (const tool of Array.isArray(requestedTools) ? requestedTools : []) {
+    const name = String(tool?.name || "");
+    if (tool?.type === "namespace" && name) {
+      for (const child of Array.isArray(tool.tools) ? tool.tools : []) {
+        const childName = String(child?.name || "");
+        if (childName) includedShensi.add(`${name}_${childName}`);
+      }
+    }
+    if (name && shensiByName.has(name)) {
+      if (!includedShensi.has(name)) merged.push(shensiByName.get(name));
+      includedShensi.add(name);
+      continue;
+    }
+    merged.push(tool);
+  }
+  for (const [name, tool] of shensiByName) {
+    if (!includedShensi.has(name)) merged.push(tool);
+  }
+  return merged;
+};
+
+const chatToolProjection = (tools = []) => {
+  const projected = [];
+  const calls = new Map();
+  const add = ({ name, description = "", parameters = null, target }) => {
+    const normalizedName = String(name || "").replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 64);
+    if (!normalizedName || calls.has(normalizedName)) return;
+    calls.set(normalizedName, target);
+    projected.push({
+      type: "function",
+      function: {
+        name: normalizedName,
+        description: String(description || "Agent tool").slice(0, 1_024),
+        parameters: parameters && typeof parameters === "object"
+          ? parameters
+          : { type: "object", properties: {}, additionalProperties: true },
+      },
+    });
+  };
+  for (const tool of Array.isArray(tools) ? tools : []) {
+    const type = String(tool?.type || "");
+    const name = String(tool?.name || "");
+    if (type === "function" && name) {
+      add({
+        name,
+        description: tool.description,
+        parameters: tool.parameters || tool.input_schema,
+        target: { type: "function", name },
+      });
+      continue;
+    }
+    if (type === "namespace" && name) {
+      for (const child of Array.isArray(tool.tools) ? tool.tools : []) {
+        const childName = String(child?.name || "");
+        if (!childName) continue;
+        add({
+          name: `${name}_${childName}`,
+          description: child.description || tool.description,
+          parameters: child.parameters || child.input_schema || child.inputSchema,
+          target: { type: "namespace", namespace: name, name: childName },
+        });
+      }
+      continue;
+    }
+    if (type === "custom" && name) {
+      add({
+        name,
+        description: `${String(tool.description || name)} Return the custom tool input in the input string field.`,
+        parameters: {
+          type: "object",
+          properties: { input: { type: "string", description: "Exact custom tool input" } },
+          required: ["input"],
+          additionalProperties: false,
+        },
+        target: { type: "custom", name },
+      });
+    }
+  }
+  return { tools: projected, calls };
+};
+
+const chatCallAsResponsesItem = (call, projection = new Map()) => {
+  const callId = call?.id || `call_${randomUUID()}`;
+  const functionName = String(call?.function?.name || "");
+  const target = projection.get(functionName) || { type: "function", name: functionName };
+  const args = String(call?.function?.arguments || "{}");
+  if (target.type === "custom") {
+    let input = args;
+    try {
+      const parsed = JSON.parse(args);
+      if (typeof parsed?.input === "string") input = parsed.input;
+    } catch {}
+    return { type: "custom_tool_call", id: `ctc_${randomUUID()}`, call_id: callId, name: target.name, input, status: "completed" };
+  }
+  return {
+    type: "function_call",
+    id: `fc_${randomUUID()}`,
+    call_id: callId,
+    ...(target.type === "namespace" ? { namespace: target.namespace } : {}),
+    name: target.name,
+    arguments: args,
+    status: "completed",
+  };
+};
+
+export const startCodexProviderBridge = async ({ settings, tools, permissionContract = null, fetchImpl = globalThis.fetch, signal, onRequest = () => {} }) => {
   const token = randomBytes(32).toString("hex");
   const catalog = new Map(tools.dynamicTools.flatMap((ns) => ns.tools.map((tool) => [`${ns.name}_${tool.name}`, { namespace: ns.name, name: tool.name, tool }])));
   const functionTools = [...catalog].map(([name, { tool }]) => ({ type: "function", name, description: tool.description, parameters: tool.inputSchema, strict: false }));
+  const forwardNativeTools = normalizeAgentPermissionMode(permissionContract?.mode || settings.agentPermissionMode) !== "shensi_only";
   const known = new Map();
   const controllers = new Set();
   const server = createServer(async (req, res) => {
@@ -48,23 +162,32 @@ export const startCodexProviderBridge = async ({ settings, tools, fetchImpl = gl
       const fullInput = request.previous_response_id ? [...(known.get(request.previous_response_id) || []), ...(request.input || [])] : request.input || [];
       if (request.previous_response_id && !known.has(request.previous_response_id)) throw new Error("缺少连续任务上下文，拒绝无上下文重试");
       const chat = settings.protocol === "chat_completions";
+      const providerTools = forwardNativeTools ? providerToolsFor(request.tools, functionTools) : functionTools;
+      const chatProjection = chatToolProjection(providerTools);
       const input = Array.isArray(fullInput) ? fullInput.map((item) => item.type === "function_call" ? { ...item, name: item.namespace ? `${item.namespace}_${item.name}` : item.name, namespace: undefined } : item) : fullInput;
       const upstream = chat ? {
-        model: settings.model, messages: responsesInputToChat(fullInput, request.instructions), tools: functionTools.map((tool) => ({ type: "function", function: { name: tool.name, description: tool.description, parameters: tool.parameters } })), tool_choice: "auto", stream: false, max_tokens: Number(settings.maxOutputTokens) || 12000,
-      } : { ...request, model: settings.model, input, previous_response_id: undefined, tools: functionTools, store: false, stream: false, max_output_tokens: Number(settings.maxOutputTokens) || 12000 };
-      onRequest({ model: settings.model, protocol: settings.protocol, toolCount: functionTools.length });
+        model: settings.model, messages: responsesInputToChat(fullInput, request.instructions), tools: chatProjection.tools, tool_choice: "auto", stream: false, max_tokens: Number(settings.maxOutputTokens) || 12000,
+      } : { ...request, model: settings.model, input, previous_response_id: undefined, tools: providerTools, store: false, stream: false, max_output_tokens: Number(settings.maxOutputTokens) || 12000 };
+      onRequest({
+        model: settings.model,
+        protocol: settings.protocol,
+        toolCount: providerTools.length,
+        requestedTools: (Array.isArray(request.tools) ? request.tools : []).map((tool) => ({ type: String(tool?.type || ""), name: String(tool?.name || "") })),
+        forwardedTools: providerTools.map((tool) => ({ type: String(tool?.type || ""), name: String(tool?.name || "") })),
+      });
       const response = await fetchProvider(`${String(settings.baseUrl).replace(/\/+$/u, "")}/${chat ? "chat/completions" : "responses"}`, { method: "POST", headers: { "content-type": "application/json", ...(settings.apiKey ? { authorization: `Bearer ${settings.apiKey}` } : {}) }, body: JSON.stringify(upstream), signal: controller.signal }, { fetchImpl, allowDirectFallback: true });
       const payload = await response.json();
       if (!response.ok || payload.error) throw new Error(payload.error?.message || `上游 HTTP ${response.status}`);
       const message = payload.choices?.[0]?.message || {};
       const rawOutput = chat ? [
-        ...(message.tool_calls || []).map((call) => ({ type: "function_call", id: `fc_${randomUUID()}`, call_id: call.id, name: call.function.name, arguments: call.function.arguments, status: "completed" })),
+        ...(message.tool_calls || []).map((call) => chatCallAsResponsesItem(call, chatProjection.calls)),
         ...(contentText(message.content) ? [{ type: "message", id: `msg_${randomUUID()}`, role: "assistant", status: "completed", content: [{ type: "output_text", text: contentText(message.content), annotations: [] }] }] : []),
       ] : payload.output || [];
       const output = rawOutput.map((item) => {
         if (item.type !== "function_call") return item;
+        if (item.namespace) return item;
         const target = catalog.get(item.name);
-        if (!target) throw new Error(`模型请求了当前未提供的工具：${item.name}`);
+        if (!target) return item;
         return { ...item, name: target.name, namespace: target.namespace };
       });
       if (!output.length) throw new Error("上游没有返回文本或工具调用");

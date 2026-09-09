@@ -10,10 +10,13 @@ import { gunzipSync } from "node:zlib";
 import { detectCliProxyEnvironment, detectLocalClaudeCode, detectLocalCodex, detectLocalOpenCode, runModelAdapter as runUntrustedModelAdapter, terminateActiveCliProcesses, testModelAdapter as testUntrustedModelAdapter } from "./src/server/adapters.mjs";
 import { detectOpenCodeModelCatalog } from "./src/cli/opencode-model-catalog.mjs";
 import { openCodeCatalogCacheKey } from "./src/opencode-profile-ui-policy.js";
+import { runDeepSeekOpenCodeAgent } from "./src/server/deepseek-opencode-agent-runner.mjs";
 import { runOpenCodeAgent } from "./src/server/opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./src/server/claude-code-agent-runner.mjs";
 import { createCodexApiAgentRuntime } from "./src/server/codex-api-agent-runtime.mjs";
 import { createConversationAgentGateway } from "./src/server/conversation-agent-gateway.mjs";
+import { startConversationAgentMcp } from "./src/server/conversation-agent-mcp.mjs";
+import { toolsWithPermissionPrompt } from "./src/server/agent-permission-prompt-tools.mjs";
 import { configureGlobalFetchProxy, fetchProvider } from "./src/server/network-proxy.mjs";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getModelOption, getProviderPreset, supportedSpeedModes, webSearchMode } from "./src/model-presets.js";
 import { activateTextExecutionModeProfile } from "./src/generation-profiles.js";
@@ -21,6 +24,7 @@ import { freePublicModels, modelDisplayName } from "./src/public-model-catalog.j
 import { buildProjectQuestionContext } from "./src/general-project-context.js";
 import { isShensiAgentCompatibleProfile, selectedAgentRuntimeProfile } from "./src/agent-engine-registry.js";
 import { effectiveRuntimeContract } from "./src/effective-runtime-contract.js";
+import { normalizeAgentPermissionMode, permissionContractFor } from "./src/agent-permission-policy.js";
 import { normalizeUnifiedAgentDecision, parseUnifiedAgentDecision, unifiedAgentEntrySystemPrompt, unifiedAgentEntryUserPrompt } from "./src/unified-agent-entry.js";
 import {
   agentReadPlanFailureMessage,
@@ -764,6 +768,40 @@ const runModelAdapter = async (options = {}) => {
   const deepSeekSettings = deepSeekAgent ? await resolveDeepSeekAgentSettings(options.settings ?? {}) : null;
   const openCodeSettings = openCodeAgent ? resolveOpenCodeAgentSettings(options.settings ?? {}) : null;
   const claudeCodeSettings = claudeCodeAgent ? resolveClaudeCodeAgentSettings(options.settings ?? {}) : null;
+  const agentPermissionMode = normalizeAgentPermissionMode(
+    options.permissionContract?.mode
+      || options.shensiRuntime?.permissionContract?.mode
+      || options.shensiRuntime?.agentPermissionMode
+      || options.settings?.agentPermissionMode
+      || agentStatus?.permissionMode,
+  );
+  const runtimeSessionId = String(options.shensiRuntime?.taskId || options.requestId || options.shensiRuntime?.sessionId || "").trim()
+    || (agentPreferred ? randomUUID() : "");
+  const suppliedPermissionContract = options.permissionContract || options.shensiRuntime?.permissionContract;
+  const permissionContract = suppliedPermissionContract && typeof suppliedPermissionContract === "object"
+    && suppliedPermissionContract.capabilities && suppliedPermissionContract.confirmation
+    ? suppliedPermissionContract
+    : permissionContractFor(agentPermissionMode, {
+      runner: selectedAgentEngine || String(options.settings?.agentEngine || "text_adapter"),
+      taskId: runtimeSessionId,
+    });
+  const requestApproval = typeof options.requestApproval === "function"
+    ? options.requestApproval
+    : typeof options.shensiRuntime?.requestApproval === "function"
+      ? options.shensiRuntime.requestApproval
+      : null;
+  const onToolEvent = typeof options.shensiRuntime?.onToolEvent === "function"
+    ? options.shensiRuntime.onToolEvent
+    : null;
+  const workspaceToolContext = options.shensiRuntime?.workspaceToolContext;
+  const needsWorkspaceToolRuntime = agentPreferred && (codexApiAgent || deepSeekAgent || openCodeAgent || claudeCodeAgent || selectedAgentEngine === "codex");
+  const agentWorkspaceToolRuntime = needsWorkspaceToolRuntime && workspaceToolContext?.root
+    ? await codexAgentProvider.createWorkspaceToolRuntime(
+      { cwd: resolve(String(workspaceToolContext.root)) },
+      workspaceToolContext,
+      { exposeAbsolutePaths: false },
+    )
+    : null;
   const attachmentContext = (Array.isArray(options.attachments) ? options.attachments : [])
     .map((attachment) => {
       const text = String(attachment?.text || "").trim();
@@ -776,7 +814,6 @@ const runModelAdapter = async (options = {}) => {
     const prompt = (Array.isArray(options.messages) ? options.messages : [])
       .map((message) => `${message.role || "user"}: ${message.content || ""}`)
       .join("\n\n");
-    const workspaceToolContext = options.shensiRuntime?.workspaceToolContext;
     const workspaceToolRuntime = workspaceToolContext?.root
       ? await codexAgentProvider.createWorkspaceToolRuntime(
         { cwd: resolve(String(workspaceToolContext.root)) },
@@ -785,79 +822,110 @@ const runModelAdapter = async (options = {}) => {
       )
       : null;
     const result = await codexAgentProvider.apiAgentRuntime.runStage({
-      settings: codexApiSettings,
+      settings: { ...codexApiSettings, agentPermissionMode },
       prompt: [options.system, prompt, attachmentContext].filter(Boolean).join("\n\n"),
-      contextBlocks: [],
+      contextBlocks: Array.isArray(options.contextBlocks) ? options.contextBlocks : [],
       stage: options.shensiRuntime?.stage || "agent",
-      sessionId: options.shensiRuntime?.sessionId || `codex-api-${randomUUID()}`,
+      sessionId: runtimeSessionId,
       signal: options.signal,
       workspaceToolRuntime,
-      onToolEvent: typeof options.shensiRuntime?.onToolEvent === "function"
-        ? options.shensiRuntime.onToolEvent
-        : null,
+      onToolEvent,
+      agentPermissionMode,
+      permissionContract,
+      nativeHost: null,
+      requestApproval,
     });
-    return { ...result, executionRuntime: "codex_api_agent" };
+    return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "codex_api_agent" };
   }
-  if (claudeCodeAgent) {
+  if (deepSeekAgent || openCodeAgent || claudeCodeAgent) {
+    if (agentPermissionMode === "approval_required" && typeof requestApproval !== "function") {
+      throw new Error("操作需确认模式缺少神思审批通道");
+    }
     const prompt = [options.system, ...(Array.isArray(options.messages) ? options.messages : []).map((message) => `${message.role || "user"}: ${message.content || ""}`), attachmentContext]
       .filter(Boolean)
       .join("\n\n");
-    const result = await runClaudeCodeAgentTurn({
+    const emptyWorkspaceToolRuntime = {
+      dynamicTools: [],
+      invoke: async () => ({ success: false, contentItems: [{ type: "inputText", text: "Shensi workspace tools are unavailable for this request." }] }),
+    };
+    const mcpTools = claudeCodeAgent && agentPermissionMode === "approval_required"
+      ? toolsWithPermissionPrompt(agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime, requestApproval, { runner: "claude_code" })
+      : agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime;
+    const nativeHost = await startConversationAgentMcp({ tools: mcpTools, onToolEvent, signal: options.signal });
+    const commonRunnerOptions = {
       prompt,
       cwd: options.cwd || root,
-      model: claudeCodeSettings.model,
-      provider: claudeCodeSettings.provider,
-      baseUrl: claudeCodeSettings.baseUrl,
-      apiKey: claudeCodeSettings.apiKey,
-      credentialSource: claudeCodeSettings.credentialSource,
-      cliPath: claudeCodeSettings.cliPath,
-      timeoutMs: claudeCodeSettings.timeoutMs,
+      reasoningEffort: String(options.settings?.agentReasoningEffort || options.settings?.reasoningEffort || ""),
+      allowEdits: permissionContract.capabilities.externalWrites === true,
+      allowNetwork: permissionContract.capabilities.network === true,
+      agentPermissionMode,
+      permissionContract,
+      nativeHost,
+      requestApproval,
+      contextBlocks: Array.isArray(options.contextBlocks) ? options.contextBlocks : [],
       signal: options.signal,
-    });
-    return { ...result, executionRuntime: "claude_code_agent" };
+    };
+    try {
+      if (deepSeekAgent) {
+        const result = await runDeepSeekOpenCodeAgent({
+          ...commonRunnerOptions,
+          apiKey: deepSeekSettings.apiKey,
+          model: String(options.settings?.agentModel || agentStatus?.agentModel || deepSeekSettings.model || "deepseek-v4-pro"),
+          reasoningEffort: String(options.settings?.agentReasoningEffort ?? agentStatus?.agentReasoningEffort ?? deepSeekSettings.reasoningEffort ?? "high"),
+          timeoutMs: deepSeekSettings.timeoutMs,
+        });
+        return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "deepseek_opencode_agent" };
+      }
+      if (openCodeAgent) {
+        const result = await runOpenCodeAgent({
+          ...commonRunnerOptions,
+          model: openCodeSettings.agentModelId,
+          provider: openCodeSettings.provider,
+          baseUrl: openCodeSettings.baseUrl,
+          apiKey: openCodeSettings.apiKey,
+          credentialSource: openCodeSettings.credentialSource,
+          cliPath: openCodeSettings.cliPath,
+          reasoningEffort: openCodeSettings.reasoningEffort,
+          timeoutMs: openCodeSettings.timeoutMs,
+        });
+        return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "opencode_agent" };
+      }
+      const result = await runClaudeCodeAgentTurn({
+        ...commonRunnerOptions,
+        model: claudeCodeSettings.model,
+        provider: claudeCodeSettings.provider,
+        baseUrl: claudeCodeSettings.baseUrl,
+        apiKey: claudeCodeSettings.apiKey,
+        credentialSource: claudeCodeSettings.credentialSource,
+        cliPath: claudeCodeSettings.cliPath,
+        timeoutMs: claudeCodeSettings.timeoutMs,
+      });
+      return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "claude_code_agent" };
+    } finally {
+      await nativeHost.close();
+    }
   }
-  if (openCodeAgent) {
-    const prompt = [options.system, ...(Array.isArray(options.messages) ? options.messages : []).map((message) => `${message.role || "user"}: ${message.content || ""}`), attachmentContext]
-      .filter(Boolean)
-      .join("\n\n");
-    const result = await runOpenCodeAgent({
-      prompt,
-      cwd: options.cwd || root,
-      model: openCodeSettings.agentModelId,
-      provider: openCodeSettings.provider,
-      baseUrl: openCodeSettings.baseUrl,
-      apiKey: openCodeSettings.apiKey,
-      credentialSource: openCodeSettings.credentialSource,
-      cliPath: openCodeSettings.cliPath,
-      reasoningEffort: openCodeSettings.reasoningEffort,
-      timeoutMs: openCodeSettings.timeoutMs,
-      allowEdits: false,
-      signal: options.signal,
-    });
-    return { ...result, executionRuntime: "opencode_agent" };
-  }
+  const trustedSettings = agentPreferred ? {
+    ...(options.settings ?? {}),
+    provider: "OpenAI",
+    adapter: "cli",
+    protocol: "responses",
+    cliPath: "codex",
+    cliArgs: "exec --sandbox read-only --skip-git-repo-check --ephemeral --color never -",
+    model: selectedRuntime?.model || "",
+    reasoningEffort: String(options.settings?.agentReasoningEffort ?? agentStatus?.agentReasoningEffort ?? ""),
+    speedMode: String(options.settings?.agentSpeedMode || agentStatus?.agentSpeedMode || "default"),
+  } : await resolveTrustedGenerationSettings({ channel: "text", settings: options.settings ?? {}, route: "chat" });
   const trustedOptions = {
     ...options,
-    settings: deepSeekAgent ? {
-      ...deepSeekSettings,
-      model: String(options.settings?.agentModel || agentStatus?.agentModel || deepSeekSettings.model || "deepseek-v4-pro"),
-      reasoningEffort: String(options.settings?.agentReasoningEffort ?? agentStatus?.agentReasoningEffort ?? deepSeekSettings.reasoningEffort ?? "high"),
-      speedMode: "default",
-    } : agentPreferred ? {
-      ...(options.settings ?? {}),
-      provider: "OpenAI",
-      adapter: "cli",
-      protocol: "responses",
-      cliPath: "codex",
-      cliArgs: "exec --sandbox read-only --skip-git-repo-check --ephemeral --color never -",
-      model: selectedRuntime?.model || "",
-      reasoningEffort: String(options.settings?.agentReasoningEffort ?? agentStatus?.agentReasoningEffort ?? ""),
-      speedMode: String(options.settings?.agentSpeedMode || agentStatus?.agentSpeedMode || "default"),
-    } : await resolveTrustedGenerationSettings({ channel: "text", settings: options.settings ?? {}, route: "chat" }),
+    settings: { ...trustedSettings, agentPermissionMode },
+    agentPermissionMode,
+    permissionContract,
+    nativeHost: null,
+    workspaceToolRuntime: agentWorkspaceToolRuntime,
+    onToolEvent,
+    requestApproval,
   };
-  if (options.shensiRuntime && deepSeekAgent) {
-    return { ...(await runUntrustedModelAdapter(trustedOptions)), executionRuntime: "deepseek_opencode_agent" };
-  }
   return options.shensiRuntime
     ? shensiModelRuntimeRouter.run(trustedOptions)
     : runUntrustedModelAdapter(trustedOptions);
@@ -1891,6 +1959,7 @@ const rateLimits = new Map([
   ["/api/chat/supplement", { limit: 120, windowMs: 60_000 }],
   ["/api/codex-agent/provider", { limit: 30, windowMs: 60_000 }],
   ["/api/codex-agent/engine", { limit: 30, windowMs: 60_000 }],
+  ["/api/codex-agent/permission-mode", { limit: 30, windowMs: 60_000 }],
   ["/api/codex-agent/model", { limit: 30, windowMs: 60_000 }],
   ["/api/codex-agent/options", { limit: 60, windowMs: 60_000 }],
   ["/api/codex-agent/account/login", { limit: 6, windowMs: 60_000 }],
@@ -4148,6 +4217,11 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/codex-agent/engine" && request.method === "POST") {
     const body = await readJsonBody(request, 16 * 1024);
     return sendJson(response, 200, await codexAgentProvider.setAgentEngine(String(body.engine || "")));
+  }
+
+  if (pathname === "/api/codex-agent/permission-mode" && request.method === "POST") {
+    const body = await readJsonBody(request, 16 * 1024);
+    return sendJson(response, 200, await codexAgentProvider.setAgentPermissionMode(String(body.permissionMode || "")));
   }
 
   if (pathname === "/api/codex-agent/project" && request.method === "POST") {

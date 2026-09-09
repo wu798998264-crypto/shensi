@@ -7,6 +7,7 @@ import { listManagedSkills } from "./skill-store.mjs";
 import { inspectSelectedSkillSource } from "./skill-library.mjs";
 import { loadWorkspaceState, saveWorkspaceState } from "./workspace.mjs";
 import { applyConversationMediaResultToWorkspace } from "../media-generation-coordination.js";
+import { runDeepSeekOpenCodeAgent } from "./deepseek-opencode-agent-runner.mjs";
 import { runOpenCodeAgent } from "./opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./claude-code-agent-runner.mjs";
 import { runBundledConversationAgent } from "./bundled-conversation-runtime.mjs";
@@ -15,6 +16,8 @@ import { agentChildEnvironment, nativeCodexEnvironment } from "./codex-runtime-i
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
 import { imageModelCapabilities, videoModelCapabilities } from "../model-presets.js";
 import { createAgentBrowserService } from "./agent-browser-service.mjs";
+import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
+import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -71,26 +74,35 @@ export const createConversationAgentGateway = ({
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
     const settings = await resolveRuntimeSettings(options.settings);
-    if (settings.agentEngine === "codex_api") return runBundledConversationAgent({ ...options, settings, appRoot, machineRoot });
+    settings.agentPermissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || settings.agentPermissionMode);
+    const permissionContract = options.permissionContract || permissionContractFor(settings.agentPermissionMode, { runner: settings.agentEngine });
+    const shensiOnly = settings.agentPermissionMode === "shensi_only";
+    if (settings.agentEngine === "codex_api") return runBundledConversationAgent({ ...options, settings, permissionContract, appRoot, machineRoot });
     const processEnvironment = conversationAgentProcessEnvironment();
     if (settings.agentEngine === "codex") {
       const environment = nativeCodexEnvironment({ environment: processEnvironment });
       const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: join(machineRoot, "conversation-agent-v1", "external", options.sessionId), environment,
+        isolateConfig: shensiOnly,
         launchResolver: () => resolveLocalCodexLaunch({ environment: { ...environment, ...(settings.cliPath && settings.cliPath !== "codex" ? { SHENSI_CODEX_EXECUTABLE: settings.cliPath } : {}) } }) });
-      try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal }); }
+      try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal, permissionContract, requestApproval: options.requestApproval }); }
       finally { await runtime.close(); }
     }
-    const nativeHost = await startMcp({ tools: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, signal: options.signal });
+    const mcpTools = settings.agentEngine === "claude_code" && settings.agentPermissionMode === "approval_required"
+      ? toolsWithPermissionPrompt(options.workspaceToolRuntime, options.requestApproval)
+      : options.workspaceToolRuntime;
+    const nativeHost = await startMcp({ tools: mcpTools, onToolEvent: options.onToolEvent, signal: options.signal });
     const cwd = join(machineRoot, "conversation-agent-v1", "scratch", options.sessionId);
     await mkdir(cwd, { recursive: true });
     try {
       const run = settings.agentEngine === "claude_code"
         ? externalRunners.claudeCode || runClaudeCodeAgentTurn
-        : ["opencode", "deepseek_opencode"].includes(settings.agentEngine)
-          ? externalRunners.openCode || runOpenCodeAgent
-          : null;
+        : settings.agentEngine === "deepseek_opencode"
+          ? externalRunners.deepSeek || runDeepSeekOpenCodeAgent
+          : settings.agentEngine === "opencode"
+            ? externalRunners.openCode || runOpenCodeAgent
+            : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
-      return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: false, environment: processEnvironment });
+      return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract, requestApproval: options.requestApproval, environment: processEnvironment });
     } finally { await nativeHost.close(); }
   },
   mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {

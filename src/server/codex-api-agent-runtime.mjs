@@ -1,5 +1,6 @@
 import { fetchProvider } from "./network-proxy.mjs";
 import { isShensiAgentCompatibleProfile } from "../agent-engine-registry.js";
+import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { isGpt6AstraModel, sanitizeModelControls } from "../model-presets.js";
 
 const text = (value = "") => String(value ?? "").trim();
@@ -50,12 +51,19 @@ const contextText = (blocks = []) => (Array.isArray(blocks) ? blocks : [])
   .filter(Boolean)
   .join("\n\n");
 
-const buildInstructions = ({ contextBlocks = [], stage = "agent" } = {}) => [
+const permissionInstructions = (permissionMode) => permissionMode === "shensi_only"
+  ? "本轮权限为“仅限神思”：只能使用本轮明确提供的神思工作区工具；不得使用原生联网或宿主工具，也不得声称执行了未提供的外部能力。"
+  : permissionMode === "approval_required"
+    ? "本轮权限为“操作需确认”：联网等受保护能力必须经神思逐项确认，一次允许只适用于当前操作。"
+    : "本轮权限为“完全权限”：可使用本运行器实际提供且当前任务请求的原生能力；神思工作区内容仍通过受控工具访问。";
+
+const buildInstructions = ({ contextBlocks = [], stage = "agent", permissionMode = "shensi_only" } = {}) => [
   `<shensi-stage name="${stage}">`,
   ...(stage === "conversation_agent" ? ["你是完整的 Agent。根据当前指令、任务路由和已读取证据自主执行。按需发现文档与 Skill，通过提供的工具完成任务；真实工具结果才是读写和生成成功的依据。"] : [
     "你由神思运行器通过当前配置已核验的 Agent 协议执行。神思服务端负责文档、Skill、任务合同和正式落盘；你只能调用本轮明确提供的受控工具，不能自行猜测未读取的文件内容，也不能声称调用了实际未调用的工具。",
     "工作区工具均为只读且受当前作品、历史授权和读取预算约束。正式文档修改必须返回完整候选内容和目标信息，由神思事务层校验 revision、保存历史并落盘；不得要求只读工具写文件，也不得声称已经直接覆盖作品文件。",
   ]),
+  permissionInstructions(permissionMode),
   contextText(contextBlocks),
   "</shensi-stage>",
 ].filter(Boolean).join("\n\n");
@@ -111,6 +119,34 @@ const toolResultText = (result) => {
   return values.join("\n") || JSON.stringify({ ok: result?.success === true });
 };
 
+const webSearchApproval = async ({ permissionMode, requestApproval, settings = {} } = {}) => {
+  if (permissionMode === "shensi_only") return false;
+  if (permissionMode === "full_access") return true;
+  if (typeof requestApproval !== "function") {
+    throw Object.assign(new Error("操作需确认模式下启用联网搜索需要神思审批通道"), { code: "CODEX_API_APPROVAL_CHANNEL_REQUIRED" });
+  }
+  try {
+    const response = await requestApproval({
+      question: "神思运行器请求为本次任务启用原生联网搜索。是否允许本次操作？",
+      options: [
+        { id: "allow", label: "允许本次操作" },
+        { id: "deny", label: "拒绝本次操作" },
+      ],
+      detail: {
+        runner: "codex_api",
+        capability: "network",
+        operation: "network_exfiltration",
+        action: "web_search",
+        provider: text(settings.provider || "OpenAI"),
+      },
+    });
+    return text(response?.answer || response).toLowerCase() === "allow";
+  } catch (error) {
+    if (error?.name === "AbortError" || error?.code === "TASK_CANCELLED") throw error;
+    return false;
+  }
+};
+
 const webSources = (payload) => {
   const collected = new Map();
   const visit = (value) => {
@@ -147,17 +183,19 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
     );
   };
 
-  const runStage = async ({ settings = {}, prompt = "", contextBlocks = [], stage = "agent", sessionId = "", signal = null, workspaceToolRuntime = null, onToolEvent = null, drainSupplements = () => [] } = {}) => {
+  const runStage = async ({ settings = {}, prompt = "", contextBlocks = [], stage = "agent", sessionId = "", signal = null, workspaceToolRuntime = null, onToolEvent = null, drainSupplements = () => [], permissionContract = null, requestApproval = null } = {}) => {
     if (!supports({ settings, stage, sessionId })) {
       throw Object.assign(new Error("神思运行器配置不完整：需要已核验的 Responses 或 Chat Completions Agent 配置"), { code: "CODEX_API_AGENT_CONFIG_INVALID" });
     }
     const normalizedSessionId = text(sessionId);
+    const permissionMode = normalizeAgentPermissionMode(permissionContract?.mode || settings.agentPermissionMode);
+    const runtimePermissionContract = permissionContractFor(permissionMode, { runner: "codex_api", taskId: normalizedSessionId });
     const controller = new AbortController();
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     active.set(normalizedSessionId, controller);
     try {
-      const instructions = buildInstructions({ contextBlocks, stage });
+      const instructions = buildInstructions({ contextBlocks, stage, permissionMode });
       const startedAt = now();
       const workspace = workspaceFunctionTools(workspaceToolRuntime);
       const gpt6Controls = isGpt6AstraModel(settings.model) ? sanitizeModelControls({
@@ -223,9 +261,11 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
               workspaceToolsUsed,
               workspaceToolCalls,
               sessionId: normalizedSessionId,
+              permissionMode,
+              permissionContract: runtimePermissionContract,
               startedAt,
               completedAt: now(),
-              agentRuntime: { runtime: "shensi_chat_completions_agent", sessionId: normalizedSessionId, stage, toolCalls: usedToolCalls },
+              agentRuntime: { runtime: "shensi_chat_completions_agent", sessionId: normalizedSessionId, stage, toolCalls: usedToolCalls, permissionMode },
             };
           }
           if (usedToolCalls + calls.length > maxToolCalls) {
@@ -252,8 +292,11 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
           }
         }
       }
+      const nativeWebSearchEnabled = settings.webSearchEnabled === true
+        ? await webSearchApproval({ permissionMode, requestApproval, settings })
+        : false;
       const tools = [
-        ...(settings.webSearchEnabled === true ? [{ type: "web_search" }] : []),
+        ...(nativeWebSearchEnabled ? [{ type: "web_search" }] : []),
         ...workspace.tools,
       ];
       const maxToolCalls = Math.max(1, Math.min(32, Number(settings.maxToolCalls) || 12));
@@ -387,9 +430,11 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
         workspaceToolsUsed,
         workspaceToolCalls,
         sessionId: normalizedSessionId,
+        permissionMode,
+        permissionContract: runtimePermissionContract,
         startedAt,
         completedAt: now(),
-        agentRuntime: { runtime: "codex_api_agent", sessionId: normalizedSessionId, stage, toolCalls: usedToolCalls },
+        agentRuntime: { runtime: "codex_api_agent", sessionId: normalizedSessionId, stage, toolCalls: usedToolCalls, permissionMode },
       };
     } catch (error) {
       if (error?.name === "AbortError" || signal?.aborted || controller.signal.aborted) {
