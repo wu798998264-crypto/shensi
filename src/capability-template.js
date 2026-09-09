@@ -1963,6 +1963,34 @@ export const capabilityTemplateNodeIsVisible = (bundle, nodeType, id, visiting =
 export const capabilityTemplateVisibleItems = (bundle, container = {}) => list(container.items)
   .filter((item) => capabilityTemplateNodeIsVisible(bundle, item.targetType, item.targetId));
 
+const capabilityTemplateScopeMembers = (bundle, scopeType = "template", scopeId = "") => {
+  if (!["template", "group", "module"].includes(scopeType)) throw new Error("面板拖拽范围不存在");
+  const effectiveScopeId = scopeType === "template" ? bundle.template.id : String(scopeId || "");
+  const scope = capabilityTemplateNode(bundle, scopeType, effectiveScopeId);
+  if (!scope) throw new Error("面板拖拽范围不存在");
+  if (scope.kernelManaged === true || isKernelManagedCapabilityNode(scopeType, scope.id)) {
+    throw new Error("内置运行机制不可调整位置");
+  }
+  return {
+    scope,
+    members: scopeType === "module" ? scope.slots : scope.items,
+  };
+};
+
+const capabilityTemplateMemberIsKernelManaged = (bundle, scopeType, member) => {
+  if (!member) return false;
+  if (member.kernelManaged === true) return true;
+  if (scopeType === "module") return false;
+  const target = capabilityTemplateNode(bundle, member.targetType, member.targetId);
+  return isKernelManagedCapabilityNode(member.targetType, member.targetId) || target?.kernelManaged === true;
+};
+
+const assertCapabilityTemplateMemberMovable = (bundle, scopeType, member) => {
+  if (capabilityTemplateMemberIsKernelManaged(bundle, scopeType, member)) {
+    throw new Error("内置运行机制不可调整位置");
+  }
+};
+
 export const reorderCapabilityTemplateMember = (input, {
   scopeType = "template",
   scopeId = "",
@@ -1971,26 +1999,42 @@ export const reorderCapabilityTemplateMember = (input, {
   placement: requestedPlacement = "before",
 } = {}) => {
   const bundle = normalizeCapabilityTemplate(input);
-  const effectiveScopeId = scopeType === "template" ? bundle.template.id : String(scopeId || "");
-  const scope = capabilityTemplateNode(bundle, scopeType, effectiveScopeId);
-  if (!scope || !["template", "group", "module"].includes(scopeType)) throw new Error("面板拖拽范围不存在");
-  if (scope.kernelManaged === true || isKernelManagedCapabilityNode(scopeType, scope.id)) {
-    throw new Error("内置运行机制不可调整位置");
-  }
-  const members = scopeType === "module" ? scope.slots : scope.items;
+  const { members } = capabilityTemplateScopeMembers(bundle, scopeType, scopeId);
   const sourceIndex = members.findIndex((member) => member.id === String(memberId || ""));
   const initialTargetIndex = members.findIndex((member) => member.id === String(targetMemberId || ""));
   if (sourceIndex < 0 || initialTargetIndex < 0) throw new Error("找不到要调整的插槽或目标位置");
   if (sourceIndex === initialTargetIndex) return bundle;
   const source = members[sourceIndex];
-  if (source.kernelManaged === true
-    || (scopeType !== "module" && isKernelManagedCapabilityNode(source.targetType, source.targetId))) {
-    throw new Error("内置运行机制不可调整位置");
-  }
+  const target = members[initialTargetIndex];
+  assertCapabilityTemplateMemberMovable(bundle, scopeType, source);
+  assertCapabilityTemplateMemberMovable(bundle, scopeType, target);
   const dropPlacement = requestedPlacement === "after" ? "after" : "before";
   members.splice(sourceIndex, 1);
   const targetIndex = members.findIndex((member) => member.id === String(targetMemberId || ""));
   members.splice(targetIndex + (dropPlacement === "after" ? 1 : 0), 0, source);
+  const validation = validateCapabilityTemplate(bundle);
+  if (!validation.valid) throw new Error(validation.errors.join("；"));
+  return validation.bundle;
+};
+
+export const swapCapabilityTemplateMembers = (input, {
+  scopeType = "template",
+  scopeId = "",
+  memberId = "",
+  targetMemberId = "",
+} = {}) => {
+  const bundle = normalizeCapabilityTemplate(input);
+  const { members } = capabilityTemplateScopeMembers(bundle, scopeType, scopeId);
+  const sourceIndex = members.findIndex((member) => member.id === String(memberId || ""));
+  const targetIndex = members.findIndex((member) => member.id === String(targetMemberId || ""));
+  if (sourceIndex < 0 || targetIndex < 0) throw new Error("找不到要交换的插槽或目标位置");
+  if (sourceIndex === targetIndex) return bundle;
+  assertCapabilityTemplateMemberMovable(bundle, scopeType, members[sourceIndex]);
+  assertCapabilityTemplateMemberMovable(bundle, scopeType, members[targetIndex]);
+  // Swap complete member objects so roles, bindings, policies, and identity
+  // remain attached to the same slot or placement while normalization
+  // recomputes the role for the new index.
+  [members[sourceIndex], members[targetIndex]] = [members[targetIndex], members[sourceIndex]];
   const validation = validateCapabilityTemplate(bundle);
   if (!validation.valid) throw new Error(validation.errors.join("；"));
   return validation.bundle;
