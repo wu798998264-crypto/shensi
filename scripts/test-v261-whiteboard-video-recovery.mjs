@@ -112,13 +112,15 @@ try {
 }
 
 const appSource = await readFile(join(root, "src", "app.js"), "utf8");
+const agentToolsSource = await readFile(join(root, "src", "server", "conversation-agent-tools.mjs"), "utf8");
 const styles = await readFile(join(root, "src", "styles.css"), "utf8");
 assert.match(appSource, /edgeTargetHandle\s*=\s*direction === "input" \? "output" : "input"/u, "多选连接应声明目标连接点方向");
 assert.match(styles, /data-edge-target-handle="input"[\s\S]*whiteboard-node-handle\.input::before/u, "拖拽期间应显示已有节点输入连接点");
 assert.doesNotMatch(appSource, /data-whiteboard-generation-history"\) && !canvasNodeGenerationHistory/u, "卡片历史入口不能因暂无版本而隐藏");
 assert.match(appSource, /restoreInterruptedWhiteboardGenerationDraft\(job\)/u, "失败任务提示词应恢复为卡片草稿");
-assert.match(appSource, /state\.workspaceKind === "notebook"[\s\S]*?semanticArtifactTarget/u, "笔记空间不得仅凭小说或剧本文体创建作品型目标");
-assert.match(appSource, /state\.workspaceKind !== "notebook"\) \{/u, "跨文体作品路由必须保持在作品空间内");
+assert.match(appSource, /workspaceKind: taskContextSnapshot\.workspaceKind,[\s\S]*?workspacePath: taskContextSnapshot\.workspacePath/u, "原生 Agent 必须绑定发送时的工作区");
+assert.match(agentToolsSource, /if \(!workspacePath\) throw new Error\("当前尚未绑定作品或笔记"\)/u, "结构操作必须拒绝未绑定工作区");
+assert.match(agentToolsSource, /executeWorkspaceStructureTransaction\(/u, "结构操作必须通过原子结构事务执行");
 assert.match(appSource, /sequencedDocumentKind\(state\.activeDocument, documentState\)/u, "正文标题应识别导入文档的章节或剧集状态");
 
 console.log("v2.6.1 白板连接、卡片历史和即梦状态恢复测试通过");
