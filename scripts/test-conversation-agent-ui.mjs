@@ -104,7 +104,7 @@ try {
         const questionId = 'question-' + window.nativeAgentStarts.length;
         const events = [
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
-          { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: true, allowFreeText: true } },
+          { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: window.nativeAgentStarts.length === 1, allowFreeText: true } },
         ];
         window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentLinkTarget : null, workspacePath: request.workspacePath });
         return Response.json({ok:true,id,status:'running'});
@@ -209,6 +209,11 @@ try {
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='第二个对话只讨论大纲';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 2 && document.querySelector('#conversationChoicePanel')?.hidden === false", "第二个对话并发运行");
   assert.equal(await evaluate("[...window.nativeAgentMocks.values()].filter(r=>r.status==='waiting_input').length"), 2, "两个对话必须能同时运行");
+  assert.equal(await evaluate("document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').length"), 1, "单选问题也必须显示确认按钮");
+  await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').click(); true");
+  assert.equal(await evaluate("window.nativeAgentAnswers.length"), 0, "单选项目只标记选中，确认前不得提交");
+  assert.equal(await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').classList.contains('is-selected')"), true, "单选项目必须显示选中状态");
+  assert.equal(await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').disabled"), false, "选中后确认按钮必须可用");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='保留悬念，重点比较视角';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentAnswers.length === 1", "自由回答");
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "候选分支保留");
@@ -234,7 +239,7 @@ try {
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
-  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
   throw error;

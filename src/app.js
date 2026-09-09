@@ -36865,7 +36865,7 @@ const renderConversationChoicePanel = () => {
       type: "native_agent_answer",
       value: pending.allowFreeText === false ? option.id : option.label,
       selected: (pending.selectedValues || []).includes(pending.allowFreeText === false ? option.id : option.label),
-    })).join("") + (pending.multiple ? conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length }) : "");
+    })).join("") + conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length });
     elements.conversationChoiceHint.textContent = pending.allowFreeText === false
       ? "请选择允许或拒绝；本次决定只作用于当前这一项操作。"
       : "也可以直接在下方输入其他想法。";
@@ -43811,13 +43811,13 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
   }
   if (pendingConversationChoice.kind === "native_agent" && type === "native_agent_answer") {
     const pending = pendingConversationChoice;
+    pending.selectedValues ??= [];
     if (pending.multiple) {
-      pending.selectedValues ??= [];
       pending.selectedValues = pending.selectedValues.includes(value) ? pending.selectedValues.filter((item) => item !== value) : [...pending.selectedValues, value];
-      renderConversationChoicePanel();
-      return;
+    } else {
+      pending.selectedValues = pending.selectedValues.includes(value) ? [] : [value];
     }
-    await answerNativeConversationQuestion(pending, value);
+    renderConversationChoicePanel();
     return;
   }
   if (pendingConversationChoice.kind === "native_agent" && type === "native_agent_confirm") {
