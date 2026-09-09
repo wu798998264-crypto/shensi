@@ -68,7 +68,8 @@ assert.match(appSource, /rememberedModuleDocument\(\{[\s\S]{0,180}documentIds/u,
 assert.match(appSource, /moduleLastDocuments\[`\$\{presentationId\}:\$\{resolvedViewId\}`\]/u, "导航记忆必须按板块和视图分别保存");
 assert.match(appSource, /const viewId = option\.dataset\.moduleView;[\s\S]{0,500}rememberedModuleDocument\(\{[\s\S]{0,160}viewId/u, "切换分类时必须恢复该分类上次打开的文档");
 assert.match(appSource, /ui\.documentPreviewKey = manuscriptDocumentHasSubstantiveContent\(documentId\)[\s\S]{0,100}currentDocumentPreviewKey/u, "打开有内容正文必须默认进入预览");
-assert.match(appSource, /const confirmedView = creativeWorkspaceView\(guidanceDeliverableType\);[\s\S]{0,220}selectCreativeWorkspaceView\(guidanceDeliverableType\)/u, "创作文体确认后必须切换相应目录");
+assert.match(appSource, /const creativeWorkspaceView = \(deliverableType = ""\) =>/u, "创作文体必须有统一目录映射");
+assert.match(appSource, /const selectCreativeWorkspaceView = \(deliverableType,[\s\S]{0,1200}state\.moduleViews\.manuscript = viewId/u, "创作文体确认后必须能切换相应目录");
 const landedLinkHandler = appSource.slice(appSource.indexOf('elements.chatFeed.addEventListener("click"'), appSource.indexOf("const olderMessagesButton", appSource.indexOf('elements.chatFeed.addEventListener("click"')));
 assert.match(landedLinkHandler, /const landedDocumentId[\s\S]*selectDocument\(landedDocumentId\)/u, "对话底部落盘链接必须通过统一文档选择逻辑切换目录");
 

@@ -72,16 +72,16 @@ const workspaceActivation = await sourceWindow("const activateProjectState =", 1
 assert.match(workspaceActivation, /for \(const conversation of state\.conversations \?\? \[\]\)[\s\S]*?scheduleConversationQueueDrain\(conversation\.id\);/u,
   "返回作品或笔记本后必须唤醒此前等待的对话队列");
 
-const chatCompletion = await sourceWindow("if (!workspaceTargetIsActive(turnContextSnapshot.workspaceKind", 20);
-assert.match(chatCompletion, /await savePinnedConversationCompletion\(\{[\s\S]*?workspaceKind: turnContextSnapshot\.workspaceKind,[\s\S]*?workspacePath: turnContextSnapshot\.workspacePath,[\s\S]*?messages: taskMessages/u);
-assert.match(chatCompletion, /\}\s*else\s*(?:\{\s*)?persist\(\);/u,
-  "普通 Chat 任务必须按发送时工作区选择终态保存路径");
+const chatCompletion = await sourceWindow("const persistTaskConversation = async () =>", 45);
+assert.match(chatCompletion, /savePinnedConversationCompletion\(\{[\s\S]*?workspaceKind: workspace\.workspaceKind,[\s\S]*?workspacePath: workspace\.workspacePath,[\s\S]*?messages: taskMessages/u);
+assert.match(chatCompletion, /taskWorkspaceState === state[\s\S]*?workspaceTargetIsActive\(workspace\.workspaceKind, workspace\.workspacePath\)/u,
+  "当前工作区任务才允许直接保存到前台状态");
 
-const semanticLanding = await sourceWindow("const taskWorkspaceStillActive = ()", 55);
-assert.match(semanticLanding, /requestSemanticLandingPackageForContent\(\{[\s\S]*?workspaceState: taskWorkspaceState/u,
+const semanticLanding = await sourceWindow("const autoLandCodexAgentCandidate =", 190);
+assert.match(semanticLanding, /requestSemanticLandingPackageForContent\(\{[\s\S]*?workspaceState: landingWorkspaceState/u,
   "异步语义落点规划必须使用发送时工作区");
-assert.match(semanticLanding, /taskWorkspaceStillActive\(\)/u,
-  "等待语义规划期间切换作品后必须重新判断工作区身份");
+assert.match(semanticLanding, /workspaceTargetIsActive\(workspaceScope\.workspaceKind, workspaceScope\.workspacePath\)/u,
+  "落盘前必须重新判断发送时工作区身份");
 
 const agentRefresh = await sourceWindow("const refreshAgentTaskWorkspaceDocuments =", 190);
 assert.match(agentRefresh, /workspaceTargetIsActive\(scope\.workspaceKind, scope\.workspacePath\)/u);
