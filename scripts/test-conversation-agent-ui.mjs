@@ -119,6 +119,7 @@ try {
           run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=5;
           return Response.json({ok:true,accepted:true});
         }
+        if (path.endsWith('/cancel')) { run.status='cancelled'; run.events.push({sequence:run.events.length+1,type:'cancelled',payload:{message:'已取消测试任务'}}); run.lastSequence=run.events.length; return Response.json({ok:true,accepted:true}); }
         const after=Number(new URL(path,location.origin).searchParams.get('after')||0);
         return Response.json({ok:true,...run,events:run.events.filter(e=>e.sequence>after)});
       }
@@ -148,15 +149,31 @@ try {
   assert.match(first.text, /你更希望比较哪些差异/);
   assert.doesNotMatch(first.text, /先选择主笔数量|单主笔生成多稿|多主笔生成候选/);
   assert.deepEqual(first.options, ["节奏", "视角", "确认选择"]);
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='第二个对话只讨论大纲';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
+  await waitFor("window.nativeAgentStarts.length === 2 && document.querySelector('#conversationChoicePanel')?.hidden === false", "第二个对话并发运行");
+  assert.equal(await evaluate("[...window.nativeAgentMocks.values()].filter(r=>r.status==='waiting_input').length"), 2, "两个对话必须能同时运行");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='保留悬念，重点比较视角';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentAnswers.length === 1", "自由回答");
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "候选分支保留");
-  assert.equal(await evaluate("window.nativeAgentStarts.length"), 1, "回答不能新建第二个任务");
+  assert.equal(await evaluate("window.nativeAgentStarts.length"), 2, "回答不能新建额外任务");
+  await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
+  await waitFor("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]')", "原对话入口");
+  await evaluate("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]').click(); true");
+  await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false", "原对话问题恢复");
+  await evaluate("document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_answer]')[0].click(); true");
+  await evaluate("document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_answer]')[1].click(); true");
+  await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
+  await waitFor("window.nativeAgentAnswers.length === 2", "多选回答");
+  assert.equal(await evaluate("window.nativeAgentAnswers[1].answer"), "节奏；视角");
   await evaluate("if(document.querySelector('#creativeStartWelcomeDialog')?.open)document.querySelector('#dismissCreativeStartWelcome')?.click(); true");
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
-  console.log(JSON.stringify({ok:true,screenshotPath,checks:["raw instruction preserved","no keyword media route","send before choice","free answer same run","three candidate branches"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,checks:["raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","free answer same run","multi-select after switching back","three candidate branches"]}));
+} catch (error) {
+  console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
+  throw error;
 } finally {
   socket.close();
   child.kill();

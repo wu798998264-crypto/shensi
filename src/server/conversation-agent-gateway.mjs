@@ -13,6 +13,7 @@ import { runBundledConversationAgent } from "./bundled-conversation-runtime.mjs"
 import { createShensiCodexAgentRuntime } from "./shensi-codex-agent-runtime.mjs";
 import { nativeCodexEnvironment } from "./codex-runtime-isolation.mjs";
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
+import { imageModelCapabilities, videoModelCapabilities } from "../model-presets.js";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -66,47 +67,80 @@ export const createConversationAgentGateway = ({
       return await run({ ...settings, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: false });
     } finally { await nativeHost.close(); }
   },
-  mediaStatus: async (jobId, { request }) => {
+  mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {
     if (!/^generation-[a-z0-9-]+$/u.test(jobId)) throw new Error("无效媒体任务ID");
     const { job } = await apiRequest(`/api/generation/jobs/${jobId}`);
     if (String(job.target?.workspacePath).replaceAll("\\", "/").toLowerCase() !== String(request.workspacePath).replaceAll("\\", "/").toLowerCase()
       || job.target?.conversationId !== request.conversationId) throw new Error("不能读取其他作品或对话的媒体任务");
-    return { id: job.id, status: job.status, attachment: job.result?.attachment, error: job.error || "" };
-  },
-  media: async (args, { request, runId, signal, emit }) => {
-    const channel = args.channel;
-    if (!["image", "video"].includes(channel)) throw new Error("仅支持图片或视频");
-    if (channel === "video" && !(Number(args.duration) > 0)) throw new Error("请先用 interaction.ask 单独确认视频时长；已明确秒数则直接传入");
-    const profiles = request.mediaProfiles?.[channel] || [];
-    const profile = args.profileId ? profiles.find((profile) => profile.id === args.profileId) : profiles[0];
-    if (!profile) throw new Error("没有找到指定的媒体配置；不会切换其他配置");
-    const messageId = `${runId}-${hash(args.operationId).slice(0, 12)}`;
-    const submitted = await apiRequest("/api/generation/jobs/media", { channel, submissionId: messageId, target: { targetType: "conversation-message", workspaceKind: request.workspaceKind, workspacePath: request.workspacePath, conversationId: request.conversationId, messageId, sourceMessageId: request.sourceMessageId, documentId: request.targetDocumentId || "", conversationBranchScope: request.branchId || "" }, request: {
-      prompt: args.prompt, settings: profile, imageCount: 1, duration: args.duration, quality: args.quality || "2k", resolution: args.resolution || "720p", aspectRatio: args.aspectRatio || profile.aspectRatio || "16:9", referenceMedia: request.attachments || [], connectionSelection: { source: args.profileId ? "explicit" : "first_profile", explicit: Boolean(args.profileId), connectionId: profile.id },
-    } });
-    const id = submitted.job.id;
-    await emit("media_job", { jobId: id, messageId, channel, profileId: profile.id });
-    let job = submitted.job;
-    try {
-      while (!["complete", "failed", "cancelled", "interrupted", "needs_attention", "abandoned"].includes(job.status)) {
-        await sleep(800, signal);
-        const polled = await apiRequest(`/api/generation/jobs/${id}`);
-        job = polled.job;
-      }
-    } catch (error) {
-      if (signal.aborted) await apiRequest(`/api/generation/jobs/${id}/cancel`, {}).catch(() => {});
-      throw new Error(`媒体任务 ${id} 保留，未重新提交：${error.message}`);
+    if (archive) {
+      await archiveConversationMediaJob({ appRoot, request, job });
+      await emit("media_saved", { jobId: job.id, messageId: job.target.messageId, attachment: job.result.attachment, channel: job.channel });
     }
-    if (job.status !== "complete") throw new Error(`媒体任务 ${id} 未完成：${job.error || job.status}。保留原任务，不盲目重提。`);
-    let saved = false;
-    for (let attempt = 0; attempt < 3 && !saved; attempt++) {
-      const loaded = await loadWorkspaceState({ appRoot, requestedPath: request.workspacePath });
-      const result = applyConversationMediaResultToWorkspace(loaded.state, job, { timeLabel: new Date().toLocaleTimeString("zh-CN") });
-      if (result.suppressed) throw new Error("用户已撤销该媒体目标，结果不自动回填");
-      try { await saveWorkspaceState({ appRoot, requestedPath: request.workspacePath, state: loaded.state, expectedStateStamp: loaded.stateStamp }); saved = true; }
-      catch (error) { if (error.code !== "WORKSPACE_STATE_CONFLICT" || attempt === 2) throw new Error(`生成已成功，但全部资产备份未完成；保留任务 ${id}，只重试归档：${error.message}`); }
-    }
-    await emit("media_saved", { jobId: id, attachment: job.result.attachment, channel });
-    return { jobId: id, attachment: job.result.attachment, backedUpToAllAssets: true };
+    return { id: job.id, status: job.status, attachment: job.result?.attachment, error: job.error || "", backedUpToAllAssets: archive };
   },
+  media: createConversationMediaExecutor({ appRoot, apiRequest }),
 });
+
+export const createConversationMediaExecutor = ({ appRoot, apiRequest }) => {
+  const blockedRuns = new Map();
+  return async (args, { request, runId, signal, emit = async () => {} }) => {
+    if (blockedRuns.has(runId)) throw new Error(blockedRuns.get(runId));
+    let submissionAttempted = false;
+    try {
+      const channel = args.channel;
+      if (!["image", "video"].includes(channel)) throw new Error("仅支持图片或视频");
+      if (channel === "video" && !(Number(args.duration) > 0)) throw new Error("请先用 interaction.ask 单独确认视频时长；已明确秒数则直接传入");
+      const profiles = request.mediaProfiles?.[channel] || [];
+      const profile = args.profileId ? profiles.find((candidate) => candidate.id === args.profileId) : profiles[0];
+      if (!profile) throw new Error("没有找到指定的媒体配置；不会切换其他配置");
+      const capabilities = channel === "image" ? imageModelCapabilities(profile.provider, profile.model) : videoModelCapabilities(profile.provider, profile.model);
+      const quality = args.quality || (capabilities.resolutions.includes("2k") ? "2k" : "high");
+      const resolution = args.resolution || "720p";
+      if (capabilities.exact && channel === "image" && !capabilities.resolutions.includes(quality)) throw new Error("此图片模型不支持所需清晰度，请调整参数，未提交");
+      if (capabilities.exact && channel === "video" && (!capabilities.resolutions.includes(resolution) || !capabilities.durationSeconds.includes(Number(args.duration)))) throw new Error("此视频模型不支持所需清晰度或时长，请调整参数，未提交");
+      const messageId = `${runId}-${hash(args.operationId).slice(0, 12)}`;
+      submissionAttempted = true;
+      const submitted = await apiRequest("/api/generation/jobs/media", { channel, submissionId: messageId, target: { targetType: "conversation-message", workspaceKind: request.workspaceKind, workspacePath: request.workspacePath, conversationId: request.conversationId, messageId, sourceMessageId: request.sourceMessageId, documentId: request.targetDocumentId || "", conversationBranchScope: request.branchId || "" }, request: {
+        prompt: args.prompt, settings: profile, imageCount: 1, duration: args.duration, quality, resolution, aspectRatio: args.aspectRatio || profile.aspectRatio || "16:9", referenceMedia: (request.attachments || []).filter((attachment) => /^(image|video|audio)\//u.test(attachment.mimeType || "")), connectionSelection: { source: args.profileId ? "explicit" : "first_profile", explicit: Boolean(args.profileId), connectionId: profile.id },
+      } });
+      const id = submitted.job.id;
+      await emit("media_job", { jobId: id, messageId, channel, profileId: profile.id });
+      let job = submitted.job;
+      try {
+        while (["queued", "submitting", "running", "polling", "downloading", "cancel_requested"].includes(job.status)) {
+          await sleep(800, signal);
+          const polled = await apiRequest(`/api/generation/jobs/${id}`);
+          job = polled.job;
+        }
+      } catch (error) {
+        if (signal.aborted) await apiRequest(`/api/generation/jobs/${id}/cancel`, {}).catch(() => {});
+        throw new Error(`媒体任务 ${id} 保留，未重新提交：${error.message}`);
+      }
+      if (job.status !== "complete") throw new Error(`媒体任务 ${id} 未完成：${job.error || job.status}。保留原任务，不盲目重提。`);
+      await archiveConversationMediaJob({ appRoot, request, job });
+      await emit("media_saved", { jobId: id, messageId, attachment: job.result.attachment, channel });
+      return { jobId: id, attachment: job.result.attachment, backedUpToAllAssets: true };
+    } catch (error) {
+      if (submissionAttempted) blockedRuns.set(runId, `本轮媒体步骤已停止，先核对原任务，不能盲目新建重提：${error.message}`);
+      throw error;
+    }
+  };
+};
+
+export const archiveConversationMediaJob = async ({ appRoot, request, job }) => {
+  if (job.status !== "complete" || !job.result?.attachment) throw new Error("媒体尚未下载验收完成，不能归档");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const loaded = await loadWorkspaceState({ appRoot, requestedPath: request.workspacePath });
+    const conversations = structuredClone(loaded.state.conversations);
+    const messages = structuredClone(loaded.state.messages);
+    const result = applyConversationMediaResultToWorkspace(loaded.state, job, { timeLabel: new Date().toLocaleTimeString("zh-CN") });
+    if (result.suppressed) throw new Error("用户已撤销该媒体目标，结果不自动回填");
+    // Conversation text is written by the shared UI save lane. The server
+    // owns only the durable asset here, avoiding competing whole-chat saves
+    // while other conversations continue to receive messages.
+    loaded.state.conversations = conversations;
+    loaded.state.messages = messages;
+    try { await saveWorkspaceState({ appRoot, requestedPath: request.workspacePath, state: loaded.state, expectedStateStamp: loaded.stateStamp }); return result; }
+    catch (error) { if (error.code !== "WORKSPACE_STATE_CONFLICT" || attempt === 2) throw new Error(`生成已成功，但全部资产备份未完成；保留任务 ${job.id}，只重试归档：${error.message}`); }
+  }
+};

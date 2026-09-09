@@ -64,7 +64,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         },
         candidates: async (variants) => { record.candidates = variants; await event(entry, "candidates", { variants }); return { delivered: variants.length, savedToDocument: false }; },
         media: (args) => media(args, { request, runId: record.id, signal: controller.signal, emit: (type, payload) => event(entry, type, payload) }),
-        mediaStatus: (jobId) => mediaStatus(jobId, { request }),
+        mediaStatus: (jobId, archive = false) => mediaStatus(jobId, { request, archive, emit: (type, payload) => event(entry, type, payload) }),
         emit: (type, payload) => event(entry, type, payload),
       });
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];

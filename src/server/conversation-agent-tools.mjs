@@ -50,6 +50,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     namespace("media", [
       tool("profiles", "只读查看已有图片/视频配置名称、ID、模型和顺序，不改变配置。", {}),
       tool("status", "查询当前对话已有媒体任务及是否已归档；恢复前先查询，不新建任务。", { jobId: str("已有媒体任务ID") }, ["jobId"]),
+      tool("archive", "只重试把已下载验收成功的媒体备份到全部资产；不重新调用厂商生成。", { jobId: str("已完成媒体任务ID") }, ["jobId"]),
       tool("generate", "使用既有后台媒体生成服务；返回下载验收结果，自动归档全部资产。缺少视频时长应先询问。", { channel: { type: "string", enum: ["image", "video"] }, prompt: str("生成提示词"), profileId: str("可选明确配置ID"), quality: str("图片清晰度，默认2k"), resolution: str("视频清晰度，默认720p"), duration: integer("视频秒数", 1), aspectRatio: str("画面比例"), operationId: str("同一生成幂等标识，不可盲目换ID重提") }, ["channel", "prompt", "operationId"]),
     ]),
   ];
@@ -75,6 +76,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     if (namespace === "media") {
       if (name === "generate") return media(args);
       if (name === "status" && mediaStatus) return mediaStatus(args.jobId);
+      if (name === "archive" && mediaStatus) return mediaStatus(args.jobId, true);
       if (name === "profiles") return Object.fromEntries(["image", "video"].map((channel) => [channel, (mediaProfiles[channel] || []).map(({ id, name, remarkName, provider, model }) => ({ id, name: remarkName || name, provider, model }))]));
     }
     if (namespace !== "documents") throw new Error("未提供的工具");

@@ -18643,7 +18643,7 @@ const renderExecutionProcess = (message) => {
   const durabilityStatusText = execution.durabilityStatus === "memory_only"
     ? execution.durabilityWarning || "本轮内容目前只保留在内存中，刷新或关闭前请等待自动保存恢复"
     : execution.durabilityWarning || "";
-  const processTitle = qualityReviewExecution
+  const processTitle = execution.strength === "native_agent" ? "Agent 自主执行" : qualityReviewExecution
     ? "内容质检"
     : agentExecution
     ? conversationOnlyExecution ? `${agentRuntime.label} · 对话协作` : agentRuntime.label
@@ -35716,6 +35716,12 @@ const nativeConversationMonitors = new Map();
 const persistNativeConversation = async (runtime) => {
   const { conversation, messages, workspaceScope, candidateState } = runtime;
   conversation.messages = messages;
+  if (workspaceTargetIsActive(workspaceScope.workspaceKind, workspaceScope.workspacePath)) {
+    mergeAgentRuntimeConversationState(state, runtime);
+    persistWorkspaceStateOnly({ saveDelay: 0 });
+    await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+    return;
+  }
   if (!workspaceScope.workspacePath) { persist(); return; }
   await savePinnedConversationCompletion({ ...workspaceScope, conversationId: conversation.id,
     messages, conversationState: conversation, candidateState, force: true });
@@ -35772,7 +35778,7 @@ const monitorNativeConversation = (runtime, pending) => {
             pending.execution.agentResultReferences.push({ sequence: event.sequence, type: event.type, ...event.payload });
           }
           if (event.type === "media_saved") {
-            const id = `media-${event.payload.jobId}`;
+            const id = event.payload.messageId || `media-${event.payload.jobId}`;
             if (!messages.some((message) => message.id === id)) messages.push({ id, role: "assistant", content: "已生成并备份到全部资产。",
               time: nowTime(), [event.payload.channel === "video" ? "videos" : "images"]: [event.payload.attachment] });
           }
