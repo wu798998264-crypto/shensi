@@ -19507,10 +19507,98 @@ button.trash-entry-main:focus-visible {
 }
 
 .capability-board {
+  min-width: 0;
+}
+
+.capability-relation-parallel,
+.capability-relation-member-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   min-width: 0;
+}
+
+.capability-relation-primary-secondary {
+  display: grid;
+  grid-template-columns: minmax(0, calc((100% - 42px) / 3)) minmax(0, 1fr);
+  column-gap: 32px;
+  align-items: start;
+}
+
+.capability-secondary-zone .capability-relation-member-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.capability-relation-organization {
+  display: grid;
+  row-gap: 32px;
+}
+
+.capability-role-zone,
+.capability-role-collection {
+  position: relative;
+  min-width: 0;
+  padding-top: 23px;
+}
+
+.capability-upper-zone {
+  width: calc((100% - 20px) / 3);
+  justify-self: center;
+}
+
+.capability-lower-zone {
+  padding-top: 0;
+}
+
+.capability-lower-zone > .capability-role-zone-caption {
+  top: -23px;
+}
+
+.capability-role-zone-caption {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 17px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.capability-upper-zone > .capability-role-zone-caption {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.capability-board-cell[data-relation-role="primary"],
+.capability-board-cell[data-relation-role="upper"] {
+  border-width: 2px;
+  border-color: var(--border-strong);
+}
+
+.capability-board-cell[data-relation-role="primary"] .capability-cell-property,
+.capability-board-cell[data-relation-role="upper"] .capability-cell-property {
+  font-weight: 700;
+}
+
+.capability-role-empty {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  background: var(--surface-subtle);
+  font-size: 11px;
 }
 
 .capability-board-cell {
@@ -19540,6 +19628,39 @@ button.trash-entry-main:focus-visible {
 
 .capability-board-cell.is-drop-after {
   box-shadow: inset -4px 0 0 var(--accent);
+}
+
+.capability-role-zone.is-drop-swap {
+  border-radius: 6px;
+  outline: 2px solid var(--accent);
+  outline-offset: 5px;
+}
+
+.capability-role-zone.is-drop-swap .capability-board-cell {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.capability-board-cell.is-swap-counterpart {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+.capability-role-zone.is-drop-swap::after {
+  content: attr(data-drop-label);
+  position: absolute;
+  z-index: 6;
+  inset: 23px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  border-radius: 6px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  pointer-events: none;
 }
 
 .capability-node-cell:hover,
@@ -20502,8 +20623,23 @@ button.trash-entry-main:focus-visible {
 }
 
 @media (max-width: 900px) {
-  .capability-board {
+  .capability-relation-parallel,
+  .capability-relation-member-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .capability-relation-primary-secondary {
+    grid-template-columns: 1fr;
+    row-gap: 32px;
+  }
+
+  .capability-primary-zone,
+  .capability-upper-zone {
+    width: calc((100% - 10px) / 2);
+  }
+
+  .capability-primary-zone {
+    justify-self: start;
   }
 
   .skill-chain-grid {
@@ -23136,7 +23272,8 @@ button.trash-entry-main:focus-visible {
     padding-left: 24px;
   }
 
-  .capability-board {
+  .capability-relation-parallel,
+  .capability-relation-member-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 

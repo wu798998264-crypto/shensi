@@ -255,7 +255,7 @@ import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSessi
 import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=5.4.11-single-semantic-pass";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
-import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, validateCapabilityTemplate } from "./capability-template.js?v=0.42.6-capability-drag-reorder";
+import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
 import { SKILL_CAPABILITY_CATEGORIES, resolveSkillCapabilitiesFromCategories, skillCapabilityCategoryIds, skillCapabilityCategoryLabels } from "./skill-capability-categories.js?v=0.36.35-skill-categories";
 import { compatibleTriggerDeclaration } from "./skill-trigger.js?v=0.43.0-import-compatibility";
 import { mergeSkillDraftValues } from "./skill-draft-merge.js?v=0.43.1-preserve-user-input";
@@ -20638,7 +20638,9 @@ const renderCapabilityNodePreview = (node, bundle) => {
   return `<span class="capability-cell-preview${entries.length ? "" : " is-empty"}">${cells.join("")}</span>`;
 };
 
-const renderCapabilityNodeCell = (item, node) => {
+const capabilityMemberDataAttributes = ({ scopeType, scopeId, relationType, relationRole } = {}) => `data-capability-scope-type="${escapeHtml(scopeType)}" data-capability-scope-id="${escapeHtml(scopeId)}" data-relation-type="${escapeHtml(relationType)}" data-relation-role="${escapeHtml(relationRole)}"`;
+
+const renderCapabilityNodeCell = (item, node, scope) => {
   // The badge on a child card describes its role in the visible parent.
   // Showing the child's own internal relation here made an organization look
   // entirely parallel even though routing correctly treated it as upper/lower.
@@ -20647,7 +20649,13 @@ const renderCapabilityNodeCell = (item, node) => {
   const bundle = capabilityTemplateBundle();
   const countLabel = item.targetType === "group" ? `${capabilityNodeCount(node, bundle)} 个模块或模组` : `${capabilityNodeCount(node, bundle)} 个 Skill 插槽`;
   const kernelManaged = isKernelManagedCapabilityNode(item.targetType, item.targetId) || node?.kernelManaged === true;
-  return `<article class="capability-board-cell capability-node-cell${kernelManaged ? " is-kernel-managed" : ""}${node?.disabled ? " is-disabled" : ""}" data-capability-node-context-type="${escapeHtml(item.targetType)}" data-capability-node-context-id="${escapeHtml(item.targetId)}" data-capability-placement-id="${escapeHtml(item.id)}" data-capability-member-id="${escapeHtml(item.id)}" data-capability-member-kind="placement" data-capability-kernel-managed="${kernelManaged}" draggable="${kernelManaged ? "false" : "true"}" ${kernelManaged ? "" : 'title="拖动调整位置及当前关系中的角色"'}>
+  const relationAttributes = capabilityMemberDataAttributes({
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+    relationType: scope.node.relationType,
+    relationRole: item.role,
+  });
+  return `<article class="capability-board-cell capability-node-cell${kernelManaged ? " is-kernel-managed" : ""}${node?.disabled ? " is-disabled" : ""}" data-capability-node-context-type="${escapeHtml(item.targetType)}" data-capability-node-context-id="${escapeHtml(item.targetId)}" data-capability-placement-id="${escapeHtml(item.id)}" data-capability-member-id="${escapeHtml(item.id)}" data-capability-member-kind="placement" data-capability-kernel-managed="${kernelManaged}" ${relationAttributes} draggable="${kernelManaged ? "false" : "true"}" ${kernelManaged ? "" : 'title="拖动调整位置及当前关系中的角色"'}>
     <span class="capability-cell-property">${escapeHtml(relation)} · ${kernelManaged ? "内置机制" : typeLabel}</span>
     <button class="capability-cell-open" type="button" data-open-capability-node="${escapeHtml(item.targetType)}" data-capability-node-id="${escapeHtml(item.targetId)}">
       <strong>${escapeHtml(node?.name || "节点不可用")}${node?.disabled ? ' <span class="skill-status missing">已禁用</span>' : ""}</strong>
@@ -20658,7 +20666,7 @@ const renderCapabilityNodeCell = (item, node) => {
   </article>`;
 };
 
-const renderCapabilitySkillCell = (module, slot) => {
+const renderCapabilitySkillCell = (module, slot, scope) => {
   const skill = capabilityTemplateSkill(slot.skillId);
   const skillName = skill?.name || (slot.skillId ? "Skill 不可用" : "选择 Skill");
   const origin = !skill ? "空插槽" : String(slot.skillId).startsWith("builtin:") ? "官方" : skill.sourceType === "github" ? "GitHub 下载" : skill.origin === "downloaded" ? "广场" : skill.origin === "imported" ? "本地" : "自定义";
@@ -20668,7 +20676,13 @@ const renderCapabilitySkillCell = (module, slot) => {
   const primaryAction = slot.skillId
     ? `data-view-template-skill-detail="${escapeHtml(slot.skillId)}" data-template-skill-kind="${contextKind}"`
     : `data-open-template-skill-picker="${escapeHtml(slot.id)}" data-template-module-id="${escapeHtml(module.id)}"`;
-  return `<article class="capability-board-cell capability-skill-cell ${slot.skillId ? "is-filled" : "is-empty"}${disabled ? " is-disabled" : ""}${kernelManaged ? " is-kernel-managed" : ""}" data-capability-slot-id="${escapeHtml(slot.id)}" data-template-module-id="${escapeHtml(module.id)}" data-capability-member-id="${escapeHtml(slot.id)}" data-capability-member-kind="slot" data-capability-kernel-managed="${kernelManaged}" draggable="${kernelManaged ? "false" : "true"}" ${kernelManaged ? "" : 'title="拖动调整位置及当前关系中的角色"'} ${slot.skillId ? `data-capability-skill-context-id="${escapeHtml(slot.skillId)}" data-capability-skill-context-kind="${contextKind}"` : ""}>
+  const relationAttributes = capabilityMemberDataAttributes({
+    scopeType: scope.scopeType,
+    scopeId: scope.scopeId,
+    relationType: module.relationType,
+    relationRole: slot.role,
+  });
+  return `<article class="capability-board-cell capability-skill-cell ${slot.skillId ? "is-filled" : "is-empty"}${disabled ? " is-disabled" : ""}${kernelManaged ? " is-kernel-managed" : ""}" data-capability-slot-id="${escapeHtml(slot.id)}" data-template-module-id="${escapeHtml(module.id)}" data-capability-member-id="${escapeHtml(slot.id)}" data-capability-member-kind="slot" data-capability-kernel-managed="${kernelManaged}" ${relationAttributes} draggable="${kernelManaged ? "false" : "true"}" ${kernelManaged ? "" : 'title="拖动调整位置及当前关系中的角色"'} ${slot.skillId ? `data-capability-skill-context-id="${escapeHtml(slot.skillId)}" data-capability-skill-context-kind="${contextKind}"` : ""}>
     <span class="capability-cell-property">${escapeHtml(capabilityRoleLabel(slot.role))} · ${kernelManaged ? "内置机制" : "Skill"}</span>
     <button class="capability-cell-open" type="button" ${primaryAction}>
       <span class="capability-cell-icon">${icon(slot.skillId ? "\uE946" : "\uE710")}</span>
@@ -20680,6 +20694,38 @@ const renderCapabilitySkillCell = (module, slot) => {
 };
 
 const renderCapabilityAddCell = (scopeType) => `<button class="capability-board-cell capability-add-cell" type="button" ${scopeType === "module" ? "data-add-capability-slot" : "data-open-capability-item-picker"} title="${scopeType === "module" ? "增加一个插槽" : "添加模块或模组"}">${icon("\uE710", scopeType === "module" ? "增加一个插槽" : "添加模块或模组")}<span>${scopeType === "module" ? "增加插槽" : "添加模块或模组"}</span></button>`;
+
+const renderCapabilityRelationBoard = (scope, bundle) => {
+  const relationType = scope.node.relationType || "parallel";
+  const memberKind = scope.scopeType === "module" ? "slot" : "placement";
+  const members = scope.scopeType === "module"
+    ? (scope.node.slots ?? []).filter((slot) => Boolean(slot.skillId))
+    : capabilityTemplateVisibleItems(bundle, scope.node);
+  const renderMember = (member) => scope.scopeType === "module"
+    ? renderCapabilitySkillCell(scope.node, member, scope)
+    : renderCapabilityNodeCell(member, capabilityTemplateNode(bundle, member.targetType, member.targetId), scope);
+  const addCell = scope.node.kernelManaged === true ? "" : renderCapabilityAddCell(scope.scopeType);
+  const boardAttributes = `data-capability-board-scope="${escapeHtml(scope.scopeType)}" data-capability-scope-id="${escapeHtml(scope.scopeId)}" data-relation-type="${escapeHtml(relationType)}"`;
+  if (relationType === "parallel") {
+    return `<div class="capability-board capability-relation-parallel" ${boardAttributes}>${members.map(renderMember).join("")}${addCell}</div>`;
+  }
+  const leadRole = relationType === "organization" ? "upper" : "primary";
+  const subordinateRole = relationType === "organization" ? "lower" : "secondary";
+  const lead = members.find((member) => member.role === leadRole) || null;
+  const subordinates = members.filter((member) => member.id !== lead?.id);
+  const roleZoneAttributes = `data-capability-role-zone="${leadRole}" data-capability-zone-member-id="${escapeHtml(lead?.id || "")}" data-capability-member-kind="${memberKind}" data-capability-scope-type="${escapeHtml(scope.scopeType)}" data-capability-scope-id="${escapeHtml(scope.scopeId)}" data-relation-type="${escapeHtml(relationType)}" data-relation-role="${leadRole}"`;
+  const leadContent = lead ? renderMember(lead) : '<span class="capability-role-empty">暂无节点</span>';
+  if (relationType === "primary-secondary") {
+    return `<div class="capability-board capability-relation-primary-secondary" ${boardAttributes}>
+      <section class="capability-role-zone capability-primary-zone" ${roleZoneAttributes}><span class="capability-role-zone-caption">主要区</span>${leadContent}</section>
+      <section class="capability-role-collection capability-secondary-zone" data-relation-role="${subordinateRole}"><span class="capability-role-zone-caption">次要区</span><div class="capability-relation-member-grid">${subordinates.map(renderMember).join("")}${addCell}</div></section>
+    </div>`;
+  }
+  return `<div class="capability-board capability-relation-organization" ${boardAttributes}>
+    <section class="capability-role-zone capability-upper-zone" ${roleZoneAttributes}><span class="capability-role-zone-caption">上位区</span>${leadContent}</section>
+    <section class="capability-role-collection capability-lower-zone" data-relation-role="${subordinateRole}"><span class="capability-role-zone-caption">下位区</span><div class="capability-relation-member-grid">${subordinates.map(renderMember).join("")}${addCell}</div></section>
+  </div>`;
+};
 
 const capabilityScopeBreadcrumbs = (bundle) => {
   const crumbs = [{ scopeType: "template", scopeId: bundle.template.id, name: bundle.template.name }];
@@ -20717,12 +20763,6 @@ const renderCapabilityTemplateManager = () => {
   const breadcrumbs = capabilityScopeBreadcrumbs(bundle);
   const back = scope.scopeType === "template" ? "" : `<button class="icon-button bare" type="button" data-capability-back title="返回上一步">${icon("\uE72B", "返回上一步")}</button>`;
   const crumbs = breadcrumbs.map((crumb, index) => `<button type="button" data-capability-breadcrumb="${index}">${escapeHtml(crumb.name)}</button>`).join('<span aria-hidden="true">/</span>');
-  const board = scope.scopeType === "module"
-    ? (node.slots ?? []).filter((slot) => Boolean(slot.skillId)).map((slot) => renderCapabilitySkillCell(node, slot)).join("")
-    : capabilityTemplateVisibleItems(bundle, node).map((item) => {
-      const child = capabilityTemplateNode(bundle, item.targetType, item.targetId);
-      return renderCapabilityNodeCell(item, child);
-    }).join("");
   const saveLabel = scope.scopeType === "template" ? "保存面板版本" : scope.scopeType === "group" ? "保存模组版本" : "保存模块版本";
   const typeLabel = scope.scopeType === "template" ? "面板" : scope.scopeType === "group" ? "模组" : "模块";
   const scopeSummary = globalUiPreferences.uiLanguage === "en-US"
@@ -20746,7 +20786,7 @@ const renderCapabilityTemplateManager = () => {
     <header class="capability-template-header" data-capability-node-context-type="${scope.scopeType}" data-capability-node-context-id="${escapeHtml(scope.scopeId)}">
       ${back}<div><nav>${crumbs}</nav><span>${typeLabel} · ${escapeHtml(capabilityRelationLabel(node.relationType))}关系</span><h4>${escapeHtml(node.name)}</h4><p>${escapeHtml(node.description || "尚未填写具体作用。")}</p><small>触发规则：${escapeHtml(node.triggerRules || "尚未填写")}</small></div>
     </header>
-    <div class="capability-board" data-capability-board-scope="${scope.scopeType}">${board}${scope.node.kernelManaged === true ? "" : renderCapabilityAddCell(scope.scopeType)}</div>
+    ${renderCapabilityRelationBoard(scope, bundle)}
     <footer class="capability-template-footer">
       ${scope.scopeType === "template" ? `<span class="capability-template-footer-actions"><button class="secondary-button" type="button" data-open-route-history>${icon("\uE81C")}<span>任务路由历史</span></button><button class="secondary-button" type="button" data-reset-capability-template>${icon("\uE777")}<span>一键还原初始面板</span></button></span>` : "<span></span>"}
       <button class="primary-button" type="button" data-save-capability-scope ${validation.valid ? "" : "disabled"}>${icon("\uE74E")}<span>${saveLabel}</span></button>
@@ -68382,15 +68422,82 @@ elements.skillSettingsContent.addEventListener("keydown", (event) => {
   openSkillDetail({ kind: "marketplace", id: card.dataset.marketplaceSkillId }).catch((error) => showToast(error.message || "Skill 详情读取失败"));
 });
 
+const clearCapabilityMemberDropIndicators = () => {
+  elements.skillSettingsContent.querySelectorAll(".is-drop-before, .is-drop-after, .is-drop-swap, .is-swap-counterpart")
+    .forEach((item) => {
+      item.classList.remove("is-drop-before", "is-drop-after", "is-drop-swap", "is-swap-counterpart");
+      item.removeAttribute("data-drop-label");
+    });
+};
+
 const clearCapabilityMemberDrag = () => {
   ui.draggingCapabilityMember = null;
-  elements.skillSettingsContent.querySelectorAll(".is-dragging, .is-drop-before, .is-drop-after")
-    .forEach((item) => item.classList.remove("is-dragging", "is-drop-before", "is-drop-after"));
+  elements.skillSettingsContent.querySelectorAll(".is-dragging").forEach((item) => item.classList.remove("is-dragging"));
+  clearCapabilityMemberDropIndicators();
 };
 
 const capabilityMemberDropPlacement = (target, clientX) => {
   const rect = target.getBoundingClientRect();
   return clientX < rect.left + rect.width / 2 ? "before" : "after";
+};
+
+const capabilityMemberDropTarget = (eventTarget) => {
+  const member = eventTarget.closest?.("[data-capability-member-id]");
+  if (member) return {
+    element: member,
+    id: member.dataset.capabilityMemberId,
+    kind: member.dataset.capabilityMemberKind,
+    scopeType: member.dataset.capabilityScopeType,
+    scopeId: member.dataset.capabilityScopeId,
+    relationType: member.dataset.relationType,
+    relationRole: member.dataset.relationRole,
+  };
+  const zone = eventTarget.closest?.("[data-capability-role-zone]");
+  if (!zone?.dataset.capabilityZoneMemberId) return null;
+  return {
+    element: zone,
+    id: zone.dataset.capabilityZoneMemberId,
+    kind: zone.dataset.capabilityMemberKind,
+    scopeType: zone.dataset.capabilityScopeType,
+    scopeId: zone.dataset.capabilityScopeId,
+    relationType: zone.dataset.relationType,
+    relationRole: zone.dataset.relationRole,
+  };
+};
+
+const capabilityMemberDropOperation = (source, target, clientX) => {
+  if (!source || !target || source.id === target.id || source.kind !== target.kind) return null;
+  if (source.scopeType !== target.scopeType || source.scopeId !== target.scopeId) return null;
+  if (source.relationType !== target.relationType) return null;
+  const relationType = source.relationType || "parallel";
+  if (relationType === "parallel") {
+    return { type: "reorder", placement: capabilityMemberDropPlacement(target.element, clientX) };
+  }
+  const leadRole = relationType === "organization" ? "upper" : "primary";
+  const subordinateRole = relationType === "organization" ? "lower" : "secondary";
+  const roles = new Set([source.relationRole, target.relationRole]);
+  if (roles.has(leadRole) && roles.has(subordinateRole)) {
+    return { type: "swap", leadRole, label: relationType === "organization" ? "替换上位节点" : "替换主要节点" };
+  }
+  if (source.relationRole === subordinateRole && target.relationRole === subordinateRole) {
+    return { type: "reorder", placement: capabilityMemberDropPlacement(target.element, clientX) };
+  }
+  return null;
+};
+
+const renderCapabilityMemberDropIndicator = (target, operation) => {
+  clearCapabilityMemberDropIndicators();
+  if (operation.type === "reorder") {
+    target.element.classList.add(operation.placement === "before" ? "is-drop-before" : "is-drop-after");
+    return;
+  }
+  const board = target.element.closest(".capability-board");
+  const leadZone = board?.querySelector(`[data-capability-role-zone="${operation.leadRole}"]`);
+  if (leadZone) {
+    leadZone.classList.add("is-drop-swap");
+    leadZone.dataset.dropLabel = operation.label;
+  }
+  if (target.relationRole !== operation.leadRole) target.element.classList.add("is-swap-counterpart");
 };
 
 elements.skillSettingsContent.addEventListener("dragstart", (event) => {
@@ -68399,6 +68506,10 @@ elements.skillSettingsContent.addEventListener("dragstart", (event) => {
   ui.draggingCapabilityMember = {
     id: member.dataset.capabilityMemberId,
     kind: member.dataset.capabilityMemberKind,
+    scopeType: member.dataset.capabilityScopeType,
+    scopeId: member.dataset.capabilityScopeId,
+    relationType: member.dataset.relationType,
+    relationRole: member.dataset.relationRole,
   };
   member.classList.add("is-dragging");
   if (event.dataTransfer) {
@@ -68409,45 +68520,65 @@ elements.skillSettingsContent.addEventListener("dragstart", (event) => {
 
 elements.skillSettingsContent.addEventListener("dragover", (event) => {
   const source = ui.draggingCapabilityMember;
-  const target = event.target.closest("[data-capability-member-id]");
-  if (!source || !target || target.dataset.capabilityMemberKind !== source.kind || target.dataset.capabilityMemberId === source.id) return;
+  const target = capabilityMemberDropTarget(event.target);
+  const operation = capabilityMemberDropOperation(source, target, event.clientX);
+  if (!operation) {
+    clearCapabilityMemberDropIndicators();
+    return;
+  }
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  const placement = capabilityMemberDropPlacement(target, event.clientX);
-  elements.skillSettingsContent.querySelectorAll(".is-drop-before, .is-drop-after")
-    .forEach((item) => item.classList.remove("is-drop-before", "is-drop-after"));
-  target.classList.add(placement === "before" ? "is-drop-before" : "is-drop-after");
+  renderCapabilityMemberDropIndicator(target, operation);
 });
 
 elements.skillSettingsContent.addEventListener("dragleave", (event) => {
-  const target = event.target.closest("[data-capability-member-id]");
-  if (target && !target.contains(event.relatedTarget)) target.classList.remove("is-drop-before", "is-drop-after");
+  const board = event.target.closest(".capability-board");
+  if (board && !board.contains(event.relatedTarget)) clearCapabilityMemberDropIndicators();
 });
 
 elements.skillSettingsContent.addEventListener("drop", (event) => {
   const source = ui.draggingCapabilityMember;
-  const target = event.target.closest("[data-capability-member-id]");
-  if (!source || !target || target.dataset.capabilityMemberKind !== source.kind || target.dataset.capabilityMemberId === source.id) return;
+  const target = capabilityMemberDropTarget(event.target);
+  const operation = capabilityMemberDropOperation(source, target, event.clientX);
+  if (!operation) return;
   event.preventDefault();
   try {
     const bundle = capabilityTemplateBundle();
     const scope = capabilityTemplateScope(bundle);
     const expectedKind = scope?.scopeType === "module" ? "slot" : "placement";
-    if (!scope || source.kind !== expectedKind) throw new Error("拖拽目标与当前面板层级不一致");
-    const placement = capabilityMemberDropPlacement(target, event.clientX);
-    const next = reorderCapabilityTemplateMember(bundle, {
+    const sameScope = scope
+      && source.scopeType === scope.scopeType
+      && source.scopeId === scope.scopeId
+      && target.scopeType === scope.scopeType
+      && target.scopeId === scope.scopeId;
+    if (!sameScope || source.kind !== expectedKind) throw new Error("只能在当前模块、模组或面板内部调整位置");
+    const currentScope = capabilityTemplateNode(bundle, scope.scopeType, scope.scopeId);
+    const currentMembers = scope.scopeType === "module" ? currentScope?.slots : currentScope?.items;
+    const sourceMember = currentMembers?.find((member) => member.id === source.id);
+    const targetMember = currentMembers?.find((member) => member.id === target.id);
+    if (!sourceMember || !targetMember) throw new Error("拖拽成员已变化，请重新操作");
+    const verifiedOperation = capabilityMemberDropOperation(
+      { ...source, relationType: currentScope.relationType, relationRole: sourceMember.role },
+      { ...target, relationType: currentScope.relationType, relationRole: targetMember.role },
+      event.clientX,
+    );
+    if (!verifiedOperation) throw new Error("当前关系不允许这次拖拽");
+    const operationInput = {
       scopeType: scope.scopeType,
       scopeId: scope.scopeId,
       memberId: source.id,
-      targetMemberId: target.dataset.capabilityMemberId,
-      placement,
-    });
+      targetMemberId: target.id,
+    };
+    const next = verifiedOperation.type === "swap"
+      ? swapCapabilityTemplateMembers(bundle, operationInput)
+      : reorderCapabilityTemplateMember(bundle, { ...operationInput, placement: verifiedOperation.placement });
     const nextScope = capabilityTemplateNode(next, scope.scopeType, scope.scopeId);
     const members = scope.scopeType === "module" ? nextScope.slots : nextScope.items;
     const moved = members.find((member) => member.id === source.id);
     setCapabilityTemplateDraft(next);
     renderSkillSettings();
-    showToast(`位置已调整，当前为“${capabilityRoleLabel(moved?.role)}”关系；请保存${scope.scopeType === "module" ? "模块" : scope.scopeType === "group" ? "模组" : "面板"}版本`);
+    const actionLabel = verifiedOperation.type === "swap" ? "角色已精确交换" : "位置已调整";
+    showToast(`${actionLabel}，当前为“${capabilityRoleLabel(moved?.role)}”关系；请保存${scope.scopeType === "module" ? "模块" : scope.scopeType === "group" ? "模组" : "面板"}版本`);
   } catch (error) {
     showToast(error.message || "面板位置调整失败");
   } finally {
@@ -68472,38 +68603,41 @@ elements.skillSettingsContent.addEventListener("dragend", () => {
 });
 
 elements.skillSettingsContent.addEventListener("dragover", (event) => {
-  const groupTarget = event.target.closest("[data-slot-group-drop-target]");
   const slotTarget = event.target.closest("[data-custom-slot-id]");
-  if (!ui.draggingSkillSlotId || (!groupTarget && !slotTarget)) return;
+  const sourceSlot = (ui.skillCatalog.customSlots ?? []).find((item) => item.id === ui.draggingSkillSlotId);
+  const sameParent = sourceSlot && slotTarget
+    && String(sourceSlot.parentGroupId || "") === String(slotTarget.dataset.parentGroupId || "");
+  if (!sameParent || slotTarget.dataset.customSlotId === sourceSlot.id) {
+    elements.skillSettingsContent.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+    return;
+  }
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
-  const target = slotTarget || groupTarget;
-  elements.skillSettingsContent.querySelectorAll(".is-drag-over").forEach((item) => { if (item !== target) item.classList.remove("is-drag-over"); });
-  target.classList.add("is-drag-over");
+  elements.skillSettingsContent.querySelectorAll(".is-drag-over").forEach((item) => { if (item !== slotTarget) item.classList.remove("is-drag-over"); });
+  slotTarget.classList.add("is-drag-over");
 });
 
 elements.skillSettingsContent.addEventListener("dragleave", (event) => {
-  const target = event.target.closest("[data-slot-group-drop-target]");
+  const target = event.target.closest("[data-slot-group-drop-target], [data-custom-slot-id]");
   if (target && !target.contains(event.relatedTarget)) target.classList.remove("is-drag-over");
 });
 
 elements.skillSettingsContent.addEventListener("drop", async (event) => {
-  const targetGroup = event.target.closest("[data-slot-group-drop-target]");
   const targetSlot = event.target.closest("[data-custom-slot-id]");
-  const id = ui.draggingSkillSlotId || event.dataTransfer.getData("text/plain");
-  if (!id || (!targetGroup && !targetSlot)) return;
-  event.preventDefault();
-  if (targetSlot?.dataset.customSlotId === id) return;
+  const id = ui.draggingSkillSlotId;
+  if (!id || !targetSlot || targetSlot.dataset.customSlotId === id) return;
   const slot = (ui.skillCatalog.customSlots ?? []).find((item) => item.id === id);
   if (!slot) return;
-  const parentGroupId = targetGroup?.dataset.slotGroupDropTarget ?? targetSlot?.dataset.parentGroupId ?? "";
-  const targetOrder = targetSlot ? (ui.skillCatalog.customSlots ?? [])
+  const parentGroupId = String(slot.parentGroupId || "");
+  if (parentGroupId !== String(targetSlot.dataset.parentGroupId || "")) return;
+  event.preventDefault();
+  const targetOrder = (ui.skillCatalog.customSlots ?? [])
     .filter((item) => (item.parentGroupId || "") === parentGroupId && item.id !== id)
     .sort((left, right) => Number(left.order || 999) - Number(right.order || 999)
       || Number(left.createdAt || 0) - Number(right.createdAt || 0)
       || left.name.localeCompare(right.name, "zh-CN"))
-    .findIndex((item) => item.id === targetSlot.dataset.customSlotId) : -1;
-  const nextOrder = targetSlot && targetOrder >= 0 ? targetOrder : (ui.skillCatalog.customSlots ?? []).filter((item) => (item.parentGroupId || "") === parentGroupId && item.id !== id).length;
+    .findIndex((item) => item.id === targetSlot.dataset.customSlotId);
+  const nextOrder = targetOrder >= 0 ? targetOrder : (ui.skillCatalog.customSlots ?? []).filter((item) => (item.parentGroupId || "") === parentGroupId && item.id !== id).length;
   if ((slot.parentGroupId || "") === parentGroupId && Number(slot.order || 0) === nextOrder) return;
   try {
     const response = await fetch("/api/skills/slots/upsert", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, parentGroupId, order: nextOrder }) });

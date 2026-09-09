@@ -20,7 +20,7 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 const theoryGroup = template.groups.find((group) => group.id === "group:novel-theory");
 assert.equal(theoryGroup.relationType, "organization");
 assert.deepEqual(theoryGroup.items.map((item) => item.role), ["upper", "lower", "lower", "lower", "lower"]);
-assert.match(appSource, /const renderCapabilityNodeCell = \(item, node\) => \{[\s\S]{0,500}capabilityRoleLabel\(item\?\.role \|\| "peer"\)/u,
+assert.match(appSource, /const renderCapabilityNodeCell = \(item, node, scope\) => \{[\s\S]{0,500}capabilityRoleLabel\(item\?\.role \|\| "peer"\)/u,
   "模组内部卡片必须显示其在父模组中的上位/下位角色，不能误显子模块自己的并行关系");
 assert.equal(theoryGroup.items[0].targetId, "module:novel-theory-advisor");
 
