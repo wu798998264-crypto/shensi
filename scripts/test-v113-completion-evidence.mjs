@@ -361,12 +361,19 @@ assert.match(appSource, /clipboardData/u);
 assert.match(appSource, /addAttachments/u);
 assert.match(appSource, /data-edit-queued/u);
 assert.match(appSource, /queued-inline-editor/u);
-assert.match(appSource, /executionSurface = "agent";\s+const requestWorkspaceState/u,
-  "所有文字请求必须统一进入 Agent；闲聊只允许由内部快速通道降级");
+const nativeConversationSource = appSource.slice(
+  appSource.indexOf("const executeConversationAgentMessage ="),
+  appSource.indexOf("const sendMessage ="),
+);
+assert.match(nativeConversationSource, /conversationAgentRequest\("\/api\/conversation-agent\/start"/u,
+  "所有普通文字请求必须统一进入原生 Agent");
 assert.match(appSource, /contractDocument\.externalContentChanged === true/u);
-assert.match(appSource, /requestTarget\?\.crossFormatRoute\?\.targetDocumentId/u);
-assert.match(appSource, /const committedExecution = landed/u);
-assert.match(appSource, /landingStatus: "committed"/u);
-assert.match(appSource, /generationAttempt:[\s\S]{0,500}status: "committed"/u);
+assert.match(nativeConversationSource, /const targetDocumentId = options\.inlineEdit\?\.documentId \|\| taskContextSnapshot\.activeDocumentId \|\| conversation\.boundDocumentId \|\| ""/u);
+assert.doesNotMatch(nativeConversationSource, /crossFormatRoute|isExplicitCrossFormatInstruction/u,
+  "跨格式任务不得再由普通对话本地关键词路由抢先指定目标");
+assert.match(appSource, /const landed = hasVerifiedLandingReceipt\(reply\);[\s\S]{0,900}landingStatus: verificationPending \? reply\.engineExecution\.status : landed \? "committed" : "failed"/u,
+  "正式交付只能在验证回执成功后标记为 committed");
+assert.match(appSource, /if \(requestId\) message\.generationAttempt = clone\(await fetchGenerationAttempt\(requestId\)/u,
+  "正式落盘后必须回读并保留后台任务的完成证据");
 
 console.log("Shensi v1.1.3 completion evidence passed");
