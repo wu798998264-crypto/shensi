@@ -5,6 +5,7 @@ import { STRUCTURE_WORKSPACE_VERSION } from "./structure-schema.js";
 import { canonicalEpisodeTitle, episodeHeadingParts, parseEpisodeHeading } from "./episode-document.js";
 import { effectiveSequencedDocumentNumber, freeDocumentTitle, legacySequencedTitleParts, sequencedDocumentKind, sequencedDocumentLabel } from "./document-title-policy.js";
 import { taskConversationMetadata } from "./workspace-conversation-policy.js";
+import { DEFAULT_AGENT_PERMISSION_MODE } from "./agent-permission-policy.js";
 
 export const MODULES = WORKSPACE_MODULES;
 
@@ -238,6 +239,7 @@ export const createInitialState = () => ({
   settings: {
     activeTextConnectionId: "text-public-agent",
     activeTextAgentConnectionId: "text-public-agent",
+    agentPermissionMode: DEFAULT_AGENT_PERMISSION_MODE,
     adapter: "api",
     provider: "OpenAI",
     protocol: "responses",

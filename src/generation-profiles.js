@@ -1,5 +1,6 @@
 import { DREAMINA_CLI_PROFILES, DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS, OPENAI_IMAGE_CLI_ALIAS, OPENAI_IMAGE_CLI_ARGS, validDreaminaCliProfileId } from "./media-cli-presets.js?v=2.19.7-media-account-pool";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderAudioModelOptions, getProviderImageModelOptions, getProviderModelOptions, getProviderPreset, getProviderVideoModelOptions } from "./model-presets.js";
+import { normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 
 const CHANNELS = ["text", "image", "video", "audio"];
 const GENERATION_RUNTIME_FIELDS = Object.freeze(["baseUrl", "cliPath", "cliArgs"]);
@@ -1147,7 +1148,7 @@ export const createGenerationProfile = (channel, overrides = {}) => {
 };
 
 export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
-  const next = { ...settings };
+  const next = { ...settings, agentPermissionMode: normalizeAgentPermissionMode(settings.agentPermissionMode) };
   for (const channel of CHANNELS) {
     const keys = PROFILE_KEYS[channel];
     const source = Array.isArray(settings[keys.list]) && settings[keys.list].length
