@@ -7667,6 +7667,8 @@ const handleApiRequest = async (request, response, pathname) => {
         guidanceSelectionMode,
         semanticDeliverableType: deliverableType,
         semanticLane: agentDecision.lane,
+        semanticWriteIntent: agentDecision.writePlan?.intent || "",
+        semanticWriteOperation: agentDecision.writePlan?.operation || creativeTask.operation || "",
         semanticGuidanceCompleted: agentDecision.guidanceCompleted === true,
         recoveryCandidate: body.resume === true ? startedAttempt.adoptedCandidate : "",
         languagePolicy: serverLanguagePolicy,

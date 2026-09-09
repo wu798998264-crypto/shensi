@@ -100,7 +100,8 @@ assert.match(appSource, /kind:\s*"fresh_start"/u);
 assert.match(appSource, /label:\s*"从零开始"/u);
 assert.match(appSource, /label:\s*"先补充资料"/u);
 assert.match(appSource, /只依据现有资料继续/u, "服务端资料选择必须能解除本轮缺失资料等待");
-assert.match(appSource, /freshCreativeStart\s*\|\|\s*recoverableContextGateRetry\s*\?\s*\[\]/u, "确认继续后不得再次提交同一失效引用形成循环");
-assert.match(appSource, /contextAvailability\.status\s*!==\s*"retry_read"/u, "已有可读资料时不得在客户端提前阻断服务端全文重读");
+assert.match(appSource, /explicitReferenceDocumentIds:\s*recoverableContextGateRetry\s*\?\s*\[\]\s*:/u, "确认继续后不得再次提交同一失效引用形成循环");
+assert.doesNotMatch(appSource, /hardContextBlocked|contextAvailability\.status/u, "普通 Agent 对话不得由已删除的客户端资料门禁提前阻断");
+assert.match(appSource, /conversationAgentRequest\("\/api\/conversation-agent\/start"/u, "资料重读必须交给统一 Agent 入口");
 
 console.log("Shensi v2.84 required context reload tests passed");

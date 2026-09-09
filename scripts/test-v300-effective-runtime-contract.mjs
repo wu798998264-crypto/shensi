@@ -62,6 +62,20 @@ const settings = normalizeGenerationProfiles({
     },
   ],
 }, { text: { "deepseek-chat": "test-only" } });
+const profileById = (id) => settings.textConnections.find((profile) => profile.id === id);
+const legacyClaudeProfile = {
+  id: "claude-deepseek",
+  provider: "DeepSeek",
+  adapter: "cli",
+  protocol: "responses",
+  model: "deepseek-v4-pro",
+  agentModelId: "deepseek-v4-pro",
+  executionMode: "agent",
+  executionModes: ["agent"],
+  agentEngine: "claude_code",
+  credentialSource: "shensi",
+};
+assert.equal(profileById("claude-deepseek"), undefined, "重复 DeepSeek Agent 配置必须在归一化后清除");
 
 const chat = effectiveRuntimeContract({ settings, surface: "chat" });
 assert.equal(chat.ok, true);
@@ -85,7 +99,7 @@ assert.equal(explicitChat.ok, false, "DeepSeek API 配置不能冒充神思运�
 assert.equal(explicitChat.code, "CODEX_PROVIDER_MISMATCH");
 
 const explicitCustomApi = runtimeContractForProfile({
-  profile: { ...settings.textConnections[1], provider: "自定义兼容接口" },
+  profile: { ...profileById("deepseek-chat"), provider: "自定义兼容接口" },
   surface: "agent",
 });
 assert.equal(explicitCustomApi.ok, true);
@@ -99,28 +113,28 @@ assert.equal(legacySurface.surface, "agent");
 assert.equal(legacySurface.profileId, "opencode-deepseek", "旧 Chat surface 不能偷偷回退到其他配置");
 
 const invalidOpenCode = runtimeContractForProfile({
-  profile: { ...settings.textConnections[2], model: "deepseek-v4-pro", agentModelId: "" },
+  profile: { ...profileById("opencode-deepseek"), model: "deepseek-v4-pro", agentModelId: "" },
   surface: "agent",
 });
 assert.equal(invalidOpenCode.ok, false);
 assert.equal(invalidOpenCode.code, "OPENCODE_MODEL_ID_INVALID");
 
 const invalidCodex = runtimeContractForProfile({
-  profile: { ...settings.textConnections[0], model: "openai/gpt-5.6-sol", agentModelId: "openai/gpt-5.6-sol" },
+  profile: { ...profileById("openai-both"), model: "openai/gpt-5.6-sol", agentModelId: "openai/gpt-5.6-sol" },
   surface: "agent",
 });
 assert.equal(invalidCodex.ok, false);
 assert.equal(invalidCodex.code, "CODEX_MODEL_ID_INVALID");
 
-const claude = runtimeContractForProfile({ profile: settings.textConnections[3], surface: "agent" });
+const claude = runtimeContractForProfile({ profile: legacyClaudeProfile, surface: "agent" });
 assert.equal(claude.ok, true);
 assert.equal(claude.runner, "claude_code");
 assert.equal(claude.provider, "DeepSeek");
 assert.equal(claude.model, "deepseek-v4-pro", "配置归一化会去掉旧 Claude 模型的上下文后缀");
 
-assert.equal(shouldShowCodexAccountControls(settings.textConnections[0]), true);
-assert.equal(shouldShowCodexAccountControls(settings.textConnections[2]), false);
-assert.equal(shouldShowCodexAccountControls(settings.textConnections[3]), false);
+assert.equal(shouldShowCodexAccountControls(profileById("openai-both")), true);
+assert.equal(shouldShowCodexAccountControls(profileById("opencode-deepseek")), false);
+assert.equal(shouldShowCodexAccountControls(legacyClaudeProfile), false);
 
 const bindingRoot = await mkdtemp(join(tmpdir(), "shensi-v300-runtime-contract-"));
 try {

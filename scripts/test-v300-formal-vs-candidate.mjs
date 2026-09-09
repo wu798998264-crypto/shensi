@@ -40,7 +40,9 @@ assert.equal(classifyAssistantOutput({
 }).kind, "discussion");
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(app, /classifyAssistantOutput\(\{/u, "真实回复处理必须使用统一输出分类");
+assert.doesNotMatch(app, /import\s+\{\s*classifyAssistantOutput\s*\}/u, "普通 Agent 回复不得再依赖前端关键词输出分类");
+assert.match(app, /materializeCandidateDraftBranches\(/u, "原生 Agent 候选事件必须进入候选分支管理");
+assert.match(app, /nativeAgentRunId/u, "真实回复处理必须绑定原生 Agent 运行实例");
 assert.match(app, /当前没有识别到可直接写入的正式内容。请说明要写入哪条回复或哪一段/u, "没有识别到正式内容时必须主动澄清且不得混用候选稿术语");
 assert.match(app, /Agent 已生成正式内容，正在自动落盘/u, "单一正式内容必须显示为正式内容而非候选稿");
 

@@ -186,6 +186,27 @@ assert.equal(route.writeAuthorization.action, "append");
 assert.deepEqual(route.writeAuthorization.targetDocumentIds, ["doc-at-submit"]);
 assert.match(route.writeAuthorization.reason, /agent_semantic_commit/u);
 
+const semanticProductionProfile = detectShensiRunProfile({
+  prompt: "请完成本轮任务",
+  routingText: "请完成本轮任务",
+  requestMode: "creative",
+  targetDocumentId: "chapter-1",
+  semanticDeliverableType: "novel",
+  semanticLane: "task_execution",
+  semanticWriteIntent: "commit",
+  semanticWriteOperation: "append",
+});
+assert.equal(semanticProductionProfile.production, true, "结构化 Agent 写入决定不得再被无关键词原文降级为引导");
+assert.equal(semanticProductionProfile.candidateCount, 1, "结构化 Agent 正式写入应至少进入一条成品执行链");
+assert.equal(detectShensiRunProfile({
+  prompt: "请完成本轮任务",
+  requestMode: "creative",
+  targetDocumentId: "chapter-1",
+  semanticLane: "task_execution",
+  semanticWriteIntent: "commit",
+  semanticWriteOperation: "none",
+}).production, true, "操作字段为空时也不得回退关键词判断，写入授权会在宿主层补齐默认操作");
+
 const readOnly = createFormalWriteAuthorization({
   instruction: "请直接写入当前文档——文本故意与结构化决定冲突",
   sourceMessageId: "message-semantic-2",
@@ -222,8 +243,10 @@ assert.doesNotMatch(serverSource, /if \(agentDecision\.lane === "guided_dialogue
   "guided_dialogue 不能在 Skill 路由之前提前返回");
 assert.doesNotMatch(appSource, /if \(creativeGuidanceRequested && !guidanceDialog\)/u,
   "首轮不得根据本地关键词直接递归创建创作引导");
-assert.match(appSource, /localRuntimeReply = materialInspectionActive/u,
-  "普通消息不得被本地关键词路由绕过统一 Agent");
+assert.doesNotMatch(appSource, /localRuntimeReply\s*=\s*materialInspectionActive/u,
+  "普通消息不得保留已废弃的本地关键词回复分流");
+assert.doesNotMatch(appSource, /executionSurface:\s*"chat"[\s\S]{0,220}sendMessage\(prompt/u,
+  "普通消息不得以 chat 执行面进入对话发送链");
 assert.match(serverSource, /semanticDeliverableType:\s*deliverableType/u,
   "正式创作引导编排器必须接收 Agent 判断的产物类型");
 assert.match(serverSource, /semanticLane:\s*agentDecision\.lane/u,

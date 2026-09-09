@@ -325,9 +325,11 @@ const taskLabel = ({ activeModule = "manuscript", contextDomain = "novel" }) => 
   })[activeModule] ?? "创作任务";
 };
 
-export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", requestMode = "creative", targetDocumentId = "", semanticDeliverableType = "", semanticLane = "", semanticGuidanceCompleted = false, taskContract = null } = {}) => {
+export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", requestMode = "creative", targetDocumentId = "", semanticDeliverableType = "", semanticLane = "", semanticWriteIntent = "", semanticWriteOperation = "", semanticGuidanceCompleted = false, taskContract = null } = {}) => {
   const normalizedPrompt = String(prompt);
   const contractDecision = validateTaskContractForExecution(taskContract);
+  const semanticProduction = semanticLane === "task_execution"
+    && ["candidate", "commit", "candidate_only"].includes(String(semanticWriteIntent || ""));
   const contractProduction = semanticLane !== "guided_dialogue"
     && contractDecision.valid
     && contractDecision.authoritative
@@ -374,7 +376,7 @@ export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeMo
   const reviewDelivery = reviewDeliveryPolicy({ text: routedPrompt, contextDomain });
   const reviewMutationPrompt = routedPrompt.replace(REVIEW_ADVICE_PHRASE_PATTERN, "");
   const reviewOnly = reviewDelivery.active && !REVIEW_CONTENT_MUTATION_PATTERN.test(reviewMutationPrompt);
-  const production = contractProduction || (!reviewOnly && (direct
+  const production = semanticProduction || contractProduction || (!reviewOnly && (direct
     || hasExplicitCreativeProductionIntent({ text: routedPrompt, targetDocumentId: effectiveTargetDocumentId })
     || PRODUCTION_PATTERN.test(routedPrompt)));
   const fullAudit = FULL_AUDIT_PATTERN.test(routedPrompt);
@@ -1889,6 +1891,8 @@ export const runShensiOrchestration = async ({
   guidanceSelectionMode = "",
   semanticDeliverableType = "",
   semanticLane = "",
+  semanticWriteIntent = "",
+  semanticWriteOperation = "",
   semanticGuidanceCompleted = false,
   recoveryCandidate = "",
   taskEnvelope = {},
@@ -1911,7 +1915,7 @@ export const runShensiOrchestration = async ({
     .slice(-8)
     .map(({ content }) => String(content ?? ""))
     .join("\n");
-  const profile = detectShensiRunProfile({ prompt, routingText, activeModule, contextDomain, requestMode, targetDocumentId, semanticDeliverableType, semanticLane, semanticGuidanceCompleted, taskContract: creativeTask?.taskContract ?? null });
+  const profile = detectShensiRunProfile({ prompt, routingText, activeModule, contextDomain, requestMode, targetDocumentId, semanticDeliverableType, semanticLane, semanticWriteIntent: semanticWriteIntent || writeAuthorizationState, semanticWriteOperation: semanticWriteOperation || creativeTask?.operation || writeAuthorization?.action || "", semanticGuidanceCompleted, taskContract: creativeTask?.taskContract ?? null });
   const contractDecision = validateTaskContractForExecution(creativeTask?.taskContract);
   const contractReportDelivery = reviewDeliveryFromTaskContract(creativeTask?.taskContract, contractDecision);
   const independentReport = contractDecision.valid && contractDecision.authoritative

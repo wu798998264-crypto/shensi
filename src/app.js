@@ -119,7 +119,6 @@ import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
-import { runtimeEvidenceQuestionKind, runtimeEvidenceReply } from "./runtime-evidence-policy.js";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
 import { WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, deactivateWhiteboardGenerationDraft, duplicateWhiteboardGenerationDraftEntries, normalizeWhiteboardGenerationDraftCache, preferredWhiteboardGenerationDraftForNode, updateWhiteboardGenerationDraftCache, whiteboardGenerationDraftKey, whiteboardGenerationSurfaceIsActive } from "./whiteboard-generation-draft.js?v=5.4.10-audio-draft-v9";
 import { createWhiteboardPromptHistory, normalizeWhiteboardPromptHistorySnapshot, pushWhiteboardPromptHistory, stepWhiteboardPromptHistory } from "./whiteboard-generation-prompt-history.js?v=1.0.0";
@@ -144,14 +143,13 @@ import { renderHistoryDiff, resolveHistoryDiffInput } from "./history-diff.js";
 import { collectRelatedDocumentHistory, prepareRelatedDocumentRestore } from "./related-history.js";
 import { landingReceiptPresentation, verifiedLandingDocumentLinksForManifest, verifiedLandingManifestReceipt, verifyLandingDelivery } from "./landing-document-links.js?v=2.89-derived-receipt";
 import { createConversationTrashEntry, createFileTrashEntry, createHistoryTrashEntry, createTreeTrashEntry, daysUntilTrashExpiry, pruneTrashEntries, purgeTrashPayloadsFromState, trashPreviewDocument } from "./trash.js";
-import { buildDeletedContentRecoveryContext, deletedContentRequestMentioned, deletedContentSearchEntries } from "./deleted-content-access.js";
+import { buildDeletedContentRecoveryContext, deletedContentSearchEntries } from "./deleted-content-access.js";
 import { directoryDeletionDocumentIds, orphanTreeReferenceTrashPayload } from "./orphan-tree-reference.js";
 import { findActivityBlockIndex } from "./activity-navigation.js";
 import { batchBaseChapterNumber, candidateTargetDocumentId, chapterNumberValue, explicitlyDefersCandidateLanding, explicitlyRequestsBoundDocument, isGenerationAndLandingRequest, isLandingRequest, isLocalWriteCapabilityQuestion, requestedChapterBatch, requestedChapterTarget, stripCandidateChapterHeading } from "./chapter-target.js?v=1.1.3-direct-replace";
 import { analyzeBatchLanding, analyzeSmartLandingPath, associatedDocumentId, automaticLandingDecision, candidateLandingShouldBeDeferred, continuationDestinationIntent, conversationAssociationDisplayDocumentId, conversationAssociationRoutingAnchorId, conversationAutoAssociationEnabled, createTurnContextSnapshot, explicitNewDocumentIntent, requestsMultipleCandidates, resolveTurnAssociationChange, shouldAutoCreateDocument, splitLabeledCandidateVariants, toggleConversationDocumentAssociation } from "./automatic-landing-policy.js?v=1.1.6-fixed-conversation-binding";
 import { conversationChoiceUserInstruction } from "./conversation-choice-panel.js?v=5.4.11-real-uncertainty-only";
 import { resolveConversationFormalContentReference } from "./conversation-formal-content.js";
-import { classifyAssistantOutput } from "./assistant-output-kind.js?v=3.0.10";
 import {
   openCodeCatalogCacheKey,
   openCodeCatalogGroupsForProvider,
@@ -206,7 +204,6 @@ import { bindFormalWriteCandidate, createFormalWriteAuthorization, rebaseFormalW
 import { formalDocumentWriteRevision, formalDocumentWriteRevisionFromState } from "./document-write-revision.js";
 import { liveWriteTargetDecision } from "./live-write-target-policy.js";
 import { supplementRequestsLatestDocument } from "./supplement-policy.js";
-import { contextAvailabilityDecision } from "./context-availability-policy.js";
 import { manualMemorySyncDelay, memorySyncRevisionIsCurrent } from "./memory-sync-scheduler.js";
 import { createBlankDocumentBaseline, documentContentState, hasSubstantiveVersionContent } from "./version-store.js";
 import { historyOperationLabel, historySourceLabel, normalizeHistoryEntryIntegrity, stampHistoryEntryIntegrity, updateHistoryEntryMetadata, verifyHistoryEntryIntegrity } from "./version-integrity.js";
@@ -32604,28 +32601,6 @@ const deterministicStructuralWorkspacePlan = (prompt = "") => {
   });
 };
 
-const isExplicitStructuralOnlyWorkspaceOperation = (prompt = "") => {
-  const source = String(prompt || "");
-  return looksLikeWorkspaceOperation(source) && (
-    /(?:只|仅)(?:需|要)?[^。；\n]{0,24}(?:调整|整理|移动|归类|重命名|改名|目录|文件夹)/u.test(source)
-    || /(?:不|不要|无需|别)[^。；\n]{0,12}(?:修改|改动|改写|重写|生成)[^。；\n]{0,8}(?:正文|内容)/u.test(source)
-  );
-};
-
-const localRuntimeStatusReply = (message) => {
-  const command = String(message || "").trim();
-  const kind = runtimeEvidenceQuestionKind(command);
-  if (!kind) return null;
-  const active = activeGenerationProfile(state.settings, "text", state.settings.activeTextChatConnectionId);
-  return {
-    content: runtimeEvidenceReply({
-      kind,
-      activeProfile: active,
-      connectionAvailable: Boolean(active && generationConnectionIsAvailable("text", active)),
-    }),
-  };
-};
-
 const assistantReplyFor = async (message, requestTarget = null, { conversation = activeConversation(), messages = state.messages, candidateState = state, taskContextSnapshot = null } = {}) => {
   const command = message.trim();
   const effectiveTaskContextSnapshot = taskContextSnapshot || [...(messages ?? [])].reverse()
@@ -59617,30 +59592,6 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
     workspaceName: String(taskWorkspaceSourceState.projectName || taskWorkspaceSourceState.settings?.projectName || ""),
   };
   const inTaskWorkspace = (callback) => withSynchronousWorkspaceState(taskWorkspaceSourceState, callback);
-  if (deletedContentRequestMentioned(prompt)) {
-    return await sendMessage(prompt, {
-      queuedItem,
-      immediateInstructionId,
-      conversationId: conversation.id,
-      executionSurface: "chat",
-      taskContextSnapshot: submittedTaskContextSnapshot,
-      workspaceState: taskWorkspaceSourceState,
-      preflight: () => runBoundedExternalWorkspaceRefresh({ silent: true }),
-    });
-  }
-  // Pure structure commands are owned by the local workspace-operation
-  // transaction. They must not enter the Codex creative preparation path,
-  // even when Agent is the currently selected composer runtime.
-  if (isExplicitStructuralOnlyWorkspaceOperation(prompt)) {
-    return await sendMessage(prompt, {
-      queuedItem,
-      immediateInstructionId,
-      conversationId: conversation.id,
-      executionSurface: "chat",
-      taskContextSnapshot: submittedTaskContextSnapshot,
-      workspaceState: taskWorkspaceSourceState,
-    });
-  }
   const taskMessages = conversationMessagesForTaskState(conversation, taskWorkspaceSourceState);
   const taskSnapshots = conversation.id === taskWorkspaceSourceState.activeConversationId ? taskWorkspaceSourceState.snapshots : (conversation.snapshots ??= {});
   const dispatchToken = uid("codex-dispatch");

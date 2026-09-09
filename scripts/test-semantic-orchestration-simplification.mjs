@@ -228,8 +228,14 @@ assert.match(app, /只分析当前内容/u, "续写歧义框必须提供非续�
 assert.match(app, /取消本次任务/u, "续写歧义框必须允许直接取消");
 assert.match(app, /章节增量覆盖/u, "记忆指标必须说明只统计章节增量");
 assert.match(app, /语义完整性(?:仍需|未)验收/u, "记忆面板不得把基础覆盖率冒充语义完整率");
-assert.match(app, /const requestMode = authoritativeTaskContract[\s\S]{0,140}\? taskRoute\.mode/u,
-  "客户端残留创作引导状态不得覆盖权威 TaskContract 的运行模式");
+assert.match(app, /const taskRoute = buildAdaptiveTaskRoute\(\{/u,
+  "Agent 任务必须通过统一 taskRoute 进入执行面");
+assert.match(app, /taskContract: agentCreativeMutationPlan\?\.taskContract \?\? null/u,
+  "Agent 任务路由必须接收冻结的 TaskContract，而不是由客户端残留状态重新猜测运行模式");
+assert.match(app, /const agentExecutionContract = createExecutionContract\(\{ taskPacket: agentTaskPacket, executor: "agent", taskRoute, target \}\)/u,
+  "执行合同必须绑定已经生成的 Agent taskRoute");
+assert.match(app, /taskRouteMode: taskRoute\.mode/u,
+  "对话记录必须保存 Agent 最终路由模式");
 assert.match(app, /conversationOnlyExecution[\s\S]{0,700}"对话协作"/u,
   "仅对话任务的执行面板不得继续显示为正式正文链");
 assert.match(app, /const guidedExecution = execution\.strength === "guidance"[\s\S]{0,420}const conversationOnlyExecution = !guidedExecution/u,
