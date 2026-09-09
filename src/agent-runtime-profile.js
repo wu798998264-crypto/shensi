@@ -1,52 +1,50 @@
 import { agentEngineDescriptor, normalizeAgentEngineId } from "./agent-engine-registry.js";
+import { normalizeAgentPermissionMode, permissionContractFor } from "./agent-permission-policy.js";
 
-const defaultCapabilities = (engine) => ["codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(engine)
-  ? {
-      permissionMode: "workspace_scoped",
-      permissionLabel: "工作区访问",
-      filesystemAccess: "workspace_only",
-      networkCapability: false,
-      shensiSkillContext: true,
-      openCodeToolsEnabled: ["deepseek_opencode", "opencode"].includes(engine),
-      claudeCodeToolsEnabled: engine === "claude_code",
-      globalPluginsEnabled: false,
-      globalMcpEnabled: false,
-      globalSkillsEnabled: false,
-      appsEnabled: false,
-      multiAgentEnabled: false,
-      workspaceToolsAvailable: false,
-      workspaceToolsProtocol: "unavailable",
-      workspaceToolsUnavailableReason: "provider_dynamic_tools_unsupported",
-    }
-  : {
-      permissionMode: "danger_full_access",
-      permissionLabel: "完整访问（与 Codex 最高权限一致）",
-      filesystemAccess: "os_user_full",
-      networkCapability: true,
-      shensiSkillContext: true,
-      openCodeToolsEnabled: false,
-      globalPluginsEnabled: true,
-      globalMcpEnabled: true,
-      globalSkillsEnabled: true,
-      appsEnabled: true,
-      multiAgentEnabled: true,
-      workspaceToolsAvailable: true,
-      workspaceToolsProtocol: "shensi_workspace_tools_v1",
-      workspaceToolsUnavailableReason: "",
-    };
+const defaultCapabilities = (engine, permissionMode = "shensi_only") => {
+  const contract = permissionContractFor(normalizeAgentPermissionMode(permissionMode), { runner: engine });
+  const enhanced = contract.mode !== "shensi_only";
+  const workspaceToolsAvailable = ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(engine);
+  return {
+    permissionMode: contract.mode,
+    permissionLabel: contract.label,
+    filesystemAccess: contract.capabilities.filesystem,
+    networkCapability: contract.capabilities.network,
+    shellEnabled: contract.capabilities.shell,
+    secretsEnabled: contract.capabilities.secrets,
+    shensiSkillContext: true,
+    openCodeToolsEnabled: enhanced && ["deepseek_opencode", "opencode"].includes(engine),
+    claudeCodeToolsEnabled: enhanced && engine === "claude_code",
+    codexToolsEnabled: enhanced && ["codex", "codex_api"].includes(engine),
+    globalPluginsEnabled: contract.capabilities.globalPlugins,
+    globalMcpEnabled: contract.capabilities.globalMcp,
+    globalSkillsEnabled: contract.capabilities.globalSkills,
+    appsEnabled: contract.capabilities.apps,
+    hooksEnabled: contract.capabilities.hooks,
+    skillSearchEnabled: contract.capabilities.skillSearch,
+    multiAgentEnabled: contract.capabilities.multiAgent,
+    workspaceToolsAvailable,
+    workspaceToolsProtocol: workspaceToolsAvailable
+      ? engine === "codex" ? "shensi_workspace_tools_v1" : "shensi_conversation_agent_v1"
+      : "unavailable",
+    workspaceToolsUnavailableReason: workspaceToolsAvailable ? "" : "runtime_profile_required",
+  };
+};
 
 export const agentRuntimeProfile = ({ engine = "", model = "", capabilities = null } = {}) => {
   const normalizedEngine = normalizeAgentEngineId(engine);
   const suppliedCapabilities = capabilities && typeof capabilities === "object"
     ? Object.fromEntries(Object.entries(capabilities).filter(([, value]) => value !== undefined))
     : {};
+  const permissionMode = normalizeAgentPermissionMode(suppliedCapabilities.permissionMode);
   return {
     engine: normalizedEngine,
     label: agentEngineDescriptor(normalizedEngine).label,
     model: String(model || "").trim(),
     capabilities: {
-      ...defaultCapabilities(normalizedEngine),
+      ...defaultCapabilities(normalizedEngine, permissionMode),
       ...suppliedCapabilities,
+      permissionMode,
     },
   };
 };
@@ -63,6 +61,8 @@ export const agentRuntimeProfileFromStatus = (status = {}) => agentRuntimeProfil
     globalMcpEnabled: status.runtimeIsolation?.globalMcpEnabled === true,
     globalSkillsEnabled: status.runtimeIsolation?.globalSkillsEnabled === true,
     appsEnabled: status.runtimeIsolation?.appsEnabled === true,
+    hooksEnabled: status.runtimeIsolation?.hooksEnabled === true,
+    skillSearchEnabled: status.runtimeIsolation?.skillSearchEnabled === true,
     multiAgentEnabled: status.runtimeIsolation?.multiAgentEnabled === true,
     workspaceToolsAvailable: status.workspaceToolsAvailable === true,
     workspaceToolsProtocol: status.workspaceToolsProtocol,
@@ -83,30 +83,24 @@ export const agentRuntimeProfileFromExecution = (execution = {}) => agentRuntime
 export const agentCapabilitySummary = (profileValue = {}) => {
   const profile = profileValue?.capabilities ? profileValue : agentRuntimeProfile(profileValue);
   const capabilities = profile.capabilities || {};
-  if (["codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(profile.engine)) {
-    const runtimeToolLabel = profile.engine === "codex_api"
-      ? capabilities.workspaceToolsAvailable ? "神思工作区工具" : ""
-      : ["deepseek_opencode", "opencode"].includes(profile.engine)
-        ? capabilities.openCodeToolsEnabled !== false ? "OpenCode 工具" : ""
-        : capabilities.claudeCodeToolsEnabled !== false ? "Claude Code 工具" : "";
-    return [
-      capabilities.filesystemAccess === "workspace_only" ? "工作区文件访问" : capabilities.permissionLabel,
-      capabilities.shensiSkillContext !== false ? "神思 Skill 上下文" : "",
-      runtimeToolLabel,
-      capabilities.workspaceToolsAvailable === false ? "神思工作区动态读取不可用" : "",
-      !capabilities.globalPluginsEnabled && !capabilities.globalMcpEnabled && !capabilities.networkCapability && !capabilities.multiAgentEnabled
-        ? "不含 Codex 插件、MCP、联网工具和子 Agent"
-        : "",
-    ].filter(Boolean).join(" · ");
-  }
+  const runtimeToolLabel = ["deepseek_opencode", "opencode"].includes(profile.engine) && capabilities.openCodeToolsEnabled
+    ? "OpenCode 原生工具"
+    : profile.engine === "claude_code" && capabilities.claudeCodeToolsEnabled
+      ? "Claude Code 原生工具"
+      : ["codex", "codex_api"].includes(profile.engine) && capabilities.codexToolsEnabled
+        ? "Codex 原生工具"
+        : "";
+  const ambientExtensions = capabilities.globalSkillsEnabled || capabilities.globalPluginsEnabled
+    || capabilities.globalMcpEnabled || capabilities.appsEnabled || capabilities.hooksEnabled || capabilities.skillSearchEnabled;
   return [
-    capabilities.filesystemAccess === "os_user_full" ? "完整文件访问" : capabilities.permissionLabel,
+    capabilities.permissionLabel,
+    capabilities.workspaceToolsAvailable ? "神思工作区工具" : capabilities.shensiSkillContext !== false ? "神思 Skill 上下文" : "",
+    runtimeToolLabel,
+    capabilities.shellEnabled ? "Shell 与系统文件" : "",
     capabilities.networkCapability ? "联网工具" : "",
-    capabilities.globalSkillsEnabled || capabilities.globalPluginsEnabled || capabilities.globalMcpEnabled || capabilities.appsEnabled
-      ? "Skill、插件、MCP 与 App"
-      : "",
+    ambientExtensions ? "全局 Skill、插件、MCP、App 与 Hooks" : "",
     capabilities.multiAgentEnabled ? "多 Agent" : "",
-    capabilities.workspaceToolsAvailable ? "神思工作区按需读取" : "",
+    capabilities.permissionMode === "shensi_only" ? "不访问宿主环境" : "",
   ].filter(Boolean).join(" · ");
 };
 

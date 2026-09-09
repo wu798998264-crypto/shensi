@@ -10,8 +10,8 @@ const digest = (value = "") => {
   return (hash >>> 0).toString(16).padStart(8, "0");
 };
 
-export const agentSessionKey = ({ conversationId = "", branchId = "", provider = "codex", cwd = "" } = {}) => (
-  [clean(conversationId), clean(branchId) || "main", clean(provider) || "codex", pathKey(cwd)].join("::")
+export const agentSessionKey = ({ conversationId = "", branchId = "", provider = "codex", cwd = "", permissionMode = "" } = {}) => (
+  [clean(conversationId), clean(branchId) || "main", clean(provider) || "codex", clean(permissionMode) || "legacy_unspecified", pathKey(cwd)].join("::")
 );
 
 export const normalizeAgentSessionRecord = (record = {}) => ({
@@ -22,6 +22,7 @@ export const normalizeAgentSessionRecord = (record = {}) => ({
   model: clean(record.model),
   cwd: clean(record.cwd),
   toolVersion: clean(record.toolVersion) || "unavailable",
+  permissionMode: clean(record.permissionMode),
   status: ["active", "compacted", "corrupted"].includes(record.status) ? record.status : "active",
   providerSummary: clean(record.providerSummary).slice(0, 2_000),
   updatedAt: clean(record.updatedAt),
@@ -35,6 +36,7 @@ export const agentSessionCompatibility = (record = {}, expected = {}) => {
   if (pathKey(current.cwd) !== pathKey(expected.cwd)) reasons.push("cwd_changed");
   if (current.model !== clean(expected.model)) reasons.push("model_changed");
   if (current.toolVersion !== (clean(expected.toolVersion) || "unavailable")) reasons.push("tool_protocol_changed");
+  if (current.permissionMode !== clean(expected.permissionMode)) reasons.push("permission_mode_changed");
   if (current.status === "corrupted") reasons.push("session_corrupted");
   return { compatible: reasons.length === 0, reasons, record: current };
 };
@@ -55,6 +57,7 @@ export const safeAgentSessionMirror = ({ record = {}, recovery = "", recoveryRea
   return {
     provider: normalized.provider,
     model: normalized.model,
+    permissionMode: normalized.permissionMode,
     branchId: normalized.branchId,
     safeThreadId: normalized.threadId ? `thread-${digest(normalized.threadId)}` : "",
     cwdFingerprint: normalized.cwd ? digest(pathKey(normalized.cwd)) : "",

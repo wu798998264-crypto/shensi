@@ -1,5 +1,15 @@
 const PERMISSION_MODE_IDS = Object.freeze(["shensi_only", "approval_required", "full_access"]);
 
+const CODEX_GRANULAR_APPROVAL_POLICY = Object.freeze({
+  granular: Object.freeze({
+    sandbox_approval: true,
+    rules: true,
+    skill_approval: true,
+    request_permissions: true,
+    mcp_elicitations: true,
+  }),
+});
+
 export const DEFAULT_AGENT_PERMISSION_MODE = "shensi_only";
 
 export const AGENT_PERMISSION_MODES = Object.freeze({
@@ -23,8 +33,8 @@ export const AGENT_PERMISSION_MODES = Object.freeze({
     id: "approval_required",
     label: "操作需确认",
     description: "可使用完整 Agent 能力；密钥、作品外写入、依赖、服务、网络外发和破坏性操作逐项确认。",
-    sandbox: "workspace-write",
-    approvalPolicy: "on-request",
+    sandbox: "read-only",
+    approvalPolicy: CODEX_GRANULAR_APPROVAL_POLICY,
     network: true,
     shell: true,
     systemFiles: true,
@@ -55,13 +65,16 @@ export const AGENT_PERMISSION_MODES = Object.freeze({
 
 const MODE_ALIASES = Object.freeze({
   workspace_scoped: "shensi_only",
+  "workspace-scoped": "shensi_only",
   shensi: "shensi_only",
   safe: "shensi_only",
   restricted: "shensi_only",
   ask: "approval_required",
   on_request: "approval_required",
+  "on-request": "approval_required",
   approval: "approval_required",
   danger_full_access: "full_access",
+  "danger-full-access": "full_access",
   native: "full_access",
   unrestricted: "full_access",
 });
@@ -141,5 +154,6 @@ export const codexPermissionConfig = (value) => {
   };
 };
 
-export const permissionModeIds = () => [...PERMISSION_MODE_IDS];
+export const codexGranularApprovalPolicy = () => CODEX_GRANULAR_APPROVAL_POLICY;
 
+export const permissionModeIds = () => [...PERMISSION_MODE_IDS];

@@ -12,9 +12,11 @@ import {
 
 assert.equal(DEFAULT_AGENT_PERMISSION_MODE, "shensi_only");
 assert.equal(normalizeAgentPermissionMode("workspace_scoped"), "shensi_only");
-assert.equal(normalizeAgentPermissionMode("on-request"), "shensi_only");
+assert.equal(normalizeAgentPermissionMode("workspace-scoped"), "shensi_only");
+assert.equal(normalizeAgentPermissionMode("on-request"), "approval_required");
 assert.equal(normalizeAgentPermissionMode("approval_required"), "approval_required");
 assert.equal(normalizeAgentPermissionMode("danger_full_access"), "full_access");
+assert.equal(normalizeAgentPermissionMode("danger-full-access"), "full_access");
 assert.equal(normalizeAgentPermissionMode("unknown"), "shensi_only");
 assert.equal(normalizeAgentPermissionSettings({}).agentPermissionMode, "shensi_only");
 assert.deepEqual(agentPermissionModeOptions().map((item) => item.id), ["shensi_only", "approval_required", "full_access"]);
@@ -23,7 +25,16 @@ assert.equal(AGENT_PERMISSION_MODES.shensi_only.shell, false);
 assert.equal(AGENT_PERMISSION_MODES.approval_required.approvalRequired, true);
 assert.equal(AGENT_PERMISSION_MODES.full_access.sandbox, "danger-full-access");
 assert.equal(codexPermissionConfig("shensi_only").sandbox, "read-only");
-assert.equal(codexPermissionConfig("approval_required").approvalPolicy, "on-request");
+assert.deepEqual(codexPermissionConfig("approval_required").approvalPolicy, {
+  granular: {
+    sandbox_approval: true,
+    rules: true,
+    skill_approval: true,
+    request_permissions: true,
+    mcp_elicitations: true,
+  },
+}, "需确认档位必须使用 Codex granular 审批合同");
+assert.deepEqual(codexPermissionConfig("approval_required").sandboxPolicy, { type: "readOnly", networkAccess: false }, "需确认档位必须先阻断原生写入和联网，再由运行器发起审批");
 assert.equal(codexPermissionConfig("full_access").sandboxPolicy.type, "dangerFullAccess");
 
 const contract = permissionContractFor("approval_required", { runner: "opencode", taskId: "task-1", snapshotAt: "2026-09-09T00:00:00.000Z" });
