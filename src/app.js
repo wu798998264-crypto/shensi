@@ -218,6 +218,7 @@ import { generatedLandingHistoryDocumentIds } from "./generated-landing-history.
 import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFragment, proseParagraphs, stripMatchingLeadingHeadingHtml } from "./prose-format.js";
 import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfileFromExecution } from "./agent-runtime-profile.js";
 import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
+import { journalManualConversation, forgetManualConversation, restoreManualConversations } from "./manual-conversation-journal.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelBelongsToEngine, agentModelsForEngine, agentProfilesForEngine, isCodexApiCompatibleProvider } from "./agent-engine-registry.js";
 import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js";
 import { executionModeOptionState } from "./model-execution-capabilities.js";
@@ -3377,6 +3378,7 @@ const ensureStateSchema = () => {
       updatedAt: `今天 ${nowTime()}`,
     }];
   }
+  try { restoreManualConversations(localStorage, state); } catch (error) { console.warn("Conversation journal recovery failed", error.message); }
   state.activeConversationId ||= state.conversations[0]?.id;
   for (const conversation of state.conversations) {
     Object.assign(conversation, taskConversationMetadata(conversation, currentConversationWorkspace()));
@@ -3920,6 +3922,7 @@ const loadConversation = (conversationId, { saveCurrent = true } = {}) => {
   ensureConversationReferenceContext(conversation);
   state.activeConversationId = conversation.id;
   conversation.messages ??= [];
+  try { journalManualConversation(localStorage, state, conversation); } catch (error) { showToast(`对话位置保存失败：${error.message}`); }
   conversation.snapshots ??= {};
   conversation.isolatedBranches ??= [];
   conversation.candidateBranchGroups ??= [];
@@ -39056,15 +39059,13 @@ const activateWorkspaceKind = async (workspaceKind, { activatePreferred = true }
     // JSON parsing starts. The list refresh is background work and must never
     // turn a header toggle into a one-second main-thread stall.
     requestAnimationFrame(() => setTimeout(() => {
+      if (ui.workspaceMenuKind !== nextKind) return;
       renderProjectMenu();
       const refresh = nextKind === "notebook"
         ? refreshNotebooks({ force: false, render: true })
         : refreshProjects({ force: false, render: true });
-      void refresh.then((refreshed) => {
-        if (!refreshed) return;
-        scheduleUiBackgroundTask(() => {
-          void prefetchWorkspaceCollection(nextKind, 2);
-        }, { timeout: 3_000, interactionGrace: 220 });
+      void refresh.catch((error) => {
+        if (ui.workspaceMenuKind === nextKind) showToast(`列表加载失败：${error.message}`);
       });
     }, 32));
     return true;
@@ -42255,6 +42256,7 @@ const deleteConversation = (conversationId) => {
   const index = state.conversations.findIndex((conversation) => conversation.id === conversationId);
   if (index < 0) return;
   const [conversation] = state.conversations.splice(index, 1);
+  try { forgetManualConversation(localStorage, state, conversationId); } catch (error) { showToast(`对话恢复记录清理失败：${error.message}`); }
   state.documentConversationBindings = unbindConversation(state.documentConversationBindings, conversationId);
   state.trash.unshift(createConversationTrashEntry({ conversation: clone(conversation) }));
   if (!state.conversations.length) state.conversations.push(newConversationRecord());
@@ -42286,9 +42288,10 @@ const createConversation = () => {
     if (pendingConversationChoice.kind === "contract") pendingCreativeContractObservation = null;
     closeConversationChoicePanel({ focus: false });
   }
-  const conversation = newConversationRecord();
+  const conversation = newConversationRecord({ manualCreated: true });
   state.conversations.unshift(conversation);
   state.activeConversationId = conversation.id;
+  try { journalManualConversation(localStorage, state, conversation); } catch (error) { showToast(`对话尚未可靠保存：${error.message}`); }
   state.messages = conversation.messages;
   state.snapshots = conversation.snapshots;
   state.isolatedBranches = conversation.isolatedBranches;
