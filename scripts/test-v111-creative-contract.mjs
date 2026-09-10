@@ -68,7 +68,7 @@ assert.doesNotMatch(cssSource, /\.author-cockpit-contract-fields\s*\{[\s\S]{0,14
 assert.match(cssSource, /\.author-cockpit-contract-field textarea:focus/u);
 assert.match(packageScript, /--config\.electronDist=\$localElectronDist/u);
 assert.match(packageScript, /Using local Electron runtime/u);
-assert.match(packageScript, /ELECTRON_BUILDER_OFFLINE = "true"/u);
+assert.match(packageScript, /ELECTRON_BUILDER_OFFLINE = "false"/u, "本地Electron无需重新下载，但正式签名必须联网取得可信时间戳");
 assert.match(packageScript, /Offline signing mode enabled/u);
 
 console.log("Shensi 1.1.1 creative contract fixed-layout regressions passed");
