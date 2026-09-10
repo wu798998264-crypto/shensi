@@ -7966,15 +7966,6 @@ root.innerHTML = `
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
                 <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option></select></label>
-                <fieldset class="wide agent-permission-selector settings-agent-permission-selector">
-                  <legend>Agent 权限档位</legend>
-                  <div class="agent-permission-options" data-agent-permission-surface="settings" role="radiogroup" aria-label="Agent 权限档位">
-                    <label><input type="radio" name="agentPermissionMode" value="shensi_only" /><span><strong>仅限神思</strong><small>只使用神思提供的作品、Skill、媒体与交互工具</small></span></label>
-                    <label><input type="radio" name="agentPermissionMode" value="approval_required" /><span><strong>操作需确认</strong><small>完整 Agent 能力；受保护操作逐项确认</small></span></label>
-                    <label><input type="radio" name="agentPermissionMode" value="full_access" /><span><strong>完全权限</strong><small>使用当前系统账户能力，不逐项确认</small></span></label>
-                  </div>
-                  <small class="agent-permission-hint">适用于神思运行器和全部外置运行器；仅影响保存后启动的新任务。</small>
-                </fieldset>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option></select></label>

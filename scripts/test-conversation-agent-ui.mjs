@@ -179,17 +179,25 @@ try {
   await waitFor("document.querySelector('#settingsDialog')?.open && document.querySelector('#settingsDialog')?.getAttribute('aria-busy') !== 'true'", "设置窗口", 45000);
   await evaluate("document.querySelector('[data-settings-section=model]').click(); true");
   await waitFor("document.querySelector('[data-settings-page=model]')?.hidden === false", "模型设置");
-  assert.equal(await evaluate("document.querySelector('input[name=agentPermissionMode]:checked')?.value"), "approval_required", "快捷档位必须同步到设置");
-  await evaluate(`(() => {
-    const input=document.querySelector('input[name=agentPermissionMode][value=full_access]');
-    input.checked=true;
-    input.dispatchEvent(new Event('change',{bubbles:true}));
-    document.querySelector('#settingsForm').requestSubmit();
-    return true;
+  await evaluate("document.querySelector('[data-model-settings-channel=text]').click(); true");
+  await waitFor("document.querySelector('[data-model-channel-panel=text]')?.hidden === false", "文字模型设置");
+  assert.equal(await evaluate("document.querySelector('[data-agent-permission-surface=settings]')"), null, "权限档位只能保留在对话区左上角");
+  const modelSettingsLayout = await evaluate(`(() => {
+    const page=document.querySelector('[data-settings-page=model]');
+    const input=[...page.querySelectorAll('input:not([disabled]):not([type=hidden]),select:not([disabled])')]
+      .find((item)=>!item.hidden&&item.getBoundingClientRect().width>0&&item.getBoundingClientRect().height>0);
+    input.focus();
+    return {
+      overflow:page.scrollWidth-page.clientWidth,
+      focused:document.activeElement===input,
+      controls:[...page.querySelectorAll('input:not([type=hidden]),select,button')].filter((item)=>!item.hidden).every((item)=>getComputedStyle(item).pointerEvents!=='none')
+    };
   })()`);
-  await waitFor("document.querySelector('[data-agent-permission-mode=full_access]')?.classList.contains('is-selected')", "设置同步完全权限", 45000);
+  assert.ok(modelSettingsLayout.overflow <= 1, "模型设置不得横向溢出");
+  assert.equal(modelSettingsLayout.focused, true, "模型设置中可用的输入控件必须可以获得焦点");
+  assert.equal(modelSettingsLayout.controls, true, "模型设置可见控件必须可点击");
   await evaluate("document.querySelector('#cancelSettings').click(); document.querySelector('#quickModelButton').click(); true");
-  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false && document.querySelector('[data-agent-permission-mode=full_access]')?.classList.contains('is-selected')", "设置同步快捷面板");
+  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false && document.querySelector('[data-agent-permission-mode=approval_required]')?.classList.contains('is-selected')", "权限档位保持在快捷面板");
   await evaluate("document.querySelector('[data-agent-permission-mode=shensi_only]').click(); true");
   await waitFor("document.querySelector('[data-agent-permission-mode=shensi_only]')?.classList.contains('is-selected') && !document.querySelector('[data-agent-permission-mode=shensi_only]')?.disabled", "恢复默认权限");
   await evaluate("document.querySelector('#closeQuickModel').click(); true");
@@ -211,9 +219,10 @@ try {
   assert.match(first.text, /你更希望比较哪些差异/);
   assert.doesNotMatch(first.text, /先选择主笔数量|单主笔生成多稿|多主笔生成候选/);
   assert.deepEqual(first.options, ["节奏", "视角", "确认选择"]);
-  const choiceGeometry = await evaluate(`(() => { const options=document.querySelector('.native-choice-items').getBoundingClientRect(); const confirm=document.querySelector('.native-choice-confirm').getBoundingClientRect(); return {gap:confirm.left-options.right,right:confirm.left>=options.right}; })()`);
-  assert.equal(choiceGeometry.right,true);
-  assert.ok(choiceGeometry.gap>=0&&choiceGeometry.gap<=10,'确认按钮紧靠选项右侧');
+  const choiceGeometry = await evaluate(`(() => { const options=document.querySelector('.native-choice-items').getBoundingClientRect(); const confirm=document.querySelector('.native-choice-confirm').getBoundingClientRect(); const button=document.querySelector('.native-choice-confirm button').getBoundingClientRect(); return {verticalGap:confirm.top-options.bottom,below:confirm.top>=options.bottom-1,rightGap:Math.abs(button.right-confirm.right)}; })()`);
+  assert.equal(choiceGeometry.below,true);
+  assert.ok(choiceGeometry.verticalGap>=-1&&choiceGeometry.verticalGap<=10,'确认按钮应紧靠全部选项下方');
+  assert.ok(choiceGeometry.rightGap<=1,'确认按钮应位于选择框右侧');
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='第二个对话只讨论大纲';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 2 && document.querySelector('#conversationChoicePanel')?.hidden === false", "第二个对话并发运行");

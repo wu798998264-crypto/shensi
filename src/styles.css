@@ -14721,9 +14721,25 @@ body.resizing-chat-composer * {
   line-height: 1.4;
 }
 
-.conversation-choice-options:has(.native-choice-items) { flex-wrap: nowrap; align-items: flex-start; }
-.native-choice-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
-.native-choice-confirm { flex: 0 0 auto; }
+.conversation-choice-options:has(.native-choice-items) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 5px;
+}
+
+.native-choice-items {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.native-choice-confirm {
+  display: flex;
+  min-width: 0;
+  justify-content: flex-end;
+}
 .native-agent-live-status { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
 .native-agent-task-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 8px; }
 .native-agent-task-card .native-agent-live-status { border: 0; margin: 0; padding: 0 0 6px; }
@@ -16561,6 +16577,7 @@ button.trash-entry-main:focus-visible {
 
 .settings-grid label {
   display: flex;
+  min-width: 0;
   flex-direction: column;
   gap: 7px;
   color: var(--text-secondary);
@@ -16810,7 +16827,9 @@ button.trash-entry-main:focus-visible {
 .settings-grid input,
 .settings-grid select {
   width: 100%;
+  min-width: 0;
   height: 38px;
+  box-sizing: border-box;
   padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -16906,6 +16925,7 @@ button.trash-entry-main:focus-visible {
 
 .settings-input-action {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(0, 1fr) 38px;
   align-items: center;
   gap: 6px;
@@ -17022,9 +17042,17 @@ button.trash-entry-main:focus-visible {
 }
 
 .settings-page {
+  min-width: 0;
   height: 100%;
   padding: 22px 24px 28px;
+  overflow-x: hidden;
   overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.settings-page .settings-grid,
+.settings-page .settings-grid > * {
+  min-width: 0;
 }
 
 .settings-page[hidden] {
