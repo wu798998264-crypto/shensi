@@ -151,10 +151,10 @@ if ($hasElectronBuilder) {
         $localElectronExe = Join-Path $localElectronDist "electron.exe"
         $builderArgs = @("--win", "--x64")
         if (Test-Path -LiteralPath $localElectronExe) {
-            $env:ELECTRON_BUILDER_OFFLINE = "true"
+            $env:ELECTRON_BUILDER_OFFLINE = "false"
             $builderArgs += "--config.electronDist=$localElectronDist"
             Write-Host "==> Using local Electron runtime: $localElectronDist"
-            Write-Host "==> Offline signing mode enabled"
+            Write-Host "==> Local Electron runtime with online trusted timestamp signing"
             Write-Host "==> Formal signing requires a trusted timestamp for GitHub update publication"
         } else {
             Write-Warning "Local Electron runtime not found; electron-builder may download it from the configured mirror"

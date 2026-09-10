@@ -37,7 +37,7 @@ const signatureScript = [
   "}",
   "$result | ConvertTo-Json -Compress",
 ].join("\n");
-const signatureProcess = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", signatureScript], {
+const signatureProcess = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(signatureScript, "utf16le").toString("base64")], {
   encoding: "utf8",
   windowsHide: true,
   env: { ...process.env, SHENSI_RELEASE_INSTALLER: requestedInstaller },
