@@ -151,6 +151,8 @@ try {
   await evaluate(`window.agentLinkTarget=${JSON.stringify(agentLinkTarget)}; true`);
   await evaluate("document.querySelector('#quickModelButton').click(); true");
   await waitFor("document.querySelector('#quickModelPanel')?.hidden === false", "权限快捷面板");
+  await evaluate("document.querySelector('#conversationPermissionLabel').click(); true");
+  assert.equal(await evaluate("document.querySelector('#conversationPermissionMenu').closest('.chat-panel-toolbar') !== null"), true);
   const defaultPermission = await evaluate(`({
     labels:[...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')].map((item)=>item.textContent.trim()),
     selected:document.querySelector('[data-agent-permission-surface="quick"] [data-agent-permission-mode].is-selected')?.dataset.agentPermissionMode,
@@ -239,6 +241,14 @@ try {
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  const emptyId = await evaluate(`(() => { const key=Object.keys(localStorage).find(key=>key.startsWith('shensi-manual-conversations-v1:')); return JSON.parse(localStorage.getItem(key)).activeId; })()`);
+  assert.ok(emptyId);
+  await cdp('Page.reload', {});
+  await waitFor("window.nativeAgentStarts === undefined && document.documentElement.dataset.bootReady === 'true' && document.querySelector('#conversationHistoryButton')", "空对话刷新恢复", 45000);
+  await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
+  await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
+  assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
   console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));

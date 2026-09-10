@@ -7404,6 +7404,15 @@ root.innerHTML = `
       <aside class="chat-panel" id="chatPanel" aria-label="神思对话">
         <header class="chat-panel-toolbar" aria-label="对话快捷操作">
           <div class="chat-panel-toolbar-actions">
+            <details class="conversation-permission-menu" id="conversationPermissionMenu">
+              <summary id="conversationPermissionLabel">仅限神思 ▾</summary>
+              <div class="agent-permission-options" data-agent-permission-surface="quick" role="group" aria-label="新任务权限档位">
+                <button type="button" data-agent-permission-mode="shensi_only">仅限神思</button>
+                <button type="button" data-agent-permission-mode="approval_required">操作需确认</button>
+                <button type="button" data-agent-permission-mode="full_access">完全权限</button>
+                <small>仅影响新任务</small>
+              </div>
+            </details>
             <button class="quick-model-button" id="quickModelButton" type="button" title="切换文字模型与档位" aria-haspopup="dialog" aria-expanded="false"><span id="quickModelLabel">模型</span>${icon("\uE70D", "切换模型")}</button>
             <button class="icon-button bare" id="quickNewConversationButton" type="button" title="新建对话" aria-label="新建对话">${icon("\uE710", "新建对话")}</button>
             <button class="icon-button bare" id="conversationHistoryButton" type="button" title="全部历史对话" aria-label="全部历史对话" aria-expanded="false">${icon("\uE81C", "全部历史对话")}</button>
@@ -7425,15 +7434,6 @@ root.innerHTML = `
           </div>
           <div class="quick-agent-fields" id="quickAgentFields">
             <label>文字配置<select id="quickAgentEngine"></select></label>
-            <fieldset class="agent-permission-selector quick-agent-permission-selector">
-              <legend>权限档位</legend>
-              <div class="agent-permission-options" data-agent-permission-surface="quick" role="group" aria-label="新任务权限档位">
-                <button type="button" data-agent-permission-mode="shensi_only">仅限神思</button>
-                <button type="button" data-agent-permission-mode="approval_required">操作需确认</button>
-                <button type="button" data-agent-permission-mode="full_access">完全权限</button>
-              </div>
-              <small class="agent-permission-hint" data-agent-permission-hint>仅影响切换后启动的新任务；当前运行任务保持原权限。</small>
-            </fieldset>
             <label>文字模型<select id="quickAgentModel" class="text-model-state-select"><option value="">当前配置默认模型</option></select></label>
             <div class="quick-text-model-verification" id="quickAgentVerification" data-state="unknown" hidden>
               <span id="quickAgentVerificationStatus" role="status" aria-live="polite">尚未检查当前 Agent</span>
@@ -19241,6 +19241,12 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
   )).join("")}</nav>`;
 };
 
+const renderNativeAgentEvidence = (message) => {
+  const reads = message.execution?.actualReads || [];
+  const targets = message.execution?.deliveryTargets || [];
+  return `${targets.length ? `<div class="native-agent-targets">目标文档：${targets.map(item => escapeHtml(item.title || item.documentId)).join("、")}</div>` : ""}${reads.length ? `<details class="native-agent-reads"><summary>实际读取 ${reads.length} 项</summary>${reads.map(item => `<div>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")} · ${escapeHtml(item.title || item.id)}${item.fullText ? "（全文）" : "（部分内容）"}</div>`).join("")}</details>` : ""}`;
+};
+
 const renderVerifiedLandedContent = (message = {}) => {
   if (message.pending || message.candidate || message.landingStatus !== "complete") return "";
   const documents = Array.isArray(message.landedDocuments) ? message.landedDocuments : [];
@@ -19719,6 +19725,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
       ${renderNativeAgentDocumentLinks(message)}
+      ${renderNativeAgentEvidence(message)}
       ${message.execution?.nativeAgentRunId && message.pending ? `<div class="native-agent-live-status" role="status">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>` : ""}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
@@ -24408,6 +24415,8 @@ const quickTextConnectionStatusSuffix = (profile) => {
 
 const renderQuickAgentPermissionMode = () => {
   const mode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
+  const label = document.querySelector('#conversationPermissionLabel');
+  if (label) label.textContent = `${agentPermissionModeInfo(mode).label} ▾`;
   const descriptions = new Map(agentPermissionModeOptions().map((option) => [option.id, option.description]));
   document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]').forEach((button) => {
     const selected = button.dataset.agentPermissionMode === mode;
@@ -24440,7 +24449,7 @@ const renderQuickModelSelector = () => {
   const models = ui.temporaryCodexSelected ? (ui.localCodex?.models || []) : modelOptionsForProvider(active.provider, active.adapter);
   const activeModelDisplay = modelPickerDisplayName(models.find((item) => item.slug === active.model) || active.model) || "未选择模型";
   const permission = agentPermissionModeInfo(state.settings?.agentPermissionMode);
-  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${modelPickerDisplayName(selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "默认模型")} · ${permission.label}`;
+  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${modelPickerDisplayName(selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "默认模型")}`;
   button.title = "点击切换文字配置、运行器和模型";
   if (elements.quickChatModelFields) elements.quickChatModelFields.hidden = isAgent;
   if (elements.quickAgentFields) elements.quickAgentFields.hidden = !isAgent;
@@ -35862,6 +35871,16 @@ const monitorNativeConversation = (runtime, pending) => {
             && closedAgentBrowserSessions.has(String(event.payload?.metadata?.sessionId || ""))) {
             void answerNativeConversationQuestion(conversation.agentQuestion, "取消本次网页读取");
           }
+        } else if (event.type === "resource_read") {
+          const reads = pending.execution.actualReads ??= [];
+          const prior = reads.find(item => item.kind === event.payload.kind && item.id === event.payload.id);
+          if (prior) Object.assign(prior, event.payload, { fullText: prior.fullText || event.payload.fullText });
+          else reads.push(event.payload);
+        } else if (event.type === "delivery") {
+          pending.execution.deliveryTargets = event.payload.targets || [];
+        } else if (event.type === "progress") {
+          pending.streamText = "";
+          pending.execution.result = event.payload.message;
         } else if (event.type === "text_delta") {
           pending.streamText = (pending.streamText || "") + event.payload.text;
           pending.execution.result = "Agent 正在生成回答";
@@ -35886,6 +35905,12 @@ const monitorNativeConversation = (runtime, pending) => {
           pending.execution.agentResultReferences ??= [];
           if (!pending.execution.agentResultReferences.some((entry) => entry.sequence === event.sequence)) {
             pending.execution.agentResultReferences.push({ sequence: event.sequence, type: event.type, ...event.payload });
+          }
+          if (event.type === "document_saved" && event.payload.trustedDocumentSave) {
+            const targets = pending.execution.deliveryTargets ??= [];
+            const target = { documentId: event.payload.documentId, title: event.payload.title };
+            const index = targets.findIndex(item => item.documentId === target.documentId);
+            if (index < 0) targets.push(target); else targets[index] = target;
           }
           if (event.type === "media_saved") {
             const id = event.payload.messageId || `media-${event.payload.jobId}`;
@@ -35913,7 +35938,11 @@ const monitorNativeConversation = (runtime, pending) => {
       }
       await persistNativeConversation(runtime);
       if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
-        await runBoundedExternalWorkspaceRefresh({ silent: true });
+        const savedIds = (pending.execution.agentResultReferences || []).filter(item => item.trustedDocumentSave).map(item => item.documentId);
+        if (savedIds.length) await refreshVerifiedAgentDocuments(savedIds).catch(error => {
+          pending.execution.refreshError = error.message;
+          showToast(`已写入磁盘，但界面刷新失败：${error.message}`);
+        });
       }
       return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
     } catch (error) {
@@ -35979,7 +36008,9 @@ const executeConversationAgentMessage = async (content, options) => {
   const sourceMessageId = queuedItem?.sourceMessageIdForRun || uid("message");
   if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
   const refs = queuedItem || resolveConversationReferenceContext(conversation);
-  const targetDocumentId = options.inlineEdit?.documentId || taskContextSnapshot.activeDocumentId || conversation.boundDocumentId || "";
+  const targetDocumentId = options.inlineEdit?.documentId || "";
+  const currentDocumentId = taskContextSnapshot.activeDocumentId || "";
+  const currentDocument = currentDocumentId ? { documentId: currentDocumentId, title: workspaceState.documents[currentDocumentId]?.title || currentDocumentId } : null;
   const profileSettings = queuedItem?.nativeConfiguration
     ? applyGenerationRuntimeBindings(queuedItem.nativeConfiguration, machineGenerationRuntime, storedGenerationSecrets())
     : generationSettingsForAgentEngine(workspaceState.settings, { agentConnectionId: workspaceState.settings.activeTextAgentConnectionId });
@@ -36007,7 +36038,7 @@ const executeConversationAgentMessage = async (content, options) => {
     await yieldAfterImmediateInstructionRender();
     const started = await conversationAgentRequest("/api/conversation-agent/start", {
       sourceMessageId, conversationId: conversation.id, branchId: activeCandidateThreadScope(conversation, taskMessages),
-      workspaceKind: taskContextSnapshot.workspaceKind, workspacePath: taskContextSnapshot.workspacePath, targetDocumentId,
+      workspaceKind: taskContextSnapshot.workspaceKind, workspacePath: taskContextSnapshot.workspacePath, targetDocumentId, currentDocument,
       workspaceName: taskContextSnapshot.workspaceName || workspaceState.projectName || workspaceState.settings?.projectName || "",
       selection: options.inlineEdit ? { documentId: options.inlineEdit.documentId, originalText: options.inlineEdit.originalText } : null,
       contentOnly: Boolean(options.inlineEdit),
@@ -38508,6 +38539,36 @@ const rollbackToMessage = async (messageId) => {
   elements.chatInput.focus();
   elements.chatInput.setSelectionRange(split.draft.length, split.draft.length);
   showToast("已退回并彻底清除后续对话记录；正式文档当前版本不受影响");
+  return true;
+};
+
+const refreshVerifiedAgentDocuments = async (ids) => {
+  const sourceState = state;
+  const workspacePath = state.settings.workspacePath;
+  // Save pending user edits through conflict reconciliation before loading disk truth.
+  await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+  const loaded = await fetchWorkspacePayload(workspacePath);
+  if (state !== sourceState || state.settings.workspacePath !== workspacePath) return false;
+  for (const id of ids) {
+    if (ui.workspaceDirtyDocumentIds.has(id) || ui.workspaceDocumentChangesUnknown) throw new Error("目标存在尚未保存的手动编辑，请保存后再打开最新内容");
+    const document = loaded.state?.documents?.[id];
+    if (!document) throw new Error(`目标文档不存在：${id}`);
+    state.documents[id] = clone(document);
+    state.histories ||= {};
+    if (loaded.state.histories?.[id]) state.histories[id] = clone(loaded.state.histories[id]);
+    ui.workspaceDocumentHashes.set(id, documentSaveHashes({ [id]: document }).get(id));
+    for (const [moduleId, remoteItems] of Object.entries(loaded.state.moduleItems || {})) {
+      const remoteItem = remoteItems.find(item => (Array.isArray(item) ? item[0] : item.id) === id);
+      if (!remoteItem) continue;
+      state.moduleItems[moduleId] ||= [];
+      const index = state.moduleItems[moduleId].findIndex(item => (Array.isArray(item) ? item[0] : item.id) === id);
+      if (index < 0) state.moduleItems[moduleId].push(clone(remoteItem));
+      else state.moduleItems[moduleId][index] = clone(remoteItem);
+    }
+  }
+  ui.documentListRenderKey = "";
+  elements.editor.dataset.document = "";
+  renderAll();
   return true;
 };
 
@@ -44687,11 +44748,8 @@ document.querySelector("#projectButton").addEventListener("click", async () => {
     renderProjectMenu();
     elements.projectMenu.removeAttribute("aria-busy");
     await refreshWorkspaceEntries({ force: false });
-    // Warm likely targets only after the menu has painted.  The idle task
-    // keeps this background work out of the click's critical path.
-    scheduleUiBackgroundTask(() => {
-      void prefetchWorkspaceCollection(ui.workspaceMenuKind, 2);
-    }, { timeout: 3_000, interactionGrace: 220 });
+    // Opening a list must not hydrate unrelated full works. Row hover still
+    // prefetches the one workspace the user is actually approaching.
   }
   renderUtilityPanelState();
 });
@@ -60980,6 +61038,7 @@ document.querySelector('[data-agent-permission-surface="quick"]')?.addEventListe
   if (!button) return;
   const previousMode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
   const nextMode = normalizeAgentPermissionMode(button.dataset.agentPermissionMode);
+  document.querySelector('#conversationPermissionMenu').open = false;
   if (nextMode === previousMode) return;
   const buttons = [...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')];
   buttons.forEach((item) => { item.disabled = true; });
@@ -61527,6 +61586,8 @@ elements.chatFeed.addEventListener("click", async (event) => {
   const landedDocumentButton = event.target.closest("[data-open-landed-document]");
   const landedDocumentId = landedDocumentButton?.dataset.openLandedDocument;
   if (landedDocumentId) {
+    event.preventDefault();
+    try {
     const targetWorkspaceKind = landedDocumentButton.dataset.landedWorkspaceKind === "notebook" ? "notebook" : "project";
     const targetWorkspacePath = String(landedDocumentButton.dataset.landedWorkspacePath || "");
     const targetWorkspaceName = String(landedDocumentButton.dataset.landedWorkspaceName || "");
@@ -61538,11 +61599,14 @@ elements.chatFeed.addEventListener("click", async (event) => {
         : switchProject({ workspacePath: targetWorkspacePath, name: targetWorkspaceName }));
       if (!switched) return;
     }
+    if (!await refreshVerifiedAgentDocuments([landedDocumentId])) return;
     if (!state.documents[landedDocumentId]) {
       showToast(`已切换到目标${targetWorkspaceKind === "notebook" ? "笔记本" : "作品"}，但未找到该文档，请刷新后重试`);
       return;
     }
     selectDocument(landedDocumentId);
+    if (state.activeDocument !== landedDocumentId) throw new Error("目标文档定位失败");
+    } catch (error) { showToast(`打开已写入文档失败：${error.message}`); }
     return;
   }
   const olderMessagesButton = event.target.closest("[data-load-older-messages]");

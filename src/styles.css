@@ -12728,6 +12728,13 @@ body.resizing-chat-composer * {
   border: 0;
 }
 
+.conversation-permission-menu { position: relative; flex: 0 0 auto; font-size: 12px; }
+.conversation-permission-menu > summary { cursor: pointer; list-style: none; padding: 7px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.conversation-permission-menu > .agent-permission-options { position: absolute; top: 100%; left: 0; z-index: 100; display: flex; flex-direction: column; gap: 4px; padding: 8px; min-width: 130px; background: var(--panel-bg, white); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 18px #0002; }
+.conversation-permission-menu button { padding: 7px; cursor: pointer; }
+.conversation-permission-menu button.is-selected { font-weight: 700; outline: 1px solid currentColor; }
+.chat-panel-toolbar-actions > #quickModelButton { min-width: 0; overflow: hidden; }
+
 .agent-permission-selector legend {
   margin-bottom: 6px;
   color: var(--text-secondary);
