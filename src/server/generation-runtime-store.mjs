@@ -20,6 +20,7 @@ import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.
 
 const CHANNELS = new Set(["text", "image", "video", "audio"]);
 const ADAPTERS = new Set(["api", "cli"]);
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{1,119}$/i;
 const PROFILE_RUNTIME_IDENTITY_FIELDS = Object.freeze([
   "adapter", "provider", "protocol", "baseUrl", "model", "apiKey", "cliPath", "cliArgs",
@@ -229,11 +230,13 @@ const normalizeBinding = (value = {}) => {
   const profileId = text(value.profileId || value.id, 120);
   const adapter = text(value.adapter, 16);
   const provider = text(value.provider, 120);
+  const agentEngine = text(value.agentEngine, 64);
+  const externalCliAgent = channel === "text" && EXTERNAL_CLI_AGENT_ENGINES.has(agentEngine);
   const protocol = text(value.protocol, 80);
   if (!CHANNELS.has(channel)) throw runtimeError("本机运行时绑定的通道无效");
   if (!PROFILE_ID.test(profileId)) throw runtimeError("本机运行时绑定的配置编号无效");
   if (!ADAPTERS.has(adapter)) throw runtimeError("本机运行时绑定的调用方式无效");
-  if (!provider) throw runtimeError("本机运行时绑定缺少服务商");
+  if (!provider && !externalCliAgent) throw runtimeError("本机运行时绑定缺少服务商");
   const baseUrl = validateBaseUrl(value.baseUrl);
   const cliPath = text(value.cliPath, 2_048);
   const cliArgs = text(value.cliArgs, 16_384);
@@ -264,12 +267,14 @@ const normalizeBinding = (value = {}) => {
   if (/\0|[\r\n;&|<>]/.test(cliPath)) throw runtimeError("CLI 程序路径包含不允许的字符");
   if (adapter === "api" && !baseUrl && getProviderPreset(provider).custom) throw runtimeError("自定义 API 绑定缺少服务地址");
   if (adapter === "cli" && !cliPath) throw runtimeError("CLI 绑定缺少程序路径");
+  if (externalCliAgent && agentEngine === "custom" && !cliArgs) throw runtimeError("自定义运行器绑定缺少参数模板");
   if (chatAdapter && (!chatProtocol || !chatBaseUrl)) throw runtimeError("双处理器 Chat 绑定缺少协议或服务地址");
   return {
     channel,
     profileId,
     adapter,
     provider,
+    agentEngine,
     protocol,
     baseUrl,
     cliPath,
@@ -602,8 +607,29 @@ export const resolveTrustedGenerationSettings = async ({
     : requested.settings;
   const adapter = text(candidate.adapter, 16);
   const provider = text(candidate.provider, 120);
+  const externalCliAgent = channel === "text"
+    && candidate.adapter === "cli"
+    && EXTERNAL_CLI_AGENT_ENGINES.has(text(candidate.agentEngine, 64));
   const protocol = text(candidate.protocol, 80);
-  if (!ADAPTERS.has(adapter) || !provider) throw runtimeError("生成配置缺少调用方式或服务商");
+  if (!ADAPTERS.has(adapter) || (!provider && !externalCliAgent)) throw runtimeError("生成配置缺少调用方式或服务商");
+
+  if (externalCliAgent) {
+    const cliPath = text(candidate.cliPath, 2_048);
+    const cliArgs = text(candidate.cliArgs, 16_384);
+    if (!cliPath) throw runtimeError("外置 Agent 缺少 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED", 409);
+    if (candidate.agentEngine === "custom" && !cliArgs) throw runtimeError("自定义运行器缺少 CLI 参数模板", "EXTERNAL_CLI_ARGS_REQUIRED", 409);
+    return {
+      ...candidate,
+      id: requested.profileId,
+      connectionId: requested.profileId,
+      adapter: "cli",
+      provider,
+      protocol,
+      baseUrl: "",
+      cliPath,
+      cliArgs,
+    };
+  }
 
   if (isBuiltInGptChatCli({ channel, settings: candidate })) {
     const binding = await resolveBuiltInGptChatBinding({

@@ -30,6 +30,31 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
     wingetId: "Anthropic.ClaudeCode",
     officialUrl: "https://code.claude.com/docs/en/installation",
   }),
+  trae_work: Object.freeze({
+    id: "trae_work",
+    label: "Trae Work",
+    npmPackage: "",
+    wingetId: "",
+    officialUrl: "https://docs.trae.cn/cli_get-started-with-trae-code-cli-2.md",
+    installKind: "powershell",
+    installScript: "irm https://trae.cn/trae-cli/install_v2.ps1 | iex",
+  }),
+  workbuddy: Object.freeze({
+    id: "workbuddy",
+    label: "WorkBuddy",
+    npmPackage: "@tencent-ai/codebuddy-code@latest",
+    wingetId: "",
+    officialUrl: "https://www.codebuddy.ai/docs/cli/cli-reference",
+    installKind: "npm",
+  }),
+  custom: Object.freeze({
+    id: "custom",
+    label: "自定义运行器",
+    npmPackage: "",
+    wingetId: "",
+    officialUrl: "",
+    installKind: "manual",
+  }),
 });
 
 const clean = (value = "") => String(value ?? "").replace(/\0/gu, "").trim();
@@ -56,6 +81,64 @@ const firstAccessible = async (candidates = [], accessFile = access) => {
   return "";
 };
 
+const knownRunnerLaunchCandidates = ({ runnerId, environment = process.env, homeDirectory = homedir() } = {}) => {
+  const directories = pathDirectories(environment);
+  const localAppData = clean(environment.LOCALAPPDATA) || join(homeDirectory, "AppData", "Local");
+  const roamingAppData = clean(environment.APPDATA) || join(homeDirectory, "AppData", "Roaming");
+  if (runnerId === "trae_work") return [
+    ...directories.flatMap((directory) => [join(directory, "traecli.exe"), join(directory, "traecli")]),
+    join(homeDirectory, ".trae", "bin", "traecli.exe"),
+    join(homeDirectory, ".local", "bin", "traecli.exe"),
+    join(localAppData, "Programs", "Trae", "traecli.exe"),
+  ].map((executable) => ({ executable, prefixArgs: [] }));
+  if (runnerId === "workbuddy") return [
+    ...directories.flatMap((directory) => [
+      { executable: join(directory, "codebuddy.exe"), prefixArgs: [] },
+      { executable: process.execPath, prefixArgs: [join(directory, "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy")] },
+    ]),
+    { executable: process.execPath, prefixArgs: [join(roamingAppData, "npm", "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy")] },
+  ];
+  return [];
+};
+
+export const resolveKnownAgentRunnerLaunch = async ({
+  runnerId,
+  environment = process.env,
+  homeDirectory = homedir(),
+  accessFile = access,
+} = {}) => {
+  for (const launch of knownRunnerLaunchCandidates({ runnerId: clean(runnerId), environment, homeDirectory })) {
+    const target = launch.prefixArgs[0] || launch.executable;
+    if (await accessible(target, accessFile)) return launch;
+  }
+  const error = new Error(`没有检测到可直接启动的 ${AGENT_RUNNER_INSTALL_SPECS[clean(runnerId)]?.label || "Agent"} CLI`);
+  error.code = "ENOENT";
+  throw error;
+};
+
+export const detectKnownAgentRunnerInstallation = async ({
+  runnerId,
+  cwd = process.cwd(),
+  environment = process.env,
+  resolveLaunch = resolveKnownAgentRunnerLaunch,
+  runProcess = runAgentRunnerInstallerProcess,
+} = {}) => {
+  try {
+    const launch = await resolveLaunch({ runnerId, environment });
+    const result = await runProcess({
+      executable: launch.executable,
+      args: [...launch.prefixArgs, "--version"],
+      cwd,
+      environment,
+      timeoutMs: 8_000,
+    });
+    const version = clean(result.stdout || result.stderr).split(/\r?\n/u)[0] || AGENT_RUNNER_INSTALL_SPECS[clean(runnerId)]?.label || "Agent CLI";
+    return { available: true, installed: true, version: version.slice(0, 160), cliPath: launch.executable, prefixArgs: launch.prefixArgs };
+  } catch (error) {
+    return { available: false, installed: false, message: clean(error?.message || error).slice(0, 500) };
+  }
+};
+
 export const locateWindowsInstallTools = async ({
   environment = process.env,
   homeDirectory = homedir(),
@@ -77,7 +160,11 @@ export const locateWindowsInstallTools = async ({
     join(localAppData, "Programs", "nodejs", "node_modules", "npm", "bin", "npm-cli.js"),
     join(roamingAppData, "npm", "node_modules", "npm", "bin", "npm-cli.js"),
   ], accessFile);
-  return { winget, npmCli, npmPrefix: join(roamingAppData, "npm") };
+  const powershell = await firstAccessible([
+    ...directories.map((directory) => join(directory, "powershell.exe")),
+    join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+  ], accessFile);
+  return { winget, npmCli, powershell, npmPrefix: join(roamingAppData, "npm") };
 };
 
 export const runAgentRunnerInstallerProcess = ({
@@ -169,9 +256,29 @@ export const installAgentRunnerFromOfficialSource = async ({
     error.code = "AGENT_RUNNER_INSTALL_PLATFORM_UNSUPPORTED";
     throw error;
   }
+  if (spec.installKind === "manual") {
+    const error = new Error(`${spec.label} 需要在设置中填写可执行程序和参数模板，不提供自动下载安装`);
+    error.code = "AGENT_RUNNER_MANUAL_SETUP_REQUIRED";
+    throw error;
+  }
   let tools = await locateTools({ environment });
   const npmEnvironment = { ...environment, NPM_CONFIG_UPDATE_NOTIFIER: "false", NPM_CONFIG_AUDIT: "false", NPM_CONFIG_FUND: "false" };
-  if (tools.npmCli) {
+  if (spec.installKind === "powershell") {
+    if (!tools.powershell) {
+      const error = new Error(`无法自动装配 ${spec.label}：本机没有 Windows PowerShell`);
+      error.code = "AGENT_RUNNER_INSTALL_TOOL_MISSING";
+      throw error;
+    }
+    report({ stage: "installing", progress: 34, message: `正在通过 ${spec.label} 官方 PowerShell 安装脚本装配…`, method: "powershell" });
+    await runProcess({
+      executable: tools.powershell,
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", spec.installScript],
+      cwd,
+      environment,
+    });
+    return { method: "powershell", officialUrl: spec.officialUrl };
+  }
+  if (spec.installKind === "npm" && tools.npmCli && spec.npmPackage) {
     report({ stage: "installing", progress: 34, message: `正在通过官方 npm 包装配 ${spec.label}…`, method: "npm" });
     await runProcess({
       executable: nodeExecutable,

@@ -13,6 +13,7 @@ import { openCodeCatalogCacheKey } from "./src/opencode-profile-ui-policy.js";
 import { runDeepSeekOpenCodeAgent } from "./src/server/deepseek-opencode-agent-runner.mjs";
 import { runOpenCodeAgent } from "./src/server/opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./src/server/claude-code-agent-runner.mjs";
+import { runExternalCliAgent } from "./src/server/external-cli-agent-runner.mjs";
 import { createCodexApiAgentRuntime } from "./src/server/codex-api-agent-runtime.mjs";
 import { createConversationAgentGateway } from "./src/server/conversation-agent-gateway.mjs";
 import { startConversationAgentMcp } from "./src/server/conversation-agent-mcp.mjs";
@@ -23,6 +24,7 @@ import { activateTextExecutionModeProfile } from "./src/generation-profiles.js";
 import { freePublicModels, modelDisplayName } from "./src/public-model-catalog.js";
 import { buildProjectQuestionContext } from "./src/general-project-context.js";
 import {
+  agentEngineDescriptor,
   isShensiAgentCompatibleProfile,
   isSystemManagedPublicAgentProfile,
   selectedAgentRuntimeProfile,
@@ -88,7 +90,7 @@ import { planLongFormFoundation, planVolumeChapterOutlines, runLongFormStructure
 import { planWorkspaceOperations } from "./src/server/workspace-operation-planner.mjs";
 import { planSmartLanding } from "./src/server/smart-landing-planner.mjs";
 import { createUpdateManager } from "./src/server/update-manager.mjs";
-import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager } from "./src/server/agent-runner-installer.mjs";
+import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation } from "./src/server/agent-runner-installer.mjs";
 import { appDataRoot, initializeConfiguredDataRoot, machineLocalDataRoot } from "./src/server/app-data.mjs";
 import {
   completeDreaminaProfileOAuth,
@@ -700,6 +702,48 @@ const resolveClaudeCodeAgentSettings = (settings = {}) => {
   };
 };
 
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
+
+const resolveExternalCliAgentSettings = (settings = {}) => {
+  const requestedEngine = String(settings?.agentEngine || "").trim();
+  if (!EXTERNAL_CLI_AGENT_ENGINES.has(requestedEngine)) {
+    throw Object.assign(new Error("当前 Agent 配置不是外置 CLI 运行器"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
+  }
+  const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
+  const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
+  const profile = (requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null)
+    || (requestedEngine === String(settings?.agentEngine || "") ? settings : null);
+  if (!profile || String(profile.agentEngine || requestedEngine).trim() !== requestedEngine || profile.adapter !== "cli") {
+    throw Object.assign(new Error(`${agentEngineDescriptor(requestedEngine).label} 配置必须使用 CLI 调用方式`), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
+  }
+  const descriptor = agentEngineDescriptor(requestedEngine);
+  const cliPath = String(profile.cliPath || descriptor.cliPath || "").trim();
+  const cliArgs = String(profile.cliArgs || descriptor.cliArgs || "").trim();
+  if (requestedEngine === "custom" && !cliPath) {
+    throw Object.assign(new Error("自定义运行器缺少 CLI 程序路径"), { code: "EXTERNAL_CLI_PATH_REQUIRED", statusCode: 409 });
+  }
+  if (requestedEngine === "custom" && !cliArgs) {
+    throw Object.assign(new Error("自定义运行器缺少 CLI 参数模板"), { code: "EXTERNAL_CLI_ARGS_REQUIRED", statusCode: 409 });
+  }
+  const model = String(profile.agentModelId || profile.model || "").trim();
+  return {
+    ...settings,
+    ...profile,
+    id: String(profile.id || profile.connectionId || `${requestedEngine}-agent-session`),
+    connectionId: String(profile.id || profile.connectionId || `${requestedEngine}-agent-session`),
+    adapter: "cli",
+    agentEngine: requestedEngine,
+    provider: String(profile.provider || "").trim(),
+    model,
+    agentModelId: model,
+    cliPath,
+    cliArgs,
+    credentialSource: String(profile.credentialSource || "external").trim() || "external",
+    textConnections: [profile],
+    activeTextConnectionId: String(profile.id || profile.connectionId || `${requestedEngine}-agent-session`),
+  };
+};
+
 const resolveCodexApiAgentSettings = (settings = {}) => {
   const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
   const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
@@ -769,10 +813,12 @@ const runModelAdapter = async (options = {}) => {
   const deepSeekAgent = agentPreferred && selectedAgentEngine === "deepseek_opencode";
   const openCodeAgent = agentPreferred && selectedAgentEngine === "opencode";
   const claudeCodeAgent = agentPreferred && selectedAgentEngine === "claude_code";
+  const externalCliAgent = agentPreferred && EXTERNAL_CLI_AGENT_ENGINES.has(selectedAgentEngine);
   const codexApiSettings = codexApiAgent ? resolveCodexApiAgentSettings(options.settings ?? {}) : null;
   const deepSeekSettings = deepSeekAgent ? await resolveDeepSeekAgentSettings(options.settings ?? {}) : null;
   const openCodeSettings = openCodeAgent ? resolveOpenCodeAgentSettings(options.settings ?? {}) : null;
   const claudeCodeSettings = claudeCodeAgent ? resolveClaudeCodeAgentSettings(options.settings ?? {}) : null;
+  const externalCliSettings = externalCliAgent ? resolveExternalCliAgentSettings(options.settings ?? {}) : null;
   const agentPermissionMode = normalizeAgentPermissionMode(
     options.permissionContract?.mode
       || options.shensiRuntime?.permissionContract?.mode
@@ -799,7 +845,7 @@ const runModelAdapter = async (options = {}) => {
     ? options.shensiRuntime.onToolEvent
     : null;
   const workspaceToolContext = options.shensiRuntime?.workspaceToolContext;
-  const needsWorkspaceToolRuntime = agentPreferred && (codexApiAgent || deepSeekAgent || openCodeAgent || claudeCodeAgent || selectedAgentEngine === "codex");
+  const needsWorkspaceToolRuntime = agentPreferred && (codexApiAgent || deepSeekAgent || openCodeAgent || claudeCodeAgent || externalCliAgent || selectedAgentEngine === "codex");
   const agentWorkspaceToolRuntime = needsWorkspaceToolRuntime && workspaceToolContext?.root
     ? await codexAgentProvider.createWorkspaceToolRuntime(
       { cwd: resolve(String(workspaceToolContext.root)) },
@@ -842,7 +888,7 @@ const runModelAdapter = async (options = {}) => {
     });
     return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "codex_api_agent" };
   }
-  if (deepSeekAgent || openCodeAgent || claudeCodeAgent) {
+  if (deepSeekAgent || openCodeAgent || claudeCodeAgent || externalCliAgent) {
     if (agentPermissionMode === "approval_required" && typeof requestApproval !== "function") {
       throw new Error("操作需确认模式缺少神思审批通道");
     }
@@ -853,8 +899,8 @@ const runModelAdapter = async (options = {}) => {
       dynamicTools: [],
       invoke: async () => ({ success: false, contentItems: [{ type: "inputText", text: "Shensi workspace tools are unavailable for this request." }] }),
     };
-    const mcpTools = claudeCodeAgent && agentPermissionMode === "approval_required"
-      ? toolsWithPermissionPrompt(agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime, requestApproval, { runner: "claude_code" })
+    const mcpTools = agentPermissionMode === "approval_required" && (claudeCodeAgent || externalCliAgent)
+      ? toolsWithPermissionPrompt(agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime, requestApproval, { runner: selectedAgentEngine })
       : agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime;
     const nativeHost = await startConversationAgentMcp({ tools: mcpTools, onToolEvent, signal: options.signal });
     const commonRunnerOptions = {
@@ -869,6 +915,8 @@ const runModelAdapter = async (options = {}) => {
       requestApproval,
       contextBlocks: Array.isArray(options.contextBlocks) ? options.contextBlocks : [],
       signal: options.signal,
+      onEvent: options.onEvent,
+      onProcess: options.onProcess,
     };
     try {
       if (deepSeekAgent) {
@@ -894,6 +942,20 @@ const runModelAdapter = async (options = {}) => {
           timeoutMs: openCodeSettings.timeoutMs,
         });
         return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "opencode_agent" };
+      }
+      if (externalCliAgent) {
+        const result = await runExternalCliAgent({
+          ...commonRunnerOptions,
+          engine: selectedAgentEngine,
+          provider: externalCliSettings.provider,
+          baseUrl: externalCliSettings.baseUrl,
+          apiKey: externalCliSettings.apiKey,
+          model: externalCliSettings.model,
+          cliPath: externalCliSettings.cliPath,
+          cliArgs: externalCliSettings.cliArgs,
+          timeoutMs: externalCliSettings.timeoutMs,
+        });
+        return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: `${selectedAgentEngine}_agent` };
       }
       const result = await runClaudeCodeAgentTurn({
         ...commonRunnerOptions,
@@ -976,6 +1038,50 @@ const testModelAdapter = async ({ settings = {}, cwd } = {}) => {
       : settings.audioChannel === true || settings.channel === "audio"
         ? "audio"
         : "text";
+  if (channel === "text"
+    && EXTERNAL_CLI_AGENT_ENGINES.has(String(settings.agentEngine || "").trim())
+    && settings.connectionProbeOnly !== true) {
+    const externalSettings = resolveExternalCliAgentSettings(settings);
+    const nativeHost = await startConversationAgentMcp({
+      tools: {
+        dynamicTools: [],
+        invoke: async () => ({ success: false, contentItems: [{ type: "inputText", text: "No Shensi workspace tools are needed for this connection test." }] }),
+      },
+    });
+    try {
+      const inference = await runExternalCliAgent({
+        engine: externalSettings.agentEngine,
+        prompt: "Connection test. Reply with exactly SHENSI_EXTERNAL_AGENT_OK.",
+        cwd: cwd || root,
+        model: externalSettings.model,
+        provider: externalSettings.provider,
+        baseUrl: externalSettings.baseUrl,
+        apiKey: externalSettings.apiKey,
+        cliPath: externalSettings.cliPath,
+        cliArgs: externalSettings.cliArgs,
+        nativeHost,
+        agentPermissionMode: "shensi_only",
+        permissionContract: permissionContractFor("shensi_only", { runner: externalSettings.agentEngine }),
+        timeoutMs: Math.min(Math.max(Number(externalSettings.timeoutMs) || 120_000, 30_000), 600_000),
+      });
+      if (!/SHENSI_EXTERNAL_AGENT_OK/iu.test(String(inference.text || ""))) {
+        throw new Error(`${agentEngineDescriptor(externalSettings.agentEngine).label} 已返回文本，但连接测试口令不匹配`);
+      }
+      return {
+        ok: true,
+        connected: true,
+        available: true,
+        testLevel: "real_inference",
+        verificationLevel: "real_inference",
+        actualProvider: inference.actualProvider || externalSettings.provider,
+        actualModel: inference.actualModel || externalSettings.model,
+        agentVerified: true,
+        message: `${agentEngineDescriptor(externalSettings.agentEngine).label} 真实推理成功${inference.actualModel ? `：${inference.actualModel}` : ""}`,
+      };
+    } finally {
+      await nativeHost.close?.();
+    }
+  }
   if (channel === "text" && settings.agentEngine === "opencode" && settings.connectionProbeOnly !== true
     && !(Array.isArray(settings.textConnections) && settings.textConnections.length)) {
     return testUntrustedModelAdapter({ settings, cwd });
@@ -1337,6 +1443,15 @@ const localCapabilities = async ({ includeOpenCode = false, includeClaude = fals
 const detectAgentRunner = async (runnerId, { force = false } = {}) => {
   if (!AGENT_RUNNER_INSTALL_SPECS[runnerId]) return { available: false, installed: false, message: "未知 Agent 运行器" };
   if (force) resetLocalCapabilityCache(runnerId);
+  if (runnerId === "custom") return {
+    available: false,
+    installed: false,
+    configurable: true,
+    message: "自定义运行器需要在当前文字配置中填写 CLI 程序路径和参数模板",
+  };
+  if (["trae_work", "workbuddy"].includes(runnerId)) {
+    return detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env });
+  }
   const capability = runnerId === "codex"
     ? await detectLocalCodex({ cwd: root, includeModels: false })
     : runnerId === "opencode"
@@ -1409,6 +1524,7 @@ const conversationAgentGateway = createConversationAgentGateway({
     if (engine === "claude_code") return resolveClaudeCodeAgentSettings(selected);
     if (engine === "opencode") return resolveOpenCodeAgentSettings(selected);
     if (engine === "deepseek_opencode") return resolveDeepSeekAgentSettings(selected);
+    if (EXTERNAL_CLI_AGENT_ENGINES.has(engine)) return resolveExternalCliAgentSettings(selected);
     return { ...selected, agentEngine: engine };
   },
   apiRequest: async (path, body) => {
@@ -4741,6 +4857,8 @@ const handleApiRequest = async (request, response, pathname) => {
           ? resolveCodexApiAgentSettings(body.agentSettings ?? {})
           : selectedAgentEngine === "claude_code"
             ? resolveClaudeCodeAgentSettings(body.agentSettings ?? {})
+            : EXTERNAL_CLI_AGENT_ENGINES.has(selectedAgentEngine)
+              ? resolveExternalCliAgentSettings({ ...(body.agentSettings ?? {}), agentEngine: selectedAgentEngine })
             : { model: String(body.agentSettings?.agentModelId || body.agentSettings?.model || ""),
                 reasoningEffort: body.agentSettings?.reasoningEffort, speedMode: body.agentSettings?.speedMode };
     runtimeSettings.agentEngine = selectedAgentEngine;

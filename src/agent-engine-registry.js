@@ -56,12 +56,39 @@ const ENGINE_DEFINITIONS = Object.freeze({
     adapter: "cli",
     launcher: "claude",
   }),
+  trae_work: Object.freeze({
+    id: "trae_work",
+    label: "Trae Work",
+    provider: "",
+    adapter: "cli",
+    launcher: "traecli",
+    cliPath: "traecli",
+    cliArgs: "exec --json --model {model}",
+  }),
+  workbuddy: Object.freeze({
+    id: "workbuddy",
+    label: "WorkBuddy",
+    provider: "",
+    adapter: "cli",
+    launcher: "codebuddy",
+    cliPath: "codebuddy",
+    cliArgs: "-p --output-format stream-json --model {model} --mcp-config {mcpConfigFile}",
+  }),
+  custom: Object.freeze({
+    id: "custom",
+    label: "自定义运行器",
+    provider: "",
+    adapter: "cli",
+    launcher: "custom",
+    cliPath: "",
+    cliArgs: "",
+  }),
 });
 
 export const AGENT_ENGINE_IDS = Object.freeze(Object.keys(ENGINE_DEFINITIONS));
 
 export const normalizeAgentEngineId = (value = "") => (
-  ["codex_api", "deepseek_opencode", "opencode", "claude_code"].includes(text(value)) ? text(value) : "codex"
+  ["codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(text(value)) ? text(value) : "codex"
 );
 
 export const agentEngineDescriptor = (value = "") => ENGINE_DEFINITIONS[normalizeAgentEngineId(value)];
@@ -105,6 +132,7 @@ export const agentModelBelongsToEngine = (model = "", engine = "") => {
   const slug = text(typeof model === "string" ? model : model?.slug || model?.id || model?.name).toLocaleLowerCase("en-US");
   if (!slug) return false;
   if (normalizeAgentEngineId(engine) === "codex_api") return true;
+  if (["trae_work", "workbuddy", "custom"].includes(normalizeAgentEngineId(engine))) return true;
   if (normalizeAgentEngineId(engine) === "opencode") return /^[^/\s]+\/[^/\s]+$/u.test(slug);
   if (normalizeAgentEngineId(engine) === "claude_code") return /^(?:claude-|anthropic\/claude-|deepseek-v4-(?:pro|flash)(?:\[1m\])?)/u.test(slug);
   return normalizeAgentEngineId(engine) === "deepseek_opencode"
@@ -124,7 +152,11 @@ export const agentModelsForEngine = (engine = "", {
   effectiveModel = "",
 } = {}) => {
   const engineId = normalizeAgentEngineId(engine);
-  const source = ["deepseek_opencode", "opencode"].includes(engineId) ? openCodeModels : codexModels;
+  const source = ["deepseek_opencode", "opencode"].includes(engineId)
+    ? openCodeModels
+    : ["trae_work", "workbuddy", "custom"].includes(engineId)
+      ? [...(Array.isArray(codexModels) ? codexModels : []), ...(Array.isArray(openCodeModels) ? openCodeModels : [])]
+      : codexModels;
   const models = new Map((Array.isArray(source) ? source : [])
     .map(normalizedModel)
     .filter(Boolean)

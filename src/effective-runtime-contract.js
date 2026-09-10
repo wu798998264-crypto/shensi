@@ -7,6 +7,7 @@ import {
 
 const text = (value = "") => String(value ?? "").trim();
 const uniqueModes = () => ["agent"];
+const EXTERNAL_CLI_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
 
 const failed = ({ code, message, profileId = "", surface = "", ...rest }) => ({
   ok: false,
@@ -24,6 +25,7 @@ const credentialSourceForProfile = (profile = {}, engine = "", surface = "") => 
   if (engine === "codex") return "codex";
   if (engine === "opencode" || engine === "deepseek_opencode") return "opencode";
   if (engine === "claude_code") return "claude";
+  if (EXTERNAL_CLI_ENGINES.has(engine)) return "external";
   return "shensi";
 };
 
@@ -74,9 +76,19 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
     cliArgs: text(profile.cliArgs),
   };
 
-  if (!provider) return failed({ ...base, code: "RUNTIME_PROVIDER_REQUIRED", message: "没有选择模型服务商" });
+  const externalCli = EXTERNAL_CLI_ENGINES.has(engine);
+  if (!provider && !externalCli) return failed({ ...base, code: "RUNTIME_PROVIDER_REQUIRED", message: "没有选择模型服务商" });
   if (!runner) return failed({ ...base, code: "RUNTIME_RUNNER_REQUIRED", message: "没有选择可用的运行器" });
-  if (!model) return failed({ ...base, code: "RUNTIME_MODEL_REQUIRED", message: "没有选择模型" });
+  if (!model && !externalCli) return failed({ ...base, code: "RUNTIME_MODEL_REQUIRED", message: "没有选择模型" });
+  if (externalCli && adapter !== "cli") {
+    return failed({ ...base, code: "EXTERNAL_CLI_ADAPTER_REQUIRED", message: "外置 Agent 运行器必须使用 CLI 调用方式" });
+  }
+  if (engine === "custom" && !text(profile.cliPath)) {
+    return failed({ ...base, code: "EXTERNAL_CLI_PATH_REQUIRED", message: "自定义运行器缺少 CLI 程序路径" });
+  }
+  if (engine === "custom" && !text(profile.cliArgs)) {
+    return failed({ ...base, code: "EXTERNAL_CLI_ARGS_REQUIRED", message: "自定义运行器缺少 CLI 参数模板" });
+  }
   if (requestedSurface === "agent"
     && engine === "codex"
     && model.includes("/")) {
