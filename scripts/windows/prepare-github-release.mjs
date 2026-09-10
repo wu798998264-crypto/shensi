@@ -29,6 +29,7 @@ const installerInfo = await stat(requestedInstaller).catch(() => null);
 if (!installerInfo?.isFile() || installerInfo.size <= 10 * 1024 * 1024) throw new Error("正式 Windows 安装包不存在或体积异常");
 
 const signatureScript = [
+  "$ErrorActionPreference = 'Stop'",
   "$signature = Get-AuthenticodeSignature -LiteralPath $env:SHENSI_RELEASE_INSTALLER",
   "$result = [ordered]@{",
   "  status = [string]$signature.Status",
@@ -40,7 +41,7 @@ const signatureScript = [
 const signatureProcess = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(signatureScript, "utf16le").toString("base64")], {
   encoding: "utf8",
   windowsHide: true,
-  env: { ...process.env, SHENSI_RELEASE_INSTALLER: requestedInstaller },
+  env: { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "psmodulepath")), SHENSI_RELEASE_INSTALLER: requestedInstaller },
 });
 if (signatureProcess.status !== 0) throw new Error("无法验证 Windows 安装包签名");
 const signature = JSON.parse(String(signatureProcess.stdout || "{}").trim() || "{}");

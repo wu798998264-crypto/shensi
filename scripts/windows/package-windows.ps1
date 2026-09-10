@@ -220,6 +220,7 @@ Write-Host "==> Packaging finished (buildId=$buildId)"
 # looks like a valid .exe. Refuse to publish it: verify the final installer is
 # substantial and parseable before treating this build as successful.
 $installerPath = Join-Path $windowsOutput "Shensi-Setup-$version-$buildId-x64.exe"
+& (Join-Path $repoRoot "scripts\windows\sign-final-installer.ps1") -InstallerPath $installerPath
 & node (Join-Path $repoRoot "scripts\verify-windows-package.mjs") $installerPath
 if ($LASTEXITCODE -ne 0) { throw "Windows installer verification failed (exit $LASTEXITCODE)" }
 Write-Host "==> Installer verification passed: $installerPath"
