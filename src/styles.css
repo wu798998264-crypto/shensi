@@ -14714,6 +14714,14 @@ body.resizing-chat-composer * {
   line-height: 1.4;
 }
 
+.conversation-choice-options:has(.native-choice-items) { flex-wrap: nowrap; align-items: flex-start; }
+.native-choice-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.native-choice-confirm { flex: 0 0 auto; }
+.native-agent-live-status { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
+.native-agent-live-status::before { content: '◌'; display: inline-block; margin-right: 6px; animation: native-agent-spin 1.5s linear infinite; }
+@keyframes native-agent-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .native-agent-live-status::before { animation: none; } }
+
 .conversation-choice-parameter-group {
   display: grid;
   flex: 0 0 100%;

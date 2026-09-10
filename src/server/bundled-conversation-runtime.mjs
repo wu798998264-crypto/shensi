@@ -58,7 +58,7 @@ export const runBundledConversationAgent = async ({ appRoot, machineRoot, ...opt
     const result = await runtime.runStage({ settings: { ...options.settings, webSearchEnabled: false, provider: "OpenAI", adapter: "cli", cliPath: "codex", timeoutMs: Math.max(1_800_000, Number(options.settings.timeoutMs) || 0) },
       system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), messages: [{ role: "user", content: options.prompt }],
       shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime,
-      signal: options.signal, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer,
+      signal: options.signal, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, isWaitingForUser: options.isWaitingForUser,
       permissionContract: options.permissionContract, requestApproval: options.requestApproval, nativeWebSearchEnabled });
     return { ...result, agentRuntime: { ...result.agentRuntime, runtime: "bundled_codex", version: "0.146.0", model: options.settings.model, protocol: options.settings.protocol, permissionMode } };
   } finally { await runtime.close(); await bridge.close(); }

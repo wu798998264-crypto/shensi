@@ -19587,7 +19587,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
   }
   const nativeQuestion = activeConversation()?.agentQuestion;
   queueMicrotask(recoverNativeConversationRuns);
-  if (nativeQuestion?.kind === "native_agent" && nativeQuestion.id !== pendingConversationChoice?.id) {
+  if (nativeQuestion?.kind === "native_agent" && !nativeQuestion.submitting && nativeQuestion.id !== pendingConversationChoice?.id) {
     pendingConversationChoice = nativeQuestion;
     queueMicrotask(() => renderConversationChoicePanel());
   }
@@ -19719,6 +19719,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
       ${renderNativeAgentDocumentLinks(message)}
+      ${message.execution?.nativeAgentRunId && message.pending ? `<div class="native-agent-live-status" role="status">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>` : ""}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
     </section>`;
@@ -35861,13 +35862,17 @@ const monitorNativeConversation = (runtime, pending) => {
             && closedAgentBrowserSessions.has(String(event.payload?.metadata?.sessionId || ""))) {
             void answerNativeConversationQuestion(conversation.agentQuestion, "取消本次网页读取");
           }
+        } else if (event.type === "text_delta") {
+          pending.streamText = (pending.streamText || "") + event.payload.text;
+          pending.execution.result = "Agent 正在生成回答";
         } else if (event.type === "open_candidates") {
           if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) openLatestCandidateComparison();
         } else if (event.type === "answer" || event.type === "answer_accepted") {
           const id = `answer-${event.payload.decisionId}`;
           if (!messages.some((message) => message.id === id)) messages.push({ id, role: "user", content: event.payload.answer, time: nowTime(), conversationChoiceInstruction: true });
-          conversation.agentQuestion = null;
+          if (conversation.agentQuestion?.id === event.payload.decisionId) conversation.agentQuestion = null;
           pending.execution.status = "running";
+          pending.execution.result = "Agent 正在继续处理";
         } else if (event.type === "candidates") {
           pending.candidate = event.payload.variants[0].content;
           pending.generationAttempt = { requestId: runId, candidateVariants: event.payload.variants.map((variant, index) => ({
@@ -35929,18 +35934,32 @@ const monitorNativeConversation = (runtime, pending) => {
 
 const answerNativeConversationQuestion = async (question, answer) => {
   if (!String(answer || "").trim()) return;
+  if (question.submitting) return;
   const runtime = agentTaskRuntimeFor({ conversationId: question.conversationId });
   if (!runtime || runtime.conversation.agentQuestion?.id !== question.id) { showToast("选项已过期，请刷新当前任务"); return; }
   const id = `answer-${question.id}`;
+  question.submitting = true;
+  const pending = runtime.messages.find((message) => message.execution?.nativeAgentRunId === question.runId && !message.execution.nativeAgentTerminal);
+  if (pending) Object.assign(pending.execution, { status: "running", result: "正在提交答案，Agent 将继续处理" });
+  if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
   if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: String(answer), time: nowTime(), conversationChoiceInstruction: true });
   clearActiveComposerDraft();
   await persistNativeConversation(runtime);
   renderNativeConversation(runtime, true);
   try {
     await conversationAgentRequest(`/api/conversation-agent/${question.runId}/answer`, { decisionId: question.id, answer: String(answer) });
-    runtime.conversation.agentQuestion = null;
+    if (runtime.conversation.agentQuestion?.id === question.id) runtime.conversation.agentQuestion = null;
+    if (pending && !pending.execution.nativeAgentTerminal) pending.execution.result = "Agent 正在继续处理";
     if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
-  } catch (error) { showToast(error.message); }
+  } catch (error) {
+    question.submitting = false;
+    if (runtime.conversation.agentQuestion?.id === question.id) {
+      if (pending) Object.assign(pending.execution, { status: "waiting_input", result: "答案提交失败，请重试" });
+      if (question.conversationId === state.activeConversationId) { pendingConversationChoice = question; renderConversationChoicePanel(); }
+    }
+    showToast(error.message);
+  }
+  renderNativeConversation(runtime, true);
 };
 
 const recoverNativeConversationRuns = () => {
@@ -36863,12 +36882,12 @@ const renderConversationChoicePanel = () => {
   }
   if (pending.kind === "native_agent") {
     elements.conversationChoiceQuestion.textContent = pending.question || "Agent 需要你的决定";
-    elements.conversationChoiceOptions.innerHTML = (pending.options || []).map((option) => conversationChoiceButton({
+    elements.conversationChoiceOptions.innerHTML = '<span class="native-choice-items">' + (pending.options || []).map((option) => conversationChoiceButton({
       label: option.label,
       type: "native_agent_answer",
       value: pending.allowFreeText === false ? option.id : option.label,
       selected: (pending.selectedValues || []).includes(pending.allowFreeText === false ? option.id : option.label),
-    })).join("") + conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length });
+    })).join("") + `</span><span class="native-choice-confirm">${conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length })}</span>`;
     elements.conversationChoiceHint.textContent = pending.allowFreeText === false
       ? "请选择允许或拒绝；本次决定只作用于当前这一项操作。"
       : "也可以直接在下方输入其他想法。";

@@ -336,6 +336,7 @@ export class ShensiCodexAgentRuntime {
         return;
       }
       run.text += delta;
+      run.onToolEvent?.({ phase: "text_delta", text: delta });
       return;
     }
     if (method === "turn/completed") {
@@ -556,10 +557,17 @@ export class ShensiCodexAgentRuntime {
       // longer timeout, but enforce a creative-stage floor and a defensive cap.
       const timeoutMs = effectiveShensiCodexAgentStageTimeoutMs(options.settings);
       const timeoutPromise = new Promise((_, rejectTimeout) => {
-        timeout = setTimeout(() => {
+        let remaining = timeoutMs;
+        let sampledAt = Date.now();
+        const tick = () => {
+          const now = Date.now();
+          if (!options.isWaitingForUser?.()) remaining -= now - sampledAt;
+          sampledAt = now;
+          if (remaining > 0) { timeout = setTimeout(tick, Math.min(1000, remaining)); return; }
           void this.request("turn/interrupt", { threadId: run.threadId, turnId: run.turnId }, { timeoutMs: 15_000 }).catch(() => {});
           rejectTimeout(runtimeError(`Codex Agent 阶段执行超过 ${timeoutMs}ms`, "CODEX_AGENT_TURN_TIMEOUT", false));
-        }, timeoutMs);
+        };
+        timeout = setTimeout(tick, Math.min(1000, remaining));
       });
       await Promise.race([completion, abortPromise, timeoutPromise]);
       if (!run.text.trim()) throw runtimeError("Codex Agent 没有返回当前阶段文本", "CODEX_AGENT_EMPTY_RESPONSE", false);

@@ -87,7 +87,7 @@ export const createConversationAgentGateway = ({
       const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: runtimeMachineRoot, environment,
         isolateConfig: shensiOnly,
         launchResolver: () => resolveLocalCodexLaunch({ environment: { ...environment, ...(settings.cliPath && settings.cliPath !== "codex" ? { SHENSI_CODEX_EXECUTABLE: settings.cliPath } : {}) } }) });
-      try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal, permissionContract, requestApproval: options.requestApproval }); }
+      try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal, isWaitingForUser: options.isWaitingForUser, permissionContract, requestApproval: options.requestApproval }); }
       finally { await runtime.close(); }
     }
     const mcpTools = settings.agentEngine === "claude_code" && settings.agentPermissionMode === "approval_required"

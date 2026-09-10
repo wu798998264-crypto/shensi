@@ -128,6 +128,17 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
   };
   const execute = async (entry, request) => {
     const { record, controller } = entry;
+    let textBuffer = "", textTimer = null;
+    const flushText = () => {
+      clearTimeout(textTimer); textTimer = null;
+      if (!textBuffer) return Promise.resolve();
+      const text = textBuffer; textBuffer = "";
+      return event(entry, "text_delta", { text });
+    };
+    const bufferText = (text) => {
+      textBuffer += String(text || "");
+      if (!textTimer) textTimer = setTimeout(() => { void flushText().catch(() => {}); }, 160);
+    };
     try {
       const catalog = await skillCatalog(request);
       const route = await readRoute(request);
@@ -166,8 +177,9 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model, permissionMode: request.settings.agentPermissionMode });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
-      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, onToolEvent: (data) => event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request });
+      const result = await run({ settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request });
       record.text = result.text || "";
+      await flushText();
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");
       record.status = "completed";
@@ -178,6 +190,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       record.error = String(error.message || error).replaceAll(String(request.settings.apiKey || "\0"), "[REDACTED]").replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
       await event(entry, record.status, { message: record.error }).catch(() => {});
     } finally {
+      clearTimeout(textTimer);
       if (lanes.get(record.key) === record.id) lanes.delete(record.key);
       for (const pending of entry.pending.values()) pending.reject(new Error("任务已经结束"));
       entry.pending.clear();
