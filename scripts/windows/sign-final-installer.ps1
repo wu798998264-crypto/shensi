@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][string]$InstallerPath)
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1') -Force
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
 $metadata = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\..\package.json') | ConvertFrom-Json
 $signing = $metadata.build.win.signtoolOptions
