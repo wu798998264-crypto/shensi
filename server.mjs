@@ -7939,6 +7939,21 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...result });
   }
 
+  if (pathname === "/api/workspace/document-state" && request.method === "POST") {
+    const body = await readJsonBody(request, 32 * 1024);
+    const ids = [...new Set((Array.isArray(body.documentIds) ? body.documentIds : []).map(String))];
+    if (!ids.length || ids.length > 80) return sendJson(response, 400, { ok: false, message: "请选择1至80个目标文档" });
+    const loaded = await loadWorkspaceState({ appRoot: root, requestedPath: body.workspacePath });
+    const selected = new Set(ids);
+    const state = loaded.state || {};
+    return sendJson(response, 200, { ok: true, state: {
+      documents: Object.fromEntries(ids.filter(id => state.documents?.[id]).map(id => [id, state.documents[id]])),
+      histories: Object.fromEntries(ids.filter(id => state.histories?.[id]).map(id => [id, state.histories[id]])),
+      moduleItems: Object.fromEntries(Object.entries(state.moduleItems || {}).map(([module, items]) => [module, items.filter(item => selected.has(item[0]))])),
+      customFolders: state.customFolders || [],
+    } });
+  }
+
   if (pathname === "/api/workspace/load" && request.method === "POST") {
     const body = await readJsonBody(request);
     const temporary = isTemporaryNotebookPath(body.workspacePath);

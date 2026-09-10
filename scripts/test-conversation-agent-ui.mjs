@@ -203,6 +203,8 @@ try {
     starts:window.nativeAgentStarts.length
   })`);
   assert.equal(first.input, "");
+  assert.equal(await evaluate("document.querySelector('#conversationAgentLiveStatus')"), null, '不再存在输入框上方的重复状态栏');
+  assert.equal(await evaluate("document.querySelectorAll('[data-native-task-card]').length"),1,'每轮只有一张原生任务卡片');
   assert.equal(await evaluate("window.nativeAgentStarts[0].targetDocumentId"), '', '当前打开文档不得默认绑定为写入目标');
   assert.equal(await evaluate("window.nativeAgentStarts[0].currentDocument.documentId"), agentLinkTarget.id);
   assert.match(first.text, /不生成视频，只给三份不同视角的候选故事/);

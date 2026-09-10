@@ -22,10 +22,11 @@ try {
   const service=createConversationAgentService({appRoot:root,storageRoot:join(root,'runs'),skillCatalog:async()=>[],readRoute:async()=>'',run:async ({workspaceToolRuntime:tools})=>{
     calls++;
     if(calls===1) {
-      await invoke(tools,'interaction','delivery',{mode:'documents',documentIds:['article']});
+      await invoke(tools,'interaction','delivery',{mode:'conversation',documentIds:[]});
       return {text:'已经完成写入。'}; // deliberately false: must not become success
     }
     const current=await invoke(tools,'documents','read',{documentId:'article'});
+    await invoke(tools,'interaction','delivery',{mode:'documents',documentIds:['article']});
     await invoke(tools,'documents','write',{operation:'replace',documentId:'article',title:'新的文章标题',content:'这是新文章完整的正式正文内容。',expectedRevision:current.revision,operationId:'replace'});
     return {text:'已通过验收。'};
   }});
@@ -43,6 +44,24 @@ try {
   assert.equal(loaded.state.documents.article.title,'新的文章标题');
   assert.match(loaded.state.documents.article.markdown,/新文章完整/);
   assert.match(loaded.state.histories.article[0].content,/完整保留的旧文章/);
+  const writer = createConversationAgentTools({...base,requestId:'all-write-modes',instruction:'追加、局部修订、重命名并保存报告'});
+  let current = await invoke(writer,'documents','read',{documentId:'article'});
+  const append = {operation:'append',documentId:'article',content:'\n\n这是追加的结尾。',expectedRevision:current.revision,operationId:'append'};
+  await invoke(writer,'documents','write',append);
+  await invoke(writer,'documents','write',append);
+  current = await invoke(writer,'documents','read',{documentId:'article'});
+  assert.equal(current.content.split('这是追加的结尾。').length,2,'幂等重试不能重复追加');
+  await invoke(writer,'documents','write',{operation:'patch',documentId:'article',patches:[{type:'block',original:'追加的结尾',content:'修订的结尾'}],expectedRevision:current.revision,operationId:'patch'});
+  current = await invoke(writer,'documents','read',{documentId:'article'});
+  await invoke(writer,'documents','write',{operation:'rename',documentId:'article',title:'最后标题',expectedRevision:current.revision,operationId:'rename'});
+  await invoke(writer,'documents','write',{operation:'create',documentId:'quality-report',moduleId:'reports',title:'正文质量检查报告',content:'检查范围：实际提供的正文。结论：存在一处节奏问题，建议补充动机。',operationId:'report'});
+  const writes=await loadWorkspaceState({appRoot:root,requestedPath:workspacePath});
+  assert.equal(writes.state.documents.article.title,'最后标题');
+  assert.match(writes.state.documents.article.markdown,/修订的结尾/);
+  assert.equal(writes.state.documents['quality-report'].moduleId,'reports');
+  assert.ok(writes.state.histories.article.length>=4);
+  const stale=await writer.invoke({namespace:'documents',tool:'write',arguments:{operation:'replace',documentId:'article',content:'不应该落盘的旧版本覆盖正文。',expectedRevision:'obsolete',operationId:'stale'}});
+  assert.equal(stale.success,false,'过期版本不能覆盖最新内容');
   let stubbornCalls=0;
   const stubborn=createConversationAgentService({appRoot:root,storageRoot:join(root,'failures'),skillCatalog:async()=>[],readRoute:async()=>'',run:async()=>{stubbornCalls++;return {text:'声称完成但没有工具证据'};}});
   const failure=await wait(stubborn,(await stubborn.start({...request,conversationId:'stubborn'})).id);

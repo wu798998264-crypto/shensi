@@ -7480,7 +7480,6 @@ root.innerHTML = `
             <div class="conversation-choice-options" id="conversationChoiceOptions"></div>
             <p class="conversation-choice-hint" id="conversationChoiceHint">也可以直接在下方对话输入区说明你的想法；发送后选项会自动隐藏。</p>
           </section>
-          <div id="conversationAgentLiveStatus" class="native-agent-live-status" role="status" hidden></div>
           <section class="agent-operation-proposal" id="agentOperationProposal" hidden aria-live="polite" aria-label="Agent 操作提案">
             <header><div><small>Agent 操作确认</small><h3 id="agentOperationProposalTitle">确认操作</h3></div><span id="agentOperationProposalImpact"></span></header>
             <p id="agentOperationProposalObjective"></p>
@@ -19245,7 +19244,7 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
 const renderNativeAgentEvidence = (message) => {
   const reads = message.execution?.actualReads || [];
   const targets = message.execution?.deliveryTargets || [];
-  return `${targets.length ? `<div class="native-agent-targets">目标文档：${targets.map(item => escapeHtml(item.title || item.documentId)).join("、")}</div>` : ""}${reads.length ? `<details class="native-agent-reads"><summary>实际读取 ${reads.length} 项</summary>${reads.map(item => `<div>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")} · ${escapeHtml(item.title || item.id)}${item.fullText ? "（全文）" : "（部分内容）"}</div>`).join("")}</details>` : ""}`;
+  return `${targets.length ? `<div class="native-agent-targets">目标文档：${targets.map(item => escapeHtml(item.title || item.documentId)).join("、")}</div>` : ""}${reads.length ? `<details class="native-agent-reads"><summary>实际读取 ${reads.length} 项</summary>${reads.map(item => `<div>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")} · ${escapeHtml(item.title || item.id)}${item.fullText ? "（全文）" : item.readKind === "search_excerpt" ? "（检索片段）" : "（部分内容）"}</div>`).join("")}</details>` : ""}`;
 };
 
 const renderVerifiedLandedContent = (message = {}) => {
@@ -19588,12 +19587,6 @@ const renderChatAgentGuidanceCard = () => {
 };
 
 const renderMessages = ({ forceScrollToBottom = false } = {}) => {
-  const liveStatus = document.querySelector('#conversationAgentLiveStatus');
-  const liveMessage = (state.messages || []).find(message => message.pending && message.execution?.nativeAgentRunId && !message.execution.nativeAgentTerminal);
-  if (liveStatus) {
-    liveStatus.hidden = Boolean(ui.conversationPreview || !liveMessage || liveMessage.execution.status === 'waiting_input');
-    liveStatus.textContent = liveMessage?.execution?.result || 'Agent 正在处理';
-  }
   if (ui.conversationPreview) {
     renderConversationPreview();
     return;
@@ -19732,8 +19725,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
       ${renderNativeAgentDocumentLinks(message)}
-      ${renderNativeAgentEvidence(message)}
-      ${message.execution?.nativeAgentRunId && message.pending ? `<div class="native-agent-live-status" role="status">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>` : ""}
+      ${message.execution?.nativeAgentRunId ? `<section class="native-agent-task-card" data-native-task-card="${escapeHtml(message.id)}"><div role="status" class="${message.pending ? "native-agent-live-status" : "native-agent-final-status"}">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>${renderNativeAgentEvidence(message)}</section>` : ""}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
     </section>`;
@@ -35847,8 +35839,16 @@ const persistNativeConversation = async (runtime) => {
 
 const renderNativeConversation = (runtime, forceScrollToBottom = false) => {
   if (!workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) return;
-  mergeAgentRuntimeConversationState(state, runtime);
-  renderConversationIfActive(runtime.conversation.id, { forceScrollToBottom });
+  if (runtime.conversation.id !== state.activeConversationId) return;
+  runtime.forceScroll = runtime.forceScroll || forceScrollToBottom;
+  if (runtime.renderTimer) return;
+  runtime.renderTimer = setTimeout(() => {
+    runtime.renderTimer = null;
+    if (!workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath) || runtime.conversation.id !== state.activeConversationId) return;
+    mergeAgentRuntimeConversationState(state, runtime);
+    renderConversationIfActive(runtime.conversation.id, { forceScrollToBottom: runtime.forceScroll });
+    runtime.forceScroll = false;
+  }, 80);
 };
 
 const monitorNativeConversation = (runtime, pending) => {
@@ -35907,7 +35907,10 @@ const monitorNativeConversation = (runtime, pending) => {
           materializeCandidateDraftBranches({ conversation, messages, messageIndex: messages.indexOf(pending), candidateState: runtime.candidateState });
           await persistNativeConversation(runtime);
         } else if (event.type === "tool") {
-          pending.execution.result = `${event.payload.phase === "started" ? "正在执行" : "已处理"}：${event.payload.name}`;
+          const name = String(event.payload.name || "");
+          pending.execution.result = event.payload.phase === "started"
+            ? name === "documents.write" ? "正在保存文档" : name === "interaction.delivery" ? "正在核对成果归档" : name.startsWith("skills.") ? "正在查阅创作技能" : name.startsWith("documents.") ? "正在查阅文档" : "Agent 正在处理"
+            : event.payload.success === false ? "操作未完成，Agent 正在处理原因" : "Agent 正在继续处理";
         } else if (["document_saved", "media_saved", "media_job"].includes(event.type)) {
           pending.execution.agentResultReferences ??= [];
           if (!pending.execution.agentResultReferences.some((entry) => entry.sequence === event.sequence)) {
@@ -35927,7 +35930,12 @@ const monitorNativeConversation = (runtime, pending) => {
           await persistNativeConversation(runtime);
         } else if (event.type === "completed") pending.content = event.payload.text;
         else if (["failed", "cancelled"].includes(event.type)) pending.content = event.payload.message;
-        renderNativeConversation(runtime);
+        if (event.type === "text_delta" && conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
+          const card = document.querySelector(`[data-native-task-card="${CSS.escape(pending.id)}"]`);
+          const stream = card?.closest('.assistant-message')?.querySelector('[data-stream-text]');
+          if (stream) stream.textContent = pending.streamText || "";
+          else renderNativeConversation(runtime);
+        } else renderNativeConversation(runtime);
       }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
       pending.content ||= result.text || result.error || "Agent 已完成任务。";
       pending.pending = false;
@@ -38552,9 +38560,14 @@ const rollbackToMessage = async (messageId) => {
 const refreshVerifiedAgentDocuments = async (ids) => {
   const sourceState = state;
   const workspacePath = state.settings.workspacePath;
-  // Save pending user edits through conflict reconciliation before loading disk truth.
-  await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
-  const loaded = await fetchWorkspacePayload(workspacePath);
+  // Only conflicting target edits require a flush; unrelated navigation and
+  // conversations must not block opening a verified result.
+  if (ui.workspaceDocumentChangesUnknown || ids.some(id => ui.workspaceDirtyDocumentIds.has(id))) await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+  const response = await fetchWorkspaceRequest('/api/workspace/document-state', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({workspacePath, documentIds: ids}),
+  }, 15000);
+  const loaded = await response.json();
+  if (!response.ok || !loaded.ok) throw new Error(loaded.message || '目标文档读取失败');
   if (state !== sourceState || state.settings.workspacePath !== workspacePath) return false;
   state.customFolders ||= [];
   for (const folder of loaded.state?.customFolders || []) {

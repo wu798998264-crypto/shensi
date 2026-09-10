@@ -14725,6 +14725,9 @@ body.resizing-chat-composer * {
 .native-choice-items { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .native-choice-confirm { flex: 0 0 auto; }
 .native-agent-live-status { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
+.native-agent-task-card { border: 1px solid var(--border); border-radius: 8px; padding: 8px; margin-top: 8px; }
+.native-agent-task-card .native-agent-live-status { border: 0; margin: 0; padding: 0 0 6px; }
+.native-agent-task-card .native-agent-reads { margin-top: 6px; }
 .native-agent-live-status::before { content: '◌'; display: inline-block; margin-right: 6px; animation: native-agent-spin 1.5s linear infinite; }
 @keyframes native-agent-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .native-agent-live-status::before { animation: none; } }

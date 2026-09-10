@@ -20,6 +20,7 @@ try {
     skillCatalog: async () => [],
     readRoute: async () => "由 Agent 按语义选择工具。",
     run: async (options) => {
+      if (options.deliveryReview) return { text: JSON.parse(options.prompt).result };
       capturedRuns.push(options);
       await options.workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: { mode: 'conversation', documentIds: [] } });
       if (options.permissionContract.mode !== "approval_required") return { text: options.permissionContract.mode };

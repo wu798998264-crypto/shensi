@@ -35,7 +35,8 @@ try {
 
   const waiting = new Map();
   let choiceProtocol = '';
-  const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime, contextBlocks }) => {
+  const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime, contextBlocks, deliveryReview, prompt }) => {
+    if (deliveryReview) return {text: JSON.parse(prompt).result};
     choiceProtocol = contextBlocks.find((block) => block.name === '动态选择交互')?.text || '';
     waiting.set(sessionId, true);
     await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: { mode: 'conversation', documentIds: [] } });

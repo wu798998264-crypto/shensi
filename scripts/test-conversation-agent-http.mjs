@@ -58,6 +58,10 @@ try {
   assert.equal(duplicate.id, started.id); assert.equal(duplicate.reused, true);
   const loaded = await api("/api/workspace/load", { workspacePath });
   assert.match(loaded.state.documents["agent-created"].markdown, /真实内置Agent/u);
+  const focused = await api('/api/workspace/document-state', {workspacePath,documentIds:['agent-created']});
+  assert.deepEqual(Object.keys(focused.state.documents),['agent-created']);
+  assert.equal(focused.state.settings,undefined);
+  assert.equal(focused.state.conversations,undefined);
   const retired = await fetch(origin + "/api/chat", { method: "POST", headers, body: JSON.stringify({ messages: request.messages }) });
   assert.equal(retired.status, 410);
   console.log("HTTP end-to-end: original task -> bundled Codex -> mock upstream -> protected document transaction -> durable status; duplicate start and retired Chat endpoint passed");

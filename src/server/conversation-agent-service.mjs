@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, appendFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
@@ -112,13 +112,30 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     return entry.saving;
   };
   const event = async (entry, type, payload = {}) => {
-    entry.record.events.push({ sequence: entry.record.events.length + 1, type, payload, at: new Date().toISOString() });
-    await persist(entry);
+    const item = { sequence: entry.record.events.length + 1, type, payload, at: new Date().toISOString() };
+    entry.record.events.push(item);
+    // Append only the new event. Full snapshots are reserved for terminal state.
+    const line = JSON.stringify({ event: item, status: entry.record.status }) + "\n";
+    entry.saving = (entry.saving || Promise.resolve()).then(() => appendFile(`${recordPath(entry.record.id)}.events`, line, { encoding: "utf8", flush: !["tool", "text_delta", "resource_read"].includes(type) }));
+    await entry.saving;
+    if (terminal(entry.record.status)) await persist(entry);
   };
   const get = async (id) => {
     if (runs.has(id)) return runs.get(id);
     let record;
     try { record = JSON.parse(await readFile(recordPath(id), "utf8")); } catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    const journal = await readFile(`${recordPath(id)}.events`, "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
+    const lines = journal.split("\n");
+    for (let index = 0; index < lines.length; index++) {
+      if (!lines[index]) continue;
+      let item;
+      try { item = JSON.parse(lines[index]); } catch (error) { if (index === lines.length - 1) break; throw error; }
+      if (item.event.sequence <= record.events.length) continue;
+      if (item.event.sequence !== record.events.length + 1) throw new Error("任务事件序号不连续，保留原记录等待恢复");
+      record.events.push(item.event); record.status = item.status;
+      if (item.event.type === "completed") record.text = item.event.payload.text;
+      if (["failed", "cancelled"].includes(item.event.type)) record.error = item.event.payload.message;
+    }
     const recoveredInterruptedRun = !terminal(record.status);
     if (recoveredInterruptedRun) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
     const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
@@ -183,6 +200,14 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
       const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
+      // Reconcile conversation-only delivery against the original user request,
+      // not the writer's self-declared mode. This stays semantic, never keyword-routed.
+      if (tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
+        await event(entry, "progress", { message: "正在核对成果归档" });
+        const previousText = result.text;
+        const checked = await run({ ...runOptions, deliveryReview: true, prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。若需要归档，先声明documents并完成写入；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
+        result = { ...checked, text: checked.text || previousText };
+      }
       for (let attempt = 0; attempt < 2 && tools.deliveryStatus; attempt++) {
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;

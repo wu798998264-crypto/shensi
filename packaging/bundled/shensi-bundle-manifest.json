@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "bundleId": "shensi-capability-bundle",
-  "bundleVersion": "sha256:cda1a3182f013566",
-  "bundleSha256": "cda1a3182f0135663def1ee29ba3e80dfc5ae6a9f64b3fe4fb8c909eedde93c1",
+  "bundleVersion": "sha256:4d143a8194be4bb1",
+  "bundleSha256": "4d143a8194be4bb1a44575aefcb83e40a547ca80bc5586c324b84a770c94c10d",
   "entry": "神思.md",
   "fileCount": 598,
-  "totalBytes": 19167180,
+  "totalBytes": 19168326,
   "contentSummary": {
     "runtime-content": 176,
     "runtime-data": 25,
@@ -3411,8 +3411,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-任务路由规则.md",
-      "sizeBytes": 30145,
-      "sha256": "bc33434e4cd13c6f355db24d852c4932f0568ea7b7e0d8148312e95d60237a49",
+      "sizeBytes": 31291,
+      "sha256": "a3da14d793723aeb2dfd12a8d17d5885801900a9c046c4872abcdd3f6f279daf",
       "role": "runtime-content"
     },
     {
