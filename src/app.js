@@ -7480,6 +7480,7 @@ root.innerHTML = `
             <div class="conversation-choice-options" id="conversationChoiceOptions"></div>
             <p class="conversation-choice-hint" id="conversationChoiceHint">也可以直接在下方对话输入区说明你的想法；发送后选项会自动隐藏。</p>
           </section>
+          <div id="conversationAgentLiveStatus" class="native-agent-live-status" role="status" hidden></div>
           <section class="agent-operation-proposal" id="agentOperationProposal" hidden aria-live="polite" aria-label="Agent 操作提案">
             <header><div><small>Agent 操作确认</small><h3 id="agentOperationProposalTitle">确认操作</h3></div><span id="agentOperationProposalImpact"></span></header>
             <p id="agentOperationProposalObjective"></p>
@@ -19587,6 +19588,12 @@ const renderChatAgentGuidanceCard = () => {
 };
 
 const renderMessages = ({ forceScrollToBottom = false } = {}) => {
+  const liveStatus = document.querySelector('#conversationAgentLiveStatus');
+  const liveMessage = (state.messages || []).find(message => message.pending && message.execution?.nativeAgentRunId && !message.execution.nativeAgentTerminal);
+  if (liveStatus) {
+    liveStatus.hidden = Boolean(ui.conversationPreview || !liveMessage || liveMessage.execution.status === 'waiting_input');
+    liveStatus.textContent = liveMessage?.execution?.result || 'Agent 正在处理';
+  }
   if (ui.conversationPreview) {
     renderConversationPreview();
     return;
@@ -35850,7 +35857,7 @@ const monitorNativeConversation = (runtime, pending) => {
   const monitor = (async () => {
     const { conversation, messages } = runtime;
     try {
-      const result = await watchConversationAgent({ runId, onEvent: async (event) => {
+      const result = await watchConversationAgent({ runId, after: pending.execution.nativeAgentCursor || 0, onEvent: async (event) => {
         pending.execution.nativeAgentCursor = event.sequence;
         if (event.type === "question") {
           const id = `question-${event.payload.id}`;
@@ -38549,6 +38556,10 @@ const refreshVerifiedAgentDocuments = async (ids) => {
   await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
   const loaded = await fetchWorkspacePayload(workspacePath);
   if (state !== sourceState || state.settings.workspacePath !== workspacePath) return false;
+  state.customFolders ||= [];
+  for (const folder of loaded.state?.customFolders || []) {
+    if (!state.customFolders.some(item => item.id === folder.id)) state.customFolders.push(clone(folder));
+  }
   for (const id of ids) {
     if (ui.workspaceDirtyDocumentIds.has(id) || ui.workspaceDocumentChangesUnknown) throw new Error("目标存在尚未保存的手动编辑，请保存后再打开最新内容");
     const document = loaded.state?.documents?.[id];
@@ -42356,6 +42367,7 @@ const renameConversation = (conversationId, title) => {
   const conversation = state.conversations.find((item) => item.id === conversationId);
   if (!conversation) return;
   conversation.title = title;
+  try { journalManualConversation(localStorage, state, conversation); } catch (error) { showToast(`对话名称恢复记录保存失败：${error.message}`); }
   persist();
   renderAll();
   showToast("对话名称已更新");

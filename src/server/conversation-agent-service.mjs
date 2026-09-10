@@ -141,7 +141,11 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     };
     try {
       const catalog = await skillCatalog(request);
-      const route = await readRoute(request);
+      const routeSource = await readRoute(request);
+      const route = typeof routeSource === "string" ? routeSource : routeSource?.text || "";
+      for (const source of routeSource?.sources || []) {
+        if (source.characters > 0) await event(entry, "resource_read", source);
+      }
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
       const requestUserInput = async ({ question, options = [], multiple = false, presentation = "", metadata = null, kind = "question", detail = null }) => {
         const decision = kind === "agent_permission"
@@ -248,6 +252,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (existingFlight) return existingFlight;
       const operation = (async () => {
         const pending = entry.pending.get(decisionId);
+        if (!pending && entry.record.events.some(item => item.type === "answer_accepted" && item.payload.decisionId === decisionId)) return { accepted: true };
         if (!pending || terminal(entry.record.status)) throw new Error("选项已过期，请直接发送新的要求");
         if (!String(answer || "").trim()) throw new Error("回答不能为空");
         const value = String(answer);

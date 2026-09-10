@@ -41,15 +41,19 @@ const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
     ? routeDocumentCandidates.filter((candidate) => requestedLabels.has(candidate.label))
     : routeDocumentCandidates;
   const blocks = [];
+  const sources = [];
   for (const candidate of candidates) {
     try {
       const text = await readFile(join(shensiRoot, "神思模块", ...candidate.parts), "utf8");
-      if (String(text).trim()) blocks.push(`# ${candidate.label}\n${text}`);
+      if (String(text).trim()) {
+        blocks.push(`# ${candidate.label}\n${text}`);
+        sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length });
+      }
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
   }
-  return blocks.join("\n\n") || "当前没有可用的任务路由附录；请根据用户原始指令和可用 Skill 自主判断，空白路由资料不是阻断条件。";
+  return { text: blocks.join("\n\n") || "当前没有可用的任务路由附录；请根据用户原始指令和可用 Skill 自主判断，空白路由资料不是阻断条件。", sources };
 };
 
 export const createConversationAgentGateway = ({

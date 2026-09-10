@@ -1171,8 +1171,9 @@ try {
     return { workspacePath, stateStamp: saved.stateStamp || '' };
   })()`);
   assert.equal(pendingDecisionSeed.workspacePath, projectWorkspacePath);
+  await evaluate("window.beforeReliabilityReload = true");
   await cdp("Page.reload", { ignoreCache: true });
-  await waitFor("document.readyState === 'complete' && document.documentElement.dataset.bootReady === 'true' && Boolean(document.querySelector('meta[name=\"shensi-session-token\"]')?.content) && document.querySelector('#projectButton')?.textContent.includes('主界面验收作品')", "重新载入待确认事项验收作品并恢复本地会话", 30_000);
+  await waitFor("window.beforeReliabilityReload === undefined && document.readyState === 'complete' && document.documentElement.dataset.bootReady === 'true' && Boolean(document.querySelector('meta[name=\"shensi-session-token\"]')?.content) && document.querySelector('#projectButton')?.textContent.includes('主界面验收作品')", "重新载入待确认事项验收作品并恢复本地会话", 30_000);
   const reloadedAssetPersistence = await evaluate(`(async () => {
     const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
     const loaded = await fetch('/api/workspace/load', { method: 'POST', headers: { 'content-type': 'application/json', 'x-shensi-session': token }, body: JSON.stringify({ workspacePath: ${JSON.stringify(projectWorkspacePath)} }) }).then((response) => response.json());

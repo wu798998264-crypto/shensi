@@ -336,7 +336,7 @@ export class ShensiCodexAgentRuntime {
         return;
       }
       run.text += delta;
-      run.onToolEvent?.({ phase: "text_delta", text: delta });
+      if (run.stage === "conversation_agent") run.onToolEvent?.({ phase: "text_delta", text: delta });
       return;
     }
     if (method === "turn/completed") {

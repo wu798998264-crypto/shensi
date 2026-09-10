@@ -203,10 +203,15 @@ try {
     starts:window.nativeAgentStarts.length
   })`);
   assert.equal(first.input, "");
+  assert.equal(await evaluate("window.nativeAgentStarts[0].targetDocumentId"), '', '当前打开文档不得默认绑定为写入目标');
+  assert.equal(await evaluate("window.nativeAgentStarts[0].currentDocument.documentId"), agentLinkTarget.id);
   assert.match(first.text, /不生成视频，只给三份不同视角的候选故事/);
   assert.match(first.text, /你更希望比较哪些差异/);
   assert.doesNotMatch(first.text, /先选择主笔数量|单主笔生成多稿|多主笔生成候选/);
   assert.deepEqual(first.options, ["节奏", "视角", "确认选择"]);
+  const choiceGeometry = await evaluate(`(() => { const options=document.querySelector('.native-choice-items').getBoundingClientRect(); const confirm=document.querySelector('.native-choice-confirm').getBoundingClientRect(); return {gap:confirm.left-options.right,right:confirm.left>=options.right}; })()`);
+  assert.equal(choiceGeometry.right,true);
+  assert.ok(choiceGeometry.gap>=0&&choiceGeometry.gap<=10,'确认按钮紧靠选项右侧');
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='第二个对话只讨论大纲';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 2 && document.querySelector('#conversationChoicePanel')?.hidden === false", "第二个对话并发运行");
@@ -242,12 +247,21 @@ try {
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='单选最后一问续跑验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
+  await waitFor("window.nativeAgentStarts.length === 3 && document.querySelector('#conversationChoicePanel')?.hidden === false", "单选最后一问");
+  await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').click(); true");
+  await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
+  await waitFor("window.nativeAgentAnswers.length === 3", "最后一问确认提交");
+  assert.equal(await evaluate("window.nativeAgentAnswers[2].answer"), '节奏');
+  await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "最后一问后完成成果交付");
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   const emptyId = await evaluate(`(() => { const key=Object.keys(localStorage).find(key=>key.startsWith('shensi-manual-conversations-v1:')); return JSON.parse(localStorage.getItem(key)).activeId; })()`);
   assert.ok(emptyId);
   await cdp('Page.reload', {});
   await waitFor("window.nativeAgentStarts === undefined && document.documentElement.dataset.bootReady === 'true' && document.querySelector('#conversationHistoryButton')", "空对话刷新恢复", 45000);
   await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
   await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
+  assert.equal(await evaluate(`document.querySelector('[data-conversation="${emptyId}"]').closest('.conversation-task-row').classList.contains('active')`), true, '恢复原活动对话');
   assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
   console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
 } catch (error) {

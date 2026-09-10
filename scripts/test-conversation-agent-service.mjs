@@ -69,6 +69,8 @@ try {
   assert.deepEqual(duplicateAnswer, { accepted: true }, '同一决策的快速重复回答应共享一次接受结果');
   const acceptedEvents = (await service.status(a.id)).events.filter((event) => event.type === 'answer_accepted' && event.payload.decisionId === qa.id);
   assert.equal(acceptedEvents.length, 1, '同一决策只能写入一条 answer_accepted 事件');
+  await new Promise(done => setTimeout(done, 20));
+  assert.deepEqual(await service.answer(a.id, qa.id, '我的其他想法'), { accepted: true }, '接受后响应丢失的重试不能变成过期错误');
   await service.cancel(b.id);
   await new Promise((done) => setTimeout(done, 40));
   assert.equal((await service.status(a.id)).text, '我的其他想法');
