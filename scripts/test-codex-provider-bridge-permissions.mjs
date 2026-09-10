@@ -48,8 +48,10 @@ const requestedTools = [
   },
 ];
 
-const invokeBridge = async ({ protocol, providerReply }) => {
+const invokeBridge = async ({ protocol, providerReply, input = null }) => {
   let upstreamBody = null;
+  let upstreamUrl = "";
+  let upstreamHeaders = null;
   const bridge = await startCodexProviderBridge({
     settings: {
       protocol,
@@ -59,7 +61,9 @@ const invokeBridge = async ({ protocol, providerReply }) => {
     },
     permissionContract: permissionContractFor("full_access", { runner: "codex_api", taskId: `bridge-${protocol}` }),
     tools: workspaceTools,
-    fetchImpl: async (_url, options) => {
+    fetchImpl: async (url, options) => {
+      upstreamUrl = String(url);
+      upstreamHeaders = options.headers;
       upstreamBody = JSON.parse(options.body);
       return Response.json(providerReply);
     },
@@ -74,13 +78,13 @@ const invokeBridge = async ({ protocol, providerReply }) => {
       body: JSON.stringify({
         model: "ignored-by-bridge",
         instructions: "Use the available tools.",
-        input: [{ role: "user", content: [{ type: "input_text", text: "Run the task" }] }],
+        input: input || [{ role: "user", content: [{ type: "input_text", text: "Run the task" }] }],
         tools: requestedTools,
         stream: false,
       }),
     });
     assert.equal(response.ok, true);
-    return { upstreamBody, payload: await response.json() };
+    return { upstreamBody, upstreamUrl, upstreamHeaders, payload: await response.json() };
   } finally {
     await bridge.close();
   }
@@ -134,4 +138,49 @@ assert.equal(chat.payload.output[1].input, "*** Begin Patch");
 assert.equal(chat.payload.output[2].namespace, "documents");
 assert.equal(chat.payload.output[2].name, "list");
 
-console.log("Codex provider bridge preserves native tools and Shensi namespaces for Responses and Chat Completions");
+const anthropic = await invokeBridge({
+  protocol: "anthropic_messages",
+  input: [
+    { role: "user", content: [{ type: "input_text", text: "Read the document" }] },
+    { type: "function_call", call_id: "prior-doc-call", namespace: "documents", name: "list", arguments: "{}" },
+    { type: "function_call_output", call_id: "prior-doc-call", output: '{"documents":["第一章"]}' },
+  ],
+  providerReply: {
+    id: "provider-anthropic",
+    content: [
+      { type: "tool_use", id: "call-native", name: "exec_command", input: { cmd: "pwd" } },
+      { type: "tool_use", id: "call-patch", name: "apply_patch", input: { input: "*** Begin Patch" } },
+      { type: "tool_use", id: "call-docs", name: "documents_list", input: {} },
+      { type: "text", text: "工具调用已准备" },
+    ],
+    usage: { input_tokens: 11, output_tokens: 7 },
+  },
+});
+assert.match(anthropic.upstreamUrl, /\/messages$/u);
+assert.equal(anthropic.upstreamHeaders["x-api-key"], "test-only");
+assert.equal(anthropic.upstreamHeaders["anthropic-version"], "2023-06-01");
+assert.deepEqual(
+  anthropic.upstreamBody.tools.map((tool) => tool.name),
+  ["exec_command", "apply_patch", "documents_list"],
+  "Anthropic Messages 桥必须投影原生工具、自定义工具和神思 namespace",
+);
+assert.equal(anthropic.upstreamBody.system, "Use the available tools.");
+assert.deepEqual(anthropic.upstreamBody.messages[1].content[0], {
+  type: "tool_use",
+  id: "prior-doc-call",
+  name: "documents_list",
+  input: {},
+});
+assert.deepEqual(anthropic.upstreamBody.messages[2].content[0], {
+  type: "tool_result",
+  tool_use_id: "prior-doc-call",
+  content: '{"documents":["第一章"]}',
+});
+assert.equal(anthropic.payload.output[0].name, "exec_command");
+assert.equal(anthropic.payload.output[1].type, "custom_tool_call");
+assert.equal(anthropic.payload.output[1].input, "*** Begin Patch");
+assert.equal(anthropic.payload.output[2].namespace, "documents");
+assert.equal(anthropic.payload.output[3].content[0].text, "工具调用已准备");
+assert.deepEqual(anthropic.payload.usage, { input_tokens: 11, output_tokens: 7, total_tokens: 18 });
+
+console.log("Codex provider bridge preserves native tools and Shensi namespaces across Responses, Chat Completions, and Anthropic Messages");

@@ -1,5 +1,5 @@
 import { fetchProvider } from "./network-proxy.mjs";
-import { isShensiAgentCompatibleProfile } from "../agent-engine-registry.js";
+import { isShensiAgentCompatibleProfile, isSystemManagedPublicAgentProfile } from "../agent-engine-registry.js";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { isGpt6AstraModel, sanitizeModelControls } from "../model-presets.js";
 
@@ -41,6 +41,15 @@ const outputText = (payload) => {
   visit(payload?.output);
   return values.join("\n").trim();
 };
+
+const anthropicOutputText = (payload) => (Array.isArray(payload?.content) ? payload.content : [])
+  .filter((item) => item?.type === "text" && typeof item.text === "string")
+  .map((item) => item.text)
+  .join("\n")
+  .trim();
+
+const anthropicFunctionCalls = (payload) => (Array.isArray(payload?.content) ? payload.content : [])
+  .filter((item) => item?.type === "tool_use" && text(item.id) && text(item.name));
 
 const contextText = (blocks = []) => (Array.isArray(blocks) ? blocks : [])
   .map((block) => {
@@ -163,6 +172,7 @@ const webSources = (payload) => {
     if (item?.type === "web_search_call") visit(item.action?.sources || item.sources);
     if (item?.type === "message") visit(item.content);
   }
+  visit(payload?.content);
   return [...collected.values()].slice(0, 20);
 };
 
@@ -176,8 +186,8 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
       && settings.agentEngine === "codex_api"
       && settings.adapter === "api"
       && isShensiAgentCompatibleProfile(settings)
-      && ["responses", "chat_completions"].includes(text(settings.protocol))
-      && (text(settings.apiKey) || text(settings.credentialSource) === "public")
+      && ["responses", "chat_completions", "anthropic_messages", "messages"].includes(text(settings.protocol))
+      && (text(settings.apiKey) || isSystemManagedPublicAgentProfile(settings))
       && text(settings.baseUrl || "https://api.openai.com/v1")
       && text(settings.model),
     );
@@ -205,6 +215,100 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
       }) : null;
       if (gpt6Controls && text(settings.protocol) === "chat_completions" && workspace.tools.length) {
         throw Object.assign(new Error("GPT-6 Astra 工具调用需要 Responses 协议，请在该文字配置中明确选择 Responses；未修改现有配置。"), { code: "GPT6_RESPONSES_REQUIRED" });
+      }
+      if (["anthropic_messages", "messages"].includes(text(settings.protocol))) {
+        const nativeWebSearchEnabled = settings.webSearchEnabled === true
+          ? await webSearchApproval({ permissionMode, requestApproval, settings })
+          : false;
+        const anthropicTools = [
+          ...(nativeWebSearchEnabled ? [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }] : []),
+          ...workspace.tools.map((tool) => ({
+            name: tool.name,
+            description: tool.description,
+            input_schema: tool.parameters,
+          })),
+        ];
+        const maxToolCalls = Math.max(1, Math.min(stage === "conversation_agent" ? 256 : 32, Number(settings.maxToolCalls) || (stage === "conversation_agent" ? 96 : 12)));
+        const messages = [{ role: "user", content: [{ type: "text", text: String(prompt || "") }] }];
+        let payload = null;
+        let usedToolCalls = 0;
+        let workspaceToolsUsed = false;
+        let webSearchUsed = false;
+        const sources = new Map();
+        const workspaceToolCalls = [];
+        while (true) {
+          for (const content of drainSupplements()) messages.push({ role: "user", content: [{ type: "text", text: String(content) }] });
+          const response = await fetchProvider(`${normalizeBaseUrl(settings.baseUrl)}/messages`, {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+              "x-api-key": text(settings.apiKey),
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: text(settings.model),
+              system: instructions,
+              messages,
+              max_tokens: Math.max(256, Math.min(32_000, Number(settings.maxOutputTokens) || 8_000)),
+              ...(anthropicTools.length ? { tools: anthropicTools } : {}),
+            }),
+            signal: controller.signal,
+          }, { fetchImpl, allowDirectFallback: true });
+          payload = await safeJson(response);
+          const webCalls = (Array.isArray(payload.content) ? payload.content : []).filter((item) => item?.type === "server_tool_use" && item?.name === "web_search");
+          webSearchUsed ||= webCalls.length > 0 || (Array.isArray(payload.content) && payload.content.some((item) => item?.type === "web_search_tool_result"));
+          for (const call of webCalls) {
+            const callId = text(call.id || `web_search_${usedToolCalls + 1}`);
+            onToolEvent?.({ phase: "started", kind: "web_search", callId, name: "Anthropic Web Search", input: call.input || null });
+            onToolEvent?.({ phase: "completed", kind: "web_search", callId, name: "Anthropic Web Search", input: call.input || null, success: true });
+          }
+          for (const source of webSources(payload)) sources.set(source.url, source);
+          const calls = anthropicFunctionCalls(payload);
+          if (!calls.length) {
+            const result = anthropicOutputText(payload);
+            if (!result) throw Object.assign(new Error("神思运行器响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
+            return {
+              text: result,
+              protocol: "anthropic_messages",
+              providerResponseId: payload.id || "",
+              usage: payload.usage || null,
+              sources: [...sources.values()],
+              webSearchUsed,
+              workspaceToolsUsed,
+              workspaceToolCalls,
+              sessionId: normalizedSessionId,
+              permissionMode,
+              permissionContract: runtimePermissionContract,
+              startedAt,
+              completedAt: now(),
+              agentRuntime: { runtime: "shensi_anthropic_messages_agent", sessionId: normalizedSessionId, stage, toolCalls: usedToolCalls, permissionMode },
+            };
+          }
+          if (usedToolCalls + calls.length > maxToolCalls) {
+            throw Object.assign(new Error(`神思运行器工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
+          }
+          messages.push({ role: "assistant", content: payload.content });
+          const toolResults = [];
+          for (const call of calls) {
+            usedToolCalls += 1;
+            const callId = text(call.id);
+            const target = workspace.calls.get(text(call.name));
+            const args = parsedArguments(call.input);
+            onToolEvent?.({ phase: "started", kind: "workspace", callId, name: target ? `${target.namespace}.${target.tool}` : text(call.name), input: args });
+            let result;
+            if (!target || typeof workspaceToolRuntime?.invoke !== "function") {
+              result = { success: false, contentItems: [{ type: "inputText", text: JSON.stringify({ ok: false, error: { code: "CODEX_API_TOOL_UNAVAILABLE", message: "该工具未获神思授权" } }) }] };
+            } else {
+              workspaceToolsUsed = true;
+              result = await workspaceToolRuntime.invoke({ namespace: target.namespace, tool: target.tool, arguments: args });
+              workspaceToolCalls.push({ name: `${target.namespace}.${target.tool}`, success: result?.success === true, target: text(args.path || args.reference || args.documentId || args.query).slice(0, 300) });
+            }
+            onToolEvent?.({ phase: "completed", kind: "workspace", callId, name: target ? `${target.namespace}.${target.tool}` : text(call.name), input: args, success: result?.success === true });
+            toolResults.push({ type: "tool_result", tool_use_id: callId, content: toolResultText(result), is_error: result?.success !== true });
+          }
+          messages.push({ role: "user", content: toolResults });
+        }
       }
       if (text(settings.protocol) === "chat_completions") {
         const chatTools = workspace.tools.map((tool) => ({

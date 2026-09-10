@@ -1,6 +1,7 @@
 import { DREAMINA_CLI_PROFILES, DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS, OPENAI_IMAGE_CLI_ALIAS, OPENAI_IMAGE_CLI_ARGS, validDreaminaCliProfileId } from "./media-cli-presets.js?v=2.19.7-media-account-pool";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderAudioModelOptions, getProviderImageModelOptions, getProviderModelOptions, getProviderPreset, getProviderVideoModelOptions } from "./model-presets.js";
 import { normalizeAgentPermissionMode } from "./agent-permission-policy.js";
+import { SHENSI_AGENT_API_PROTOCOLS } from "./agent-engine-registry.js";
 
 const CHANNELS = ["text", "image", "video", "audio"];
 const GENERATION_RUNTIME_FIELDS = Object.freeze(["baseUrl", "cliPath", "cliArgs"]);
@@ -25,7 +26,7 @@ export const TEXT_CODEX_CLI_PROFILE_VERSION = 1;
 export const PROVIDER_MODEL_ISOLATION_VERSION = 1;
 export const AGGREGATE_IMAGE_API_PROFILE_VERSION = 1;
 export const AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION = 1;
-export const TEXT_PROFILE_CLEANUP_VERSION = 2;
+export const TEXT_PROFILE_CLEANUP_VERSION = 3;
 
 const PROFILE_KEYS = {
   text: { list: "textConnections", active: "activeTextConnectionId" },
@@ -367,7 +368,7 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
   // Built-in providers are strict namespaces. A stale model copied from a
   // different provider must never leak back into this profile's picker or
   // request. Custom providers keep arbitrary model IDs by design.
-  const model = !draft && !genericOpenCode && providerPreset.custom !== true && providerPreset.public !== true && catalog.length && !catalog.some((item) => item.slug === requestedModel)
+  const model = channel !== "text" && !draft && !genericOpenCode && providerPreset.custom !== true && providerPreset.public !== true && catalog.length && !catalog.some((item) => item.slug === requestedModel)
     ? catalog.find((item) => item.available !== false && item.selectable !== false)?.slug || catalog[0].slug
     : requestedModel;
   const channelLabel = channel === "text" ? "文字" : channel === "image" ? "图片" : channel === "video" ? "视频" : "音频";
@@ -805,7 +806,7 @@ const deepSeekAgentProfile = (profile = {}) => profile.provider === "DeepSeek"
 
 const legacyRemovedTextProfile = (profile = {}) => LEGACY_REMOVED_TEXT_PROFILE_IDS.has(String(profile.id || ""))
   || (profile.agentEngine === "codex_api" && profile.systemManaged !== true
-    && /^(?:神思运行器|神思运行器配置)$/u.test(String(profile.remarkName || profile.name || "").trim()));
+    && /^神思运行器(?:配置)?(?:\s*[·_+-]\s*(?:API|Agent|文字|默认|配置))*$/iu.test(String(profile.remarkName || profile.name || "").trim()));
 
 const deepSeekAgentScore = (profile = {}, activeIds = new Set()) => {
   const hasCredential = Boolean(String(profile.apiKey || "").trim());
@@ -1314,8 +1315,11 @@ export const generationProfileLabel = (profile = {}, channel = "text") => {
   const remarkName = String(profile.remarkName || "").trim();
   if (remarkName) return remarkName;
   if (channel === "text" && ["codex_api", "opencode", "deepseek_opencode", "claude_code"].includes(profile.agentEngine)) {
-    if (profile.agentEngine === "codex_api") return "神思运行器";
     const provider = String(profile.provider || openCodeProviderForModel(profile.agentModelId || profile.model) || "").trim();
+    if (profile.agentEngine === "codex_api") {
+      const model = String(profile.agentModelId || profile.model || "").trim();
+      return [provider || "API Agent", model].filter(Boolean).join(" · ");
+    }
     const runner = profile.agentEngine === "claude_code" ? "Claude Code" : "OpenCode";
     return provider ? `${runner}+${provider}` : runner;
   }

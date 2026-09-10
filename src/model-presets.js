@@ -864,7 +864,7 @@ export const PROVIDER_PRESETS = [
   {
     id: "Claude",
     label: "Claude（Anthropic）",
-    api: { protocol: "chat_completions", baseUrl: "https://api.anthropic.com/v1", model: "claude-fable-5" },
+    api: { protocol: "anthropic_messages", baseUrl: "https://api.anthropic.com/v1", model: "claude-fable-5" },
     cli: {
       path: "claude",
       args: "-p --model {model} --output-format text --no-session-persistence",
@@ -872,20 +872,6 @@ export const PROVIDER_PRESETS = [
       apiKeyEnv: "ANTHROPIC_API_KEY",
       workspaceAgent: true,
     },
-  },
-  {
-    id: "Trae Work",
-    label: "Trae Work",
-    api: { protocol: "chat_completions", baseUrl: "", model: "" },
-    cli: { path: "trae", args: "{promptFile}", testArgs: ["--version"], apiKeyEnv: "", workspaceAgent: true },
-    custom: true,
-  },
-  {
-    id: "WorkBuddy",
-    label: "WorkBuddy",
-    api: { protocol: "chat_completions", baseUrl: "", model: "" },
-    cli: { path: "workbuddy", args: "{promptFile}", testArgs: ["--version"], apiKeyEnv: "", workspaceAgent: true },
-    custom: true,
   },
   {
     id: "智谱 GLM",

@@ -219,7 +219,7 @@ import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFr
 import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfileFromExecution } from "./agent-runtime-profile.js";
 import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { journalManualConversation, forgetManualConversation, restoreManualConversations } from "./manual-conversation-journal.js";
-import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelBelongsToEngine, agentModelsForEngine, agentProfilesForEngine, isCodexApiCompatibleProvider } from "./agent-engine-registry.js";
+import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelsForEngine, agentProfilesForEngine } from "./agent-engine-registry.js";
 import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js";
 import { executionModeOptionState } from "./model-execution-capabilities.js";
 import {
@@ -5768,12 +5768,9 @@ const cancelTextConnectionTestPresentation = () => {
 const dynamicModelsForChannel = (providerId, adapter) => adapter === "api"
   ? (() => {
       const profile = activeGenerationProfile(generationWorkingSettings(), "text");
-      const models = profile?.provider === providerId && profile?.adapter === adapter
+      return profile?.provider === providerId && profile?.adapter === adapter
         ? cachedTextModelsForProfile(withReusableTextProviderCredential(profile))
         : [];
-      return profile?.agentEngine === "codex_api" && profile?.protocol === "responses"
-        ? models.filter((item) => agentModelBelongsToEngine(item.slug, "codex_api"))
-        : models;
     })()
   : providerId === "OpenAI"
     ? ui.localCodex?.models ?? []
@@ -6263,15 +6260,26 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
     return;
   }
   const custom = getProviderPreset(providerId).custom;
-  const current = String(preferredModel || (allowBlank ? select.value : select.value || state.settings.model) || "");
-  select.hidden = custom;
-  customInput.hidden = !custom;
+  const manualModelOption = "__manual_model__";
+  const selectedControlValue = select.value === manualModelOption ? customInput.value : select.value;
+  const current = String(preferredModel || (allowBlank ? selectedControlValue : selectedControlValue || state.settings.model) || "");
   if (custom) {
-    customInput.value ||= current;
-    select.innerHTML = `<option value="${escapeHtml(customInput.value)}">${escapeHtml(customInput.value || "自定义模型")}</option>`;
-    select.value = customInput.value;
-  } else {
     const models = modelOptionsForProvider(providerId, form.elements.adapter.value);
+    const knownCurrent = models.some((item) => item.slug === current);
+    select.hidden = false;
+    select.innerHTML = `${allowBlank ? '<option value="">请选择模型</option>' : ""}${models.length ? `<optgroup label="当前连接可用">${models.map((item) => `<option value="${escapeHtml(item.slug)}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}</optgroup>` : ""}${current && !knownCurrent ? `<optgroup label="当前模型"><option value="${escapeHtml(current)}">${escapeHtml(modelPickerDisplayName(current))}</option></optgroup>` : ""}<option value="${manualModelOption}">手动输入模型 ID…</option>`;
+    customInput.value = current;
+    select.value = current && (knownCurrent || [...select.options].some((option) => option.value === current))
+      ? current
+      : current ? manualModelOption : allowBlank ? "" : manualModelOption;
+    customInput.hidden = select.value !== manualModelOption;
+  } else {
+    select.hidden = false;
+    customInput.hidden = true;
+    const models = modelOptionsForProvider(providerId, form.elements.adapter.value);
+    if (current && !models.some((item) => item.slug === current)) {
+      models.unshift({ slug: current, label: modelPickerDisplayName(current), available: true });
+    }
     const available = models.filter((item) => item.available);
     const catalog = models.filter((item) => !item.available);
     select.innerHTML = `${allowBlank ? '<option value="">请选择模型</option>' : ""}${available.length ? `<optgroup label="当前连接可用">${available.map((item) => `<option value="${escapeHtml(item.slug)}" title="${escapeHtml(item.availabilityNote || "")}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}</optgroup>` : ""}${catalog.length ? `<optgroup label="模型目录（尚未验证）">${catalog.map((item) => `<option value="${escapeHtml(item.slug)}" ${item.selectable === false ? "disabled" : ""} title="${escapeHtml(item.availabilityNote || "待连接验证")}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}</optgroup>` : ""}`;
@@ -6622,12 +6630,14 @@ const captureGenerationFormProfile = (channel) => {
     const isClaudeCode = patch.agentEngine === "claude_code";
     const isDeepSeekOpenCode = patch.provider === "DeepSeek" && patch.adapter === "cli" && !isGenericOpenCode && !isClaudeCode;
     if (isCodexApi) {
+      const preset = getProviderPreset(patch.provider);
       patch.adapter = "api";
-      patch.provider = isCodexApiCompatibleProvider(patch.provider) ? patch.provider : "OpenAI";
       patch.agentEngine = "codex_api";
-      patch.protocol = "responses";
-      patch.baseUrl ||= patch.provider === "OpenAI" ? "https://api.openai.com/v1" : "";
-      patch.credentialSource = "shensi";
+      patch.protocol = ["responses", "chat_completions", "anthropic_messages", "messages"].includes(patch.protocol)
+        ? patch.protocol
+        : preset.api.protocol || "chat_completions";
+      patch.baseUrl ||= preset.api.baseUrl || "";
+      patch.credentialSource = preset.public === true ? "public" : "shensi";
       patch.executionMode = "agent";
       patch.executionModes = ["agent"];
       patch.agentModelId = patch.model;
@@ -7968,7 +7978,7 @@ root.innerHTML = `
                 <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option></select></label>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
-                <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option></select></label>
+                <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
                 <label class="model-setting-field">模型<span class="settings-input-action"><select name="model" id="modelInput"></select><input id="customModelInput" type="text" placeholder="输入模型 ID" autocomplete="off" hidden /><button class="icon-button bare" id="refreshModels" type="button" title="刷新可用模型">${icon("\uE72C", "刷新可用模型")}</button></span></label>
                 <label>推理强度<select name="reasoningEffort"><option value="">自动</option><option value="none">关闭推理</option><option value="minimal">最小</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">极高</option><option value="max">最大</option><option value="ultra">超高</option></select></label>
                 <label>响应速度<select name="speedMode"><option value="default">标准</option><option value="fast">快速</option><option value="flex">灵活</option></select></label>
@@ -68935,24 +68945,25 @@ elements.settingsForm.elements.provider.addEventListener("change", async (event)
   const current = activeGenerationProfile(generationWorkingSettings(), "text");
   if (elements.settingsForm.elements.namedItem("textAgentEngine")?.value === "codex_api") {
     const form = elements.settingsForm.elements;
-    const compatibleProvider = isCodexApiCompatibleProvider(providerId) ? providerId : "OpenAI";
-    const providerChanged = Boolean(current?.provider && current.provider !== compatibleProvider);
+    const preset = getProviderPreset(providerId);
+    const providerChanged = Boolean(current?.provider && current.provider !== providerId);
     form.adapter.value = "api";
-    form.provider.value = compatibleProvider;
-    form.protocol.value = "responses";
+    form.provider.value = providerId;
     if (providerChanged) {
       form.apiKey.value = "";
-      form.baseUrl.value = compatibleProvider === "OpenAI" ? getProviderPreset("OpenAI").api.baseUrl || "https://api.openai.com/v1" : "";
+      form.protocol.value = preset.api.protocol || "chat_completions";
+      form.baseUrl.value = preset.api.baseUrl || "";
       form.model.value = "";
       document.querySelector("#customModelInput").value = "";
-    } else if (compatibleProvider === "OpenAI") {
-      form.baseUrl.value ||= getProviderPreset("OpenAI").api.baseUrl || "https://api.openai.com/v1";
+    } else {
+      form.protocol.value ||= preset.api.protocol || "chat_completions";
+      form.baseUrl.value ||= preset.api.baseUrl || "";
     }
-    form.textCredentialSource.value = "shensi";
+    form.textCredentialSource.value = preset.public === true ? "public" : "shensi";
     syncGenerationProfilePreview("text");
-    renderModelOptions(compatibleProvider, { allowBlank: true, preferredModel: "" });
+    renderModelOptions(providerId, { allowBlank: true, preferredModel: providerChanged ? preset.api.model || "" : current?.model || "" });
     syncModelCapabilityControls();
-    if (compatibleProvider !== providerId) showToast("神思运行器只支持 OpenAI 或自定义兼容接口，已切回 OpenAI");
+    document.querySelector("#adapterResult").textContent = `已切换为 ${preset.label || providerId} 的 ${form.protocol.value || "API"} Agent 配置；请刷新模型并执行真实连接测试`;
     return;
   }
   if (elements.settingsForm.elements.namedItem("textAgentEngine")?.value === "claude_code") {
@@ -69058,13 +69069,19 @@ elements.settingsForm.elements.provider.addEventListener("change", async (event)
 });
 
 elements.settingsForm.elements.model.addEventListener("change", () => {
+  const customInput = document.querySelector("#customModelInput");
+  if (elements.settingsForm.elements.model.value === "__manual_model__") {
+    customInput.hidden = false;
+    customInput.focus();
+  } else {
+    customInput.hidden = true;
+  }
   syncModelCapabilityControls();
   syncGenerationProfilePreview("text");
 });
 document.querySelector("#customModelInput").addEventListener("input", (event) => {
   const select = elements.settingsForm.elements.model;
-  select.innerHTML = `<option value="${escapeHtml(event.target.value)}">${escapeHtml(event.target.value || "自定义模型")}</option>`;
-  select.value = event.target.value;
+  select.value = "__manual_model__";
   syncGenerationProfilePreview("text");
 });
 
@@ -71490,12 +71507,13 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
   const control = (name) => form.namedItem(name);
   const selectedExecutionMode = control("textExecutionMode").value || "chat";
   if (event.target.value === "codex_api") {
-    const provider = isCodexApiCompatibleProvider(control("provider").value) ? control("provider").value : "OpenAI";
+    const provider = control("provider").value || "OpenAI";
+    const preset = getProviderPreset(provider);
     control("adapter").value = "api";
     control("provider").value = provider;
-    control("protocol").value = "responses";
-    control("baseUrl").value ||= provider === "OpenAI" ? "https://api.openai.com/v1" : "";
-    control("textCredentialSource").value = "shensi";
+    control("protocol").value ||= preset.api.protocol || "chat_completions";
+    control("baseUrl").value ||= preset.api.baseUrl || "";
+    control("textCredentialSource").value = preset.public === true ? "public" : "shensi";
     control("cliPath").value = "";
     control("cliArgs").value = "";
   } else if (event.target.value === "opencode") {

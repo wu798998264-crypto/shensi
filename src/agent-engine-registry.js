@@ -1,10 +1,10 @@
 const text = (value = "") => String(value ?? "").trim();
 
-export const CODEX_API_COMPATIBLE_PROVIDERS = Object.freeze(["OpenAI", "自定义兼容接口"]);
+export const SHENSI_AGENT_API_PROTOCOLS = Object.freeze(["responses", "chat_completions", "anthropic_messages", "messages"]);
 export const SHENSI_SYSTEM_PUBLIC_AGENT_PROFILE_IDS = Object.freeze(["text-public-kilo", "text-public-agent"]);
 
 export const isCodexApiCompatibleProvider = (provider = "") => (
-  CODEX_API_COMPATIBLE_PROVIDERS.includes(text(provider))
+  Boolean(text(provider))
 );
 
 export const isSystemManagedPublicAgentProfile = (profile = {}) => (
@@ -16,8 +16,8 @@ export const isSystemManagedPublicAgentProfile = (profile = {}) => (
 
 export const isShensiAgentCompatibleProfile = (profile = {}) => (
   text(profile.adapter) === "api"
-  && ["responses", "chat_completions"].includes(text(profile.protocol))
-  && (isCodexApiCompatibleProvider(profile.provider) || isSystemManagedPublicAgentProfile(profile))
+  && SHENSI_AGENT_API_PROTOCOLS.includes(text(profile.protocol))
+  && Boolean(text(profile.provider))
 );
 
 const ENGINE_DEFINITIONS = Object.freeze({
@@ -104,6 +104,7 @@ export const agentProfileBelongsToEngine = (profile = {}, engine = "") => {
 export const agentModelBelongsToEngine = (model = "", engine = "") => {
   const slug = text(typeof model === "string" ? model : model?.slug || model?.id || model?.name).toLocaleLowerCase("en-US");
   if (!slug) return false;
+  if (normalizeAgentEngineId(engine) === "codex_api") return true;
   if (normalizeAgentEngineId(engine) === "opencode") return /^[^/\s]+\/[^/\s]+$/u.test(slug);
   if (normalizeAgentEngineId(engine) === "claude_code") return /^(?:claude-|anthropic\/claude-|deepseek-v4-(?:pro|flash)(?:\[1m\])?)/u.test(slug);
   return normalizeAgentEngineId(engine) === "deepseek_opencode"

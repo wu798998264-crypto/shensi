@@ -6,7 +6,7 @@ import { createCodexApiAgentRuntime } from "../src/server/codex-api-agent-runtim
 import { createAgentWorkspaceReadBroker } from "../src/server/agent-workspace-read-broker.mjs";
 import { createAgentWorkspaceToolRuntime } from "../src/server/agent-workspace-tools.mjs";
 import { createHistoryReadAuthorization } from "../src/history-read-policy.js";
-import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentProfileBelongsToEngine } from "../src/agent-engine-registry.js";
+import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentModelBelongsToEngine, agentProfileBelongsToEngine } from "../src/agent-engine-registry.js";
 import { generationProfileLabel } from "../src/generation-profiles.js";
 import { executionModeCapabilities } from "../src/model-execution-capabilities.js";
 import { runtimeContractForProfile } from "../src/effective-runtime-contract.js";
@@ -28,7 +28,7 @@ const profile = {
   executionModes: ["chat", "agent"],
 };
 const profileBeforeLabel = JSON.stringify(profile);
-assert.equal(generationProfileLabel(profile, "text"), "神思运行器");
+assert.equal(generationProfileLabel(profile, "text"), "OpenAI · gpt-5-codex", "文字配置名称应显示真实服务商与模型，不再生成名为神思运行器的独立配置");
 assert.equal(JSON.stringify(profile), profileBeforeLabel, "显示名称计算不得修改或复制现有配置");
 assert.equal(agentProfileBelongsToEngine(profile, "codex_api"), true);
 assert.deepEqual(executionModeCapabilities(profile).modes, ["agent"]);
@@ -57,7 +57,8 @@ const compatibleProfile = {
 assert.equal(agentProfileBelongsToEngine(compatibleProfile, "codex_api"), true);
 assert.deepEqual(executionModeCapabilities(compatibleProfile).modes, ["agent"]);
 assert.equal(runtimeContractForProfile({ profile: compatibleProfile, surface: "agent" }).runner, "codex_api_agent");
-assert.equal(runtimeContractForProfile({ profile: { ...compatibleProfile, provider: "DeepSeek" }, surface: "agent" }).code, "CODEX_PROVIDER_MISMATCH");
+assert.equal(runtimeContractForProfile({ profile: { ...compatibleProfile, provider: "DeepSeek", protocol: "chat_completions" }, surface: "agent" }).ok, true);
+assert.equal(agentModelBelongsToEngine("deepseek/deepseek-chat", "codex_api"), true, "神思运行器不得按模型名称或 provider/model 格式过滤模型");
 
 const historyAuthorization = createHistoryReadAuthorization({
   instruction: "比较第三章修改前后的历史版本",
@@ -278,6 +279,66 @@ assert.equal(toolResult.workspaceToolsUsed, true);
 assert.deepEqual(toolResult.workspaceToolCalls, [{ name: "workspace.read", success: true, target: "正文/第1章.md" }]);
 toolRuntime.close();
 
+const anthropicRequests = [];
+const anthropicInvocations = [];
+const anthropicRuntime = createCodexApiAgentRuntime({
+  fetchImpl: async (url, options) => {
+    const requestBody = JSON.parse(options.body);
+    anthropicRequests.push({ url: String(url), headers: options.headers, body: requestBody });
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(anthropicRequests.length === 1 ? {
+        id: "msg_tool_1",
+        content: [{ type: "tool_use", id: "toolu_1", name: "workspace_read", input: { path: "正文/第1章.md" } }],
+        usage: { input_tokens: 9, output_tokens: 4 },
+      } : {
+        id: "msg_tool_2",
+        content: [{ type: "text", text: "Claude 已读取当前作品文档" }],
+        usage: { input_tokens: 15, output_tokens: 8 },
+      }),
+    };
+  },
+});
+const anthropicProfile = {
+  ...profile,
+  id: "anthropic-api-test",
+  provider: "Claude",
+  protocol: "anthropic_messages",
+  model: "claude-fable-5",
+  agentModelId: "claude-fable-5",
+  baseUrl: "https://api.anthropic.com/v1",
+};
+const anthropicResult = await anthropicRuntime.runStage({
+  settings: anthropicProfile,
+  prompt: "读取第一章并继续回答",
+  sessionId: "anthropic-tool-session-test",
+  stage: "agent",
+  workspaceToolRuntime: {
+    ...workspaceToolRuntime,
+    invoke: async (request) => {
+      anthropicInvocations.push(request);
+      return workspaceToolRuntime.invoke(request);
+    },
+  },
+});
+assert.equal(anthropicResult.text, "Claude 已读取当前作品文档");
+assert.equal(anthropicResult.protocol, "anthropic_messages");
+assert.equal(anthropicResult.agentRuntime.runtime, "shensi_anthropic_messages_agent");
+assert.equal(anthropicRequests.length, 2);
+assert.equal(anthropicRequests[0].url, "https://api.anthropic.com/v1/messages");
+assert.equal(anthropicRequests[0].headers["x-api-key"], "test-key");
+assert.equal(anthropicRequests[0].body.tools[0].name, "workspace_read");
+assert.deepEqual(anthropicRequests[1].body.messages.at(-1).content[0], {
+  type: "tool_result",
+  tool_use_id: "toolu_1",
+  content: JSON.stringify({ ok: true, result: { text: "第一章内容" } }),
+  is_error: false,
+});
+assert.deepEqual(anthropicInvocations, [{ namespace: "workspace", tool: "read", arguments: { path: "正文/第1章.md" } }]);
+assert.equal(anthropicResult.workspaceToolsUsed, true);
+anthropicRuntime.close();
+
 const relayFallbackRequests = [];
 let relayFallbackInvocations = 0;
 const relayFallbackRuntime = createCodexApiAgentRuntime({
@@ -409,6 +470,8 @@ assert.equal(requested.url, "http://127.0.0.1:5317/v1/responses");
 
 const invalid = runtime.supports({ settings: { ...profile, apiKey: "" }, stage: "agent", sessionId: "x" });
 assert.equal(invalid, false);
+assert.equal(runtime.supports({ settings: { ...profile, id: "forged-public", apiKey: "", credentialSource: "public", systemManaged: false }, stage: "agent", sessionId: "forged" }), false, "普通配置不得伪造 public 绕过 API Key 校验");
+assert.equal(runtimeContractForProfile({ profile: { ...profile, id: "forged-public", apiKey: "", credentialSource: "public", systemManaged: false }, surface: "agent" }).code, "CODEX_API_KEY_REQUIRED");
 assert.equal(runtime.supports({ settings: compatibleProfile, stage: "agent", sessionId: "compatible" }), true);
 runtime.close();
 
@@ -418,13 +481,15 @@ assert.match(appSource, /<label>文字配置<select id="quickAgentEngine">/u, "�
 assert.match(appSource, /<select id="chatProviderSelect" hidden aria-hidden="true"><option value="codex_agent" selected>/u, "对话执行入口必须固定为统一 Agent");
 assert.match(appSource, /<select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>/u, "文字配置设置必须默认 Agent-only");
 assert.doesNotMatch(appSource, /<option value="codex_api">Codex API<\/option>/u, "UI 不得残留旧运行器名称");
-assert.match(appSource, /patch\.provider = isCodexApiCompatibleProvider\(patch\.provider\) \? patch\.provider : "OpenAI";/u);
+assert.doesNotMatch(appSource, /patch\.provider = isCodexApiCompatibleProvider\(patch\.provider\) \? patch\.provider : "OpenAI";/u);
+assert.match(appSource, /\["responses", "chat_completions", "anthropic_messages", "messages"\]\.includes\(patch\.protocol\)/u);
 assert.match(appSource, /agentModelsForProfile\(configuredAgentProfile\)/u);
 assert.doesNotMatch(appSource, /if \(isCodexApi\) \{\s+patch\.adapter = "api";\s+patch\.provider = "OpenAI";/u);
 assert.doesNotMatch(appSource, /Chat\/Agent 模式选择/u, "对话区不得再暴露 Chat/Agent 模式选择");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 assert.match(serverSource, /!isShensiAgentCompatibleProfile\(profile\)/u);
-assert.match(serverSource, /provider,\s+adapter: "api",\s+protocol: String\(profile\.protocol \|\| "responses"\),\s+agentEngine: "codex_api"/u);
+assert.match(serverSource, /SHENSI_AGENT_API_PROTOCOLS\.includes\(String\(profile\.protocol \|\| ""\)\)/u);
+assert.match(serverSource, /!apiKey && !isSystemManagedPublicAgentProfile\(profile\)/u);
 assert.match(serverSource, /runtimeSettings\.webSearchEnabled = requestedWebSearch && Boolean\(supportedWebSearchMode\)/u);
 assert.match(serverSource, /const workspaceToolContext = options\.shensiRuntime\?\.workspaceToolContext;/u, "通用神思运行器路径必须读取当前工作区工具上下文");
 assert.match(serverSource, /const workspaceToolRuntime = workspaceToolContext\?\.root[\s\S]{0,300}codexAgentProvider\.createWorkspaceToolRuntime\(/u, "通用神思运行器路径必须创建当前工作区只读工具");

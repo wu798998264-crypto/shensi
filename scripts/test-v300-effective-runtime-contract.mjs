@@ -95,8 +95,8 @@ assert.equal(agent.model, "deepseek/deepseek-v4-pro");
 assert.equal(agent.credentialSource, "shensi");
 
 const explicitChat = effectiveRuntimeContract({ settings, surface: "chat", profileId: "deepseek-chat" });
-assert.equal(explicitChat.ok, false, "DeepSeek API 配置不能冒充神思运行器的兼容接口");
-assert.equal(explicitChat.code, "CODEX_PROVIDER_MISMATCH");
+assert.equal(explicitChat.ok, true, "DeepSeek API 配置应由神思运行器按 Chat Completions 协议执行");
+assert.equal(explicitChat.runner, "codex_api_agent");
 
 const explicitCustomApi = runtimeContractForProfile({
   profile: { ...profileById("deepseek-chat"), provider: "自定义兼容接口" },
@@ -106,6 +106,23 @@ assert.equal(explicitCustomApi.ok, true);
 assert.equal(explicitCustomApi.surface, "agent");
 assert.equal(explicitCustomApi.runner, "codex_api_agent");
 assert.equal(explicitCustomApi.model, "deepseek-chat");
+
+const explicitAnthropicApi = runtimeContractForProfile({
+  profile: {
+    id: "claude-api",
+    provider: "Claude",
+    adapter: "api",
+    protocol: "anthropic_messages",
+    baseUrl: "https://api.anthropic.com/v1",
+    model: "claude-fable-5",
+    agentEngine: "codex_api",
+    credentialSource: "shensi",
+    apiKey: "test-only",
+  },
+  surface: "agent",
+});
+assert.equal(explicitAnthropicApi.ok, true);
+assert.equal(explicitAnthropicApi.runner, "codex_api_agent");
 
 const legacySurface = effectiveRuntimeContract({ settings, surface: "chat", profileId: "opencode-deepseek" });
 assert.equal(legacySurface.ok, true);

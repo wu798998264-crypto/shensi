@@ -1,4 +1,9 @@
-import { agentEngineForProfile, isShensiAgentCompatibleProfile } from "./agent-engine-registry.js";
+import {
+  agentEngineForProfile,
+  isShensiAgentCompatibleProfile,
+  isSystemManagedPublicAgentProfile,
+  SHENSI_AGENT_API_PROTOCOLS,
+} from "./agent-engine-registry.js";
 
 const text = (value = "") => String(value ?? "").trim();
 const uniqueModes = () => ["agent"];
@@ -73,7 +78,7 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
   if (!runner) return failed({ ...base, code: "RUNTIME_RUNNER_REQUIRED", message: "没有选择可用的运行器" });
   if (!model) return failed({ ...base, code: "RUNTIME_MODEL_REQUIRED", message: "没有选择模型" });
   if (requestedSurface === "agent"
-    && (engine === "codex" || (engine === "codex_api" && text(profile.protocol) === "responses"))
+    && engine === "codex"
     && model.includes("/")) {
     return failed({ ...base, code: "CODEX_MODEL_ID_INVALID", message: "Codex 使用普通模型 ID，不能使用 provider/model 格式" });
   }
@@ -84,13 +89,13 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
     return failed({ ...base, code: "CODEX_PROVIDER_MISMATCH", message: "Codex Agent 只能使用 OpenAI 模型配置" });
   }
   if (requestedSurface === "agent" && engine === "codex_api" && !isShensiAgentCompatibleProfile(profile)) {
-    return failed({ ...base, code: "CODEX_PROVIDER_MISMATCH", message: "神思运行器只能使用 OpenAI 或自定义兼容接口" });
+    return failed({ ...base, code: "SHENSI_AGENT_PROTOCOL_UNSUPPORTED", message: "当前配置不是神思运行器支持的 API Agent 协议" });
   }
   if (requestedSurface === "agent" && engine === "codex_api") {
     if (text(profile.adapter) !== "api") return failed({ ...base, code: "CODEX_API_ADAPTER_REQUIRED", message: "神思运行器必须使用 API 连接" });
-    if (!["responses", "chat_completions"].includes(text(profile.protocol))) return failed({ ...base, code: "CODEX_API_PROTOCOL_REQUIRED", message: "神思运行器需要 Responses 或已核验的 Chat Completions Agent 协议" });
+    if (!SHENSI_AGENT_API_PROTOCOLS.includes(text(profile.protocol))) return failed({ ...base, code: "CODEX_API_PROTOCOL_REQUIRED", message: "神思运行器需要 Responses、Chat Completions 或 Anthropic Messages Agent 协议" });
     if (!text(profile.baseUrl)) return failed({ ...base, code: "CODEX_API_BASE_URL_REQUIRED", message: "神思运行器缺少 API 地址" });
-    if (!text(profile.apiKey) && text(profile.credentialSource) !== "public") return failed({ ...base, code: "CODEX_API_KEY_REQUIRED", message: "神思运行器缺少 API Key" });
+    if (!text(profile.apiKey) && !isSystemManagedPublicAgentProfile(profile)) return failed({ ...base, code: "CODEX_API_KEY_REQUIRED", message: "神思运行器缺少 API Key" });
   }
   return { ok: true, code: "", message: "", ...base };
 };

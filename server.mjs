@@ -22,7 +22,12 @@ import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getModelOption
 import { activateTextExecutionModeProfile } from "./src/generation-profiles.js";
 import { freePublicModels, modelDisplayName } from "./src/public-model-catalog.js";
 import { buildProjectQuestionContext } from "./src/general-project-context.js";
-import { isShensiAgentCompatibleProfile, selectedAgentRuntimeProfile } from "./src/agent-engine-registry.js";
+import {
+  isShensiAgentCompatibleProfile,
+  isSystemManagedPublicAgentProfile,
+  selectedAgentRuntimeProfile,
+  SHENSI_AGENT_API_PROTOCOLS,
+} from "./src/agent-engine-registry.js";
 import { effectiveRuntimeContract } from "./src/effective-runtime-contract.js";
 import { normalizeAgentPermissionMode, permissionContractFor } from "./src/agent-permission-policy.js";
 import { normalizeUnifiedAgentDecision, parseUnifiedAgentDecision, unifiedAgentEntrySystemPrompt, unifiedAgentEntryUserPrompt } from "./src/unified-agent-entry.js";
@@ -707,9 +712,9 @@ const resolveCodexApiAgentSettings = (settings = {}) => {
   const model = String(profile.agentModelId || profile.model || "").trim();
   const apiKey = String(profile.apiKey || "").trim();
   const baseUrl = String(profile.baseUrl || (provider === "OpenAI" ? "https://api.openai.com/v1" : "")).trim();
-  if (!apiKey && String(profile.credentialSource || "") !== "public") throw Object.assign(new Error("神思运行器缺少 API Key，请先在模型设置中完成连接测试"), { code: "CODEX_API_KEY_REQUIRED", statusCode: 409 });
+  if (!apiKey && !isSystemManagedPublicAgentProfile(profile)) throw Object.assign(new Error("神思运行器缺少 API Key，请先在模型设置中完成连接测试"), { code: "CODEX_API_KEY_REQUIRED", statusCode: 409 });
   if (!model) throw Object.assign(new Error("神思运行器缺少模型"), { code: "CODEX_API_MODEL_REQUIRED", statusCode: 409 });
-  if (!["responses", "chat_completions"].includes(String(profile.protocol || ""))) throw Object.assign(new Error("神思运行器需要 Responses 或已核验的 Chat Completions Agent 协议"), { code: "CODEX_API_PROTOCOL_REQUIRED", statusCode: 409 });
+  if (!SHENSI_AGENT_API_PROTOCOLS.includes(String(profile.protocol || ""))) throw Object.assign(new Error("神思运行器需要 Responses、Chat Completions 或 Anthropic Messages Agent 协议"), { code: "CODEX_API_PROTOCOL_REQUIRED", statusCode: 409 });
   return {
     ...settings,
     ...profile,

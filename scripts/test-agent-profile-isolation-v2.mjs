@@ -119,8 +119,8 @@ const forgedPublicContract = runtimeContractForProfile({
   },
   surface: "agent",
 });
-assert.equal(forgedPublicContract.ok, false, "任意配置不能仅靠伪造 public credentialSource 绕过神思运行器供应商边界");
-assert.equal(forgedPublicContract.code, "CODEX_PROVIDER_MISMATCH");
+assert.equal(forgedPublicContract.ok, false, "任意配置不能仅靠伪造 public credentialSource 绕过神思运行器密钥校验");
+assert.equal(forgedPublicContract.code, "CODEX_API_KEY_REQUIRED");
 
 const aggregateAgentModels = agentModelsForEngine("codex_api", {
   codexModels: [
@@ -133,8 +133,8 @@ const aggregateAgentModels = agentModelsForEngine("codex_api", {
 });
 assert.deepEqual(
   aggregateAgentModels.map((item) => item.slug),
-  ["gpt-5.6-sol", "gpt-5.5", "o4-mini"],
-  "卡片 Agent 模型下拉必须完整显示当前配置返回的兼容模型，并过滤其他配置模型",
+  ["gpt-5.6-sol", "gpt-5.5", "o4-mini", "deepseek-v4-pro"],
+  "神思运行器模型下拉必须保留当前连接真实返回的全部模型，不按名称猜测兼容性",
 );
 
 const appSource = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/app.js", import.meta.url), "utf8"));
