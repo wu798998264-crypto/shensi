@@ -3,6 +3,8 @@ import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderAud
 import { normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { SHENSI_AGENT_API_PROTOCOLS } from "./agent-engine-registry.js";
 
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["opencode", "claude_code", "trae_work", "workbuddy", "custom"]);
+
 const CHANNELS = ["text", "image", "video", "audio"];
 const GENERATION_RUNTIME_FIELDS = Object.freeze(["baseUrl", "cliPath", "cliArgs"]);
 const LEGACY_GENERATION_RUNTIME_FIELDS = Object.freeze([
@@ -348,13 +350,13 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
   const fallback = DEFAULTS[channel];
   const draft = value.draft === true;
   const id = stringValue(value.id).trim() || `${channel}-${index + 1}`;
-  const genericOpenCode = channel === "text" && stringValue(value.agentEngine).trim() === "opencode";
-  const requestedProvider = draft || genericOpenCode
+  const externalCliAgent = channel === "text" && EXTERNAL_CLI_AGENT_ENGINES.has(stringValue(value.agentEngine).trim());
+  const requestedProvider = draft || externalCliAgent
     ? stringValue(value.provider).trim()
     : stringValue(value.provider, fallback.provider).trim() || fallback.provider;
   const provider = requestedProvider === "公益模型" ? "免费模型" : requestedProvider;
   const adapter = value.adapter === "cli" ? "cli" : value.adapter === "api" ? "api" : draft ? "" : "api";
-  const requestedModel = draft ? stringValue(value.model).trim() : stringValue(value.model, fallback.model).trim();
+  const requestedModel = draft || externalCliAgent ? stringValue(value.model).trim() : stringValue(value.model, fallback.model).trim();
   const providerPreset = getProviderPreset(provider);
   const catalog = channel === "image"
     ? getProviderImageModelOptions(provider, adapter)
@@ -368,7 +370,7 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
   // Built-in providers are strict namespaces. A stale model copied from a
   // different provider must never leak back into this profile's picker or
   // request. Custom providers keep arbitrary model IDs by design.
-  const model = channel !== "text" && !draft && !genericOpenCode && providerPreset.custom !== true && providerPreset.public !== true && catalog.length && !catalog.some((item) => item.slug === requestedModel)
+  const model = channel !== "text" && !draft && !externalCliAgent && providerPreset.custom !== true && providerPreset.public !== true && catalog.length && !catalog.some((item) => item.slug === requestedModel)
     ? catalog.find((item) => item.available !== false && item.selectable !== false)?.slug || catalog[0].slug
     : requestedModel;
   const channelLabel = channel === "text" ? "文字" : channel === "image" ? "图片" : channel === "video" ? "视频" : "音频";
@@ -379,7 +381,7 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
   const defaultAgentEngine = channel !== "text"
     ? ""
     : explicitAgentEngine
-      || (adapter === "api" && ["responses", "chat_completions"].includes(requestedProtocol) ? "codex_api" : "")
+      || (adapter === "api" && SHENSI_AGENT_API_PROTOCOLS.includes(requestedProtocol) ? "codex_api" : "")
       || (adapter === "cli" && provider === "OpenAI" ? "codex" : "");
   const executionModes = channel === "text" ? ["agent"] : [];
   const normalized = {
@@ -701,7 +703,7 @@ const normalizeDeepSeekTextModes = (profiles) => profiles.map((profile) => {
   if (profile.adapter === "api") {
     return {
       ...profile,
-      name: !profile.name || /^DeepSeek(?:\s+(?:Chat|API))?(?:\s*·\s*API)?$/i.test(profile.name) ? "DeepSeek · 神思运行器" : profile.name,
+      name: !profile.name || /^DeepSeek(?:\s+(?:Chat|API))?(?:\s*·\s*API)?$/i.test(profile.name) ? "DeepSeek Agent" : profile.name,
       executionMode: "agent",
       executionModes: ["agent"],
       agentEngine: "codex_api",
@@ -773,6 +775,14 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
       ...profile,
       agentModelId: modes.includes("agent") ? model : "",
       chatModelId: modes.includes("chat") ? model : "",
+    };
+  }
+  if (["trae_work", "workbuddy", "custom"].includes(engine)) {
+    const selected = String(profile.agentModelId || model || "").trim();
+    return {
+      ...profile,
+      agentModelId: modes.includes("agent") ? selected : "",
+      chatModelId: modes.includes("chat") ? String(profile.chatModelId || "").trim() : "",
     };
   }
   return {
@@ -1314,13 +1324,17 @@ const MODEL_FAMILY_LABELS = {
 export const generationProfileLabel = (profile = {}, channel = "text") => {
   const remarkName = String(profile.remarkName || "").trim();
   if (remarkName) return remarkName;
-  if (channel === "text" && ["codex_api", "opencode", "deepseek_opencode", "claude_code"].includes(profile.agentEngine)) {
+  if (channel === "text" && ["codex_api", "opencode", "deepseek_opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(profile.agentEngine)) {
     const provider = String(profile.provider || openCodeProviderForModel(profile.agentModelId || profile.model) || "").trim();
     if (profile.agentEngine === "codex_api") {
       const model = String(profile.agentModelId || profile.model || "").trim();
       return [provider || "API Agent", model].filter(Boolean).join(" · ");
     }
-    const runner = profile.agentEngine === "claude_code" ? "Claude Code" : "OpenCode";
+    const runner = profile.agentEngine === "claude_code" ? "Claude Code"
+      : profile.agentEngine === "trae_work" ? "Trae Work"
+        : profile.agentEngine === "workbuddy" ? "WorkBuddy"
+          : profile.agentEngine === "custom" ? "自定义运行器"
+            : "OpenCode";
     return provider ? `${runner}+${provider}` : runner;
   }
   const provider = String(profile.provider || "未选择服务商").trim();
@@ -1359,7 +1373,7 @@ export const visibleGenerationPickerProfiles = (settings = {}, channel = "text")
   const profiles = (Array.isArray(settings[keys.list]) ? settings[keys.list] : [])
     .filter((profile) => profile?.id
       && profile.draft !== true
-      && (String(profile.provider || "").trim() || (channel === "text" && profile.agentEngine === "opencode")));
+      && (String(profile.provider || "").trim() || (channel === "text" && EXTERNAL_CLI_AGENT_ENGINES.has(String(profile.agentEngine || "").trim()))));
   return uniqueGenerationPickerProfiles(profiles, {
     channel,
     activeId: settings[keys.active] || "",
@@ -1858,6 +1872,7 @@ export const generationRuntimeBindings = (settings = {}) => ({
       profileId: String(profile.id || ""),
       adapter: String(profile.adapter || ""),
       provider: String(profile.provider || ""),
+      agentEngine: String(profile.agentEngine || ""),
       protocol: String(profile.protocol || ""),
       baseUrl: String(profile.baseUrl || ""),
       cliPath: String(profile.cliPath || ""),
@@ -1887,9 +1902,10 @@ const profileFromRuntimeBinding = (channel, binding = {}, apiKey = "") => {
     : null;
   return createGenerationProfile(channel, {
     id: String(binding.profileId || binding.id || "").trim(),
-    name: `${provider} ${binding.adapter === "cli" ? "CLI" : "API"}`,
+    name: `${provider || binding.agentEngine || "外置 Agent"} ${binding.adapter === "cli" ? "CLI" : "API"}`,
     adapter: String(binding.adapter || ""),
     provider,
+    agentEngine: String(binding.agentEngine || ""),
     protocol: String(binding.protocol || preset.api?.protocol || DEFAULTS[channel]?.protocol || ""),
     baseUrl: String(binding.baseUrl || ""),
     model,
@@ -1928,6 +1944,7 @@ export const applyGenerationRuntimeBindings = (settings = {}, payload = {}, secr
         cliPath: String(binding.cliPath || ""),
         cliArgs: String(binding.cliArgs || ""),
         dreaminaCliProfile: String(binding.dreaminaCliProfile || ""),
+        agentEngine: String(binding.agentEngine || profile.agentEngine || ""),
       };
     });
     const existingIds = new Set(profiles.map((profile) => profile.id));
@@ -1938,7 +1955,8 @@ export const applyGenerationRuntimeBindings = (settings = {}, payload = {}, secr
         && !(hasCodexProfile && isCodexTextCliBinding(binding))
         && !existingIds.has(String(binding.profileId).trim())
         && ["api", "cli"].includes(String(binding.adapter || ""))
-        && String(binding.provider || "").trim())
+        && (String(binding.provider || "").trim()
+          || (channel === "text" && ["trae_work", "workbuddy", "custom"].includes(String(binding.agentEngine || "").trim()))))
       .map((binding) => {
         const endpoint = comparableEndpoint(binding.baseUrl);
         const legacySecretDonor = channel === "text" && binding.adapter === "api" && endpoint

@@ -6028,6 +6028,8 @@ const syncGenerationAdapterFields = (channel = "text") => {
   if (!form) return;
   const fields = GENERATION_FORM_FIELDS[channel] ?? GENERATION_FORM_FIELDS.text;
   const isCli = form.elements[fields.adapter]?.value === "cli";
+  const selectedEngine = channel === "text" ? form.elements.namedItem("textAgentEngine")?.value || "" : "";
+  const externalAgent = channel === "text" && EXTERNAL_AGENT_RUNNER_IDS.includes(selectedEngine);
   const managedOpenCode = channel === "text"
     && ["opencode", "claude_code"].includes(form.elements.namedItem("textAgentEngine")?.value)
     && form.elements.namedItem("textCredentialSource")?.value === "shensi";
@@ -6046,6 +6048,12 @@ const syncGenerationAdapterFields = (channel = "text") => {
     if (publicProviderKeyHint) {
       publicProviderKeyHint.hidden = isCli || getProviderPreset(form.elements.provider?.value).public !== true;
     }
+  }
+  if (channel === "text") {
+    const providerLabel = document.querySelector("#textProviderField");
+    if (providerLabel) providerLabel.hidden = externalAgent;
+    const protocolLabel = form.elements.protocol?.closest("label");
+    if (protocolLabel) protocolLabel.hidden = externalAgent || (isCli && !managedOpenCode);
   }
 };
 
@@ -6099,7 +6107,7 @@ const syncModelCapabilityControls = () => {
     && !(formEngine === "opencode" && field("textCredentialSource")?.value === "shensi");
   const capability = executionModeOptionState(profileForCapability, { existing: unchangedLegacyShape });
   const openCodeEngine = formEngine === "opencode";
-  const externalAgentEngine = ["opencode", "claude_code"].includes(formEngine);
+  const externalAgentEngine = ["opencode", "claude_code", ...EXTERNAL_AGENT_RUNNER_IDS].includes(formEngine);
   const credentialSource = field("textCredentialSource")?.value === "shensi"
     ? "shensi"
     : formEngine === "claude_code" ? "claude" : "opencode";
@@ -6121,14 +6129,14 @@ const syncModelCapabilityControls = () => {
   if (agentEngineField) agentEngineField.hidden = false;
   const credentialSourceField = document.querySelector("#textCredentialSourceField");
   if (credentialSourceField) {
-    credentialSourceField.hidden = !externalAgentEngine;
+    credentialSourceField.hidden = !externalAgentEngine || EXTERNAL_AGENT_RUNNER_IDS.includes(formEngine);
     const sourceSelect = credentialSourceField.querySelector("select");
     if (sourceSelect) for (const option of sourceSelect.options) option.hidden = formEngine === "claude_code"
       ? !["claude", "shensi"].includes(option.value)
       : !["opencode", "shensi"].includes(option.value);
   }
   const providerField = document.querySelector("#textProviderField");
-  if (providerField) providerField.hidden = false;
+  if (providerField) providerField.hidden = EXTERNAL_AGENT_RUNNER_IDS.includes(formEngine);
   syncAllGenerationAdapterFields();
   const connectCodexButton = document.querySelector("#connectLocalCodex");
   const runnerActionState = codexSettingsActionState({
@@ -6223,6 +6231,17 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
   const customInput = document.querySelector("#customModelInput");
   if (!form || !select || !customInput) return;
   const field = (name) => form.elements.namedItem(name);
+  const selectedEngine = field("textAgentEngine")?.value || "";
+  if (EXTERNAL_AGENT_RUNNER_IDS.includes(selectedEngine)) {
+    const profile = activeGenerationProfile(generationWorkingSettings(), "text");
+    const current = String(preferredModel || profile?.agentModelId || profile?.model || customInput.value || "").trim();
+    select.hidden = true;
+    select.innerHTML = "";
+    customInput.hidden = false;
+    customInput.value = current;
+    syncModelCapabilityControls();
+    return;
+  }
   const openCodeEngine = field("textAgentEngine")?.value === "opencode";
   if (openCodeEngine) {
     const profile = activeGenerationProfile(generationWorkingSettings(), "text");
@@ -6509,7 +6528,7 @@ const modelFieldHelpDetails = (channel, field) => {
       ? `当前为 CLI 调用：先完成 ${cliPath || providerLabel + " CLI"} 自身登录${keyEnvironment ? `，或按 CLI 文档设置 ${keyEnvironment}` : ""}`
       : `在 ${providerLabel} 开发者控制台新建 API Key 或访问密钥`;
     summary = publicProvider
-      ? "限免模型通过神思运行器执行，工具调用能力以当前模型核验结果为准；服务可能限流、临时不可用或变更模型。"
+      ? "限免模型通过免费模型 Agent 执行，工具调用能力以当前模型核验结果为准；服务可能限流、临时不可用或变更模型。"
       : adapter === "cli"
       ? `当前使用 CLI，通常先完成 CLI 自身登录${keyEnvironment ? `或设置环境变量 ${keyEnvironment}` : ""}；改用 API 时再到 ${providerLabel} 控制台创建密钥。`
       : `登录 ${providerLabel} 开发者控制台，在 API Key、访问密钥或凭证页面新建密钥；输入后点击真实连接测试，成功后由系统凭证安全加密保存。`;
@@ -6628,6 +6647,7 @@ const captureGenerationFormProfile = (channel) => {
     const isCodexApi = patch.agentEngine === "codex_api";
     const isGenericOpenCode = patch.agentEngine === "opencode";
     const isClaudeCode = patch.agentEngine === "claude_code";
+    const isExternalCli = EXTERNAL_AGENT_RUNNER_IDS.includes(patch.agentEngine);
     const isDeepSeekOpenCode = patch.provider === "DeepSeek" && patch.adapter === "cli" && !isGenericOpenCode && !isClaudeCode;
     if (isCodexApi) {
       const preset = getProviderPreset(patch.provider);
@@ -6686,6 +6706,20 @@ const captureGenerationFormProfile = (channel) => {
       }
       Object.assign(patch, openCodeRunnerDefaults("claude_code"));
       delete patch.requiresQualifiedModel;
+    } else if (isExternalCli) {
+      const descriptor = agentEngineDescriptor(patch.agentEngine);
+      patch.adapter = "cli";
+      patch.provider = String(patch.provider || "").trim();
+      patch.protocol = "";
+      patch.baseUrl = "";
+      patch.apiKey = "";
+      patch.credentialSource = "external";
+      patch.executionMode = "agent";
+      patch.executionModes = ["agent"];
+      patch.agentModelId = String(patch.model || "").trim();
+      patch.chatModelId = "";
+      patch.cliPath = String(patch.cliPath || descriptor.cliPath || "").trim();
+      patch.cliArgs = String(patch.cliArgs || descriptor.cliArgs || "").trim();
     } else if (isDeepSeekOpenCode) {
       patch.executionMode = "agent";
       patch.executionModes = ["agent"];
@@ -6719,9 +6753,12 @@ const captureGenerationFormProfile = (channel) => {
   }
   const customInput = document.querySelector(`#custom${channel === "text" ? "Model" : channel === "image" ? "ImageModel" : channel === "video" ? "VideoModel" : "AudioModel"}Input`);
   if (customInput && !customInput.hidden) patch.model = customInput.value.trim();
-  const ready = Boolean(patch.adapter && patch.model
-    && (channel !== "text" || patch.agentEngine === "opencode" || patch.provider)
-    && (channel !== "text" || patch.adapter !== "api" || patch.protocol));
+  const externalTextRunner = channel === "text" && EXTERNAL_AGENT_RUNNER_IDS.includes(String(patch.agentEngine || "").trim());
+  const ready = externalTextRunner
+    ? Boolean(patch.adapter === "cli" && patch.cliPath && (patch.agentEngine !== "custom" || patch.cliArgs))
+    : Boolean(patch.adapter && patch.model
+      && (channel !== "text" || patch.agentEngine === "opencode" || patch.provider)
+      && (channel !== "text" || patch.adapter !== "api" || patch.protocol));
   patch.draft = Boolean(current.draft) && !ready;
   patch.name = generationProfileLabel({ ...current, ...patch }, channel);
   if (["image", "video", "audio"].includes(channel)
@@ -6849,7 +6886,8 @@ const refreshGenerationSettingsForm = () => {
   syncProviderSpecificCliButtons();
 };
 
-const AGENT_RUNNER_LABELS = Object.freeze({ codex: "Codex", opencode: "OpenCode", claude_code: "Claude Code" });
+const AGENT_RUNNER_LABELS = Object.freeze({ codex: "Codex", opencode: "OpenCode", claude_code: "Claude Code", trae_work: "Trae Work", workbuddy: "WorkBuddy", custom: "自定义运行器" });
+const EXTERNAL_AGENT_RUNNER_IDS = Object.freeze(["trae_work", "workbuddy", "custom"]);
 
 const agentRunnerCapability = (runnerId = "") => ui.agentRunners?.[runnerId] || null;
 
@@ -6865,9 +6903,9 @@ const syncAgentRunnerOptions = () => {
       ? capability.installed === true ? "installed" : "missing"
       : "checking";
     option.textContent = capability
-      ? capability.installed === true ? baseLabel : `${baseLabel} · 未安装（点击装配）`
+      ? runnerId === "custom" ? `${baseLabel} · 手动配置` : capability.installed === true ? baseLabel : `${baseLabel} · 未安装（点击装配）`
       : `${baseLabel} · 正在检查`;
-    option.title = capability?.installed === false ? `点击下载并装配 ${baseLabel}` : "";
+    option.title = runnerId === "custom" ? "填写 CLI 程序路径和参数模板" : capability?.installed === false ? `点击下载并装配 ${baseLabel}` : "";
     // Keep the missing option selectable. A disabled native <option> cannot
     // receive a click, so the change guard below restores the previous value
     // and opens the installer instead of silently accepting an unusable runner.
@@ -6889,7 +6927,7 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     syncAgentRunnerOptions();
     const select = document.querySelector("#textAgentEngineSelect");
     const selectedRunnerId = String(select?.value || "");
-    if (select && AGENT_RUNNER_LABELS[selectedRunnerId] && ui.agentRunners?.[selectedRunnerId]?.installed === false
+    if (select && selectedRunnerId !== "custom" && AGENT_RUNNER_LABELS[selectedRunnerId] && ui.agentRunners?.[selectedRunnerId]?.installed === false
       && !elements.agentRunnerInstallDialog?.open) {
       select.value = select.dataset.previousAvailableValue || "";
       void openAgentRunnerInstallDialog(selectedRunnerId);
@@ -6925,9 +6963,9 @@ const renderAgentRunnerInstallJob = (job = null) => {
       : running
         ? "请保持神思运行；安装期间不会改动作品、笔记、模型配置或凭据。"
         : "安装成功后会自动复检版本；不会修改你的模型、API、凭据或现有运行器配置。";
-  elements.agentRunnerInstallSource.textContent = job?.officialUrl ? `官方来源：${job.officialUrl}` : "仅允许 Codex、OpenCode、Claude Code 的官方安装源。";
-  elements.startAgentRunnerInstall.disabled = running || completed;
-  elements.startAgentRunnerInstall.textContent = running ? "正在装配…" : completed ? "装配完成" : status === "failed" ? "重新下载并装配" : "下载并装配";
+  elements.agentRunnerInstallSource.textContent = job?.officialUrl ? `官方来源：${job.officialUrl}` : runnerId === "custom" ? "自定义运行器不会自动下载，请在下方填写 CLI 程序和参数模板。" : "仅使用对应运行器的官方安装源。";
+  elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running || completed;
+  elements.startAgentRunnerInstall.textContent = runnerId === "custom" ? "无需下载" : running ? "正在装配…" : completed ? "装配完成" : status === "failed" ? "重新下载并装配" : "下载并装配";
   elements.cancelAgentRunnerInstall.textContent = running ? "关闭（后台继续）" : completed ? "完成" : "取消";
 };
 
@@ -6971,6 +7009,12 @@ const openAgentRunnerInstallDialog = async (runnerId) => {
   if (!label || !elements.agentRunnerInstallDialog) return false;
   ui.pendingAgentRunnerSelection = runnerId;
   elements.agentRunnerInstallDialog.dataset.runnerId = runnerId;
+  if (runnerId === "custom") {
+    elements.agentRunnerInstallCopy.textContent = "自定义运行器不会自动下载；请在当前文字配置中填写 CLI 程序路径和参数模板。";
+    renderAgentRunnerInstallJob({ runnerId, status: "idle", message: "等待填写自定义 CLI 配置" });
+    ui.pendingAgentRunnerSelection = "";
+    return false;
+  }
   elements.agentRunnerInstallCopy.textContent = `本机未检测到 ${label}。点击后将从官方来源下载、安装并自动复检。`;
   renderAgentRunnerInstallJob({ runnerId, status: "idle", message: `尚未安装 ${label}` });
   if (!elements.agentRunnerInstallDialog.open) elements.agentRunnerInstallDialog.showModal();
@@ -7975,7 +8019,7 @@ root.innerHTML = `
                 <label class="wide generation-connection-remark">备注名称<input name="textRemarkName" data-generation-remark="text" type="text" maxlength="80" autocomplete="off" placeholder="例如：日常写作、长文创作、测试连接" /><small class="setting-field-help">仅用于界面区分连接；留空时自动显示服务商和模型名称。</small></label>
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
-                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option></select></label>
+                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="trae_work">Trae Work</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
@@ -8642,7 +8686,7 @@ root.innerHTML = `
           <label class="whiteboard-guidance-toggle whiteboard-text-option"><input name="guided" type="checkbox" /><span><strong>创作引导</strong><small>逐步确认方向</small></span></label>
           <label class="whiteboard-auto-skill-toggle whiteboard-text-option"><input name="autoSkills" type="checkbox" /><span><strong>自动匹配 Skill</strong><small class="whiteboard-auto-skill-status" id="whiteboardAutoSkillStatus" aria-live="polite">关闭时不自动引用</small></span></label>
           <div class="whiteboard-generate-model-controls whiteboard-text-option" aria-label="白板文本生成模型设置">
-            <button class="whiteboard-text-runtime-button" id="whiteboardTextRuntimeButton" type="button" aria-haspopup="dialog" aria-expanded="false" title="选择文字配置、运行器和生成档位"><span class="whiteboard-option-copy"><strong>模型选择</strong><small id="whiteboardTextRuntimeLabel">神思运行器 · 模型</small></span>${icon("\uE70D", "展开生成设置")}</button>
+            <button class="whiteboard-text-runtime-button" id="whiteboardTextRuntimeButton" type="button" aria-haspopup="dialog" aria-expanded="false" title="选择文字配置、运行器和生成档位"><span class="whiteboard-option-copy"><strong>模型选择</strong><small id="whiteboardTextRuntimeLabel">免费模型 · 模型</small></span>${icon("\uE70D", "展开生成设置")}</button>
             <section class="whiteboard-text-runtime-panel" id="whiteboardTextRuntimePanel" aria-label="卡片文本生成设置" hidden>
               <select id="whiteboardTextExecutionSurface" name="executionSurface" hidden aria-hidden="true"><option value="agent" selected>Agent</option></select>
               <div class="whiteboard-text-runtime-fields" id="whiteboardTextChatFields" hidden>
@@ -58235,14 +58279,17 @@ const renderCodexAgentPanel = () => {
     (activeConversationTurnId && run.turnId === activeConversationTurnId)
     || run.conversationId === state.activeConversationId
   )) || null;
+  const missingRunnerLabel = AGENT_RUNNER_LABELS[agentEngine] || (agentEngine === "deepseek_opencode" ? "OpenCode" : "Codex");
   elements.stopCodexAgent.hidden = !isAgent || !activeRun;
   elements.stopCodexAgent.dataset.turnId = activeRun?.turnId || ui.codexAgent.activeTurnId || "";
   const statusText = !isAgent
     ? ""
     : status.installed === false && agentEngine !== "codex_api"
-      ? `没有检测到本机${["deepseek_opencode", "opencode"].includes(agentEngine) ? " OpenCode CLI" : agentEngine === "claude_code" ? " Claude Code CLI" : " Codex CLI"}，请先完成安装与连接。`
-    : agentEngine === "codex_api" && !activeAgentTextProfile(state.settings)?.apiKey
-      ? "神思运行器尚未配置 API Key，请到模型设置完成连接。"
+      ? agentEngine === "custom"
+        ? "自定义运行器尚未填写 CLI 程序路径和参数模板。"
+        : `没有检测到本机 ${missingRunnerLabel} CLI，请先完成安装与连接。`
+    : agentEngine === "codex_api" && activeAgentTextProfile(state.settings)?.systemManaged !== true && !activeAgentTextProfile(state.settings)?.apiKey
+      ? "免费模型尚未完成连接配置，请到模型设置检查当前模型。"
     : status.appServer === "failed"
       ? `${agentLabel} 不可用：${status.lastError || "运行时启动失败，可重新发送任务以重启"}`
       : agentEngine === "deepseek_opencode" && !deepSeekAgentCredentialAvailable()
@@ -71228,6 +71275,11 @@ const refreshAvailableModels = async () => {
   });
   const result = document.querySelector("#adapterResult");
   if (settings.adapter === "cli") {
+    if (EXTERNAL_AGENT_RUNNER_IDS.includes(String(settings.agentEngine || settings.textAgentEngine || ""))) {
+      renderModelOptions(settings.provider || "", { allowBlank: true, preferredModel: settings.model || settings.agentModelId || "" });
+      result.textContent = "外置 Agent 不强制绑定服务商或模型；已保留当前 CLI 参数，运行时将使用你填写的模型或 CLI 默认模型";
+      return;
+    }
     if (settings.textAgentEngine === "claude_code") {
       renderModelOptions(settings.provider, { allowBlank: false, preferredModel: settings.model });
       result.textContent = `已显示 ${settings.provider || "当前服务商"} 模型；Claude Code CLI 与实际模型将在真实连接测试中共同核验`;
@@ -71522,6 +71574,10 @@ agentEngineSelect?.addEventListener("change", (event) => {
   if (!capability) {
     return;
   }
+  if (runnerId === "custom") {
+    event.target.dataset.previousAvailableValue = runnerId;
+    return;
+  }
   if (capability?.installed === true) {
     event.target.dataset.previousAvailableValue = runnerId;
     return;
@@ -71573,6 +71629,22 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
     control("cliPath").value = runner.cliPath;
     control("cliArgs").value = runner.cliArgs;
     control("model").value = "";
+  } else if (EXTERNAL_AGENT_RUNNER_IDS.includes(event.target.value)) {
+    const runnerId = String(event.target.value);
+    const descriptor = agentEngineDescriptor(runnerId);
+    control("adapter").value = "cli";
+    control("provider").value = "";
+    control("protocol").value = "";
+    control("baseUrl").value = "";
+    control("apiKey").value = "";
+    control("textCredentialSource").value = "";
+    control("cliPath").value = descriptor.cliPath || "";
+    control("cliArgs").value = descriptor.cliArgs || "";
+    control("model").value = "";
+    document.querySelector("#customModelInput").value = "";
+    document.querySelector("#adapterResult").textContent = runnerId === "custom"
+      ? "已切换到自定义运行器；请填写 CLI 程序路径和参数模板"
+      : `已切换到 ${AGENT_RUNNER_LABELS[runnerId]}；可直接使用该运行器默认模型，也可手动填写模型 ID`;
   } else if (event.target.value === "codex") {
     const runner = openCodeRunnerDefaults("codex");
     control("adapter").value = runner.adapter;
@@ -71662,10 +71734,12 @@ elements.settingsForm.addEventListener("submit", async (event) => {
   }
   for (const channel of ["text", "image", "video", "audio"]) captureGenerationFormProfile(channel);
   for (const channel of ["text", "image", "video", "audio"]) {
-    const incomplete = (generationWorkingSettings()[generationProfileKeys(channel).list] ?? []).find((profile) => (
-      profile.draft || !profile.adapter || !profile.provider || !profile.model
-      || (channel === "text" && profile.adapter === "api" && !profile.protocol)
-    ));
+    const incomplete = (generationWorkingSettings()[generationProfileKeys(channel).list] ?? []).find((profile) => {
+      if (profile.draft || !profile.adapter) return true;
+      const external = channel === "text" && EXTERNAL_AGENT_RUNNER_IDS.includes(String(profile.agentEngine || "").trim());
+      if (external) return !profile.cliPath || (profile.agentEngine === "custom" && !profile.cliArgs);
+      return !profile.provider || !profile.model || (channel === "text" && profile.adapter === "api" && !profile.protocol);
+    });
     if (!incomplete) continue;
     ui.settingsSection = "model";
     ui.modelSettingsChannel = channel;
@@ -71673,7 +71747,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
     renderSettingsSection();
     renderGenerationConnectionManagers();
     applyGenerationProfileToForm(channel);
-    showToast(`请先补全${channelTitle(channel)}配置的调用方式、服务商和模型，或删除该空白配置`);
+    showToast(`请先补全${channelTitle(channel)}配置的调用方式、服务商/模型或外置 CLI 参数，或删除该空白配置`);
     return;
   }
   const fixedSlotBindings = fixedSlotBindingsFromDraft();
