@@ -281,7 +281,9 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         if (!pending || terminal(entry.record.status)) throw new Error("选项已过期，请直接发送新的要求");
         if (!String(answer || "").trim()) throw new Error("回答不能为空");
         const value = String(answer);
+        entry.record.status = "running";
         await event(entry, "answer_accepted", { decisionId, answer: value });
+        await event(entry, "progress", { message: "已收到选择，Agent 正在继续生成" });
         entry.pending.delete(decisionId);
         pending.resolve(value);
         return { accepted: true };

@@ -33,6 +33,33 @@ try {
   assert.equal(saved.state.histories['agent-note'][2].content, '这是一段真实初稿。', '续写/追加前必须保存完整正文');
   assert.equal(saved.state.documents['agent-note'].markdown, '完整覆盖后的正文。');
 
+  const skillReads = [];
+  const skillTools = createConversationAgentTools({
+    appRoot: root,
+    workspacePath,
+    workspaceKind: 'notebook',
+    requestId: 'request-skill-alias',
+    sourceMessageId: 'user-skill-alias',
+    instruction: '读取所需 Skill',
+    catalog: [{ id: 'builtin:creative-guidance', name: '创作引导', description: '引导创作方向', capabilities: ['novel_guidance'] }],
+    readSkill: async (id) => {
+      skillReads.push(id);
+      return { id, name: '创作引导', text: '真实 Skill 全文', fullText: true, contentHash: 'skill-hash' };
+    },
+    signal: new AbortController().signal,
+  });
+  for (const argumentsValue of [
+    { id: 'builtin:creative-guidance' },
+    { skillId: 'builtin:creative-guidance' },
+    { skill_id: 'builtin:creative-guidance' },
+    { selection: { name: '创作引导' } },
+    { name: '创作引导' },
+  ]) {
+    const result = await skillTools.invoke({ namespace: 'skills', tool: 'read', arguments: argumentsValue });
+    assert.equal(result.success, true, result.contentItems[0].text);
+  }
+  assert.deepEqual(skillReads, Array(5).fill('builtin:creative-guidance'), 'Skill 参数别名必须解析到目录中的唯一真实 ID');
+
   const waiting = new Map();
   let choiceProtocol = '';
   const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime, contextBlocks, deliveryReview, prompt }) => {
@@ -68,8 +95,10 @@ try {
   ]);
   assert.deepEqual(firstAnswer, { accepted: true });
   assert.deepEqual(duplicateAnswer, { accepted: true }, '同一决策的快速重复回答应共享一次接受结果');
-  const acceptedEvents = (await service.status(a.id)).events.filter((event) => event.type === 'answer_accepted' && event.payload.decisionId === qa.id);
+  const answerStatus = await service.status(a.id);
+  const acceptedEvents = answerStatus.events.filter((event) => event.type === 'answer_accepted' && event.payload.decisionId === qa.id);
   assert.equal(acceptedEvents.length, 1, '同一决策只能写入一条 answer_accepted 事件');
+  assert.ok(answerStatus.events.some((event) => event.type === 'progress' && /继续生成/u.test(event.payload.message)), '答案接受后必须明确发出恢复运行进度');
   await new Promise(done => setTimeout(done, 20));
   assert.deepEqual(await service.answer(a.id, qa.id, '我的其他想法'), { accepted: true }, '接受后响应丢失的重试不能变成过期错误');
   await service.cancel(b.id);
