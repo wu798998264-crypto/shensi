@@ -38,6 +38,7 @@ try {
   const service = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions'), skillCatalog: async () => [], readRoute: async () => '按任务阶段加载技能', run: async ({ sessionId, workspaceToolRuntime, contextBlocks }) => {
     choiceProtocol = contextBlocks.find((block) => block.name === '动态选择交互')?.text || '';
     waiting.set(sessionId, true);
+    await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: { mode: 'conversation', documentIds: [] } });
     const result = await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'ask', arguments: { question: '方向？', options: ['方向甲', '方向乙'] } });
     return { text: JSON.parse(result.contentItems[0].text).answer };
   } });

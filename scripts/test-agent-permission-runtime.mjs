@@ -21,6 +21,7 @@ try {
     readRoute: async () => "由 Agent 按语义选择工具。",
     run: async (options) => {
       capturedRuns.push(options);
+      await options.workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: { mode: 'conversation', documentIds: [] } });
       if (options.permissionContract.mode !== "approval_required") return { text: options.permissionContract.mode };
       const result = await options.requestApproval({
         question: "允许读取系统配置？",
