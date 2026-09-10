@@ -96,12 +96,25 @@ const referenceUploadDidNotCreateTask = (value) => /upload resource[\s\S]*no fil
 const DREAMINA_VIDEO_GENERATION_COMMANDS = new Set([
   "text2video", "image2video", "frames2video", "multiframe2video", "multimodal2video", "multiframe_video", "longvideo",
 ]);
-const dreaminaVideoGenerationCommand = (command = "") => DREAMINA_VIDEO_GENERATION_COMMANDS.has(String(command || "").trim().toLowerCase());
+const DREAMINA_CONTROL_COMMANDS = new Set([
+  "version", "user_credit", "list_task", "query_result", "cancel_task", "cancel", "task_cancel", "login", "relogin", "logout", "--help",
+]);
+const dreaminaVideoGenerationCommand = (command = "") => {
+  const normalized = String(command || "").trim().toLowerCase();
+  if (DREAMINA_VIDEO_GENERATION_COMMANDS.has(normalized)) return true;
+  // Long-video verbs are advertised by the installed official CLI and may
+  // change between releases (for example `ultra_video` or `video_3min`).
+  // Treat only non-control commands containing `video` as generation verbs.
+  return Boolean(normalized) && !DREAMINA_CONTROL_COMMANDS.has(normalized) && /video/.test(normalized);
+};
 const DREAMINA_TASK_ID_COMMANDS = new Set([
   ...DREAMINA_VIDEO_GENERATION_COMMANDS,
   "list_task", "query_result", "cancel_task", "cancel", "task_cancel",
 ]);
-const dreaminaCommandMayReturnTaskIdentity = (command = "") => DREAMINA_TASK_ID_COMMANDS.has(String(command || "").trim().toLowerCase());
+const dreaminaCommandMayReturnTaskIdentity = (command = "") => {
+  const normalized = String(command || "").trim().toLowerCase();
+  return DREAMINA_TASK_ID_COMMANDS.has(normalized) || dreaminaVideoGenerationCommand(normalized);
+};
 const PLACEHOLDER_DREAMINA_TASK_IDS = new Set([
   "",
   "0",

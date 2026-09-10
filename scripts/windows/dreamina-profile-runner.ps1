@@ -84,7 +84,10 @@ function Test-DreaminaTaskIdentityOutput([string]$Output) {
 }
 
 function Test-DreaminaVideoGenerationCommand([string]$Command) {
-  return $Command -in @('text2video', 'image2video', 'frames2video', 'multiframe2video', 'multimodal2video', 'multiframe_video', 'longvideo')
+  $normalized = ([string]$Command).Trim().ToLowerInvariant()
+  if ($normalized -in @('text2video', 'image2video', 'frames2video', 'multiframe2video', 'multimodal2video', 'multiframe_video', 'longvideo')) { return $true }
+  if ($normalized -in @('version', 'user_credit', 'list_task', 'query_result', 'cancel_task', 'cancel', 'task_cancel', 'login', 'relogin', 'logout', '--help')) { return $false }
+  return -not [string]::IsNullOrWhiteSpace($normalized) -and $normalized -match 'video'
 }
 
 function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {

@@ -53,6 +53,7 @@ assert.match(runner, /Test-DreaminaTaskIdentityOutput/u);
 assert.match(videoCli, /DREAMINA_GENERATION_SESSION_REJECTED/u);
 assert.match(videoCli, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
 assert.match(videoCli, /dreaminaTaskIdInText/u);
+assert.match(videoCli, /non-control commands containing `video`/u);
 assert.match(driver, /providerTaskIdFromOutput/u);
 assert.match(driver, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
 assert.match(worker, /errorProviderTaskId/u);
