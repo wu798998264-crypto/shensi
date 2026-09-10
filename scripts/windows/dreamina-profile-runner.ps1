@@ -69,6 +69,24 @@ function Import-DreaminaRegistryKey([string]$Source) {
   if ($code -ne 0) { throw "Dreamina credential import failed (exit $code)" }
 }
 
+function Test-DreaminaUsableTaskId([string]$Value) {
+  $normalized = ([string]$Value).Trim().Trim('"')
+  if ([string]::IsNullOrWhiteSpace($normalized)) { return $false }
+  return $normalized -notmatch '^(?i:0|-|none|null|undefined|unknown|missing|n/?a|na)$'
+}
+
+function Test-DreaminaTaskIdentityOutput([string]$Output) {
+  if ([string]::IsNullOrWhiteSpace($Output)) { return $false }
+  foreach ($match in [regex]::Matches($Output, '(?im)(?:^|[\r\n{,])\s*"?(?:submit_id|submitId|task_id|taskId|providerTaskId)"?\s*[=:]\s*"?([A-Za-z0-9._:-]+)')) {
+    if (Test-DreaminaUsableTaskId -Value $match.Groups[1].Value) { return $true }
+  }
+  return $false
+}
+
+function Test-DreaminaVideoGenerationCommand([string]$Command) {
+  return $Command -in @('text2video', 'image2video', 'frames2video', 'multiframe2video', 'multimodal2video', 'multiframe_video', 'longvideo')
+}
+
 function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Output)) { return $false }
   $matchesAuthFailure = $Output -match '(?is)authsdk:\s*not logged in' `
@@ -76,13 +94,21 @@ function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {
     -or $Output -match '(?is)authsdk:.*refresh failed.*(?:protocol server.*code\s*=\s*10044|session (?:expired|rejected|invalid))'
   if (-not $matchesAuthFailure) { return $false }
 
+  # A video-generation response carrying a durable provider task identity is
+  # a task record, even when its failure text mentions authsdk. Preserve the
+  # task ID so the caller can query or surface that exact provider task rather
+  # than incorrectly invalidating an already verified account.
+  if ((Test-DreaminaVideoGenerationCommand -Command $Command) -and (Test-DreaminaTaskIdentityOutput -Output $Output)) {
+    return $false
+  }
+
   if ($Command -eq 'list_task') {
     # Prefer a narrow textual identity check before JSON parsing. Historical
     # prompts can contain provider text that Windows PowerShell 5.1 cannot
     # always decode back through ConvertFrom-Json, but a non-empty task ID is
     # still sufficient to prove this is a task record rather than a command
     # authentication envelope.
-    if ($Output -match '(?is)"(?:submit_id|submitId|task_id|taskId)"\s*:\s*"[^"\r\n]+"') {
+    if (Test-DreaminaTaskIdentityOutput -Output $Output) {
       return $false
     }
     try {
@@ -96,7 +122,8 @@ function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {
         $commandFailure = @($payload) | Where-Object {
           $status = if ($_.status) { [string]$_.status } elseif ($_.gen_status) { [string]$_.gen_status } else { [string]$_.task_status }
           $taskId = if ($_.submit_id) { [string]$_.submit_id } elseif ($_.submitId) { [string]$_.submitId } elseif ($_.task_id) { [string]$_.task_id } else { [string]$_.taskId }
-          [string]::IsNullOrWhiteSpace($taskId) -and $status -match '^(?i:fail|failed|error)$'
+          $taskIdMissing = [string]::IsNullOrWhiteSpace($taskId)
+          ($taskIdMissing -or (-not (Test-DreaminaUsableTaskId -Value $taskId))) -and $status -match '^(?i:fail|failed|error)$'
         } | Select-Object -First 1
         return $null -ne $commandFailure
       }
@@ -179,8 +206,13 @@ try {
     if (-not [string]::IsNullOrEmpty($stderrText)) { [Console]::Error.Write($stderrText) }
     $semanticOutput = ((@($commandOutput) | ForEach-Object { [string]$_ }) -join "`n") + "`n" + $stderrText
     if (Test-DreaminaSemanticAuthFailure -Output $semanticOutput -Command $firstArg) {
-      [Console]::Error.WriteLine('[DREAMINA_AUTH_REQUIRED] authsdk: not logged in; Dreamina returned an authentication failure payload and the previous verified profile snapshot was preserved.')
-      if ($exitCode -eq 0) { $exitCode = 78 }
+      if (Test-DreaminaVideoGenerationCommand -Command $firstArg) {
+        [Console]::Error.WriteLine('[DREAMINA_GENERATION_SESSION_REJECTED] authsdk: not logged in; the video generation command did not return a provider task ID, so submission outcome is unknown and the verified account snapshot remains valid.')
+        if ($exitCode -eq 0) { $exitCode = 79 }
+      } else {
+        [Console]::Error.WriteLine('[DREAMINA_AUTH_REQUIRED] authsdk: not logged in; Dreamina returned an authentication failure payload and the previous verified profile snapshot was preserved.')
+        if ($exitCode -eq 0) { $exitCode = 78 }
+      }
     }
   }
 

@@ -329,7 +329,10 @@ const assertProviderStatus = (result, phase) => {
   if (["submit", "submitted", "submitting", "querying", "processing", "generating", "in_progress", "in-progress"].includes(rawStatus)) return "running";
   throw Object.assign(
     new Error(`${phase}返回无法识别的厂商状态：${result?.rawStatus || status || "空状态"}`),
-    { providerErrorCode: result?.errorCode || "INVALID_PROVIDER_STATUS" },
+    {
+      providerErrorCode: result?.errorCode || "INVALID_PROVIDER_STATUS",
+      ...(result?.providerTaskId ? { providerTaskId: String(result.providerTaskId) } : {}),
+    },
   );
 };
 
@@ -1480,6 +1483,43 @@ const processJob = async (candidate) => {
     const current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
     if (["complete", "cancelled", "superseded"].includes(current.status)) return false;
     const providerCode = String(error.providerErrorCode || error.code || "");
+    const errorProviderTaskId = String(error?.providerTaskId || error?.provider_task_id || "").trim();
+    const usableErrorProviderTaskId = errorProviderTaskId
+      && !/^(?:0|-|none|null|undefined|unknown|missing|n\/?a|na)$/iu.test(errorProviderTaskId);
+    if (dreaminaCliMediaJob(current)
+      && current.channel === "video"
+      && current.status === "submitting"
+      && current.submissionState === "submitting"
+      && !current.providerTaskId
+      && usableErrorProviderTaskId) {
+      const taskAuthFailure = /authsdk|未检测到(?:有效)?登录态|dreamina\s+login/i.test(errorMessage(error))
+        || providerCode.toUpperCase() === "DREAMINA_AUTH_REQUIRED";
+      await updateActiveMediaGenerationJob({
+        jobId: candidate.id,
+        expectedDesiredAction: current.desiredAction || "run",
+        expectedStatuses: [current.status],
+        patch: {
+          status: "polling",
+          providerTaskId: errorProviderTaskId,
+          providerStatus: "running",
+          providerRawStatus: "submission_response_with_error",
+          providerErrorCode: taskAuthFailure
+            ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
+            : providerCode || "DREAMINA_SUBMISSION_RESPONSE_WITH_ERROR",
+          submissionState: "submitted",
+          billingRisk: "",
+          resubmitConfirmationRequired: false,
+          safeNoTaskRetry: false,
+          nextPollAt: new Date().toISOString(),
+          retryAllowed: true,
+          error: taskAuthFailure
+            ? `即梦已返回原厂商任务 ${errorProviderTaskId}，但同时报告生成阶段会话异常；已保留任务号并改为只读续查，不会重新提交。`
+            : `即梦已返回原厂商任务 ${errorProviderTaskId}，但提交响应同时包含错误；已保留任务号并改为只读续查，不会重新提交。${providerCode ? ` 原始错误码：${providerCode}` : ""}`,
+          heartbeatAt: new Date().toISOString(),
+        },
+      });
+      return false;
+    }
     const explicitDreaminaAccountVerification = explicitDreaminaAccountVerificationFailure(current, error);
     const providerControlPlaneTransient = transientProviderFailure(error)
       && Boolean(current.providerTaskId)
@@ -1713,7 +1753,9 @@ const processJob = async (candidate) => {
         : storageBlocked && current.providerTaskId
           ? "waiting_storage"
           : submissionUnknown ? "retry_required" : "failed",
-      providerStatus: current.providerStatus || "failed",
+      providerStatus: providerCode.toUpperCase() === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
+        ? "failed"
+        : current.providerStatus || "failed",
       providerErrorCode: String(error.providerErrorCode || error.code || ""),
       ...dreaminaFailurePatch,
       progressPercent: storageBlocked ? 92 : missingCredentials ? Math.max(24, Number(current.progressPercent) || 0) : 100,

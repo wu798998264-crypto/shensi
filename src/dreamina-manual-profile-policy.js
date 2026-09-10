@@ -84,7 +84,7 @@ export const dreaminaJobRequiresCredentialProfile = (job = {}, { nowMs = Date.no
   if (status === "cancel_requested") return false;
   if (["retry_required", "reconciliation_required"].includes(status)
     && normalized(job.providerStatus) === "reconciling") {
-    const reconciliationStartedAt = Date.parse(job.recoveryStartedAt || job.interruptedAt || job.createdAt || "") || 0;
+    const reconciliationStartedAt = Date.parse(job.recoveryStartedAt || job.automaticRecoveryStartedAt || job.interruptedAt || job.createdAt || "") || 0;
     return withinGraceWindow(reconciliationStartedAt, nowMs, DREAMINA_RECONCILIATION_SWITCH_GRACE_MS);
   }
   return false;
@@ -133,6 +133,10 @@ export const dreaminaProfileSwitchDecision = ({ jobs = [], requestedProfileId = 
 
 export const dreaminaProfileSwitchMessage = (decision = {}) => {
   if (decision.reason === "profile_required") return "当前连接未指定即梦账号，请重新选择已绑定真实账号的即梦配置。";
+  if (decision.reason === "submission_outcome_unknown") {
+    const current = String(decision.activeProfileId || "当前配置");
+    return `即梦配置“${current}”的一次视频提交没有返回可确认的厂商任务编号，账号核验状态仍然有效。为避免重复扣费，神思已暂停新的即梦提交并保留原任务记录；请打开“查看占用任务”，必要时手动终止本机任务，再决定是否重新生成。不要重复核验账号。`;
+  }
   const current = String(decision.activeProfileId || "当前配置");
   return `即梦 CLI 当前只有一个共享凭证锁。配置“${current}”仍有生成任务尚未结束；同一即梦配置可继续排队，但其他即梦配置暂时无法生成。手动停止后会立即释放切换限制。非即梦配置不受影响。`;
 };

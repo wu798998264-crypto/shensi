@@ -38,6 +38,39 @@ const parsedJson = (source) => {
   return {};
 };
 
+const PLACEHOLDER_PROVIDER_TASK_IDS = new Set([
+  "",
+  "0",
+  "-",
+  "none",
+  "null",
+  "undefined",
+  "unknown",
+  "missing",
+  "n/a",
+  "na",
+]);
+
+const normalizeProviderTaskId = (value) => {
+  const normalized = String(value ?? "").trim().replace(/^['"]|['"]$/gu, "");
+  return PLACEHOLDER_PROVIDER_TASK_IDS.has(normalized.toLowerCase()) ? "" : normalized;
+};
+
+const providerTaskIdFromOutput = (source = "") => {
+  const text = String(source || "");
+  const payload = parsedJson(text);
+  const direct = payload?.providerTaskId || payload?.submit_id || payload?.submitId || payload?.task_id || payload?.taskId
+    || payload?.data?.submit_id || payload?.data?.submitId || payload?.data?.task_id || payload?.data?.taskId;
+  const directId = normalizeProviderTaskId(direct);
+  if (directId) return directId;
+  const matches = text.matchAll(/(?:^|[\r\n{,])\s*["']?(?:providerTaskId|submit_id|submitId|task_id|taskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
+  for (const match of matches) {
+    const candidate = normalizeProviderTaskId(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return "";
+};
+
 const terminateSpawnTree = (child, timeoutMs = 5_000) => new Promise((resolveKill) => {
   const pid = Number(child?.pid) || 0;
   if (!pid) return resolveKill();
@@ -64,7 +97,7 @@ const terminateSpawnTree = (child, timeoutMs = 5_000) => new Promise((resolveKil
   killer.once("close", finish);
 });
 
-const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_000 }) => new Promise((resolveRun, rejectRun) => {
+const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_000, extractDreaminaTaskId = false }) => new Promise((resolveRun, rejectRun) => {
   const child = spawn(executable, args, { cwd, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
@@ -90,11 +123,17 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
     settled = true;
     clearTimeout(timer);
     if (code !== 0) {
-      const message = stderr.trim() || stdout.trim() || `媒体驱动退出码 ${code}`;
-      const markedCode = message.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
+      const message = extractDreaminaTaskId
+        ? [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") || `媒体驱动退出码 ${code}`
+        : stderr.trim() || stdout.trim() || `媒体驱动退出码 ${code}`;
+      const providerTaskId = extractDreaminaTaskId ? providerTaskIdFromOutput(message) : "";
+      const rawMarkedCode = message.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
+      const markedCode = extractDreaminaTaskId && providerTaskId && rawMarkedCode === "DREAMINA_AUTH_REQUIRED"
+        ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
+        : rawMarkedCode;
       const refreshCode = !markedCode
         ? isDreaminaAuthRequiredResponse(message)
-          ? "DREAMINA_AUTH_REQUIRED"
+          ? extractDreaminaTaskId && providerTaskId ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE" : "DREAMINA_AUTH_REQUIRED"
           : isDreaminaAuthRefreshRetryableFailure(message)
             ? "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED"
             : ""
@@ -109,6 +148,12 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
         "DREAMINA_REFERENCE_INVALID",
         "DREAMINA_TASK_RESOURCE_UNVERIFIED",
       ].includes(providerCode)) error.submissionOutcomeKnown = true;
+      error.stdout = stdout.trim();
+      error.stderr = stderr.trim();
+      if (providerTaskId) {
+        error.providerTaskId = providerTaskId;
+        error.submissionOutcomeKnown = true;
+      }
       return rejectRun(error);
     }
     resolveRun(parsedJson(stdout));
@@ -732,6 +777,7 @@ export class DreaminaVideoDriver extends MediaProviderDriver {
       cwd: process.cwd(),
       env: this.environment(settings),
       timeoutMs,
+      extractDreaminaTaskId: true,
     });
   }
 

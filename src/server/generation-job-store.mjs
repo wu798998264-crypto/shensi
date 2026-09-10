@@ -984,7 +984,8 @@ export const listDreaminaProfileBlockingJobs = async () => {
   await mkdir(jobsRoot(), { recursive: true });
   const entries = await readdir(jobsRoot(), { withFileTypes: true });
   const jobs = [];
-  for (const job of await readGenerationJobs(entries)) {
+  for (let job of await readGenerationJobs(entries)) {
+    job = await recoverLegacyDreaminaGenerationAuthFailure(job);
     const forceReleasePending = Boolean(job?.forceReleasePendingAt && !job?.forceReleaseCompletedAt);
     if (job && (dreaminaJobRequiresCredentialProfile(job) || forceReleasePending)) jobs.push(publicGenerationJob(job));
   }
@@ -1890,6 +1891,47 @@ const legacyDreaminaPreSubmitTransportFailure = (job) => job?.mode === "server"
     || ["DRIVER_TIMEOUT", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_CREDIT_QUERY_TIMEOUT", "DREAMINA_CONTROL_PLANE_TRANSIENT"]
       .includes(String(job.providerErrorCode || "").toUpperCase()));
 
+// Older workers treated an authsdk response from the paid video command as a
+// definitive account failure and persisted waiting_credentials while the
+// submission phase was already active. That state is not safe to resubmit:
+// the provider may have accepted the request. Migrate it to the same durable
+// reconciliation state used by the current worker, preserving the idempotency
+// key and keeping the credential lock visible until the user resolves it.
+const legacyDreaminaGenerationAuthFailure = (job) => {
+  if (!job?.id
+    || job.mode !== "server"
+    || !["image", "video"].includes(String(job.channel || ""))
+    || job.status !== "waiting_credentials"
+    || job.providerTaskId
+    || String(job.submissionState || "").toLowerCase() !== "submitting"
+    || !["即梦", "dreamina"].includes(normalizedIdentity(job.request?.settings?.provider))
+    || normalizedIdentity(job.request?.settings?.adapter) !== "cli"
+    || !/^(?:DREAMINA_AUTH_REQUIRED|DREAMINA_GENERATION_SESSION_REJECTED)$/i.test(String(job.providerErrorCode || ""))
+    || !/authsdk|未检测到(?:有效)?登录态|dreamina\s+login/i.test(String(job.error || ""))) return false;
+  return true;
+};
+
+const recoverLegacyDreaminaGenerationAuthFailure = async (job) => {
+  if (!legacyDreaminaGenerationAuthFailure(job)) return job;
+  const now = new Date().toISOString();
+  return updateJob(job.id, {
+    status: "retry_required",
+    providerStatus: "reconciling",
+    providerErrorCode: "DREAMINA_SUBMISSION_UNCERTAIN",
+    submissionState: "uncertain",
+    progressPercent: Math.max(24, Number(job.progressPercent) || 0),
+    failedAt: "",
+    billingRisk: "submission_outcome_unknown",
+    resubmitConfirmationRequired: false,
+    safeNoTaskRetry: false,
+    nextPollAt: now,
+    automaticRecoveryStartedAt: job.automaticRecoveryStartedAt || now,
+    automaticRecoveryStoppedAt: "",
+    error: "旧版本曾把生成阶段会话异常误判为账号失效；当前版本已停止重复核验和重复提交，正在按原幂等键核对即梦任务。必要时请在占用任务列表手动终止本机任务。",
+    heartbeatAt: now,
+  });
+};
+
 const recoverLegacyDreaminaPreSubmitTransportFailure = async (job) => {
   if (!legacyDreaminaPreSubmitTransportFailure(job)) return job;
   const now = new Date().toISOString();
@@ -2015,6 +2057,7 @@ export const listMediaGenerationJobsForWorker = async () => {
   const jobs = [];
   for (let job of await readGenerationJobs(entries)) {
     if (await pruneExpiredGenerationJob(job)) continue;
+    job = await recoverLegacyDreaminaGenerationAuthFailure(job);
     job = await recoverLegacyAggregateReferencePreflightFailure(job);
     job = await recoverLegacyDreaminaPreSubmitTransportFailure(job);
     job = await recoverLegacyDreaminaConcurrencyFailure(job);

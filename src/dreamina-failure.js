@@ -141,6 +141,20 @@ export const dreaminaFailureDiagnosis = ({
       resolution: "检查网络和本地服务后等待自动重试；不要因为这条错误重新核验账号。",
       retryable: true,
     }),
+    DREAMINA_GENERATION_SESSION_REJECTED: diagnosis({
+      category: "submission_outcome_unknown",
+      title: "即梦视频生成会话被拒绝，提交结果待核对",
+      cause: "账号与任务列表预检已经通过，但真实视频生成命令没有返回任务编号，并在生成阶段报告会话异常；这不能证明账号核验失效，也不能证明厂商没有创建任务。",
+      resolution: "神思将保留原配置、提示词和幂等记录，只读核对厂商任务列表且不会重复提交。需要停止占用时，请在占用任务列表手动终止；无需重复核验账号。",
+      retryable: true,
+    }),
+    DREAMINA_PROVIDER_TASK_AUTH_FAILURE: diagnosis({
+      category: "provider_task_internal_failure",
+      title: "即梦厂商任务内部授权处理失败",
+      cause: "厂商已经返回真实任务编号，但该任务内部的资源处理阶段报告 authsdk 异常。这是厂商任务故障，不代表当前保存的账号身份失效。",
+      resolution: "保留并核对原厂商任务编号；不得重新提交同一任务。若厂商最终明确失败，可从失败卡片重新生成，无需先重复核验账号。",
+      retryable: true,
+    }),
     DREAMINA_CREDIT_QUERY_TIMEOUT: diagnosis({
       category: "control_plane_timeout",
       title: "即梦积分查询超时",

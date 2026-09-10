@@ -13418,6 +13418,12 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
   if (current.submissionOutcomeUnknown === true) {
     return uiText("正在确认后台任务；不会重复提交或重复扣费");
   }
+  if (String(current.status || "") === "retry_required"
+    && String(current.providerStatus || "") === "reconciling"
+    && !current.providerTaskId
+    && String(current.billingRisk || "") === "submission_outcome_unknown") {
+    return uiText("提交结果未知；正在核对后台任务，必要时请手动终止占用");
+  }
   const providerTaskId = String(current.providerTaskId || "").trim();
   const providerErrorCode = String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase();
   if (providerErrorCode === "DREAMINA_PROVIDER_SESSION_RESTORE_PENDING") {
@@ -14476,6 +14482,7 @@ const showInterruptedDocumentArtifactJob = (job) => {
   if (target.targetType !== "document-artifact" || !state.documents[target.documentId]) return;
   recordCustomGenerationJobCapability(job);
   promptDreaminaReverificationForJob(job);
+  promptDreaminaSubmissionBlockForJob(job);
   updateDocumentArtifactJobProgress(job, { persistNow: true });
   mediaDocumentArtifactProgressSaves.delete(job.id);
 };
@@ -14785,6 +14792,7 @@ const showInterruptedConversationMediaJob = (job) => {
   const target = conversationMessageTarget(job);
   if (!target) return false;
   promptDreaminaReverificationForJob(job);
+  promptDreaminaSubmissionBlockForJob(job);
   const mediaLabel = job.channel === "audio" ? "音频" : job.channel === "video" ? "视频" : "图片";
   const batchTotal = Math.max(1, Number(job.target?.mediaBatchTotal) || 1);
   const batchIndex = Math.max(1, Number(job.target?.mediaBatchIndex) || 1);
@@ -15042,6 +15050,7 @@ const completedWhiteboardApplyPendingJob = (job, error) => ({
 const dreaminaReverifyPromptedJobs = new Set();
 const dreaminaReverifyPendingJobs = new Map();
 const dreaminaReverifyPromptQueue = new Map();
+const dreaminaSubmissionBlockPromptedJobs = new Set();
 let dreaminaReverifyQueuePaused = false;
 
 const rememberDreaminaJobForReverification = (job, settings) => {
@@ -15122,12 +15131,32 @@ const promptDreaminaReverificationForJob = (job) => {
   });
 };
 
+const promptDreaminaSubmissionBlockForJob = (job) => {
+  if (!job?.id || dreaminaSubmissionBlockPromptedJobs.has(job.id)) return false;
+  if (String(job.status || "") !== "retry_required"
+    || String(job.providerStatus || "") !== "reconciling"
+    || job.providerTaskId
+    || String(job.billingRisk || "") !== "submission_outcome_unknown") return false;
+  const settings = mediaGenerationSettingsForJob(job) || job.request?.settings || {};
+  const profileId = String(settings?.dreaminaCliProfile || "").trim();
+  if (!profileId || elements.dreaminaReverifyDialog?.open) return false;
+  dreaminaSubmissionBlockPromptedJobs.add(job.id);
+  openDreaminaProfileLockDialog({
+    reason: "submission_outcome_unknown",
+    activeProfileId: profileId,
+    blockingJobId: job.id,
+  });
+  showToast("即梦提交结果暂时无法确认，已暂停新的提交；请查看占用任务并在需要时手动终止本机任务。不会重复核验或重复扣费。");
+  return true;
+};
+
 const showInterruptedWhiteboardGenerationJob = (job) => {
   if (!job || typeof job !== "object" || !String(job.id || "").trim()) {
     console.warn("ignored invalid interrupted generation job", job);
     return;
   }
   recordCustomGenerationJobCapability(job);
+  promptDreaminaSubmissionBlockForJob(job);
   const target = job.target ?? {};
   const documentState = state.documents[target.documentId];
   if (!documentState || documentState.documentKind !== "whiteboard") return;
