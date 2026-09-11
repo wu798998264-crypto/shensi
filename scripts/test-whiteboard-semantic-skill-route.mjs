@@ -38,6 +38,24 @@ assert.equal(semanticRoute.activeModule, "manuscript");
 assert.equal(semanticRoute.semanticCapabilitiesAuthoritative, true);
 assert.deepEqual(semanticRoute.skillCapabilities, ["novel_prose_writer"]);
 
+const agentDecisionRoute = planWhiteboardSkillRoute({
+  prompt: "示例中提到图片提示词和短剧改编，但实际仍写小说正文",
+  workspaceKind: "project",
+  agentDecision: {
+    lane: "task_execution",
+    taskKind: "content_creation",
+    objective: "写小说正文",
+    requestMode: "creative",
+    deliverableType: "novel",
+    sourceMode: "original",
+    skillCapabilities: ["novel_prose_writer"],
+  },
+  skillCapabilities: ["novel_prose_writer"],
+});
+assert.equal(agentDecisionRoute.deliverableType, "novel");
+assert.equal(agentDecisionRoute.contextDomain, "novel");
+assert.equal(agentDecisionRoute.activeModule, "manuscript");
+
 const semanticGuidanceRoute = planWhiteboardSkillRoute({
   prompt: "请直接写正文，不要追问",
   semanticCapabilities: ["short_drama_guidance"],
@@ -108,5 +126,11 @@ assert.deepEqual(
   ["builtin:creative-guidance", "builtin:novel-writer"],
   "未提供结构化能力的旧调用必须保留既有选择行为",
 );
+
+const appSource = await (await import("node:fs/promises")).readFile(new URL("../src/app.js", import.meta.url), "utf8");
+assert.match(appSource, /agentDecision:\s*autoRoute\?\.agentDecision\s*\?\?\s*null/u,
+  "白板生成必须复用 Skill 路由已经取得的 Agent 决策，不能再次调用 Agent 判断");
+assert.match(appSource, /decisionResolution:[\s\S]{0,220}agentDecision,[\s\S]{0,220}languagePolicy/u,
+  "白板复用的 Agent 决策必须真正进入聊天请求体");
 
 console.log("Whiteboard semantic Skill route contracts passed");

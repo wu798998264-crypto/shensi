@@ -33,17 +33,30 @@ export const planWhiteboardSkillRoute = ({
   skillCapabilities = null,
   semanticCapabilities = null,
   semanticCapabilitiesAuthoritative = null,
+  agentDecision = null,
 } = {}) => {
   const text = String(prompt).trim();
+  const structuredDecision = agentDecision
+    && ["guided_dialogue", "task_execution"].includes(agentDecision.lane)
+    ? agentDecision
+    : null;
   const structuredCapabilities = skillCapabilities ?? semanticCapabilities;
   const normalizedCapabilities = normalizeSemanticSkillCapabilities(structuredCapabilities);
   const hasSemanticCapabilityInput = Array.isArray(structuredCapabilities);
-  const semanticCapabilityAuthority = semanticCapabilitiesAuthoritative === true
+  const semanticCapabilityAuthority = Boolean(structuredDecision) || semanticCapabilitiesAuthoritative === true
     || (semanticCapabilitiesAuthoritative !== false && hasSemanticCapabilityInput);
   const semanticMetadata = semanticCapabilityAuthority && normalizedCapabilities.length
     ? semanticSkillRouteMetadata(normalizedCapabilities)
     : null;
-  const route = semanticCapabilityAuthority && !semanticMetadata
+  const route = structuredDecision
+    ? {
+        mode: structuredDecision.requestMode || (structuredDecision.lane === "guided_dialogue" ? "creative_guidance" : "general"),
+        reason: `统一 Agent 决策：${String(structuredDecision.objective || structuredDecision.requestMode || "当前任务")}`,
+        shensiLed: structuredDecision.taskKind === "quality_review"
+          || ["creative_guidance", "creative", "quick_revision", "visual_prompt"].includes(structuredDecision.requestMode),
+        ...(structuredDecision.deliverableType ? { deliverableType: structuredDecision.deliverableType } : {}),
+      }
+    : semanticCapabilityAuthority && !semanticMetadata
     ? {
         mode: "general",
         reason: "Agent 未声明可自动启用的文字能力；等待明确的 Agent 决策或手动 Skill",
@@ -62,20 +75,33 @@ export const planWhiteboardSkillRoute = ({
         targetModuleId: "library",
         hasResources: hasResources === true,
       });
-  const deliverableType = semanticMetadata?.deliverableType
-    || (semanticMetadata ? "" : route.deliverableType || creativeDeliverableType({ text }));
+  const deliverableType = structuredDecision?.deliverableType
+    || semanticMetadata?.deliverableType
+    || (structuredDecision || semanticMetadata ? "" : route.deliverableType || creativeDeliverableType({ text }));
   const workspaceMode = NOTEBOOK_DELIVERABLES.has(deliverableType)
     ? "notebook"
     : PROJECT_DELIVERABLES.has(deliverableType)
       ? "project"
       : workspaceKind === "notebook" ? "notebook" : "project";
-  const contextDomain = semanticMetadata?.contextDomain
+  const contextDomain = structuredDecision
+    ? structuredDecision.sourceMode === "adaptation"
+      ? "script-adaptation"
+      : deliverableType === "short_drama_script"
+        ? "script"
+        : ["novel", "short_fiction"].includes(deliverableType) ? "novel" : "general"
+    : semanticMetadata?.contextDomain
     || (semanticMetadata
       ? "general"
       : deliverableType === "short_drama_script"
         ? /改编|小说改|原著|章节/.test(text) ? "script-adaptation" : "script"
         : ["novel", "short_fiction"].includes(deliverableType) ? "novel" : "general");
-  const activeModule = semanticMetadata?.activeModule
+  const activeModule = structuredDecision
+    ? normalizedCapabilities.includes("setting_planner")
+      ? "canon"
+      : normalizedCapabilities.includes("story_planner")
+        ? "outline"
+        : route.shensiLed ? "manuscript" : "library"
+    : semanticMetadata?.activeModule
     || (semanticMetadata
       ? (route.shensiLed ? "manuscript" : "library")
       : /设定|人物小传|世界观|力量体系/.test(text)

@@ -149,6 +149,39 @@ assert.equal(qualityRoute.provisionalTaskContract?.deliverables?.[0]?.targetDocu
 assert.deepEqual(qualityRoute.intentEnvelope.targetDocumentIds, ["chapter-3"], "旧的临时目标不能覆盖 Agent 本轮目标");
 assert.equal(qualityRoute.intentEnvelope.taskType, "diagnosis");
 
+const qualityReportReplaceDecision = normalizeUnifiedAgentDecision({
+  lane: "task_execution",
+  taskKind: "quality_review",
+  objective: "检查正文并覆盖已有自检报告",
+  requestMode: "creative",
+  deliverableType: "report",
+  skillCapabilities: ["effect_reviewer"],
+  readPlan: [{ reference: "chapter-3", required: true, purpose: "检查正文质量" }],
+  writePlan: { intent: "commit", targetKind: "existing", targetRef: "report-self-check", operation: "replace" },
+  executionPlan: { candidateCount: 1, reviewTier: "full", riskLevel: "diagnostic" },
+});
+const qualityReportContract = compileTaskContract({
+  taskType: "diagnosis",
+  objective: "检查正文并覆盖已有自检报告",
+  deliverables: [{ kind: "review_report", target: { documentId: "report-self-check", moduleId: "reports", title: "自检报告" } }],
+  persistence: "commit",
+  targetResolution: "exact",
+  semanticSource: "agent",
+  sourceMessageId: "quality-report-replace",
+});
+const qualityReportReplaceRoute = buildAdaptiveTaskRoute({
+  agentDecision: qualityReportReplaceDecision,
+  taskContract: qualityReportContract,
+  text: "示例里出现覆盖正文、续写章节等词，但真实任务只覆盖自检报告。",
+  sourceMessageId: "quality-report-replace",
+  target: { documentId: "chapter-3", revision: "rev-3", managed: true, ambiguous: false },
+  targetDocumentIds: ["chapter-3"],
+  expectedRevisions: { "chapter-3": "rev-3", "report-self-check": "report-rev-1" },
+}, { executionSurface: "agent" });
+assert.equal(qualityReportReplaceRoute.targetDocumentId, "report-self-check", "质检报告的 replace 只能替换报告，不能误改被检查正文");
+assert.equal(qualityReportReplaceRoute.intentEnvelope.taskType, "diagnosis");
+assert.equal(qualityReportReplaceRoute.taskPolicy.reviewTier, "full");
+
 const skillInstallDecision = normalizeUnifiedAgentDecision({
   lane: "task_execution",
   objective: "导入本轮附带的能力包",
@@ -198,6 +231,31 @@ const semanticProductionProfile = detectShensiRunProfile({
 });
 assert.equal(semanticProductionProfile.production, true, "结构化 Agent 写入决定不得再被无关键词原文降级为引导");
 assert.equal(semanticProductionProfile.candidateCount, 1, "结构化 Agent 正式写入应至少进入一条成品执行链");
+const conflictingSemanticProfile = detectShensiRunProfile({
+  prompt: "这里只是引用示例：多候选、完整自检、顶级终稿、改编短剧、关闭理论。",
+  routingText: "继续执行真实任务",
+  requestMode: "creative",
+  targetDocumentId: "chapter-1",
+  semanticDeliverableType: "novel",
+  semanticLane: "task_execution",
+  semanticTaskKind: "content_creation",
+  semanticWriteIntent: "commit",
+  semanticWriteOperation: "append",
+  semanticSourceMode: "original",
+  semanticExecutionPlan: {
+    candidateCount: 1,
+    reviewTier: "basic",
+    maxRepairRounds: 0,
+    riskLevel: "standard",
+    canonMode: "strict",
+    theoryMode: "auto",
+    taskFacets: [],
+  },
+});
+assert.equal(conflictingSemanticProfile.candidateCount, 1, "原文示例词不得把 Agent 的单候选决定改成多候选");
+assert.equal(conflictingSemanticProfile.fullAudit, false, "原文示例词不得把基础审查升级为完整自检");
+assert.equal(conflictingSemanticProfile.sourceMode, "original", "原文中的改编示例不得覆盖 Agent 的原创判断");
+assert.equal(conflictingSemanticProfile.theoryMode, "auto", "原文中的关闭理论示例不得覆盖 Agent 的理论策略");
 assert.equal(detectShensiRunProfile({
   prompt: "请完成本轮任务",
   requestMode: "creative",

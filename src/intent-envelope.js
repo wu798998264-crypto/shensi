@@ -46,6 +46,19 @@ export const INTENT_WRITE_MODES = Object.freeze([
 const taskTypeFor = ({ route = {}, taskContract = null, reviewDelivery = null, instruction = "" } = {}) => {
   const source = clean(instruction);
   if (taskContract?.taskType && INTENT_TASK_TYPES.includes(clean(taskContract.taskType))) return clean(taskContract.taskType);
+  if (route.semanticAuthority === true) {
+    const taskKind = clean(route.taskKind);
+    if (taskKind === "quality_review") return "diagnosis";
+    if (taskKind === "content_creation") return "writing";
+    if (taskKind === "content_revision") return "modification";
+    if (taskKind === "workspace_operation") return "operation";
+    if (taskKind === "creative_guidance") return "planning";
+    if (route.mode === "workspace_operation" || route.mode === "operation") return "operation";
+    if (route.mode === "quick_revision" || route.revisionIntent === true) return "modification";
+    if (route.diagnosisIntent === true || route.runtimeDiagnosisIntent === true) return "diagnosis";
+    if (["creative", "visual_prompt"].includes(route.mode)) return "writing";
+    return "discussion";
+  }
   if ((route.mode === "operation" || route.mode === "workspace_operation" || route.mode === "general") && /导出|导出为|下载|打包/u.test(source)) return "export";
   if (route.runtimeDiagnosisIntent === true && /测试|回归|验收/u.test(source)) return "testing";
   if (route.mode === "quick_revision" || route.revisionIntent === true || (reviewDelivery?.active === true && CONTENT_MUTATION_PATTERN.test(clean(instruction)))) return "modification";
@@ -103,6 +116,7 @@ const deliverablesFor = ({ route = {}, taskContract = null, reviewDelivery = nul
 };
 
 const inferredRequiredContextDocumentIds = ({ instruction = "", route = {}, reviewDelivery = null } = {}) => {
+  if (route.semanticAuthority === true) return [];
   const source = clean(instruction);
   if (!REVIEW_SOURCE_REFERENCE_PATTERN.test(source) || !CONTENT_MUTATION_PATTERN.test(source)) return [];
   const target = indexWriteTargetForScenario("explicit_self_check_report", {

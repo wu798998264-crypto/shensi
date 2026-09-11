@@ -49,7 +49,7 @@ import { markTaskContractGenerated } from "./src/task-contract.js";
 import { bindFormalWriteCandidate, createFormalWriteAuthorization, rebaseFormalWriteAuthorization, validateFormalWriteAuthorization } from "./src/formal-write-authorization.js";
 import { buildCandidateBasisSeed } from "./src/candidate-provenance.js";
 import { formalDocumentWriteRevisionFromState } from "./src/document-write-revision.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, creativeDeliverableType, hasSubstantiveInlineCreativeSource, isBookDeconstructionRequest, isCreativeContinuationResponse, resolveRequestedMode } from "./src/request-routing.js";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, creativeDeliverableType, hasSubstantiveInlineCreativeSource, isCreativeContinuationResponse, resolveRequestedMode } from "./src/request-routing.js";
 import { isGenerationAndLandingRequest, isLandingRequest } from "./src/chapter-target.js";
 import { looksLikeWorkspaceOperation } from "./src/workspace-operations.js";
 import { sanitizeDeletedContentWorkspaceRequest } from "./src/deleted-content-access.js";
@@ -3456,13 +3456,14 @@ const handleApiRequest = async (request, response, pathname) => {
       forceGuidance: body.forceGuidance === true,
       skillCapabilities: whiteboardSemanticCapabilities,
       semanticCapabilitiesAuthoritative: whiteboardSemanticAuthority,
+      agentDecision: whiteboardAgentDecision,
     });
     const effectiveRequestMode = route.requestMode;
     const workspaceMode = route.workspaceMode;
     const activeModule = String(body.activeModule || route.activeModule || "library");
     const contextDomain = String(body.contextDomain && body.contextDomain !== "general" ? body.contextDomain : route.contextDomain || "general");
     const sourceMode = ["original", "adaptation"].includes(body.sourceMode) ? body.sourceMode : "";
-    const deliverableType = route.deliverableType || creativeDeliverableType({ text: prompt });
+    const deliverableType = whiteboardAgentDecision?.deliverableType || route.deliverableType || "";
     const existingSkillSelections = (Array.isArray(body.existingSkills) ? body.existingSkills : [])
       .slice(0, 24)
       .map((selection) => typeof selection === "string"
@@ -3533,6 +3534,9 @@ const handleApiRequest = async (request, response, pathname) => {
       routeTopology: routeTopologyWithBindings(managedRouting.routeTopology, relevantConfiguredSelections),
       guidanceSelectionMode: existingSkillSelections.length ? "manual" : "auto",
       compiledCapabilityPlan: managedRouting.compiledCapabilityPlan,
+      deliverableType,
+      semanticCapabilities: whiteboardSemanticCapabilities,
+      semanticCapabilitiesAuthoritative: true,
     });
     let selections = whiteboardAutoSkillSelections({
       runtime,
@@ -3560,6 +3564,7 @@ const handleApiRequest = async (request, response, pathname) => {
         semanticDecisionAvailable: Boolean(whiteboardAgentDecision),
         semanticDecisionError: whiteboardSemanticDecisionError,
       },
+      agentDecision: whiteboardAgentDecision,
       selections,
       warnings: whiteboardSemanticDecisionError ? [whiteboardSemanticDecisionError] : [],
       unresolvedCapabilities: (runtime.builtinFallbackCapabilities ?? []).filter((capability) => !materializedCapabilities.has(capability)),
@@ -5526,6 +5531,9 @@ const handleApiRequest = async (request, response, pathname) => {
         routeTopology: routeTopologyWithBindings(managedRouting.routeTopology, relevantConfiguredSelections),
         guidanceSelectionMode,
         compiledCapabilityPlan: managedRouting.compiledCapabilityPlan,
+        deliverableType,
+        semanticCapabilities,
+        semanticCapabilitiesAuthoritative: true,
       }), { executionSurface: "agent" });
       if (userSkillRuntime.blockingTemplateCapabilities.length) {
         throw new Error(`当前能力模板未提供本任务必需能力：${userSkillRuntime.blockingTemplateCapabilities.join("、")}。请重新插入可用 Skill，或在对应插槽明确允许官方补位`);
@@ -6131,14 +6139,19 @@ const handleApiRequest = async (request, response, pathname) => {
         memoryUpdate: null,
       });
     }
-    const structuredExecutionEvent = body.resume === true || whiteboardOutputSurface;
-    const unifiedEntry = structuredExecutionEvent ? {
+    const submittedAgentDecision = normalizeUnifiedAgentDecision(body.agentDecision);
+    const structuredExecutionEvent = body.resume === true;
+    const unifiedEntry = submittedAgentDecision ? {
+      calls: 0,
+      result: null,
+      decision: submittedAgentDecision,
+    } : structuredExecutionEvent ? {
       calls: 0,
       result: null,
       decision: normalizeUnifiedAgentDecision({
         lane: "task_execution",
-        relation: body.resume === true ? "resume" : "new_task",
-        objective: body.resume === true ? "恢复并继续原任务" : "执行白板结构化生成事件",
+        relation: "resume",
+        objective: "恢复并继续原任务",
         requestMode: String(body.mode || "creative"),
         confidence: 1,
         writePlan: { intent: "none", targetKind: "unspecified", targetRef: "", operation: "none" },
@@ -6691,12 +6704,11 @@ const handleApiRequest = async (request, response, pathname) => {
         effectivePostwriteProjectContext += dependencyNotice;
       }
     }
-    const inferredDeliverableType = creativeDeliverableType({ text: prompt, targetDocumentId });
-    const bookDeconstructionRequested = isBookDeconstructionRequest({ text: rawPrompt });
+    const bookDeconstructionRequested = agentDecision.workflow === "book_deconstruction";
     let effectiveMode = agentDecision.requestMode;
     const deliverableType = effectiveMode === "visual_prompt"
       ? "visual_prompt"
-      : agentDecision.deliverableType || inferredDeliverableType;
+      : agentDecision.deliverableType || "";
     if (["project", "notebook"].includes(workspaceMode)
       && ["creative", "creative_guidance", "visual_prompt"].includes(effectiveMode)
       && !contextGate) {
@@ -6793,6 +6805,9 @@ const handleApiRequest = async (request, response, pathname) => {
       routeTopology: routeTopologyWithBindings(managedRouting.routeTopology, relevantConfiguredSelections),
       guidanceSelectionMode,
       compiledCapabilityPlan: managedRouting.compiledCapabilityPlan,
+      deliverableType,
+      semanticCapabilities: agentDecision.skillCapabilities,
+      semanticCapabilitiesAuthoritative: true,
     }), { executionSurface: body.executionSurface === "agent" ? "agent" : "chat" });
     const candidateWriterRuntimes = candidateWriterPlan ? (await Promise.all(candidateWriterPlan.writerIds.map(async (writerId) => {
       const [writerSkill] = await loadSelectedSkills([{
@@ -6818,6 +6833,9 @@ const handleApiRequest = async (request, response, pathname) => {
         routeTopology: routeTopologyWithBindings(managedRouting.routeTopology, relevantConfiguredSelections),
         guidanceSelectionMode: "manual",
         compiledCapabilityPlan: managedRouting.compiledCapabilityPlan,
+        deliverableType,
+        semanticCapabilities: agentDecision.skillCapabilities,
+        semanticCapabilitiesAuthoritative: true,
       }), { executionSurface: body.executionSurface === "agent" ? "agent" : "chat" });
       if (!runtime.primarySkill || String(runtime.primarySkill.id) !== writerId) throw new Error(`候选主笔未能进入正文主笔槽：${writerId}`);
       return { id: writerId, name: runtime.primarySkill.name || writerId, count: candidateWriterPlan.countsByWriter[writerId], runtime };
@@ -7720,8 +7738,11 @@ const handleApiRequest = async (request, response, pathname) => {
         guidanceSelectionMode,
         semanticDeliverableType: deliverableType,
         semanticLane: agentDecision.lane,
+        semanticTaskKind: agentDecision.taskKind,
         semanticWriteIntent: agentDecision.writePlan?.intent || "",
         semanticWriteOperation: agentDecision.writePlan?.operation || creativeTask.operation || "",
+        semanticSourceMode: agentDecision.sourceMode || sourceMode,
+        semanticExecutionPlan: agentDecision.executionPlan,
         semanticGuidanceCompleted: agentDecision.guidanceCompleted === true,
         recoveryCandidate: body.resume === true ? startedAttempt.adoptedCandidate : "",
         languagePolicy: serverLanguagePolicy,

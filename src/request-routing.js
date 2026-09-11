@@ -972,6 +972,9 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const semanticRoute = semanticMode ? {
     mode: semanticQualityReview && semanticMode === "general" ? "creative" : semanticMode,
     taskKind: String(semanticDecision.taskKind || (semanticQualityReview ? "quality_review" : "task_execution")),
+    semanticAuthority: true,
+    semanticExecutionPlan: semanticDecision.executionPlan ?? null,
+    sourceMode: String(semanticDecision.sourceMode || ""),
     reason: `统一 Agent 决策：${String(semanticDecision.objective || semanticMode)}`,
     shensiLed: semanticQualityReview || ["creative_guidance", "creative", "quick_revision", "visual_prompt"].includes(semanticMode),
     revisionIntent: ["append", "patch", "replace", "rename"].includes(semanticOperation),
@@ -1052,7 +1055,9 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const formalReviewTarget = reviewDelivery.reportRequested === true && reviewDelivery.target?.documentId
     ? reviewDelivery.target
     : null;
-  const reviewMutatesContent = taskContractDecision.authoritative
+  const reviewMutatesContent = semanticAuthority
+    ? semanticDecision.taskKind === "content_revision"
+    : taskContractDecision.authoritative
     ? taskContract?.taskType === "modification"
       && contractDeliverables.some((item) => !["report", "review_report"].includes(String(item?.kind || "")))
     : reviewIncludesContentMutation(input.text);
@@ -1109,7 +1114,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     guidanceOnly: route.mode === "creative_guidance"
       && !taskContractDecision.authoritative
       && !["candidate", "commit"].includes(semanticWriteIntent)
-      && !hasExplicitFormalAssetWriteIntent({ text: input.authorizationInstruction ?? input.text }),
+      && (semanticAuthority || !hasExplicitFormalAssetWriteIntent({ text: input.authorizationInstruction ?? input.text })),
   });
   const landingConfirmationRequired = writeAuthorization.reason === "landing_intent_uncertain";
   const explicitCandidateGeneration = writeAuthorization.state === "candidate_only"
@@ -1148,7 +1153,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     && ["commit", "candidate_only"].includes(writeAuthorization.state)
     && ["creative", "visual_prompt", "quick_revision"].includes(managedRoute.mode);
   const taskPolicy = compileAgentTaskPolicy({
-    text: input.text,
+    text: semanticAuthority ? "" : input.text,
     route: {
       ...managedRoute,
       writeAuthorization,
@@ -1160,9 +1165,11 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
       batch: input.batch === true,
     },
     target,
-    candidateCount: input.candidateCount ?? 1,
+    candidateCount: semanticDecision?.executionPlan?.candidateCount ?? input.candidateCount ?? 1,
     writeAuthorization,
     taskContract: authoritativeTaskContract,
+    semanticAuthority,
+    semanticExecutionPlan: semanticDecision?.executionPlan ?? null,
   });
   const intentEnvelope = buildIntentEnvelope({
     instruction: input.text,

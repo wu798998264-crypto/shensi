@@ -123,11 +123,15 @@ export const compileAgentTaskPolicy = ({
   candidateCount = 1,
   writeAuthorization = route?.writeAuthorization ?? null,
   taskContract = route?.taskContract ?? null,
+  semanticAuthority = route?.semanticAuthority === true,
+  semanticExecutionPlan = null,
 } = {}) => {
-  const normalizedText = sourceText(text);
+  const normalizedText = semanticAuthority ? "" : sourceText(text);
   const action = taskAction({ text: normalizedText, route, writeAuthorization, taskContract });
   const canonPolicy = compileCanonTaskPolicy({ text: normalizedText, action, route });
-  const canonMode = canonPolicy.canonMode;
+  const canonMode = semanticAuthority && ["advisory", "strict", "rewrite_canon", "alternate"].includes(semanticExecutionPlan?.canonMode)
+    ? semanticExecutionPlan.canonMode
+    : canonPolicy.canonMode;
   const commitOwner = commitOwnerFor({ action, target });
   const commitDisposition = commitDispositionFor({
     text: normalizedText,
@@ -139,7 +143,9 @@ export const compileAgentTaskPolicy = ({
     route,
     taskContract,
   });
-  const reviewTier = canonPolicy.reviewTier;
+  const reviewTier = semanticAuthority && ["none", "basic", "full"].includes(semanticExecutionPlan?.reviewTier)
+    ? semanticExecutionPlan.reviewTier
+    : canonPolicy.reviewTier;
 
   return {
     action,

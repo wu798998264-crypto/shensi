@@ -231,6 +231,9 @@ export const resolveSkillRuntime = ({
   sourceMode = "",
   guidanceSelectionMode = "",
   compiledCapabilityPlan = null,
+  deliverableType = "",
+  semanticCapabilities = [],
+  semanticCapabilitiesAuthoritative = false,
 } = {}) => {
   const rawAvailable = (Array.isArray(skills) ? skills : [])
     .filter((skill) => skill?.testStatus !== "failed"
@@ -269,7 +272,18 @@ export const resolveSkillRuntime = ({
     }));
   const requiredCapabilities = effectiveCapabilityPlan?.task?.requiredCapabilities?.length
     ? [...effectiveCapabilityPlan.task.requiredCapabilities]
-    : resolveRequiredCapabilities({ workspaceMode, activeModule, prompt, requestMode, contextDomain, targetDocumentId, sourceMode });
+    : resolveRequiredCapabilities({
+        workspaceMode,
+        activeModule,
+        prompt: semanticCapabilitiesAuthoritative ? "" : prompt,
+        requestMode,
+        contextDomain,
+        targetDocumentId,
+        sourceMode,
+        deliverableType,
+        semanticCapabilities,
+        semanticCapabilitiesAuthoritative,
+      });
   const manuallySelectedGuidance = guidanceSelectionMode === "manual"
     ? firstFor(available, (skill) => ["explicit", "whiteboard_explicit"].includes(activationSource(skill))
       && effectiveCapabilities(skill).some((capability) => GUIDANCE_CAPABILITIES.includes(capability)))

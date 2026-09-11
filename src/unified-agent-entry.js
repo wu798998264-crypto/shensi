@@ -20,7 +20,54 @@ const normalizedSkillCapabilities = (value) => [...new Set((Array.isArray(value)
   .map((item) => valueText(item, 80))
   .filter((item) => SKILL_CAPABILITY_IDS.has(item)))].slice(0, 16);
 
-export const UNIFIED_AGENT_ENTRY_VERSION = 2;
+const EXECUTION_TASK_FACETS = new Set([
+  "promo_trailer", "source_analysis", "visual_asset_reuse", "duration_control",
+  "adaptation", "visual_continuity", "production_ready", "naming", "originality",
+  "authorship", "unconventional", "novel_prototype", "structure_management",
+  "structure_directory", "structure_setting", "structure_postwrite", "structure_links",
+  "panorama", "image_asset_extraction", "character_prompt", "scene_prompt",
+  "video_prompt", "visual_asset", "public_account_humanize", "long_structure",
+  "strong_story", "plot_direction_review", "structural_numbering_revision",
+  "concept_binding", "special_narrative",
+]);
+
+const normalizedExecutionPlan = (value = {}, { lane = "", qualityReview = false, writeIntent = "none" } = {}) => {
+  const production = lane === "task_execution" && ["candidate", "commit"].includes(writeIntent);
+  const requestedCandidateCount = Number(value?.candidateCount);
+  const candidateCount = lane === "task_execution"
+    ? Number.isFinite(requestedCandidateCount)
+      ? Math.max(0, Math.min(4, Math.round(requestedCandidateCount)))
+      : production ? 1 : 0
+    : 0;
+  const reviewTier = ["none", "basic", "full"].includes(value?.reviewTier)
+    ? value.reviewTier
+    : qualityReview ? "full" : production ? "basic" : "none";
+  const requestedRepairRounds = Number(value?.maxRepairRounds);
+  const maxRepairRounds = Number.isFinite(requestedRepairRounds)
+    ? Math.max(0, Math.min(2, Math.round(requestedRepairRounds)))
+    : 0;
+  const riskLevel = ["low", "standard", "high", "full", "diagnostic"].includes(value?.riskLevel)
+    ? value.riskLevel
+    : qualityReview ? "diagnostic" : production ? "standard" : "low";
+  const canonMode = ["advisory", "strict", "rewrite_canon", "alternate"].includes(value?.canonMode)
+    ? value.canonMode
+    : production ? "strict" : "advisory";
+  const theoryMode = ["auto", "off"].includes(value?.theoryMode) ? value.theoryMode : "auto";
+  return {
+    candidateCount,
+    reviewTier,
+    maxRepairRounds,
+    riskLevel,
+    canonMode,
+    theoryMode,
+    freshStart: value?.freshStart === true,
+    taskFacets: [...new Set((Array.isArray(value?.taskFacets) ? value.taskFacets : [])
+      .map((item) => valueText(item, 80))
+      .filter((item) => EXECUTION_TASK_FACETS.has(item)))].slice(0, 16),
+  };
+};
+
+export const UNIFIED_AGENT_ENTRY_VERSION = 3;
 export const UNIFIED_AGENT_LANES = Object.freeze(["direct_reply", "guided_dialogue", "task_execution"]);
 export const UNIFIED_AGENT_TASK_KINDS = Object.freeze([
   "conversation",
@@ -32,7 +79,7 @@ export const UNIFIED_AGENT_TASK_KINDS = Object.freeze([
   "research",
   "task_execution",
 ]);
-export const UNIFIED_AGENT_WORKFLOWS = Object.freeze(["library_archive"]);
+export const UNIFIED_AGENT_WORKFLOWS = Object.freeze(["library_archive", "book_deconstruction"]);
 export const UNIFIED_AGENT_OPERATION_KINDS = Object.freeze(["skill_install", "self_repair"]);
 
 const balancedJsonObject = (source = "") => {
@@ -188,9 +235,13 @@ export const normalizeUnifiedAgentDecision = (value = null) => {
   const workflow = lane === "task_execution" && UNIFIED_AGENT_WORKFLOWS.includes(valueText(value.workflow, 80))
     ? valueText(value.workflow, 80)
     : "";
+  const sourceMode = lane === "task_execution" && ["original", "adaptation"].includes(valueText(value.sourceMode, 40))
+    ? valueText(value.sourceMode, 40)
+    : "";
   const operation = normalizedOperation(value.operation, lane);
   const skillCapabilities = lane !== "direct_reply" ? normalizedSkillCapabilities(value.skillCapabilities) : [];
   if (qualityReview && !skillCapabilities.includes("effect_reviewer")) skillCapabilities.push("effect_reviewer");
+  const executionPlan = normalizedExecutionPlan(value.executionPlan, { lane, qualityReview, writeIntent });
   return {
     schemaVersion: UNIFIED_AGENT_ENTRY_VERSION,
     lane,
@@ -200,6 +251,7 @@ export const normalizeUnifiedAgentDecision = (value = null) => {
     requestMode,
     deliverableType,
     workflow,
+    sourceMode,
     operation,
     reply,
     confidence: Math.max(0, Math.min(1, Number(value.confidence) || 0)),
@@ -217,6 +269,7 @@ export const normalizeUnifiedAgentDecision = (value = null) => {
       targetRef: valueText(value.writePlan?.targetRef, 240),
       operation: writeOperation,
     },
+    executionPlan,
     openDecision: normalizedOpenDecision(value.openDecision),
     guidance,
   };
@@ -246,6 +299,7 @@ taskKind 用来表达任务本身是什么。对正文、剧本或文章做质�
 
 workflow 只在确有专用事务流程时填写：
 - library_archive：用户的完整意图是读取当前作品或笔记本内的资料库来源，把其中有证据的内容拆分、分类并归档到设定或大纲。普通资料问答、引用资料续写正文、只整理一份当前文档、仅查看资料库，均不得选择此 workflow。
+- book_deconstruction：用户明确要求读取整本书、书源或完整长文并执行专用拆书分析。普通资料问答、单章分析、引用原文续写或一般研究不得选择此 workflow。
 
 operation 只在确有高影响操作意图时填写：
 - kind=skill_install：用户明确要求把本轮提供的 Skill/技能内容导入并绑定到神思能力面板；只讨论、分析或使用已有 Skill 时不得填写。
@@ -257,6 +311,7 @@ operation 只在确有高影响操作意图时填写：
 guided_dialogue 每轮只推进一个当前最有价值的决策。reply 和 guidance.question 只能简短承接并提出一个问题，不得输出问卷、多组问题、完整方案或正文。已有 guidanceState 时应继续同一引导；只有合同已充分形成且作者明确同意进入产出，才能把 guidanceCompleted 设为 true。
 direct_reply 不得请求加载 Skill、文档目录、写入规则或工具。guided_dialogue 可以按需请求创作引导 Skill 和最小必要资料，但不得写入文档。task_execution 只提出语义计划，不声称已经获得权限或完成操作。
 选择 library_archive 时，由宿主读取可信资料库快照、比较现有设定和大纲并动态生成确认项；你不得预先编造固定选项，也不得把“读取资料”当成修改资料库的授权。此 workflow 的 writePlan 应描述候选归档意图，正式写入必须等待宿主确认。
+executionPlan 是执行语义，不是关键词命中结果。candidateCount 只表达需要生成几份候选，不选择所谓主笔；未要求多候选时填 1。reviewTier、maxRepairRounds、riskLevel、canonMode、theoryMode、freshStart 和 taskFacets 必须结合完整语义填写，不能让提示词中无关的示例词改变路线。改编任务必须填写 sourceMode=adaptation，原创任务填写 original。
 只有在持续创作引导已形成足够合同、且用户明确同意进入产出时，guidanceCompleted 才能为 true。
 用户说“当前文档”时 targetRef 写 submitted_document；引用资料不等于允许修改。新任务不得继承旧任务的临时写入授权。
 没有真实必要时不要生成 openDecision；需要用户拍板时只问一个问题，选项必须来自本次真实场景，并允许自然语言回答。
@@ -269,7 +324,8 @@ JSON 格式：
   "objective":"本轮目标",
   "requestMode":"general | creative_guidance | creative | quick_revision | workspace_operation | visual_prompt",
   "deliverableType":"novel | short_fiction | short_drama_script | short_video_script | public_account | visual_prompt | document | report | 空字符串",
-  "workflow":"library_archive | 空字符串",
+  "workflow":"library_archive | book_deconstruction | 空字符串",
+  "sourceMode":"original | adaptation | 空字符串",
   "operation":{"kind":"skill_install | self_repair","reason":"为何必须进入高影响操作确认"},
   "reply":"direct_reply 的完整回答，或 guided_dialogue 的简短理解、判断和唯一问题",
   "confidence":0.0,
@@ -278,6 +334,7 @@ JSON 格式：
 "skillCapabilities":["从神思能力目录中选择本轮真正需要的能力 ID；只填写必要能力，不得凭关键词猜测"],
   "readPlan":[{"reference":"资源描述","required":true,"purpose":"用途"}],
   "writePlan":{"intent":"none | candidate | commit","targetKind":"current | existing | new | unspecified","targetRef":"资源引用","operation":"append | replace | patch | create | none"},
+  "executionPlan":{"candidateCount":0,"reviewTier":"none | basic | full","maxRepairRounds":0,"riskLevel":"low | standard | high | full | diagnostic","canonMode":"advisory | strict | rewrite_canon | alternate","theoryMode":"auto | off","freshStart":false,"taskFacets":["仅填写与本轮真实任务相符的结构化侧面"]},
   "openDecision":{"id":"稳定决定ID","question":"仍需用户决定的唯一事项","whyNeeded":"为何不能安全自行决定","options":[{"id":"选项ID","label":"显示文字","effect":"选择后的实际影响","entityRefs":["真实资源ID"],"scopeDelta":"新增或缩小的授权范围"}],"allowFreeText":true},
   "guidance":{"deliverableType":"novel","question":"唯一问题","questionCluster":"由你动态选择的决策簇","completedClusters":[],"delegatedClusters":[],"decisions":[],"briefSummary":"当前创作合同摘要","interactionMode":"discussion","candidateOptions":[],"recommendation":"","tradeoffs":[]}
 }`.trim();

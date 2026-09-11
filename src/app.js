@@ -31805,7 +31805,7 @@ const commitLibraryArchiveWorkflow = async (request = {}, { sourceMessageId = ""
   return { payload, content };
 };
 
-const requestModelReply = async (target = null, { storeCandidate = true, requestId = "", projectContext = null, onProgress = null, onTextDelta = null, modelMessages = null, modelAttachments = null, selectedSkills = [], explicitReferenceDocumentIds = [], requestMode = "creative", outputSurface = "conversation", guidanceState = null, guidanceSelectionMode = "", webSearchEnabled = false, cancellationCode = "TASK_CANCELLED", continuesCreativeThread = false, resume = false, executionSurface = "agent", settingsOverride = null, conversationContext = null, candidateState = state, workspaceState = state, allowNativeFallback = false, creativeTask = null, candidateWriterPlan = null, decisionResolution = null } = {}) => {
+const requestModelReply = async (target = null, { storeCandidate = true, requestId = "", projectContext = null, onProgress = null, onTextDelta = null, modelMessages = null, modelAttachments = null, selectedSkills = [], explicitReferenceDocumentIds = [], requestMode = "creative", outputSurface = "conversation", guidanceState = null, guidanceSelectionMode = "", webSearchEnabled = false, cancellationCode = "TASK_CANCELLED", continuesCreativeThread = false, resume = false, executionSurface = "agent", settingsOverride = null, conversationContext = null, candidateState = state, workspaceState = state, allowNativeFallback = false, creativeTask = null, candidateWriterPlan = null, decisionResolution = null, agentDecision = null } = {}) => {
   executionSurface = "agent";
   const requestWorkspaceState = workspaceState || state;
   const inRequestWorkspace = (callback) => withSynchronousWorkspaceState(requestWorkspaceState, callback);
@@ -31938,6 +31938,7 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
       webSearch: webSearchEnabled === true,
       allowNativeFallback: allowNativeFallback === true,
       decisionResolution: normalizeAgentDecisionResolution(decisionResolution),
+      agentDecision,
       languagePolicy: { absoluteTerms: inRequestWorkspace(() => projectAbsoluteBannedTerms()) },
     }),
   });
@@ -54937,6 +54938,7 @@ elements.whiteboardGenerateForm.addEventListener("submit", async (event) => {
       settingsOverride: textRequestSettings,
       executionSurface,
       modelMessages: [{ role: "user", content: whiteboardTextGenerationRequest(instruction, { hasUpstream: upstream.length > 0, explicitReferenceCount: explicitReferences.length }) }],
+      agentDecision: autoRoute?.agentDecision ?? null,
       onTextDelta: (delta) => {
         streamed += delta;
         queueWhiteboardTextReveal(candidateKey, delta);

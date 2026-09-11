@@ -242,7 +242,9 @@ export const compileCreativeExecutionManifest = ({
 } = {}) => {
   const deliverableType = profile?.deliverableType ?? "";
   const effectiveSourceMode = deliverableType === "short_drama_script"
-    ? sourceMode === "adaptation" || (!sourceMode && DRAMA_ADAPTATION_PATTERN.test(`${prompt} ${routingText}`)) ? "adaptation" : "original"
+    ? profile?.semanticAuthority === true
+      ? profile.sourceMode || sourceMode || "original"
+      : sourceMode === "adaptation" || (!sourceMode && DRAMA_ADAPTATION_PATTERN.test(`${prompt} ${routingText}`)) ? "adaptation" : "original"
     : sourceMode;
   const allowedWriterCapabilities = expectedWriterCapabilities({ deliverableType, activeModule, sourceMode: effectiveSourceMode });
   return Object.freeze({
@@ -325,10 +327,12 @@ const taskLabel = ({ activeModule = "manuscript", contextDomain = "novel" }) => 
   })[activeModule] ?? "创作任务";
 };
 
-export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", requestMode = "creative", targetDocumentId = "", semanticDeliverableType = "", semanticLane = "", semanticWriteIntent = "", semanticWriteOperation = "", semanticGuidanceCompleted = false, taskContract = null } = {}) => {
+export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", requestMode = "creative", targetDocumentId = "", semanticDeliverableType = "", semanticLane = "", semanticTaskKind = "", semanticWriteIntent = "", semanticWriteOperation = "", semanticSourceMode = "", semanticExecutionPlan = null, semanticGuidanceCompleted = false, taskContract = null } = {}) => {
   const normalizedPrompt = String(prompt);
   const contractDecision = validateTaskContractForExecution(taskContract);
+  const semanticQualityReview = semanticTaskKind === "quality_review";
   const semanticProduction = semanticLane === "task_execution"
+    && !semanticQualityReview
     && ["candidate", "commit", "candidate_only"].includes(String(semanticWriteIntent || ""));
   const contractProduction = semanticLane !== "guided_dialogue"
     && contractDecision.valid
@@ -344,6 +348,81 @@ export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeMo
   ));
   const semanticGuidance = semanticLane === "guided_dialogue";
   const guideFirst = !contractProduction && (semanticGuidance || requestMode === "creative_guidance");
+  const semanticAuthority = semanticGuidance || semanticLane === "task_execution";
+  if (semanticAuthority) {
+    const plan = semanticExecutionPlan && typeof semanticExecutionPlan === "object" ? semanticExecutionPlan : {};
+    const deliverableType = requestMode === "visual_prompt"
+      ? "visual_prompt"
+      : ["novel", "short_fiction", "short_drama_script", "short_video_script", "public_account", "visual_prompt", "document", "report"].includes(semanticDeliverableType)
+        ? semanticDeliverableType
+        : semanticQualityReview ? "report" : "";
+    const pipeline = requestMode === "quick_revision"
+      ? "quick_revision"
+      : requestMode === "visual_prompt" ? "visual_prompt" : "standard";
+    const production = semanticProduction || contractProduction;
+    const diagnostic = semanticQualityReview && !contractProduction;
+    const reviewTier = ["none", "basic", "full"].includes(plan.reviewTier)
+      ? plan.reviewTier
+      : diagnostic ? "full" : production ? "basic" : "none";
+    const riskLevel = ["low", "standard", "high", "full", "diagnostic"].includes(plan.riskLevel)
+      ? plan.riskLevel
+      : diagnostic ? "diagnostic" : production ? "standard" : "low";
+    const requestedCandidateCount = Math.max(0, Math.min(4, Math.round(Number(plan.candidateCount) || 0)));
+    const explicitCandidateCount = production ? requestedCandidateCount || 1 : 0;
+    const contractDeliverables = contractDecision.valid && contractDecision.authoritative
+      ? contractDecision.deliverables.filter((item) => item?.required !== false && item?.targetDocumentId)
+      : [];
+    const formalAssetTargets = contractDeliverables
+      .filter((item) => !["prose", "script_prose", "report", "review_report"].includes(String(item?.kind || "")))
+      .map((item) => ({
+        documentId: String(item.targetDocumentId || ""),
+        moduleId: String(item.target?.moduleId || activeModule || "manuscript"),
+        title: String(item.title || item.target?.title || item.targetDocumentId || ""),
+      }));
+    const taskFacets = [...new Set([
+      ...(Array.isArray(plan.taskFacets) ? plan.taskFacets.map(String).filter(Boolean) : []),
+      ...(deliverableType ? [`deliverable:${deliverableType}`] : []),
+      ...(semanticSourceMode === "adaptation" ? ["adaptation"] : []),
+    ])];
+    const fullAudit = reviewTier === "full" || riskLevel === "full";
+    const highImpact = ["high", "full"].includes(riskLevel);
+    return {
+      semanticAuthority: true,
+      direct: production,
+      semanticGuidance,
+      semanticGuidanceCompleted: semanticGuidance && semanticGuidanceCompleted === true,
+      freshStart: plan.freshStart === true,
+      guideFirst,
+      explicitGuidanceOnly: semanticGuidance,
+      formalAssetWrite: formalAssetTargets.length > 0,
+      formalAssetTargets,
+      production,
+      fullAudit,
+      diagnostic,
+      plotDirectionReview: taskFacets.includes("plot_direction_review"),
+      highImpact,
+      singleCandidateRequested: explicitCandidateCount === 1,
+      explicitCandidateCount,
+      pipeline,
+      candidateCount: pipeline !== "standard" ? (production ? 1 : 0) : explicitCandidateCount,
+      maxRepairRounds: pipeline !== "standard" ? 0 : Math.max(0, Math.min(2, Math.round(Number(plan.maxRepairRounds) || 0))),
+      riskLevel: pipeline !== "standard" ? "low" : riskLevel,
+      reviewTier,
+      canonMode: ["advisory", "strict", "rewrite_canon", "alternate"].includes(plan.canonMode) ? plan.canonMode : production ? "strict" : "advisory",
+      theoryMode: plan.theoryMode === "off" ? "off" : "auto",
+      sourceMode: ["original", "adaptation"].includes(semanticSourceMode) ? semanticSourceMode : "",
+      strength: guideFirst
+        ? "guidance"
+        : pipeline === "quick_revision"
+          ? "quick"
+          : pipeline === "visual_prompt"
+            ? "visual"
+            : fullAudit ? "full" : diagnostic ? "diagnostic" : production ? "standard" : "guidance",
+      deliverableType,
+      taskFacets,
+      taskLabel: deliverableType ? creativeDeliverableLabel(deliverableType) : taskLabel({ activeModule, contextDomain }),
+    };
+  }
   const explicitGuidanceOnly = semanticGuidance || (guideFirst
     && /(?:只|仅)(?:需要|要|先)?[\s\S]{0,40}(?:提问|追问|讨论|梳理|确认)|(?:提问|追问|提出[\s\S]{0,12}(?:问题|疑问)|创作引导|讨论|梳理|确认)/u.test(normalizedPrompt)
     && /(?:不要|无需|不必|先不|先不要|暂不|不)\s*(?:写|生成|创作|落盘|创建|新建)?\s*(?:正文|章节|文档|稿件|成稿|正式内容)/u.test(normalizedPrompt)
@@ -1891,8 +1970,11 @@ export const runShensiOrchestration = async ({
   guidanceSelectionMode = "",
   semanticDeliverableType = "",
   semanticLane = "",
+  semanticTaskKind = "",
   semanticWriteIntent = "",
   semanticWriteOperation = "",
+  semanticSourceMode = "",
+  semanticExecutionPlan = null,
   semanticGuidanceCompleted = false,
   recoveryCandidate = "",
   taskEnvelope = {},
@@ -1915,7 +1997,7 @@ export const runShensiOrchestration = async ({
     .slice(-8)
     .map(({ content }) => String(content ?? ""))
     .join("\n");
-  const profile = detectShensiRunProfile({ prompt, routingText, activeModule, contextDomain, requestMode, targetDocumentId, semanticDeliverableType, semanticLane, semanticWriteIntent: semanticWriteIntent || writeAuthorizationState, semanticWriteOperation: semanticWriteOperation || creativeTask?.operation || writeAuthorization?.action || "", semanticGuidanceCompleted, taskContract: creativeTask?.taskContract ?? null });
+  const profile = detectShensiRunProfile({ prompt, routingText, activeModule, contextDomain, requestMode, targetDocumentId, semanticDeliverableType, semanticLane, semanticTaskKind, semanticWriteIntent: semanticWriteIntent || writeAuthorizationState, semanticWriteOperation: semanticWriteOperation || creativeTask?.operation || writeAuthorization?.action || "", semanticSourceMode, semanticExecutionPlan, semanticGuidanceCompleted, taskContract: creativeTask?.taskContract ?? null });
   const contractDecision = validateTaskContractForExecution(creativeTask?.taskContract);
   const contractReportDelivery = reviewDeliveryFromTaskContract(creativeTask?.taskContract, contractDecision);
   const independentReport = contractDecision.valid && contractDecision.authoritative
@@ -2037,7 +2119,10 @@ export const runShensiOrchestration = async ({
     }
   }
   const writerCompatibilityProblem = userWriterCompatibilityIssue({ manifest: executionManifest, userSkillRuntime });
-  const contentPreservingStructuralRevision = isStructuralNumberingRevisionRequest({ text: prompt });
+  const semanticTaskFacets = new Set(profile.taskFacets ?? []);
+  const contentPreservingStructuralRevision = profile.semanticAuthority === true
+    ? semanticTaskFacets.has("structural_numbering_revision")
+    : isStructuralNumberingRevisionRequest({ text: prompt });
   if (contentPreservingStructuralRevision) {
     profile.pipeline = "structural_revision";
     profile.candidateCount = 1;
@@ -2053,20 +2138,36 @@ export const runShensiOrchestration = async ({
     profile.riskLevel = "low";
     profile.strength = "quick";
   }
-  const specialNarrativeRequested = SPECIAL_NARRATIVE_PATTERN.test(routingText) && !SPECIAL_NARRATIVE_NEGATION_PATTERN.test(routingText);
-  const conceptBindingRequested = requiresExplicitConceptBinding({
-    text: routingText,
-    contentPreservingIntent: contentPreservingStructuralRevision,
-  });
+  const specialNarrativeRequested = profile.semanticAuthority === true
+    ? semanticTaskFacets.has("special_narrative")
+    : SPECIAL_NARRATIVE_PATTERN.test(routingText) && !SPECIAL_NARRATIVE_NEGATION_PATTERN.test(routingText);
+  const conceptBindingRequested = profile.semanticAuthority === true
+    ? semanticTaskFacets.has("concept_binding")
+    : requiresExplicitConceptBinding({
+        text: routingText,
+        contentPreservingIntent: contentPreservingStructuralRevision,
+      });
   const integrityPlanningRequired = profile.production
     && !contentPreservingStructuralRevision
-    && (specialNarrativeRequested || CONCEPT_RISK_PATTERN.test(routingText));
+    && (specialNarrativeRequested || (profile.semanticAuthority === true ? conceptBindingRequested : CONCEPT_RISK_PATTERN.test(routingText)));
   const whiteboardDraftDelivery = outputSurface === "whiteboard";
   const lightweightPipeline = profile.pipeline !== "standard";
   const scriptCreativeTask = profile.deliverableType === "short_drama_script"
     || ["script", "script-adaptation"].includes(contextDomain);
   const reviewDelivery = contractDecision.authoritative
     ? contractReportDelivery || { active: false, landingEligible: false, target: null }
+    : profile.semanticAuthority === true
+      ? semanticTaskKind === "quality_review"
+        ? {
+            active: true,
+            reportRequested: true,
+            landingEligible: writeAuthorizationState === "commit",
+            candidatePreviewRequired: false,
+            kind: "review_report",
+            target: targetDocumentId ? { documentId: targetDocumentId, moduleId: "reports", title: "" } : null,
+            reason: "统一 Agent 决策声明内容质检",
+          }
+        : { active: false, landingEligible: false, target: null }
     : reviewDeliveryPolicy({
     text: routingText || prompt,
     contextDomain: scriptCreativeTask ? "script" : contextDomain,
@@ -2088,11 +2189,11 @@ export const runShensiOrchestration = async ({
     && workspaceKind === "notebook"
     && Boolean(userSkillRuntime?.primarySkill)
     && !integrityPlanningRequired
-    && hasSufficientCreativeBrief({
-      text: prompt,
-      deliverableType: profile.deliverableType,
-      hasResources: Boolean(projectContext || attachments.length),
-    });
+    && (profile.semanticAuthority === true || hasSufficientCreativeBrief({
+        text: prompt,
+        deliverableType: profile.deliverableType,
+        hasResources: Boolean(projectContext || attachments.length),
+      }));
   const languageGuardEnabled = (
     activeModule === "manuscript"
     && ["novel", "short_fiction", "public_account", "short_video_script", "short_drama_script"].includes(profile.deliverableType)
@@ -2112,6 +2213,9 @@ export const runShensiOrchestration = async ({
         prompt: profile.guideFirst ? routingText : prompt,
         projectContext: postwriteProjectContext,
         workspaceKind,
+        deliverableType: profile.deliverableType,
+        semanticAuthority: profile.semanticAuthority === true,
+        theoryMode: profile.theoryMode,
         publicAccountLayers: publicAccountOrganization ? {
           includeLeader: !selectedTheoryContext.organizationLeaderReplaced,
           includeMember: !selectedTheoryContext.organizationMemberReplaced,
@@ -2129,7 +2233,7 @@ export const runShensiOrchestration = async ({
     } else if (selectedTheoryContext) {
       theoryContext = selectedTheoryContext;
     } else if (!notebookUserPrimaryReady) {
-      theoryContext = await loadTypeTheoryContext({ shensiRoot, prompt: profile.guideFirst ? routingText : prompt, projectContext: postwriteProjectContext, workspaceKind });
+      theoryContext = await loadTypeTheoryContext({ shensiRoot, prompt: profile.guideFirst ? routingText : prompt, projectContext: postwriteProjectContext, workspaceKind, deliverableType: profile.deliverableType, semanticAuthority: profile.semanticAuthority === true, theoryMode: profile.theoryMode });
     }
   }
   const routeAction = profile.guideFirst ? "专项创作引导" : profile.production ? "调用专项写作技能" : profile.diagnostic ? "创作诊断" : "创作协作";
@@ -2475,6 +2579,10 @@ export const runShensiOrchestration = async ({
         requestMode,
         guidanceSelectionMode,
         creativeContextMode: stageCreativeContextMode,
+        deliverableType: profile.deliverableType,
+        semanticAuthority: profile.semanticAuthority === true,
+        taskFacets: profile.taskFacets,
+        reviewTier: profile.reviewTier,
         sourceSnapshot,
       }));
     }
