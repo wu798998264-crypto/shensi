@@ -19,6 +19,7 @@ import { imageModelCapabilities, videoModelCapabilities } from "../model-presets
 import { createAgentBrowserService } from "./agent-browser-service.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
+import { effectiveAgentInactivityTimeoutMs } from "./agent-inactivity-timeout.mjs";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -114,7 +115,7 @@ export const createConversationAgentGateway = ({
               ? externalRunners.externalCli || runExternalCliAgent
             : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
-      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, environment: processEnvironment });
+      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: effectiveAgentInactivityTimeoutMs(settings.timeoutMs), allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, environment: processEnvironment });
     } finally { await nativeHost.close(); }
   },
   mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {

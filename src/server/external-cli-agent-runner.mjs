@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deepSeekAgentContextText } from "./deepseek-opencode-agent-runner.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
+import { createAgentInactivityTimeout, effectiveAgentInactivityTimeoutMs } from "./agent-inactivity-timeout.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -376,11 +377,11 @@ export const runExternalCliAgent = async ({
       let emittedText = "";
       let settled = false;
       let aborted = false;
-      let timer = null;
+      let inactivityTimeout = null;
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
-        if (timer) clearTimeout(timer);
+        inactivityTimeout?.stop();
         signal?.removeEventListener?.("abort", abort);
         if (error) rejectRun(error);
         else resolveRun(value);
@@ -405,6 +406,7 @@ export const runExternalCliAgent = async ({
       child.stdout?.setEncoding?.("utf8");
       child.stderr?.setEncoding?.("utf8");
       child.stdout?.on("data", (chunk) => {
+        inactivityTimeout?.refresh();
         stdoutBytes += Buffer.byteLength(chunk);
         if (stdoutBytes > MAX_OUTPUT_BYTES) {
           try { child.kill(); } catch {}
@@ -416,7 +418,10 @@ export const runExternalCliAgent = async ({
         // object waits for close so it is never rendered as malformed text.
         if (/\r?\n/u.test(String(chunk))) emitDeltas();
       });
-      child.stderr?.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-16_000); });
+      child.stderr?.on("data", (chunk) => {
+        inactivityTimeout?.refresh();
+        stderr = `${stderr}${String(chunk)}`.slice(-16_000);
+      });
       child.stdin?.on("error", (error) => {
         if (!settled) finish(errorForRunner(runner, `${runnerLabel(runner)} 输入管道提前关闭：${redactAgentError(error, [apiKey])}`));
       });
@@ -451,11 +456,11 @@ export const runExternalCliAgent = async ({
           permissionMode: accessMode,
         });
       });
-      timer = setTimeout(() => {
+      const idleTimeoutMs = effectiveAgentInactivityTimeoutMs(timeoutMs);
+      inactivityTimeout = createAgentInactivityTimeout({ timeoutMs: idleTimeoutMs, onTimeout: () => {
         try { child.kill(); } catch {}
-        finish(errorForRunner(runner, `${runnerLabel(runner)} 调用超过 ${Math.round(Math.max(1, Number(timeoutMs) || DEFAULT_TIMEOUT_MS) / 1000)} 秒，已停止`, "EXTERNAL_CLI_TIMEOUT"));
-      }, Math.max(30_000, Math.min(3_600_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)));
-      timer.unref?.();
+        finish(errorForRunner(runner, `${runnerLabel(runner)} 连续 ${Math.round(idleTimeoutMs / 1000)} 秒没有模型或工具进展，已停止`, "EXTERNAL_CLI_TIMEOUT"));
+      } });
       child.stdin?.end(sendPromptToStdin ? finalPrompt : undefined);
     });
   } finally {

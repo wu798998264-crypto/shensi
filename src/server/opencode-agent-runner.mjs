@@ -13,6 +13,7 @@ import {
   openCodePermissionServerAuth,
   replyToOpenCodePermission,
 } from "./opencode-permission-bridge.mjs";
+import { createAgentInactivityTimeout, effectiveAgentInactivityTimeoutMs } from "./agent-inactivity-timeout.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -241,12 +242,13 @@ export const runOpenCodeAgent = async ({
     let actualModel = "";
     let settled = false;
     let aborted = false;
+    let inactivityTimeout = null;
     const permissionMonitorController = new AbortController();
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       permissionMonitorController.abort();
-      clearTimeout(timer);
+      inactivityTimeout?.stop();
       signal?.removeEventListener?.("abort", abort);
       if (error) rejectRun(error);
       else resolveRun(value);
@@ -260,6 +262,7 @@ export const runOpenCodeAgent = async ({
       const reportedModel = opencodeReportedProviderModel(event);
       actualProvider ||= reportedModel.provider;
       actualModel ||= reportedModel.model;
+      inactivityTimeout?.refresh();
       onEvent?.(event);
       if (event.type === "error") throw new Error(eventError(event));
       if (event.type === "text" || event?.part?.type === "text") {
@@ -280,12 +283,16 @@ export const runOpenCodeAgent = async ({
       fetchImpl,
       headers: permissionServerHeaders,
       signal: permissionMonitorController.signal,
-      onEvent,
+      onEvent: (event) => {
+        inactivityTimeout?.refresh();
+        onEvent?.(event);
+      },
     });
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       try {
+        inactivityTimeout?.refresh();
         stdoutBytes += Buffer.byteLength(chunk);
         if (stdoutBytes > MAX_OUTPUT_BYTES) {
           child.kill();
@@ -301,7 +308,10 @@ export const runOpenCodeAgent = async ({
         finish(new Error(safeError(error?.message || error)));
       }
     });
-    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-16_000); });
+    child.stderr.on("data", (chunk) => {
+      inactivityTimeout?.refresh();
+      stderr = `${stderr}${chunk}`.slice(-16_000);
+    });
     child.stdin.on("error", (error) => { if (!settled) finish(new Error(`OpenCode Agent 输入管道提前关闭：${safeError(error.message)}`)); });
     child.once("error", (error) => finish(new Error(`OpenCode Agent 无法启动：${safeError(error.message)}`)));
     child.once("close", (code) => {
@@ -321,11 +331,11 @@ export const runOpenCodeAgent = async ({
         permissionMode: accessMode,
       });
     });
-    const timer = setTimeout(() => {
+    const idleTimeoutMs = effectiveAgentInactivityTimeoutMs(timeoutMs);
+    inactivityTimeout = createAgentInactivityTimeout({ timeoutMs: idleTimeoutMs, onTimeout: () => {
       child.kill();
-      finish(new Error(`OpenCode Agent 调用超过 ${Math.round(timeoutMs / 1000)} 秒，已停止`));
-    }, Math.max(30_000, Math.min(3_600_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)));
-    timer.unref?.();
+      finish(Object.assign(new Error(`OpenCode Agent 连续 ${Math.round(idleTimeoutMs / 1000)} 秒没有模型或工具进展，已停止`), { code: "OPENCODE_AGENT_IDLE_TIMEOUT" }));
+    } });
       child.stdin.end();
     });
   } finally {

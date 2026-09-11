@@ -102,7 +102,7 @@ try {
     const run = await gateway.start({
       workspacePath: join(root, "external-workspace"), workspaceKind: "notebook", conversationId,
       sourceMessageId: `${conversationId}-message`, messages: [{ role: "user", content: task }],
-      settings: { id: `${agentEngine}-profile`, agentEngine, model: agentEngine === "opencode" ? "provider/model" : "claude-model" },
+      settings: { id: `${agentEngine}-profile`, agentEngine, model: agentEngine === "opencode" ? "provider/model" : "claude-model", timeoutMs: 120_000 },
       mediaProfiles: {},
     });
     for (let index = 0; index < 100; index += 1) {
@@ -129,6 +129,7 @@ try {
     assert.match(handoff.options.prompt, /完整执行这项任务/u);
     assert.ok(handoff.options.nativeHost?.url, "外置 Agent 必须获得完整神思 MCP 工具入口");
     assert.equal(handoff.options.allowEdits, false, "不得绕开神思文档事务直接写作品文件");
+    assert.equal(handoff.options.timeoutMs, 600_000, "旧配置的 120 秒必须提升为至少 10 分钟无进展超时");
     assert.ok(handoff.options.contextBlocks.some((block) => block.name === "任务路由文档"));
   }
   assert.equal(openedHosts, 4);
