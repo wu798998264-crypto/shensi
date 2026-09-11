@@ -11,7 +11,7 @@ import { detectLocalClaudeCode, detectLocalCodex, detectLocalOpenCode } from "..
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const calls = [];
-for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
+for (const runnerId of ["codex", "opencode", "claude_code", "workbuddy"]) {
   calls.length = 0;
   await installAgentRunnerFromOfficialSource({
     runnerId,
@@ -28,6 +28,22 @@ for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
   assert.ok(calls[0].args.includes(AGENT_RUNNER_INSTALL_SPECS[runnerId].npmPackage));
   assert.equal(calls[0].shell, undefined, "安装器不得启用 shell 或拼接用户命令");
 }
+
+calls.length = 0;
+await installAgentRunnerFromOfficialSource({
+  runnerId: "trae_work",
+  locateTools: async () => ({ powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" }),
+  runProcess: async (request) => { calls.push(request); return { exitCode: 0, stdout: "ok", stderr: "" }; },
+});
+assert.equal(calls.length, 1, "Trae Work 必须只有一个官方安装动作");
+assert.equal(calls[0].executable, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+assert.deepEqual(calls[0].args, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", AGENT_RUNNER_INSTALL_SPECS.trae_work.installScript]);
+assert.equal(calls[0].shell, undefined, "Trae Work 安装器不得启用 shell 或拼接用户命令");
+
+await assert.rejects(
+  installAgentRunnerFromOfficialSource({ runnerId: "custom" }),
+  (error) => error.code === "AGENT_RUNNER_MANUAL_SETUP_REQUIRED",
+);
 
 await assert.rejects(
   installAgentRunnerFromOfficialSource({ runnerId: "unknown" }),

@@ -15,6 +15,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
     npmPackage: "@openai/codex@latest",
     wingetId: "OpenAI.Codex",
     officialUrl: "https://learn.chatgpt.com/docs/codex/cli",
+    installKind: "npm",
   }),
   opencode: Object.freeze({
     id: "opencode",
@@ -22,6 +23,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
     npmPackage: "opencode-ai@latest",
     wingetId: "",
     officialUrl: "https://opencode.ai/docs/",
+    installKind: "npm",
   }),
   claude_code: Object.freeze({
     id: "claude_code",
@@ -29,6 +31,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
     npmPackage: "@anthropic-ai/claude-code@latest",
     wingetId: "Anthropic.ClaudeCode",
     officialUrl: "https://code.claude.com/docs/en/installation",
+    installKind: "npm",
   }),
   trae_work: Object.freeze({
     id: "trae_work",

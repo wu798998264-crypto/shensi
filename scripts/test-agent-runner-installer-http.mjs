@@ -48,10 +48,11 @@ try {
   const statuses = await statusResponse.json();
   assert.equal(statusResponse.status, 200);
   assert.equal(statuses.ok, true);
-  assert.deepEqual(Object.keys(statuses.runners).sort(), ["claude_code", "codex", "opencode"]);
+  assert.deepEqual(Object.keys(statuses.runners).sort(), ["claude_code", "codex", "custom", "opencode", "trae_work", "workbuddy"]);
   assert.equal(statuses.runners.codex.installed, true);
   assert.equal(statuses.runners.opencode.installed, true);
   assert.equal(statuses.runners.claude_code.installed, true);
+  assert.equal(statuses.runners.custom.configurable, true, "自定义运行器必须返回手动配置入口");
 
   const installResponse = await fetch(`${origin}/api/agent-runners/install`, {
     method: "POST",

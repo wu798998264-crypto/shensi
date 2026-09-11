@@ -1469,6 +1469,7 @@ const publicAgentRunnerStatuses = async ({ force = false } = {}) => {
       label: spec.label,
       installed: capability?.available === true,
       available: capability?.available === true,
+      configurable: capability?.configurable === true,
       version: String(capability?.version || "").slice(0, 160),
       authenticated: capability?.authenticated === true,
       authMethod: String(capability?.authMethod || "").slice(0, 80),
