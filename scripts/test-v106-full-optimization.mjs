@@ -16,12 +16,14 @@ import {
 import { defaultAppDataRoot } from "../src/server/app-data.mjs";
 
 const text = async (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
-const [app, css, server, workspaceSource, modelPresets, externalMarkdown, appData, imageEditor, packageJsonSource, installer, packageScript] = await Promise.all([
+const [app, css, server, workspaceSource, modelPresets, agentEngineRegistry, agentRunnerInstaller, externalMarkdown, appData, imageEditor, packageJsonSource, installer, packageScript] = await Promise.all([
   text("src/app.js"),
   text("src/styles.css"),
   text("server.mjs"),
   text("src/server/workspace.mjs"),
   text("src/model-presets.js"),
+  text("src/agent-engine-registry.js"),
+  text("src/server/agent-runner-installer.mjs"),
   text("src/server/external-markdown.mjs"),
   text("src/server/app-data.mjs"),
   text("src/image-card-editor.js"),
@@ -113,8 +115,11 @@ assert.match(app, /data-capability-context-action="disable"/u);
 assert.match(app, /模型基础能力回退/u);
 
 // Generic provider architecture exposes API/CLI separation and agent environments.
-assert.match(modelPresets, /id:\s*"Trae Work"/u);
-assert.match(modelPresets, /id:\s*"WorkBuddy"/u);
+assert.match(agentEngineRegistry, /trae_work:[\s\S]{0,180}label:\s*"Trae Work"/u);
+assert.match(agentEngineRegistry, /workbuddy:[\s\S]{0,180}label:\s*"WorkBuddy"/u);
+assert.match(agentEngineRegistry, /custom:[\s\S]{0,180}label:\s*"自定义运行器"/u);
+assert.match(agentRunnerInstaller, /trae_work:[\s\S]{0,260}officialUrl:/u);
+assert.match(agentRunnerInstaller, /workbuddy:[\s\S]{0,260}officialUrl:/u);
 assert.match(app, /syncGenerationAdapterFields/u);
 assert.match(app, /for \(const key of \["baseUrl", "apiKey"\]\)[\s\S]{0,180}label\.hidden = isCli/u);
 assert.match(app, /for \(const key of \["cliPath", "cliArgs"\]\)[\s\S]{0,180}label\.hidden = !isCli/u);

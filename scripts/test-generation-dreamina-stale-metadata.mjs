@@ -57,6 +57,7 @@ assert.deepEqual(
     profileId,
     adapter: "api",
     provider: "自定义兼容接口",
+    agentEngine: "",
     protocol: "images",
     baseUrl: endpoint,
     cliPath: "",
