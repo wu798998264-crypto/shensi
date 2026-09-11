@@ -25,6 +25,7 @@ const workspace = {
   workspacePath: project.workspacePath,
   documentId: "whiteboard-media-failure",
   nodeId: "video-failure-card",
+  silentNodeId: "video-silent-failure-card",
 };
 const workspaceState = createBlankProjectState({ name: project.name, workspacePath: project.workspacePath });
 workspaceState.activeModule = "manuscript";
@@ -39,7 +40,10 @@ workspaceState.documents[workspace.documentId] = {
   documentKind: "whiteboard",
   updatedAt: Date.now(),
   canvas: {
-    nodes: [createCanvasTextNode({ id: workspace.nodeId, name: "待生成视频", width: 420, height: 230, x: 80, y: 80 })],
+    nodes: [
+      createCanvasTextNode({ id: workspace.nodeId, name: "待生成视频", width: 420, height: 230, x: 80, y: 80 }),
+      createCanvasTextNode({ id: workspace.silentNodeId, name: "无详情失败视频", width: 420, height: 230, x: 540, y: 80 }),
+    ],
     edges: [],
     assets: [],
     viewport: { x: 0, y: 0, zoom: 1 },
@@ -54,7 +58,6 @@ await workspaceStore.saveWorkspaceState({
 });
 
 const prompt = "一艘纸船穿过雨夜霓虹，电影感跟拍";
-const providerTaskId = "7cfe0e80-a3b8-4768-85dd-fe8249dc10ed";
 const job = await generationStore.createMediaGenerationJob({
   channel: "video",
   target: {
@@ -84,15 +87,36 @@ const job = await generationStore.createMediaGenerationJob({
   submissionId: "media-failure-ui-0001",
 });
 await generationStore.updateMediaGenerationJob({ jobId: job.id, patch: {
-  status: "failed",
-  providerStatus: "failed",
-  providerTaskId,
-  providerErrorCode: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
-  submissionState: "submitted",
-  progressPercent: 100,
+  status: "running",
+  providerStatus: "running",
+  providerTaskId: "",
+  providerErrorCode: "",
+  submissionState: "not_submitted",
+  progressPercent: 18,
   billingRisk: "",
-  failedAt: new Date().toISOString(),
-  error: "resource store: authsdk: not logged in",
+  error: "",
+} });
+const silentFailureJob = await generationStore.createMediaGenerationJob({
+  channel: "video",
+  target: {
+    workspaceKind: "project",
+    workspacePath: workspace.workspacePath,
+    documentId: workspace.documentId,
+    nodeId: workspace.silentNodeId,
+    targetType: "whiteboard-node",
+  },
+  request: job.request,
+  submissionId: "media-failure-ui-0002",
+});
+await generationStore.updateMediaGenerationJob({ jobId: silentFailureJob.id, patch: {
+  status: "running",
+  providerStatus: "running",
+  providerTaskId: "",
+  providerErrorCode: "",
+  submissionState: "not_submitted",
+  progressPercent: 12,
+  billingRisk: "",
+  error: "",
 } });
 
 const availableLoopbackPort = () => new Promise((resolvePort, rejectPort) => {
@@ -121,6 +145,7 @@ const child = spawn(electronExecutable, [
     SHENSI_DESKTOP_USER_DATA_ROOT: userDataRoot,
     SHENSI_SKIP_UPDATE_CHECK: "1",
     SHENSI_DISABLE_HARDWARE_ACCELERATION: "1",
+    SHENSI_DISABLE_MEDIA_RECOVERY_WORKERS: "1",
     SHENSI_TEST_DESKTOP_RUNTIME: "1",
   },
   stdio: ["ignore", "pipe", "pipe"],
@@ -199,6 +224,8 @@ try {
   await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "应用启动");
   await evaluate(`(async () => {
     const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
+    const current = await fetch('/api/recovery/session', { headers: { 'x-shensi-session': token } }).then((response) => response.json());
+    const resumeRevision = Math.max(Date.now(), Number(current?.activeWorkspace?.resumeRevision || 0) + 1);
     const response = await fetch('/api/recovery/session', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-shensi-session': token },
@@ -209,7 +236,7 @@ try {
         activeModule: 'manuscript',
         activeDocument: ${JSON.stringify(workspace.documentId)},
         activeConversationId: ${JSON.stringify(workspaceState.activeConversationId)},
-        resumeRevision: Date.now(),
+        resumeRevision,
       } }),
     });
     if (!response.ok) throw new Error('恢复测试作品失败');
@@ -219,6 +246,42 @@ try {
   await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "失败任务重载");
   await evaluate(`document.querySelector('#dismissCreativeStartWelcome')?.click(); true`);
   await waitFor("document.querySelector('#whiteboardEditor') && !document.querySelector('#whiteboardEditor').hidden", "测试白板恢复");
+  await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}][data-generation-status="running"]')`, "运行中视频卡片显示", 45_000);
+  await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.silentNodeId)}][data-generation-status="running"]')`, "无详情测试视频卡片显示", 45_000);
+  await generationStore.updateMediaGenerationJob({ jobId: silentFailureJob.id, patch: {
+    status: "failed",
+    providerStatus: "failed",
+    providerTaskId: "",
+    providerErrorCode: "",
+    submissionState: "not_submitted",
+    progressPercent: 100,
+    billingRisk: "",
+    failedAt: new Date().toISOString(),
+    error: "",
+  } });
+  await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.silentNodeId)}] .whiteboard-generation-failure-detail')`, "无详情失败卡片显示", 45_000);
+  const silentFailureView = await evaluate(`(() => {
+    const card = document.querySelector('[data-canvas-node=${JSON.stringify(workspace.silentNodeId)}]');
+    return {
+      text: card.querySelector('.whiteboard-generation-failure-detail')?.textContent || '',
+      status: card.dataset.generationStatus,
+    };
+  })()`);
+  assert.equal(silentFailureView.status, "failed");
+  assert.match(silentFailureView.text, /DREAMINA_UNCLASSIFIED_FAILURE/u, "运行器没有提供错误详情时也必须显示兜底错误码");
+  assert.match(silentFailureView.text, new RegExp(silentFailureJob.id), "无详情失败也必须显示神思任务号");
+
+  await generationStore.updateMediaGenerationJob({ jobId: job.id, patch: {
+    status: "failed",
+    providerStatus: "failed",
+    providerTaskId: "",
+    providerErrorCode: "",
+    submissionState: "not_submitted",
+    progressPercent: 100,
+    billingRisk: "",
+    failedAt: new Date().toISOString(),
+    error: "upload resource: ApplyImageUpload http://imagex.bytedanceapi.com/?Action=ApplyImageUpload: context deadline exceeded",
+  } });
   await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')`, "失败卡片显示", 45_000);
   const failureView = await evaluate(`(() => {
     const card = document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}]');
@@ -226,20 +289,23 @@ try {
     const retry = card.querySelector('[data-media-job-action="retry_setup"]');
     const cardRect = card.getBoundingClientRect();
     const detailRect = detail.getBoundingClientRect();
-    const retryRect = retry.getBoundingClientRect();
+    const retryRect = retry?.getBoundingClientRect();
     return {
       text: detail.textContent,
       status: card.dataset.generationStatus,
-      retryVisible: retryRect.width > 0 && retryRect.height > 0,
+      retryVisible: Boolean(retryRect && retryRect.width > 0 && retryRect.height > 0),
+      actions: card.querySelector('.media-generation-actions')?.textContent || '',
       detailInsideCard: detailRect.left >= cardRect.left && detailRect.right <= cardRect.right && detailRect.top >= cardRect.top && detailRect.bottom <= cardRect.bottom,
-      retryInsideCard: retryRect.left >= cardRect.left && retryRect.right <= cardRect.right && retryRect.top >= cardRect.top && retryRect.bottom <= cardRect.bottom,
+      retryInsideCard: Boolean(retryRect && retryRect.left >= cardRect.left && retryRect.right <= cardRect.right && retryRect.top >= cardRect.top && retryRect.bottom <= cardRect.bottom),
     };
   })()`);
   assert.equal(failureView.status, "failed");
   assert.match(failureView.text, /柏物语/u);
-  assert.match(failureView.text, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
-  assert.match(failureView.text, new RegExp(providerTaskId));
-  assert.equal(failureView.retryVisible, true);
+  assert.match(failureView.text, /DREAMINA_UNCLASSIFIED_FAILURE/u);
+  assert.match(failureView.text, /ApplyImageUpload/u);
+  assert.match(failureView.text, /context deadline exceeded/u);
+  assert.match(failureView.text, new RegExp(job.id));
+  assert.equal(failureView.retryVisible, true, JSON.stringify(failureView));
   assert.equal(failureView.detailInsideCard, true);
   assert.equal(failureView.retryInsideCard, true);
 

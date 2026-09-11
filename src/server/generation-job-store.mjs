@@ -346,12 +346,11 @@ export const publicGenerationJob = (job) => {
   delete safe.replacementReservationOwnerPid;
   delete safe.replacementSourceReservationId;
   const serverMedia = safe.mode === "server" && ["image", "video", "audio"].includes(safe.channel);
-  const providerTerminalFailure = safe.status === "failed"
-    && safe.providerStatus === "failed"
-    && Boolean(safe.providerTaskId)
-    && !safe.billingRisk;
+  const terminalFailure = safe.status === "failed"
+    && !safe.billingRisk
+    && safe.resubmitConfirmationRequired !== true;
   const terminal = ["complete", "cancelled", "superseded"].includes(safe.status)
-    || providerTerminalFailure
+    || terminalFailure
     || Boolean(safe.supersededBy);
   const replacementPending = Boolean(job?.replacementReservationId);
   const dreaminaCliMedia = ["image", "video"].includes(safe.channel)

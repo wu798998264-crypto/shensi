@@ -55,6 +55,9 @@ assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
 assert.match(app, /!whiteboardMediaJobHoldsCard\(job\) && !mediaGenerationFailureNeedsCard\(job\)/u, "明确失败必须保留在原卡片，但不得重新成为全局阻塞任务");
 assert.match(app, /class="whiteboard-generation-failure-detail" role="alert"/u, "失败卡片必须直接显示真实错误和任务编号");
+assert.match(app, /if \(!measurementActive\) \{\s*renderWhiteboardCandidateLocation\(initial\);/u, "运行中任务转为失败后必须立即重绘原卡片");
+assert.match(app, /MEDIA_FAILURE_WITHOUT_DETAILS/u, "运行器未返回详情时也必须显示稳定的兜底错误码");
+assert.match(mediaWorker, /providerCode \|\| \(dreaminaCliMediaJob\(current\)[\s\S]{0,120}DREAMINA_UNCLASSIFIED_FAILURE[\s\S]{0,120}MEDIA_PROVIDER_FAILURE/u, "服务端终态失败不得保存空错误码");
 assert.match(app, /data-media-job-action="retry_setup"/u, "明确失败卡片必须提供恢复原参数的重新生成入口");
 assert.match(app, /已恢复原提示词和生成参数；请核对后再次点击生成/u, "重新生成入口不得绕过用户确认直接提交收费任务");
 assert.match(app, /const pendingManualRecoveryJobs = new Map\(jobs[\s\S]{0,260}filter\(mediaRecoveryJobIsActionable\)/u,

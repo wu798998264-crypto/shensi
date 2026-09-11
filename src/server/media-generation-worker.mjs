@@ -1483,6 +1483,9 @@ const processJob = async (candidate) => {
     const current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
     if (["complete", "cancelled", "superseded"].includes(current.status)) return false;
     const providerCode = String(error.providerErrorCode || error.code || "");
+    const surfacedProviderCode = providerCode || (dreaminaCliMediaJob(current)
+      ? "DREAMINA_UNCLASSIFIED_FAILURE"
+      : "MEDIA_PROVIDER_FAILURE");
     const errorProviderTaskId = String(error?.providerTaskId || error?.provider_task_id || "").trim();
     const usableErrorProviderTaskId = errorProviderTaskId
       && !/^(?:0|-|none|null|undefined|unknown|missing|n\/?a|na)$/iu.test(errorProviderTaskId);
@@ -1587,7 +1590,7 @@ const processJob = async (candidate) => {
       : null;
     const cancelPending = current.desiredAction === "cancel";
     const failurePatch = cancelPending ? {
-      providerErrorCode: String(error.providerErrorCode || error.code || ""),
+      providerErrorCode: surfacedProviderCode,
       ...dreaminaFailurePatch,
       error: missingCredentials
         ? "取消意图和原厂商任务 ID 已保留；恢复同一连接凭证后将自动继续核对取消结果。"
@@ -1756,7 +1759,7 @@ const processJob = async (candidate) => {
       providerStatus: providerCode.toUpperCase() === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
         ? "failed"
         : current.providerStatus || "failed",
-      providerErrorCode: String(error.providerErrorCode || error.code || ""),
+      providerErrorCode: surfacedProviderCode,
       ...dreaminaFailurePatch,
       progressPercent: storageBlocked ? 92 : missingCredentials ? Math.max(24, Number(current.progressPercent) || 0) : 100,
       failedAt: missingCredentials || storageBlocked || submissionUnknown ? "" : new Date().toISOString(),

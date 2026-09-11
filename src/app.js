@@ -13138,7 +13138,10 @@ const beginWhiteboardGenerationCandidate = ({ nodeId, workspacePath, documentId,
   ui.whiteboardCandidates.set(candidateKey, initial);
   if (measurementActive) scheduleWhiteboardProgressDisplay(candidateKey);
   pruneWhiteboardRuntimeCandidates();
-  if (!measurementActive) return { candidateKey, startedAt };
+  if (!measurementActive) {
+    renderWhiteboardCandidateLocation(initial);
+    return { candidateKey, startedAt };
+  }
   whiteboardGenerationProgressTimers.set(candidateKey, startedAt);
   ensureWhiteboardGenerationProgressTicker();
   return { candidateKey, startedAt };
@@ -13431,16 +13434,20 @@ const mediaGenerationErrorText = (job = {}) => {
   const current = job && typeof job === "object" ? job : {};
   const raw = String(current.error || "").trim();
   const code = String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase();
+  const terminalFailure = mediaGenerationFailureNeedsCard(current);
   const settings = current.request?.settings ?? {};
   const dreamina = ["即梦", "dreamina"].includes(String(settings.provider || "").trim().toLowerCase())
     || code.startsWith("DREAMINA_") || /authsdk:\s*not logged in/i.test(raw);
-  if (dreamina && (code || raw)) return `即梦配置“${mediaGenerationProfileLabel(current)}”：${dreaminaFailureDisplayText({
-    code,
+  if (dreamina && (code || raw || terminalFailure)) return `即梦配置“${mediaGenerationProfileLabel(current)}”：${dreaminaFailureDisplayText({
+    code: code || "DREAMINA_UNCLASSIFIED_FAILURE",
     message: raw,
     providerTaskId: current.providerTaskId,
     submissionState: current.submissionState,
   })}`;
-  return raw;
+  if (raw && code && !raw.toUpperCase().includes(code)) return `错误代码：${code}。原始报错：${raw}`;
+  if (raw) return raw;
+  if (terminalFailure) return `错误代码：${code || "MEDIA_FAILURE_WITHOUT_DETAILS"}。运行器报告任务失败，但没有返回错误详情；神思已保留任务记录和原生成参数。`;
+  return "";
 };
 
 const dreaminaFailureInput = ({ error = null, job = null } = {}) => ({
@@ -13512,7 +13519,8 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
     const retryAt = Date.parse(current.nextPollAt || "");
     const retryIn = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
     const prefix = capacityLimited ? uiText("即梦并发名额已满") : uiText("本地排队，尚未提交厂商");
-    return `${prefix} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    const detail = mediaGenerationErrorText(current);
+    return `${prefix} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}${detail ? ` · ${uiText("上次错误")}：${detail}` : ""}`;
   }
   if (current.status === "cancel_requested" && /不支持取消/i.test(String(current.error || ""))) return `${uiText("取消请求无法送达厂商，任务仍在跟踪")} · ${billingLabel}${taskLabel}`;
   const queuePosition = Number.isFinite(Number(current.providerQueuePosition)) && current.providerQueuePosition !== null
@@ -17516,11 +17524,17 @@ const renderWhiteboard = (documentState) => {
           ? `${mediaGenerationPhaseText(candidate)}${candidate.error ? `：${String(candidate.error).slice(0, 120)}` : ""}`
           : uiText("连接中断，需重新生成")
       : generating ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText("正在生成") : "";
+    const generationFailureText = candidateInterrupted
+      && durableMediaCandidate
+      && mediaGenerationFailureNeedsCard(candidate)
+      ? mediaGenerationErrorText(candidate)
+      : "";
     const generationFailureDetail = candidateInterrupted
       && durableMediaCandidate
       && mediaGenerationFailureNeedsCard(candidate)
-      && candidate.error
-      ? `<div class="whiteboard-generation-failure-detail" role="alert"><strong>${escapeHtml(uiText(`${{ image: "图片", video: "视频", audio: "音频" }[candidate.channel] || "媒体"}生成失败`))}</strong><span>${escapeHtml(candidate.error)}</span><small>${escapeHtml([
+      && generationFailureText
+      ? `<div class="whiteboard-generation-failure-detail" role="alert"><strong>${escapeHtml(uiText(`${{ image: "图片", video: "视频", audio: "音频" }[candidate.channel] || "媒体"}生成失败`))}</strong><span>${escapeHtml(generationFailureText)}</span><small>${escapeHtml([
+          candidate.providerErrorCode ? `${uiText("错误代码")}：${candidate.providerErrorCode}` : "",
           candidate.jobId ? `${uiText("神思任务")}：${candidate.jobId}` : "",
           candidate.providerTaskId ? `${uiText("厂商任务")}：${candidate.providerTaskId}` : "",
         ].filter(Boolean).join(" · "))}</small></div>`
