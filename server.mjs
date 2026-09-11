@@ -162,6 +162,7 @@ import {
   updateMediaGenerationJob,
 } from "./src/server/generation-job-store.mjs";
 import { launchMediaGenerationWorker, terminateMediaGenerationWorker } from "./src/server/media-worker-manager.mjs";
+import { stopLocalMediaJob } from "./src/server/media-local-stop.mjs";
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
@@ -4007,6 +4008,33 @@ const handleApiRequest = async (request, response, pathname) => {
       profileSignature: requestUrl.searchParams.get("profileSignature"),
     });
     return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
+  }
+
+  if (pathname === "/api/generation/jobs/pending-media" && request.method === "GET") {
+    const jobs = await listGenerationJobs({ pendingMediaOnly: true });
+    return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
+  }
+
+  if (pathname === "/api/generation/jobs/stop-local" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    const ids = [...new Set(Array.isArray(body.jobIds) ? body.jobIds : [])];
+    if (!ids.length || ids.length > 500 || ids.some((id) => !/^generation-[a-z0-9-]+$/i.test(String(id)))) {
+      return sendJson(response, 400, { ok: false, message: "请选择有效的媒体任务（每批最多 500 项）" });
+    }
+    const jobs = [];
+    let errors = [], remaining = ids;
+    // A later item may still own the physical credential slot while an
+    // earlier item's worker is already gone. Recheck once after stopping all
+    // selected workers, so one click does not leave those earlier rows stuck.
+    for (let pass = 0; pass < 2 && remaining.length; pass += 1) {
+      errors = [];
+      for (const jobId of remaining) {
+        try { jobs.push(generationJobWithLifecycle(await stopLocalMediaJob({ jobId }))); }
+        catch (error) { errors.push({ jobId, message: String(error.message || error) }); }
+      }
+      remaining = errors.map((item) => item.jobId);
+    }
+    return sendJson(response, 200, { ok: errors.length === 0, jobs, errors });
   }
 
   const generationJobMatch = pathname.match(/^\/api\/generation\/jobs\/(generation-[a-z0-9-]+)(?:\/(heartbeat|complete|fail|applied|resume|cancel|reconcile|dismiss))?$/i);

@@ -22,6 +22,7 @@ export const fetchMediaRecoveryJobs = async ({
   workspacePath,
   includeApplied = true,
   includeSmoke = true,
+  pendingOnly = false,
   attempts = DEFAULT_MEDIA_RECOVERY_FETCH_ATTEMPTS,
   delayFn = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
 } = {}) => {
@@ -34,7 +35,7 @@ export const fetchMediaRecoveryJobs = async ({
     try {
       const [response, globalResponse, smokeResponse] = await Promise.all([
         fetchFn(`/api/generation/jobs?workspacePath=${workspaceQuery}&includeApplied=${includeApplied ? "true" : "false"}`, { cache: "no-store" }),
-        fetchFn("/api/generation/jobs?includeApplied=false", { cache: "no-store" }),
+        fetchFn(pendingOnly ? "/api/generation/jobs/pending-media" : "/api/generation/jobs?includeApplied=false", { cache: "no-store" }),
         includeSmoke
           ? fetchFn("/api/generation/jobs?includeApplied=true&targetType=capability-smoke", { cache: "no-store" })
           : Promise.resolve(emptySmokeResponse),

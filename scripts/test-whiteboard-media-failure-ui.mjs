@@ -105,7 +105,7 @@ const silentFailureJob = await generationStore.createMediaGenerationJob({
     nodeId: workspace.silentNodeId,
     targetType: "whiteboard-node",
   },
-  request: job.request,
+  request: { ...job.request, settings: { provider: "LibTV", adapter: "cli", connectionId: "video-libtv", protocol: "media", model: "fixture" } },
   submissionId: "media-failure-ui-0002",
 });
 await generationStore.updateMediaGenerationJob({ jobId: silentFailureJob.id, patch: {
@@ -129,6 +129,14 @@ const availableLoopbackPort = () => new Promise((resolvePort, rejectPort) => {
 });
 
 const debugPort = await availableLoopbackPort();
+// Seed the persisted session before starting Electron. Writing a new pointer
+// into a running empty page and then reloading races that page's unload save.
+const { saveRecoveryResumeState } = await import("../src/server/recovery-store.mjs");
+await saveRecoveryResumeState({ activeWorkspace: {
+  workspacePath: workspace.workspacePath, workspaceKind: "project", projectName: project.name,
+  activeModule: "manuscript", activeDocument: workspace.documentId,
+  activeConversationId: workspaceState.activeConversationId, resumeRevision: Date.now(),
+} });
 const electronExecutable = join(root, "node_modules", "electron", "dist", "electron.exe");
 const desktopEntry = join(root, "packaging", "windows", "desktop-app");
 const child = spawn(electronExecutable, [
@@ -222,28 +230,6 @@ try {
   await cdp("Runtime.enable");
   await cdp("Page.enable");
   await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "应用启动");
-  await evaluate(`(async () => {
-    const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
-    const current = await fetch('/api/recovery/session', { headers: { 'x-shensi-session': token } }).then((response) => response.json());
-    const resumeRevision = Math.max(Date.now(), Number(current?.activeWorkspace?.resumeRevision || 0) + 1);
-    const response = await fetch('/api/recovery/session', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-shensi-session': token },
-      body: JSON.stringify({ activeWorkspace: {
-        workspacePath: ${JSON.stringify(workspace.workspacePath)},
-        workspaceKind: 'project',
-        projectName: '媒体失败卡片验收',
-        activeModule: 'manuscript',
-        activeDocument: ${JSON.stringify(workspace.documentId)},
-        activeConversationId: ${JSON.stringify(workspaceState.activeConversationId)},
-        resumeRevision,
-      } }),
-    });
-    if (!response.ok) throw new Error('恢复测试作品失败');
-    return true;
-  })()`);
-  await cdp("Page.reload", { ignoreCache: true });
-  await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "失败任务重载");
   await evaluate(`document.querySelector('#dismissCreativeStartWelcome')?.click(); true`);
   await waitFor("document.querySelector('#whiteboardEditor') && !document.querySelector('#whiteboardEditor').hidden", "测试白板恢复");
   await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}][data-generation-status="running"]')`, "运行中视频卡片显示", 45_000);
@@ -268,7 +254,7 @@ try {
     };
   })()`);
   assert.equal(silentFailureView.status, "failed");
-  assert.match(silentFailureView.text, /DREAMINA_UNCLASSIFIED_FAILURE/u, "运行器没有提供错误详情时也必须显示兜底错误码");
+  assert.match(silentFailureView.text, /MEDIA_FAILURE_WITHOUT_DETAILS/u, "LibTV 没有提供错误详情时也必须显示兜底错误码");
   assert.match(silentFailureView.text, new RegExp(silentFailureJob.id), "无详情失败也必须显示神思任务号");
 
   await generationStore.updateMediaGenerationJob({ jobId: job.id, patch: {
@@ -340,6 +326,33 @@ try {
     return payload.jobs.map((item) => item.id);
   })()`);
   assert.deepEqual(afterJobs, beforeJobs, "恢复表单不得自动创建新的收费媒体任务");
+
+  await evaluate(`document.querySelector('#whiteboardVideoDialog')?.close(); true`);
+  await generationStore.updateMediaGenerationJob({ jobId: silentFailureJob.id, patch: {
+    status: "retry_required", submissionState: "uncertain", billingRisk: "submission_outcome_unknown",
+    providerErrorCode: "LIBTV_CLI_FAILURE", error: "LibTV CLI 原始报错：上传网络中断", nextPollAt: "",
+  } });
+  await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.silentNodeId)}] .whiteboard-generation-failure-detail')?.textContent.includes('上传网络中断')`, "不确定提交也必须显示CLI真实错误", 45_000);
+  await evaluate(`document.querySelector('#openMediaRecovery').click(); true`);
+  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open && document.querySelector('[data-media-recovery-job=${JSON.stringify(silentFailureJob.id)}]')`, "待处理界面显示原失败任务");
+  // Inspect the server's full pending view as well as the real rendered card.
+  const pendingMediaView = await evaluate(`(async () => {
+    const payload = await fetch('/api/generation/jobs/pending-media').then(r => r.json());
+    return payload.jobs.map(j => ({ id: j.id, error: j.error }));
+  })()`);
+  assert.ok(pendingMediaView.some((j) => j.id === silentFailureJob.id && j.error.includes('上传网络中断')));
+  assert.equal(await evaluate(`Boolean(document.querySelector('#stopAllPendingMedia'))`), true);
+  await evaluate(`window.confirm = () => true; document.querySelector('#stopAllPendingMedia').click(); true`);
+  await waitFor(`!document.querySelector('[data-media-recovery-job=${JSON.stringify(silentFailureJob.id)}]') && !document.querySelector('#stopAllPendingMedia').disabled`, "一键终止后待处理项目消失", 45_000);
+  const stopped = await generationStore.getGenerationJob({ jobId: silentFailureJob.id });
+  assert.equal(stopped.status, "cancelled");
+  assert.match(stopped.lastProviderError.message, /上传网络中断/);
+  assert.equal(stopped.nextPollAt, "");
+  const previousLoadOrigin = await evaluate("performance.timeOrigin");
+  await cdp("Page.reload", { ignoreCache: true });
+  await waitFor(`performance.timeOrigin !== ${previousLoadOrigin} && document.documentElement?.dataset?.bootReady === 'true'`, "终止后重新载入");
+  const pendingAfterReload = await evaluate(`fetch('/api/generation/jobs/pending-media', {headers:{'x-shensi-session':document.querySelector('meta[name="shensi-session-token"]').content}}).then(r=>r.json()).then(p=>{if(!p.ok)throw new Error(p.message);return p.jobs.map(j=>j.id)})`);
+  assert.equal(pendingAfterReload.includes(silentFailureJob.id), false, "重新载入不得恢复已彻底终止的媒体任务");
 
   console.log("Whiteboard terminal media failure UI tests passed");
 } finally {

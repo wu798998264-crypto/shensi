@@ -5,6 +5,7 @@ import { generationResultMayDefaultLand, terminalGenerationAttempt, waitForGener
 import { candidateLandingProofsForVersion, candidateVersionIsAdopted as candidateVersionStoredAdoption, candidateVersionMatchesCurrentLanding as candidateVersionMatchesStoredLanding, recordCandidateAdoption as recordCandidateAdoptionState } from "./candidate-adoption.js?v=1.0.0";
 import { dreaminaConfigSyncProposal, applyDreaminaConfigSync } from "./dreamina-config-sync-policy.js?v=1.0.0-manual-profile";
 import { dreaminaProfileSwitchMessage } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
+import { mediaGenerationIssueNeedsCard } from "./media-execution-policy.js";
 import { candidateBatchCoversRequestedTargets, mergeAgentExecutionTaskRoute } from "./agent-task-route-merge.js?v=5.4.11-semantic-contract-lock";
 import { mediaResultLifecycleStage } from "./media-result-lifecycle.js?v=3.0.10";
 import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.6-generation-phases";
@@ -7209,7 +7210,7 @@ root.innerHTML = `
       <form method="dialog">
         <header><div><h2 id="mediaRecoveryDialogTitle">待处理媒体任务</h2><p>这里只显示正在阻塞软件操作的既有任务；处理后会自动隐藏并恢复正常操作。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭待处理媒体任务">${icon("\uE711", "关闭")}</button></header>
         <section class="media-recovery-list" id="mediaRecoveryList" aria-live="polite"><p class="panel-empty">正在读取待处理任务…</p></section>
-        <footer><button class="secondary-button" id="refreshMediaRecoveryList" type="button">重新读取</button><button class="primary-button" value="cancel" type="submit">完成</button></footer>
+        <footer><button class="secondary-button" id="refreshMediaRecoveryList" type="button">重新读取</button><button class="secondary-button warning" id="stopAllPendingMedia" type="button">一键彻底终止待处理项目</button><button class="primary-button" value="cancel" type="submit">完成</button></footer>
       </form>
     </dialog>
 
@@ -13434,7 +13435,7 @@ const mediaGenerationErrorText = (job = {}) => {
   const current = job && typeof job === "object" ? job : {};
   const raw = String(current.error || "").trim();
   const code = String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase();
-  const terminalFailure = mediaGenerationFailureNeedsCard(current);
+  const terminalFailure = mediaGenerationIssueNeedsCard(current);
   const settings = current.request?.settings ?? {};
   const dreamina = ["即梦", "dreamina"].includes(String(settings.provider || "").trim().toLowerCase())
     || code.startsWith("DREAMINA_") || /authsdk:\s*not logged in/i.test(raw);
@@ -15379,6 +15380,7 @@ const showMediaRecoveryBanner = (message, { checking = false } = {}) => {
 
 const clearMediaRecoveryBanner = () => {
   if (!elements.mediaRecoveryBanner) return;
+  if (elements.mediaRecoveryList?.dataset.readError === "true") return;
   elements.mediaRecoveryBanner.hidden = true;
   elements.mediaRecoveryBanner.dataset.state = "ready";
   elements.retryMediaRecovery.disabled = false;
@@ -15402,6 +15404,7 @@ const mediaRecoveryAttentionStatuses = new Set([
 
 const mediaRecoveryJobIsActionable = (job = {}) => {
   if (!mediaRecoveryJobBlocksOperation(job)) return false;
+  if (job.mode === "server" && ["image", "video", "audio"].includes(job.channel)) return true;
   const status = String(job.status || "");
   if (status === "complete") return true;
   const actions = job.availableActions && typeof job.availableActions === "object"
@@ -15456,10 +15459,13 @@ const renderMediaRecoveryJobs = (jobs = []) => {
     const verify = mediaRecoveryJobNeedsAccountVerification(job)
       ? `<button class="media-job-resume" type="button" data-media-recovery-action="verify" data-media-job-id="${escapeHtml(job.id)}" title="核验该任务原来使用的即梦配置">${icon("\uE77B", "核验账号")}<span>核验账号</span></button>`
       : "";
-    const actionsMarkup = actions || reapply || verify
-      ? `<div class="media-generation-actions recovery-dialog-actions">${actions}${reapply}${verify}</div>`
+    const stop = `<button type="button" class="secondary-button warning" data-stop-local-media="${escapeHtml(job.id)}">彻底终止本地任务</button>`;
+    const detail = mediaGenerationErrorText(job);
+    const errorMarkup = detail ? `<p class="media-recovery-error" role="alert">${escapeHtml(detail)}</p>` : "";
+    const actionsMarkup = actions || reapply || verify || stop
+      ? `<div class="media-generation-actions recovery-dialog-actions">${actions}${reapply}${verify}${stop}</div>`
       : '<small class="media-recovery-no-action">请先重新读取任务状态。</small>';
-    return `<article class="media-recovery-item" data-media-recovery-job="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : job.channel === "image" ? "图片任务" : "媒体任务")}</strong><small>${escapeHtml(status || "未知状态")}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(mediaGenerationPhaseText(job))}</p>${actionsMarkup}</article>`;
+    return `<article class="media-recovery-item" data-media-recovery-job="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : job.channel === "image" ? "图片任务" : "媒体任务")}</strong><small>${escapeHtml(status || "未知状态")}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(mediaGenerationPhaseText(job))}</p>${errorMarkup}${actionsMarkup}</article>`;
   }).join("");
 };
 
@@ -15472,6 +15478,7 @@ const readMediaRecoveryJobsForDialog = async () => {
     const { response, globalResponse, smokeResponse, payload, globalPayload, smokePayload } = await fetchMediaRecoveryJobs({
       fetchFn: fetch.bind(window),
       workspacePath: state.settings.workspacePath,
+      pendingOnly: true,
     });
     if (!response.ok || !payload.ok) throw new Error(payload.message || "生成任务恢复失败");
     if (!globalResponse.ok || !globalPayload.ok) throw new Error(globalPayload.message || "跨工作区生成任务恢复失败");
@@ -15481,16 +15488,18 @@ const readMediaRecoveryJobsForDialog = async () => {
       ...(smokeResponse.ok && smokePayload.ok ? smokePayload.jobs ?? [] : []),
     ].map((job) => [job.id, job])).values()]
       .filter((job) => job.target?.targetType !== "capability-smoke")
-      .filter((job) => mediaRecoveryAttentionStatuses.has(String(job.status || "")))
+      .filter((job) => job.forceReleasePendingAt && !job.forceReleaseCompletedAt || mediaRecoveryAttentionStatuses.has(String(job.status || "")))
       .filter(mediaRecoveryJobBlocksOperation)
       .filter(mediaRecoveryJobIsActionable)
       .sort((left, right) => Date.parse(right.updatedAt || right.createdAt || "") - Date.parse(left.updatedAt || left.createdAt || ""));
     renderMediaRecoveryJobs(jobs);
+    delete elements.mediaRecoveryList.dataset.readError;
     requestAnimationFrame(() => {
       if (elements.mediaRecoveryList) elements.mediaRecoveryList.scrollTop = Math.min(previousScrollTop, elements.mediaRecoveryList.scrollHeight);
     });
     return jobs;
   } catch (error) {
+    elements.mediaRecoveryList.dataset.readError = "true";
     elements.mediaRecoveryList.innerHTML = `<p class="panel-empty">待处理任务读取失败：${escapeHtml(error.message || "未知错误")}</p>`;
     return [];
   }
@@ -15693,6 +15702,34 @@ elements.refreshMediaRecoveryList?.addEventListener("click", () => {
 });
 
 elements.mediaRecoveryDialog?.addEventListener("click", async (event) => {
+  const stop = event.target.closest("#stopAllPendingMedia, [data-stop-local-media]");
+  if (stop) {
+    event.preventDefault();
+    const ids = stop.dataset.stopLocalMedia ? [stop.dataset.stopLocalMedia]
+      : [...elements.mediaRecoveryList.querySelectorAll("[data-media-recovery-job]")].map((item) => item.dataset.mediaRecoveryJob);
+    if (!ids.length) return;
+    if (!window.confirm(`终止这 ${ids.length} 项本地媒体任务并释放占用？任务和错误记录会保留，厂商远端取消及费用以实际回执为准。`)) return;
+    stop.disabled = true;
+    try {
+      let stoppedCount = 0;
+      const failures = [];
+      for (let index = 0; index < ids.length; index += 500) {
+        const response = await fetch("/api/generation/jobs/stop-local", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobIds: ids.slice(index, index + 500) }),
+        });
+        const payload = await response.json();
+        for (const job of payload.jobs || []) updateMediaJobTargetAfterAction(job);
+        stoppedCount += payload.jobs?.length || 0;
+        if (!response.ok || !payload.ok) failures.push(payload.errors?.map((item) => `${item.jobId}: ${item.message}`).join("；") || payload.message || "部分任务未能终止");
+      }
+      const remaining = await readMediaRecoveryJobsForDialog();
+      if (!remaining.length) clearMediaRecoveryBanner();
+      if (failures.length) throw new Error(failures.join("；"));
+      showToast(`已终止 ${stoppedCount} 项本地媒体任务`);
+    } catch (error) { showToast(error.message || "终止失败，任务记录仍保留"); }
+    finally { if (stop.isConnected) stop.disabled = false; }
+    return;
+  }
   const mediaAction = event.target.closest("[data-media-job-action][data-media-job-id]");
   if (mediaAction) {
     event.preventDefault();
@@ -17524,16 +17561,14 @@ const renderWhiteboard = (documentState) => {
           ? `${mediaGenerationPhaseText(candidate)}${candidate.error ? `：${String(candidate.error).slice(0, 120)}` : ""}`
           : uiText("连接中断，需重新生成")
       : generating ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText("正在生成") : "";
-    const generationFailureText = candidateInterrupted
-      && durableMediaCandidate
-      && mediaGenerationFailureNeedsCard(candidate)
+    const generationFailureText = durableMediaCandidate
+      && mediaGenerationIssueNeedsCard(candidate)
       ? mediaGenerationErrorText(candidate)
       : "";
-    const generationFailureDetail = candidateInterrupted
-      && durableMediaCandidate
-      && mediaGenerationFailureNeedsCard(candidate)
+    const generationFailureDetail = durableMediaCandidate
+      && mediaGenerationIssueNeedsCard(candidate)
       && generationFailureText
-      ? `<div class="whiteboard-generation-failure-detail" role="alert"><strong>${escapeHtml(uiText(`${{ image: "图片", video: "视频", audio: "音频" }[candidate.channel] || "媒体"}生成失败`))}</strong><span>${escapeHtml(generationFailureText)}</span><small>${escapeHtml([
+      ? `<div class="whiteboard-generation-failure-detail" role="alert"><strong>${escapeHtml(uiText(`${{ image: "图片", video: "视频", audio: "音频" }[candidate.channel] || "媒体"}生成${candidate.status === "failed" ? "失败" : "遇到问题"}`))}</strong><span>${escapeHtml(generationFailureText)}</span><small>${escapeHtml([
           candidate.providerErrorCode ? `${uiText("错误代码")}：${candidate.providerErrorCode}` : "",
           candidate.jobId ? `${uiText("神思任务")}：${candidate.jobId}` : "",
           candidate.providerTaskId ? `${uiText("厂商任务")}：${candidate.providerTaskId}` : "",
