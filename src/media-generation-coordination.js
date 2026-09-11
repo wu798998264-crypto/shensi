@@ -83,6 +83,13 @@ export const mediaGenerationResultSuppressed = (job = {}) => {
   );
 };
 
+export const mediaGenerationFailureNeedsCard = (job = {}) => (
+  String(job?.status || "") === "failed"
+  && !mediaGenerationResultSuppressed(job)
+  && !job?.billingRisk
+  && !job?.supersededBy
+);
+
 export const mediaGenerationActionPresentation = ({ status = "", availableActions = {} } = {}) => {
   const normalizedStatus = String(status || "");
   const actions = availableActions && typeof availableActions === "object" ? availableActions : {};

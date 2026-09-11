@@ -4174,6 +4174,35 @@ textarea.whiteboard-find-textarea-source::selection {
   font-weight: 600;
 }
 
+.whiteboard-generation-failure-detail {
+  position: absolute;
+  z-index: 7;
+  inset: 34px 8px 38px;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-height: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--error) 38%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface) 94%, var(--error));
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.whiteboard-generation-failure-detail strong,
+.whiteboard-generation-failure-detail span,
+.whiteboard-generation-failure-detail small {
+  display: block;
+  min-width: 0;
+}
+
+.whiteboard-generation-failure-detail strong { color: var(--error); font-size: 11px; }
+.whiteboard-generation-failure-detail small { color: var(--text-tertiary); user-select: text; }
+
 .whiteboard-card:is([data-card-kind="image"], [data-card-kind="video"], [data-card-kind="audio"]) .whiteboard-card-kind {
   padding: 3px 6px;
   border-radius: 4px;

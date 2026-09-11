@@ -308,7 +308,7 @@ import { resolveWorkspaceModeSelection, workspaceKindHasEntry } from "./workspac
 import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSave, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationFailureNeedsCard, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -13733,7 +13733,10 @@ const mediaGenerationActionMarkup = ({
   error = "",
   providerTaskId = "",
   submissionState = "",
-} = {}, { compact = false } = {}) => {
+  providerStatus = "",
+  billingRisk = "",
+  resultSuppressed = false,
+} = {}, { compact = false, allowFailureRetrySetup = false } = {}) => {
   if (!jobId) return "";
   const buttons = [];
   const accountVerificationRequired = dreaminaFailureRequiresAccountVerification({
@@ -13759,6 +13762,16 @@ const mediaGenerationActionMarkup = ({
       ? "media-job-reconcile"
       : primaryAction.confirmNewSubmission ? "media-job-resubmit warning" : "media-job-resume";
     buttons.push(`<button class="${className}" type="button" data-whiteboard-candidate-action data-media-job-action="${escapeHtml(primaryAction.action)}" data-media-job-id="${escapeHtml(jobId)}"${primaryAction.confirmNewSubmission ? ' data-confirm-new-submission="true"' : ""} title="${escapeHtml(title)}">${icon(primaryAction.recovery ? "\uE8B7" : "\uE768", label)}<span>${escapeHtml(label)}</span></button>`);
+  }
+  if (allowFailureRetrySetup && !primaryAction && mediaGenerationFailureNeedsCard({
+    status,
+    providerStatus,
+    providerTaskId,
+    billingRisk,
+    resultSuppressed,
+  })) {
+    const label = uiText("重新生成");
+    buttons.push(`<button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="retry_setup" data-media-job-id="${escapeHtml(jobId)}" title="${escapeHtml(uiText("恢复原提示词、参考和参数到生成面板；只有再次点击生成后才会提交新任务"))}">${icon("\uE768", label)}<span>${escapeHtml(label)}</span></button>`);
   }
   if (availableActions.dismissCompleted || availableActions.dismissUncertain) {
     const completed = availableActions.dismissCompleted === true;
@@ -13917,6 +13930,30 @@ const handleMediaGenerationActionElement = async (element) => {
       return job;
     }
     throw new Error("当前任务的连接凭据已失效，请到模型设置中重新核验该连接");
+  }
+  if (action === "retry_setup") {
+    const job = await fetchWhiteboardGenerationJob(jobId);
+    if (!mediaGenerationFailureNeedsCard(job)) throw new Error("当前任务不是可重新准备的明确失败状态");
+    const target = job.target ?? {};
+    if (!workspaceTargetIsActive(target.workspaceKind, target.workspacePath)
+      || state.activeDocument !== target.documentId
+      || !whiteboardNodeById(target.nodeId)) {
+      throw new Error("原失败卡片当前不可见，请先打开对应白板后重试");
+    }
+    restoreInterruptedWhiteboardGenerationDraft(job);
+    const candidateKey = whiteboardCandidateKey(target.nodeId, {
+      workspacePath: target.workspacePath,
+      documentId: target.documentId,
+    });
+    stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
+    renderWhiteboardCandidateLocation({ workspacePath: target.workspacePath, documentId: target.documentId });
+    reactivateWhiteboardGenerationIntent(target.nodeId);
+    if (job.channel === "video") openWhiteboardVideoDialog(target.nodeId, { allowUnavailable: true });
+    else if (job.channel === "image") openWhiteboardImageDialog(target.nodeId, "auto", { allowUnavailable: true });
+    else if (job.channel === "audio") openWhiteboardAudioDialog(target.nodeId, { allowUnavailable: true });
+    else throw new Error("当前失败任务不属于可重新准备的媒体类型");
+    showToast("已恢复原提示词和生成参数；请核对后再次点击生成，新任务才会提交");
+    return job;
   }
   return controlMediaGenerationJob(jobId, action, {
     allowNewSubmission: element.dataset.confirmNewSubmission === "true",
@@ -15239,7 +15276,7 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
   }
   const activeCandidate = ui.whiteboardCandidates.get(candidateKey);
   if (activeCandidate && activeCandidate.jobId !== job.id) return;
-  if (!whiteboardMediaJobHoldsCard(job)) {
+  if (!whiteboardMediaJobHoldsCard(job) && !mediaGenerationFailureNeedsCard(job)) {
     stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
     renderWhiteboardCandidateLocation({
       workspacePath: target.workspacePath,
@@ -17479,6 +17516,15 @@ const renderWhiteboard = (documentState) => {
           ? `${mediaGenerationPhaseText(candidate)}${candidate.error ? `：${String(candidate.error).slice(0, 120)}` : ""}`
           : uiText("连接中断，需重新生成")
       : generating ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText("正在生成") : "";
+    const generationFailureDetail = candidateInterrupted
+      && durableMediaCandidate
+      && mediaGenerationFailureNeedsCard(candidate)
+      && candidate.error
+      ? `<div class="whiteboard-generation-failure-detail" role="alert"><strong>${escapeHtml(uiText(`${{ image: "图片", video: "视频", audio: "音频" }[candidate.channel] || "媒体"}生成失败`))}</strong><span>${escapeHtml(candidate.error)}</span><small>${escapeHtml([
+          candidate.jobId ? `${uiText("神思任务")}：${candidate.jobId}` : "",
+          candidate.providerTaskId ? `${uiText("厂商任务")}：${candidate.providerTaskId}` : "",
+        ].filter(Boolean).join(" · "))}</small></div>`
+      : "";
     const generationMeasurementActive = Boolean(candidate && whiteboardGenerationMeasurementActive(candidate));
     const generationMeasurementStarted = Boolean(candidate && Number(candidate.startedAt) > 0);
     const visibleGenerationProgress = Boolean(candidate && whiteboardGenerationProgressActive(candidate) && whiteboardProgressTarget(candidate) !== null);
@@ -17544,11 +17590,12 @@ const renderWhiteboard = (documentState) => {
     const markup = `<article class="whiteboard-card ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
       ${generatedNodeTitle}
       ${kindMarkup}
+      ${generationFailureDetail}
       ${generationTypeIndicator}
       ${compositeProcessButton}
       ${content}
       ${imageEditButton}
-      ${candidateApplyFailed ? `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="reapply" data-media-job-id="${escapeHtml(candidate.jobId || "")}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button></div>` : candidate ? mediaGenerationActionMarkup({ jobId: candidate.jobId, status: candidate.status, availableActions: candidate.availableActions, desiredAction: candidate.desiredAction, providerErrorCode: candidate.providerErrorCode, error: candidate.error, providerTaskId: candidate.providerTaskId, submissionState: candidate.submissionState }, { compact: true }) : ""}
+      ${candidateApplyFailed ? `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="reapply" data-media-job-id="${escapeHtml(candidate.jobId || "")}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button></div>` : candidate ? mediaGenerationActionMarkup({ jobId: candidate.jobId, status: candidate.status, availableActions: candidate.availableActions, desiredAction: candidate.desiredAction, providerErrorCode: candidate.providerErrorCode, error: candidate.error, providerTaskId: candidate.providerTaskId, submissionState: candidate.submissionState, providerStatus: candidate.providerStatus, billingRisk: candidate.billingRisk, resultSuppressed: candidate.resultSuppressed }, { compact: true, allowFailureRetrySetup: true }) : ""}
       ${lowDetail ? "" : `<button class="whiteboard-node-handle input" type="button" data-canvas-handle="input" title="${escapeHtml(uiText("输入节点：接收直接上游信息"))}" aria-label="${escapeHtml(uiText("输入节点：接收直接上游信息"))}"></button>
       <button class="whiteboard-node-handle output" type="button" data-canvas-handle="output" title="${escapeHtml(uiText("输出节点：连接下游卡片"))}" aria-label="${escapeHtml(uiText("输出节点：连接下游卡片"))}"></button>`}
       ${resizeHandles}

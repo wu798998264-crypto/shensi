@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
+import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
 
 const [app, server, mediaWorker] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
@@ -53,6 +53,10 @@ assert.match(app, /candidate \? mediaGenerationActionMarkup\(\{ jobId: candidate
 assert.match(app, /旧任务已忽略，当前卡片和配置选择已恢复/u, "忽略旧任务后必须明确告知卡片与配置选择已经恢复");
 assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面必须只显示真实阻塞软件操作的媒体任务");
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
+assert.match(app, /!whiteboardMediaJobHoldsCard\(job\) && !mediaGenerationFailureNeedsCard\(job\)/u, "明确失败必须保留在原卡片，但不得重新成为全局阻塞任务");
+assert.match(app, /class="whiteboard-generation-failure-detail" role="alert"/u, "失败卡片必须直接显示真实错误和任务编号");
+assert.match(app, /data-media-job-action="retry_setup"/u, "明确失败卡片必须提供恢复原参数的重新生成入口");
+assert.match(app, /已恢复原提示词和生成参数；请核对后再次点击生成/u, "重新生成入口不得绕过用户确认直接提交收费任务");
 assert.match(app, /const pendingManualRecoveryJobs = new Map\(jobs[\s\S]{0,260}filter\(mediaRecoveryJobIsActionable\)/u,
   "恢复扫描必须独立记录仍需用户处理的阻塞任务，不能只记录恢复过程异常");
 assert.match(app, /pendingManualRecoveryJobs\.set\(job\.id, \{ job, detail: error\.message \}\)/u,
@@ -89,6 +93,19 @@ assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", appliedAt: new Date().toISOString() }), false, "回填完成的任务必须立即隐藏");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", billingRisk: "", availableActions: { dismissCompleted: true } }), true, "未回填完成任务在用户处理前仍需显示放弃动作");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", resultSuppressed: true, availableActions: { dismissCompleted: true } }), false, "已放弃并隐藏的完成任务不得继续阻塞");
+
+const terminalProviderFailure = {
+  id: "generation-provider-failed",
+  mode: "server",
+  channel: "video",
+  status: "failed",
+  providerStatus: "failed",
+  providerTaskId: "provider-task-failed",
+  billingRisk: "",
+};
+assert.equal(mediaGenerationFailureNeedsCard(terminalProviderFailure), true, "厂商明确失败必须留在原卡片显示原因和重试入口");
+assert.equal(mediaRecoveryJobBlocksOperation(terminalProviderFailure), false, "厂商明确失败不得污染全局待处理阻塞列表");
+assert.equal(mediaGenerationFailureNeedsCard({ ...terminalProviderFailure, resultSuppressed: true }), false, "用户已替代或停止的失败任务不得再次显示");
 
 const dataRoot = await mkdtemp(join(tmpdir(), "shensi-media-single-flight-"));
 process.env.SHENSI_DATA_ROOT = dataRoot;
