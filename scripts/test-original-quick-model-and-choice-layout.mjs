@@ -10,8 +10,8 @@ const formStart = app.indexOf('id="chatForm"');
 assert.ok(composerStart > 0 && choiceStart > composerStart && choiceStart < formStart, "所有对话选项必须位于输入区容器内、聊天表单正上方");
 
 const quickAgentFields = app.slice(app.indexOf('id="quickAgentFields"'), app.indexOf('id="quickCodexConnection"'));
-for (const label of ["Agent 配置", "Agent 模型", "检查当前 Agent", "推理强度", "响应速度", "更换目录"]) {
-  assert.match(quickAgentFields, new RegExp(label, "u"), `Codex 必须继续使用原版模型选择界面：${label}`);
+for (const label of ["文字配置", "文字模型", "检查当前 Agent", "推理强度", "响应速度", "更换目录"]) {
+  assert.match(quickAgentFields, new RegExp(label, "u"), `统一 Agent 必须保留完整的快捷模型选择能力：${label}`);
 }
 
 const codexSelectionStart = app.indexOf("const currentCodexConnectionSelected");
@@ -26,7 +26,8 @@ assert.match(optionCss, /border-radius:\s*999px/u, "选项按钮应采用参考�
 
 const choiceButtonStart = app.indexOf("const conversationChoiceButton");
 const choiceButtonEnd = app.indexOf("const renderConversationChoicePanel", choiceButtonStart);
-assert.doesNotMatch(app.slice(choiceButtonStart, choiceButtonEnd), /<small>/u, "选项按钮内部不得再显示造成大方格的说明块");
+assert.doesNotMatch(optionCss, /flex-direction:\s*column/u, "选项内部不得纵向堆叠成大方格");
+assert.match(optionCss, /white-space:\s*nowrap/u, "选项按钮必须保持单行紧凑布局");
 assert.doesNotMatch(app.slice(choiceButtonStart, choiceButtonEnd), /title=/u, "选项按钮不得通过悬停文案解释底层流程");
 assert.match(css, /\.conversation-choice-question\s*\{[^}]*display:\s*none/su, "选项问题已经进入聊天记录，选项栏不应重复显示");
 assert.match(app, /其他要求可以直接在下方对话框中输入。/u, "选项栏必须只保留统一的手动输入提示");

@@ -107,11 +107,19 @@ const taskManifest = buildTaskContextManifest({
 assert.equal(taskManifest.some((item) => item.id === "recycled"), false, "正式任务资料清单不得读取回收站正文");
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+const agentTools = await readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8");
+const structureService = await readFile(new URL("../src/server/native-workspace-structure-service.mjs", import.meta.url), "utf8");
 assert.match(app, /createConversationTrashEntry\(\{ conversation: clone\(conversation\) \}\)/u, "删除历史对话必须完整进入回收站");
 assert.match(app, /buildDeletedContentRecoveryContext\(\{ entries: state\.trash/u, "工作区操作必须先建立回收站读取授权");
 assert.match(app, /deletedContentSearchEntries\(state\.trash/u, "全局搜索必须经过回收站读取门禁");
-assert.match(app, /landingOnly \|\| deletedContentRequest/u, "Agent 中涉及已删除内容的请求必须回到受控恢复路径，不能直接扫描工作区");
-assert.match(app, /if \(deletedContentRequestMentioned\(prompt\)\)[\s\S]{0,320}executionSurface: "chat"/u, "排队或续接的 Agent 删除内容请求也必须转交受控 Chat 恢复路径");
+assert.match(agentTools, /tool\("trash", "列出当前作品回收站中的可恢复文档和文件夹，不读取其他作品或外部回收站/u,
+  "统一 Agent 只能列出当前工作区可恢复条目，不能直接扫描回收站正文");
+assert.match(agentTools, /type: \{ type: "string", enum: \[[^\]]*"folder\.restore"[^\]]*"document\.restore"/u,
+  "统一 Agent 恢复内容必须走受控结构事务");
+assert.match(agentTools, /if \(!text\(args\.expectedRevision\)\.trim\(\)\) throw new Error\("请先读取 documents\.structure 或 documents\.list 获取结构版本"\)/u,
+  "恢复前必须取得当前工作区结构 revision");
+assert.match(structureService, /clean\(expectedRevision\) !== currentRevision[\s\S]{0,180}WORKSPACE_STRUCTURE_REVISION_CONFLICT/u,
+  "结构变化后必须拒绝旧恢复计划并要求重新检查");
 assert.doesNotMatch(app, /trash:\s*\(state\.trash \?\? \[\]\)\.map/u, "工作区元数据不得默认暴露全部回收项");
 const server = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 assert.match(server, /sanitizeDeletedContentWorkspaceRequest\(\{/u, "服务端必须独立复核并缩减回收站读取范围");

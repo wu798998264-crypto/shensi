@@ -188,14 +188,25 @@ try {
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
+const agentToolsSource = await readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8");
 assert.match(appSource, /landFormalCandidateInPinnedWorkspace/u, "目标工作区不在前台时必须走后台原子事务");
-assert.match(appSource, /resolvedWorkspaceActive[\s\S]{0,700}landFormalCandidateInPinnedWorkspace/u);
+assert.match(appSource, /const pinnedWorkspace = !workspaceTargetIsActive\(workspaceScope\.workspaceKind, workspaceScope\.workspacePath\)/u,
+  "是否后台落盘必须依据任务启动时固定的工作区范围");
+assert.match(appSource, /const result = pinnedWorkspace\s*\?\s*await landFormalCandidateInPinnedWorkspace/u,
+  "切换到其他作品后必须使用固定工作区的后台原子事务");
 assert.match(appSource, /withActiveWorkspaceFormalLandingLock/u, "活动工作区提交期间切换必须等待原子落盘完成");
 assert.match(appSource, /正在完成当前文档的原子落盘，完成后自动切换作品/u);
-assert.match(appSource, /const turnContextDocuments = clone\(taskWorkspaceSourceState\.documents\)/u, "目标结构判断必须固定在任务发起时的工作区");
+assert.match(appSource, /taskWorkspaceStateForSend = await taskWorkspaceStateForSnapshot\(submittedTaskContextSnapshot\)/u,
+  "切换界面后必须重新取得发送时固定的原工作区状态");
+assert.match(appSource, /workspaceKind: taskContextSnapshot\.workspaceKind, workspacePath: taskContextSnapshot\.workspacePath/u,
+  "统一 Agent 请求必须携带发送时固定的工作区身份");
 assert.match(appSource, /savePinnedConversationCompletion[\s\S]*candidateState/u, "切换工作区后原对话与候选状态必须一并保存");
-assert.match(appSource, /const resolvedLandingWorkspacePath = creativeTask\?\.target\?\.workspacePath/u, "最终落点必须采用任务路由解析后的工作区，而不是机械绑定发送时路径");
-assert.match(appSource, /const replyBaseAuthorization = rawReply\?\.writeAuthorization/u, "服务端基于最新版重绑的授权不得被客户端旧 revision 覆盖");
+assert.match(agentToolsSource, /args\.operation !== "create" && !text\(args\.expectedRevision\)/u,
+  "统一 Agent 修改既有文档前必须持有最近读取所得 revision");
+assert.match(agentToolsSource, /const expectedRevisions = \{ \[id\]: text\(args\.expectedRevision\) \}/u,
+  "文档工具必须把 Agent 提交的最新 revision 绑定到原子事务");
+assert.match(agentToolsSource, /result = await write\(\{ appRoot, workspacePath, requestId, expectedRevisions/u,
+  "统一 Agent 必须通过神思原生文档事务写入并验收");
 assert.match(serverSource, /generation_restarted_from_latest_document/u, "生成期间修改正文后必须由服务端按最新版重跑");
 assert.match(serverSource, /latestDocumentReloaded:\s*true/u);
 

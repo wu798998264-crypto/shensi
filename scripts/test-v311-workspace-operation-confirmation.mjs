@@ -40,11 +40,18 @@ tampered.operations[1].folderLabel = "第五卷";
 assert.equal(workspaceOperationConfirmationIsCurrent(tampered, { workspaceRevision: "workspace-1" }), false, "确认后修改操作目标必须使操作哈希失效");
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(app, /!workspacePlanRequiresConfirmation\(completionMessage\.workspacePlan\)/u, "聊天完成回调只能自动执行无需确认的计划");
+const agentTools = await readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8");
+assert.doesNotMatch(app, /workspacePlanRequiresConfirmation\(completionMessage\.workspacePlan\)/u,
+  "统一 Agent 完成后不得再交给旧 Chat 回调按关键词或旧计划二次执行");
+assert.match(agentTools, /tool\("structure_apply"[\s\S]{0,1800}\["expectedRevision", "operationId", "operations"\]/u,
+  "Agent 的结构管理必须使用带 revision 和幂等标识的原子事务工具");
+assert.match(agentTools, /请先读取 documents\.structure 或 documents\.list 获取结构版本/u,
+  "Agent 未真实读取结构版本时不得执行移动、复制、删除或重命名");
+assert.match(agentTools, /interaction\.delivery 声明本轮是对话交付还是文档交付/u,
+  "统一 Agent 必须声明真实交付结果，不能只在文字中声称完成");
 assert.match(app, /workspaceOperationConfirmationIsCurrent\(plan,[\s\S]{0,160}workspaceOperationStateRevision/u, "执行前必须回读工作区结构版本");
 assert.match(app, /automatic:\s*true,\s*confirmed:\s*true/u, "已有用户确认的作者驾驶舱操作必须显式传递确认状态");
 assert.match(app, /确认并执行/u, "对话区必须明确显示确认操作按钮");
 assert.match(app, /source:\s*"model_planner"[\s\S]{0,220}workspaceRevision/u, "模型规划必须绑定确认原因和工作区版本");
 
 console.log("Shensi workspace operation confirmation passed");
-

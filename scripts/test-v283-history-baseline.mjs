@@ -49,7 +49,9 @@ const blankTransaction = await beginDocumentWriteTransaction({
   sourceMessageId: "user-create-8",
   sourceInstruction: "生成第八章并落盘",
 });
-assert.equal(blankTransaction.snapshot, null, "空白文档不能生成普通正文历史版本");
+assert.equal(blankTransaction.snapshot.document.html, blank.html, "空白占位文档写入前也必须保存完整历史快照");
+assert.equal(blankTransaction.snapshot.document.title, blank.title);
+assert.equal((await verifyDocumentVersionSnapshot(blankTransaction.snapshot)).ok, true);
 assert.equal(blankTransaction.baseline.kind, "blank_document_baseline");
 assert.equal(blankTransaction.baseline.documentId, "chapter-8");
 assert.deepEqual(generatedLandingHistoryPlan({

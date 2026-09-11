@@ -34,7 +34,16 @@ try {
       ...options,
       load: async () => { workspaceReads += 1; throw new Error("不应预读工作区"); },
     }),
-    run: async (options) => { capturedRun = options; return { text: "只讨论，不读取空文档。" }; },
+    run: async (options) => {
+      capturedRun = options;
+      const delivery = await options.workspaceToolRuntime.invoke({
+        namespace: "interaction",
+        tool: "delivery",
+        arguments: { mode: "conversation", documentIds: [] },
+      });
+      assert.equal(delivery.success, true);
+      return { text: "只讨论，不读取空文档。" };
+    },
   });
   const semanticInstruction = "不要生成视频；这里的‘覆盖、续写’只是讨论词语，不修改任何文档。";
   const started = await noPreloadService.start({
@@ -57,6 +66,7 @@ try {
   assert.ok(capturedRun.contextBlocks.some((block) => block.name === "任务路由文档"));
 
   const handoffs = [];
+  const mcpToolsByUrl = new Map();
   let openedHosts = 0;
   let closedHosts = 0;
   const gateway = createConversationAgentGateway({
@@ -68,11 +78,23 @@ try {
     startMcp: async ({ tools }) => {
       openedHosts += 1;
       assert.ok(tools.dynamicTools.some((entry) => entry.name === "documents"));
-      return { url: `http://127.0.0.1:${41000 + openedHosts}/mcp`, headers: { Authorization: "Bearer test" }, close: async () => { closedHosts += 1; } };
+      const url = `http://127.0.0.1:${41000 + openedHosts}/mcp`;
+      mcpToolsByUrl.set(url, tools);
+      return { url, headers: { Authorization: "Bearer test" }, close: async () => { closedHosts += 1; mcpToolsByUrl.delete(url); } };
     },
     externalRunners: {
-      openCode: async (options) => { handoffs.push({ engine: "opencode", options }); return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" }; },
-      claudeCode: async (options) => { handoffs.push({ engine: "claude_code", options }); return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" }; },
+      openCode: async (options) => {
+        handoffs.push({ engine: "opencode", options });
+        const delivery = await mcpToolsByUrl.get(options.nativeHost.url).invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } });
+        assert.equal(delivery.success, true);
+        return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" };
+      },
+      claudeCode: async (options) => {
+        handoffs.push({ engine: "claude_code", options });
+        const delivery = await mcpToolsByUrl.get(options.nativeHost.url).invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } });
+        assert.equal(delivery.success, true);
+        return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" };
+      },
     },
   });
   const runExternal = async (agentEngine, conversationId) => {
@@ -96,15 +118,21 @@ try {
   ]);
   assert.equal(openCode.status.status, "completed", openCode.status.error);
   assert.equal(claude.status.status, "completed", claude.status.error);
-  assert.equal(handoffs.length, 2);
+  assert.equal(handoffs.length, 4, "两个外置 Agent 都必须执行首次处理和独立交付复核");
+  const handoffCounts = handoffs.reduce((counts, handoff) => {
+    counts.set(handoff.engine, (counts.get(handoff.engine) || 0) + 1);
+    return counts;
+  }, new Map());
+  assert.equal(handoffCounts.get("opencode"), 2);
+  assert.equal(handoffCounts.get("claude_code"), 2);
   for (const handoff of handoffs) {
     assert.match(handoff.options.prompt, /完整执行这项任务/u);
     assert.ok(handoff.options.nativeHost?.url, "外置 Agent 必须获得完整神思 MCP 工具入口");
     assert.equal(handoff.options.allowEdits, false, "不得绕开神思文档事务直接写作品文件");
     assert.ok(handoff.options.contextBlocks.some((block) => block.name === "任务路由文档"));
   }
-  assert.equal(openedHosts, 2);
-  assert.equal(closedHosts, 2, "每个外置 Agent 完成后必须关闭隔离 MCP 服务");
+  assert.equal(openedHosts, 4);
+  assert.equal(closedHosts, 4, "外置 Agent 每次处理和复核后都必须关闭隔离 MCP 服务");
   console.log("Conversation Agent boundary: no keyword imports/preloads and complete OpenCode/Claude MCP handoff passed");
 } finally {
   const rel = relative(resolve(tmpdir()), root);

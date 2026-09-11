@@ -94,8 +94,10 @@ assert.doesNotMatch(dispatch, /specialOperationRequest|isConversationSkillInstal
   "安装和自修复也必须先进入统一 Agent，不能在提交入口按关键词分流");
 assert.doesNotMatch(dispatch, /sendCodexAgentMessage\(/u,
   "普通提交入口不得让任何特殊指令绕过统一排队顺序");
-assert.match(dispatch, /sendMessage\([\s\S]*taskContextSnapshot/u);
-assert.match(dispatch, /retryContext\.sourceMessage\.turnContextSnapshot \|\| taskContextSnapshot/u);
+assert.match(dispatch, /const snapshot = taskContextSnapshot\s*\?\s*clone\(taskContextSnapshot\)\s*:\s*captureTaskContextSnapshot\(targetConversationId\)/u,
+  "提交入口必须在延迟渲染前冻结本轮任务上下文");
+assert.match(dispatch, /sendMessage\([\s\S]*taskContextSnapshot: snapshot/u,
+  "统一 Agent 必须接收提交时冻结的任务上下文");
 
 const queue = await sourceBlock("const enqueueMessage =", "const updateQueuedMessage =");
 assert.match(queue, /taskContextSnapshot = null/u);

@@ -185,7 +185,10 @@ for (const source of [orchestrator, guidanceDoc, moduleDoc, ruleDoc]) {
 }
 assert.match(orchestrator, /笔记中创建小说不得套用作品模式分卷/u);
 assert.match(appSource, /persistentCreativeGuidanceContract\(/u, "后续写作上下文必须通过来源模式边界读取长期合同");
-assert.match(appSource, /conversation\[persistentGuidanceContractKey\]/u, "完成引导后必须按产物和来源模式保存长期合同");
+assert.match(appSource, /creativeGuidanceChoiceContinuation\([\s\S]{0,700}sendMessage\(conversationChoiceUserInstruction\(/u,
+  "创作引导选择必须作为普通用户文字继续同一 Agent 对话");
+assert.match(appSource, /messages: taskMessages\.filter\([\s\S]{0,320}message\.id === sourceMessageId/u,
+  "统一 Agent 必须接收包含引导回答在内的持久化会话消息");
 assert.match(appSource, /guidanceState:\s*candidateTarget\?\.guidanceState/u, "正式推演记录必须消费本轮结构化引导状态");
 
 console.log("creative guidance discussion-first tests passed");
