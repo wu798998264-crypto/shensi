@@ -8,6 +8,7 @@ const desktop = await readFile(new URL("../packaging/windows/desktop-app/main.mj
 const appData = await readFile(new URL("../src/server/app-data.mjs", import.meta.url), "utf8");
 const updateConfig = JSON.parse(await readFile(new URL("../update-config.json", import.meta.url), "utf8"));
 const updatePreparation = await readFile(new URL("./windows/prepare-github-release.mjs", import.meta.url), "utf8");
+const finalSigner = await readFile(new URL("./windows/sign-final-installer.ps1", import.meta.url), "utf8");
 
 assert.match(packageScript, /yyyyMMddHHmmssfff/u, "every installer must get a unique timestamp build id");
 assert.match(packageScript, /sameVersionInstaller[\s\S]{0,500}Increment package\.json version/u, "a semantic version must not be packaged twice");
@@ -23,6 +24,7 @@ assert.ok(packageJson.build?.files?.includes("update-config.json"), "packaged ap
 assert.equal(updateConfig.repository, "wu798998264-crypto/shensi");
 assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater must pin the release manifest public key");
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
+assert.match(finalSigner, /Get-Content\s+-Raw\s+-Encoding\s+UTF8/u, "Windows PowerShell must read UTF-8 package metadata without corrupting the Chinese product name");
 assert.match(updatePreparation, /uploadPerformed:\s*false/u, "release preparation must remain local until the user explicitly requests upload");
 
 console.log("Shensi release engineering contract passed");
