@@ -53,6 +53,12 @@ assert.match(app, /candidate \? mediaGenerationActionMarkup\(\{ jobId: candidate
 assert.match(app, /旧任务已忽略，当前卡片和配置选择已恢复/u, "忽略旧任务后必须明确告知卡片与配置选择已经恢复");
 assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面必须只显示真实阻塞软件操作的媒体任务");
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
+assert.match(app, /const pendingManualRecoveryJobs = new Map\(jobs[\s\S]{0,260}filter\(mediaRecoveryJobIsActionable\)/u,
+  "恢复扫描必须独立记录仍需用户处理的阻塞任务，不能只记录恢复过程异常");
+assert.match(app, /pendingManualRecoveryJobs\.set\(job\.id, \{ job, detail: error\.message \}\)/u,
+  "自动恢复失败的任务必须继续保留在待处理入口");
+assert.match(app, /if \(pendingManualRecoveryJobs\.size\)[\s\S]{0,520}showMediaRecoveryBanner/u,
+  "任务恢复到失败卡片后，只要仍然阻塞就必须显示全局待处理提示");
 assert.match(app, /const remaining = await readMediaRecoveryJobsForDialog\(\);[\s\S]{0,100}clearMediaRecoveryBanner\(\)/u, "处理完成后必须立即刷新列表并清除阻塞横幅");
 assert.match(app, /addCanvasGenerationRecoveryTombstone\(removed\.canvas, \{ nodeId, generationJobId \}\)/u, "单卡片删除必须持久化生成目标删除墓碑");
 assert.match(app, /targetWasDeleted = canvasGenerationRecoveryTargetDeleted/u, "恢复扫描必须识别用户已经删除的生成目标");

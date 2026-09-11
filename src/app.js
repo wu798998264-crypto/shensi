@@ -15483,7 +15483,13 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       ...(smokeResponse.ok && smokePayload.ok ? smokePayload.jobs ?? [] : []),
     ].map((job) => [job.id, job])).values()];
     let recovered = 0;
-    const recoveryIssues = [];
+    // A task can be restored into its interrupted card without being resolved.
+    // Keep those jobs visible in the global recovery entry until the user
+    // cancels, dismisses, retries or successfully applies the existing result.
+    const pendingManualRecoveryJobs = new Map(jobs
+      .filter((job) => String(job.status || "") !== "complete")
+      .filter(mediaRecoveryJobIsActionable)
+      .map((job) => [job.id, { job, detail: mediaGenerationPhaseText(job) }]));
     for (const job of jobs) {
       try {
         // Capability evidence is independent from card readback. Rebind it
@@ -15587,13 +15593,15 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       } catch (error) {
         console.warn(`Generation job ${job.id} recovery skipped:`, error.message);
         if (mediaRecoveryJobBlocksOperation(job) && mediaRecoveryJobIsActionable(job)) {
-          recoveryIssues.push(`${job.channel === "video" ? "视频" : job.channel === "image" ? "图片" : "媒体"}任务 ${job.id.slice(-8)}：${error.message}`);
+          pendingManualRecoveryJobs.set(job.id, { job, detail: error.message });
         }
       }
     }
     if (recovered && activeWhiteboardDocument()) renderWhiteboard(activeWhiteboardDocument());
-    if (recoveryIssues.length) {
-      showMediaRecoveryBanner(`当前有 ${recoveryIssues.length} 项待处理问题：${recoveryIssues[0]}${recoveryIssues.length > 1 ? `；其余 ${recoveryIssues.length - 1} 项可在“查看待处理”中处理` : ""}`);
+    if (pendingManualRecoveryJobs.size) {
+      const [{ job, detail }] = pendingManualRecoveryJobs.values();
+      const taskLabel = `${job.channel === "video" ? "视频" : job.channel === "image" ? "图片" : "媒体"}任务 ${job.id.slice(-8)}`;
+      showMediaRecoveryBanner(`当前有 ${pendingManualRecoveryJobs.size} 项待处理媒体任务：${taskLabel}：${detail || "仍需手动处理"}${pendingManualRecoveryJobs.size > 1 ? `；其余 ${pendingManualRecoveryJobs.size - 1} 项可在“查看待处理”中处理` : ""}`);
     } else if (!smokeResponse.ok || !smokePayload.ok) {
       showMediaRecoveryBanner(smokePayload.message || "常规媒体任务已恢复，但收费能力验证任务暂时无法读取；请重新检查。");
     } else {
