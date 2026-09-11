@@ -11,14 +11,14 @@ const safeJson = async (response) => {
   try { payload = raw ? JSON.parse(raw) : null; } catch {}
   if (!response.ok) {
     const detail = text(payload?.error?.message || payload?.message || raw).slice(0, 600);
-    const error = new Error(`神思运行器 API 请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
+    const error = new Error(`内置 Agent API 请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
     error.code = response.status === 401 ? "CODEX_API_UNAUTHORIZED"
       : response.status === 403 ? "CODEX_API_FORBIDDEN"
         : response.status === 429 ? "CODEX_API_RATE_LIMITED" : "CODEX_API_REQUEST_FAILED";
     error.statusCode = response.status;
     throw error;
   }
-  if (!payload || typeof payload !== "object") throw Object.assign(new Error("神思运行器 API 返回了无效响应"), { code: "CODEX_API_INVALID_RESPONSE" });
+  if (!payload || typeof payload !== "object") throw Object.assign(new Error("内置 Agent API 返回了无效响应"), { code: "CODEX_API_INVALID_RESPONSE" });
   return payload;
 };
 
@@ -69,7 +69,7 @@ const permissionInstructions = (permissionMode) => permissionMode === "shensi_on
 const buildInstructions = ({ contextBlocks = [], stage = "agent", permissionMode = "shensi_only" } = {}) => [
   `<shensi-stage name="${stage}">`,
   ...(stage === "conversation_agent" ? ["你是完整的 Agent。根据当前指令、任务路由和已读取证据自主执行。按需发现文档与 Skill，通过提供的工具完成任务；真实工具结果才是读写和生成成功的依据。"] : [
-    "你由神思运行器通过当前配置已核验的 Agent 协议执行。神思服务端负责文档、Skill、任务合同和正式落盘；你只能调用本轮明确提供的受控工具，不能自行猜测未读取的文件内容，也不能声称调用了实际未调用的工具。",
+    "你由内置 Agent 通过当前配置已核验的 Agent 协议执行。神思服务端负责文档、Skill、任务合同和正式落盘；你只能调用本轮明确提供的受控工具，不能自行猜测未读取的文件内容，也不能声称调用了实际未调用的工具。",
     "工作区工具均为只读且受当前作品、历史授权和读取预算约束。正式文档修改必须返回完整候选内容和目标信息，由神思事务层校验 revision、保存历史并落盘；不得要求只读工具写文件，也不得声称已经直接覆盖作品文件。",
   ]),
   permissionInstructions(permissionMode),
@@ -136,7 +136,7 @@ const webSearchApproval = async ({ permissionMode, requestApproval, settings = {
   }
   try {
     const response = await requestApproval({
-      question: "神思运行器请求为本次任务启用原生联网搜索。是否允许本次操作？",
+      question: "内置 Agent 请求为本次任务启用原生联网搜索。是否允许本次操作？",
       options: [
         { id: "allow", label: "允许本次操作" },
         { id: "deny", label: "拒绝本次操作" },
@@ -195,7 +195,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
 
   const runStage = async ({ settings = {}, prompt = "", contextBlocks = [], stage = "agent", sessionId = "", signal = null, workspaceToolRuntime = null, onToolEvent = null, drainSupplements = () => [], permissionContract = null, requestApproval = null } = {}) => {
     if (!supports({ settings, stage, sessionId })) {
-      throw Object.assign(new Error("神思运行器配置不完整：需要已核验的 Responses 或 Chat Completions Agent 配置"), { code: "CODEX_API_AGENT_CONFIG_INVALID" });
+      throw Object.assign(new Error("内置 Agent 配置不完整：需要已核验的 Responses 或 Chat Completions Agent 配置"), { code: "CODEX_API_AGENT_CONFIG_INVALID" });
     }
     const normalizedSessionId = text(sessionId);
     const permissionMode = normalizeAgentPermissionMode(permissionContract?.mode || settings.agentPermissionMode);
@@ -267,7 +267,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
           const calls = anthropicFunctionCalls(payload);
           if (!calls.length) {
             const result = anthropicOutputText(payload);
-            if (!result) throw Object.assign(new Error("神思运行器响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
+            if (!result) throw Object.assign(new Error("内置 Agent 响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
             return {
               text: result,
               protocol: "anthropic_messages",
@@ -286,7 +286,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
             };
           }
           if (usedToolCalls + calls.length > maxToolCalls) {
-            throw Object.assign(new Error(`神思运行器工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
+            throw Object.assign(new Error(`内置 Agent 工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
           }
           messages.push({ role: "assistant", content: payload.content });
           const toolResults = [];
@@ -354,7 +354,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
           const calls = Array.isArray(message.tool_calls) ? message.tool_calls.filter((call) => text(call?.id) && text(call?.function?.name)) : [];
           if (!calls.length) {
             const result = text(message.content);
-            if (!result) throw Object.assign(new Error("神思运行器响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
+            if (!result) throw Object.assign(new Error("内置 Agent 响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
             return {
               text: result,
               protocol: "chat_completions",
@@ -373,7 +373,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
             };
           }
           if (usedToolCalls + calls.length > maxToolCalls) {
-            throw Object.assign(new Error(`神思运行器工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
+            throw Object.assign(new Error(`内置 Agent 工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
           }
           messages.push({ role: "assistant", content: message.content || null, tool_calls: calls });
           for (const call of calls) {
@@ -477,7 +477,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
         const calls = functionCalls(payload);
         if (!calls.length) break;
         if (usedToolCalls + calls.length > maxToolCalls) {
-          throw Object.assign(new Error(`神思运行器工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
+          throw Object.assign(new Error(`内置 Agent 工具调用超过单任务上限（${maxToolCalls}）`), { code: "CODEX_API_TOOL_CALL_LIMIT" });
         }
         const outputs = [];
         for (const call of calls) {
@@ -523,7 +523,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
         }
       }
       const result = outputText(payload);
-      if (!result) throw Object.assign(new Error("神思运行器响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
+      if (!result) throw Object.assign(new Error("内置 Agent 响应中没有可用文本"), { code: "CODEX_API_EMPTY_RESPONSE" });
       return {
         text: result,
         protocol: "responses",
@@ -542,7 +542,7 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
       };
     } catch (error) {
       if (error?.name === "AbortError" || signal?.aborted || controller.signal.aborted) {
-        throw Object.assign(new Error("神思运行器任务已停止"), { name: "AbortError", code: "TASK_CANCELLED" });
+        throw Object.assign(new Error("内置 Agent 任务已停止"), { name: "AbortError", code: "TASK_CANCELLED" });
       }
       throw error;
     } finally {

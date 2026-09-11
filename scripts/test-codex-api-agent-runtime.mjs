@@ -13,7 +13,7 @@ import { runtimeContractForProfile } from "../src/effective-runtime-contract.js"
 import { agentCapabilitySummary, agentRuntimeProfile } from "../src/agent-runtime-profile.js";
 
 assert.ok(AGENT_ENGINE_IDS.includes("codex_api"));
-assert.equal(agentEngineDescriptor("codex_api").label, "神思运行器", "只修改用户可见名称，内部 codex_api 标识必须保持不变");
+assert.equal(agentEngineDescriptor("codex_api").label, "内置 Agent", "只修改用户可见名称，内部 codex_api 标识必须保持不变");
 const profile = {
   id: "codex-api-test",
   provider: "OpenAI",
@@ -28,7 +28,7 @@ const profile = {
   executionModes: ["chat", "agent"],
 };
 const profileBeforeLabel = JSON.stringify(profile);
-assert.equal(generationProfileLabel(profile, "text"), "OpenAI · gpt-5-codex", "文字配置名称应显示真实服务商与模型，不再生成名为神思运行器的独立配置");
+assert.equal(generationProfileLabel(profile, "text"), "OpenAI · gpt-5-codex", "文字配置名称应显示真实服务商与模型，不再生成独立运行器配置");
 assert.equal(JSON.stringify(profile), profileBeforeLabel, "显示名称计算不得修改或复制现有配置");
 assert.equal(agentProfileBelongsToEngine(profile, "codex_api"), true);
 assert.deepEqual(executionModeCapabilities(profile).modes, ["agent"]);
@@ -38,7 +38,7 @@ const shensiRuntimeProfile = agentRuntimeProfile({
   model: "gpt-5.6-sol",
   capabilities: { workspaceToolsAvailable: true },
 });
-assert.equal(shensiRuntimeProfile.capabilities.openCodeToolsEnabled, false, "神思运行器不得继承 OpenCode 工具能力");
+assert.equal(shensiRuntimeProfile.capabilities.openCodeToolsEnabled, false, "内置 Agent 不得继承 OpenCode 工具能力");
 assert.match(agentCapabilitySummary(shensiRuntimeProfile), /神思工作区工具/u);
 assert.doesNotMatch(agentCapabilitySummary(shensiRuntimeProfile), /OpenCode/u, "神思任务详情不得串入 OpenCode 能力标签");
 assert.doesNotMatch(agentCapabilitySummary(agentRuntimeProfile({ engine: "opencode" })), /OpenCode 原生工具/u, "仅限神思时不得暴露 OpenCode 宿主工具");
@@ -58,7 +58,7 @@ assert.equal(agentProfileBelongsToEngine(compatibleProfile, "codex_api"), true);
 assert.deepEqual(executionModeCapabilities(compatibleProfile).modes, ["agent"]);
 assert.equal(runtimeContractForProfile({ profile: compatibleProfile, surface: "agent" }).runner, "codex_api_agent");
 assert.equal(runtimeContractForProfile({ profile: { ...compatibleProfile, provider: "DeepSeek", protocol: "chat_completions" }, surface: "agent" }).ok, true);
-assert.equal(agentModelBelongsToEngine("deepseek/deepseek-chat", "codex_api"), true, "神思运行器不得按模型名称或 provider/model 格式过滤模型");
+assert.equal(agentModelBelongsToEngine("deepseek/deepseek-chat", "codex_api"), true, "内置 Agent 不得按模型名称或 provider/model 格式过滤模型");
 
 const historyAuthorization = createHistoryReadAuthorization({
   instruction: "比较第三章修改前后的历史版本",
@@ -102,7 +102,7 @@ assert.equal(body.model, "gpt-5-codex");
 assert.equal(body.reasoning.effort, "high");
 assert.equal(body.service_tier, "fast");
 assert.match(body.instructions, /主角是剑修/u);
-assert.match(body.instructions, /神思运行器/u);
+assert.match(body.instructions, /内置 Agent/u);
 assert.match(body.instructions, /仅限神思/u);
 assert.equal(body.tools, undefined, "联网关闭时不得向 Responses API 暴露网页工具");
 
@@ -271,7 +271,7 @@ assert.deepEqual(toolRequests[0].tools, [{
   parameters: workspaceToolRuntime.dynamicTools[0].tools[0].inputSchema,
   strict: false,
 }]);
-assert.equal(toolRequests[0].max_tool_calls, undefined, "Responses 兼容接口不得收到 max_tool_calls；神思运行器应在本地限制工具调用次数");
+assert.equal(toolRequests[0].max_tool_calls, undefined, "Responses 兼容接口不得收到 max_tool_calls；内置 Agent 应在本地限制工具调用次数");
 assert.deepEqual(workspaceInvocations, [{ namespace: "workspace", tool: "read", arguments: { path: "正文/第1章.md" } }]);
 assert.equal(toolRequests[1].previous_response_id, "resp_tool_1");
 assert.deepEqual(toolRequests[1].input, [{ type: "function_call_output", call_id: "call_1", output: JSON.stringify({ ok: true, result: { text: "第一章内容" } }) }]);
@@ -476,7 +476,7 @@ assert.equal(runtime.supports({ settings: compatibleProfile, stage: "agent", ses
 runtime.close();
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
-assert.match(appSource, /<option value="codex_api">神思运行器<\/option>/u, "模型设置必须保留神思运行器选项");
+assert.match(appSource, /<option value="codex_api">内置 Agent<\/option>/u, "模型设置必须保留内置 Agent 选项");
 assert.match(appSource, /<label>文字配置<select id="quickAgentEngine">/u, "对话区必须显示统一文字配置入口");
 assert.match(appSource, /<select id="chatProviderSelect" hidden aria-hidden="true"><option value="codex_agent" selected>/u, "对话执行入口必须固定为统一 Agent");
 assert.match(appSource, /<select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>/u, "文字配置设置必须默认 Agent-only");
@@ -491,12 +491,12 @@ assert.match(serverSource, /!isShensiAgentCompatibleProfile\(profile\)/u);
 assert.match(serverSource, /SHENSI_AGENT_API_PROTOCOLS\.includes\(String\(profile\.protocol \|\| ""\)\)/u);
 assert.match(serverSource, /!apiKey && !isSystemManagedPublicAgentProfile\(profile\)/u);
 assert.match(serverSource, /runtimeSettings\.webSearchEnabled = requestedWebSearch && Boolean\(supportedWebSearchMode\)/u);
-assert.match(serverSource, /const workspaceToolContext = options\.shensiRuntime\?\.workspaceToolContext;/u, "通用神思运行器路径必须读取当前工作区工具上下文");
-assert.match(serverSource, /const workspaceToolRuntime = workspaceToolContext\?\.root[\s\S]{0,300}codexAgentProvider\.createWorkspaceToolRuntime\(/u, "通用神思运行器路径必须创建当前工作区只读工具");
-assert.match(serverSource, /signal: options\.signal,\s+workspaceToolRuntime,/u, "通用神思运行器路径必须把只读工具交给 API Agent runtime");
+assert.match(serverSource, /const workspaceToolContext = options\.shensiRuntime\?\.workspaceToolContext;/u, "通用内置 Agent 路径必须读取当前工作区工具上下文");
+assert.match(serverSource, /const workspaceToolRuntime = workspaceToolContext\?\.root[\s\S]{0,300}codexAgentProvider\.createWorkspaceToolRuntime\(/u, "通用内置 Agent 路径必须创建当前工作区只读工具");
+assert.match(serverSource, /signal: options\.signal,\s+workspaceToolRuntime,/u, "通用内置 Agent 路径必须把只读工具交给 API Agent runtime");
 assert.match(serverSource, /const generalWorkspaceToolContext = workspaceToolContextForModelRequest\(/u, "白板与通用 Agent 路径必须解析可信工作区上下文");
 assert.match(serverSource, /generalAgentSessionId[\s\S]{0,900}workspaceToolContext: generalWorkspaceToolContext/u, "白板与通用 Agent 路径必须携带可信工作区上下文");
-assert.match(serverSource, /const effectiveOptions = \{[\s\S]{0,700}workspaceToolContextForModelRequest\(/u, "完整创作链中的神思运行器也必须复用同一只读工作区工具边界");
+assert.match(serverSource, /const effectiveOptions = \{[\s\S]{0,700}workspaceToolContextForModelRequest\(/u, "完整创作链中的内置 Agent 也必须复用同一只读工作区工具边界");
 assert.match(appSource, /webSearch: conversation\.webSearchEnabled === true/u);
 assert.match(appSource, /const currentWebSearchMode = \(\) => \{\s+return webSearchMode\(generationSettingsForAgentEngine\(state\.settings,/u);
 assert.match(appSource, /button\.disabled = !available;/u);
@@ -518,4 +518,4 @@ await new Promise((resolve) => setImmediate(resolve));
 cancellation.abort();
 await assert.rejects(pending, (error) => error?.code === "TASK_CANCELLED");
 cancellationRuntime.close();
-console.log("神思运行器 runtime tests passed");
+console.log("Built-in Agent runtime tests passed");

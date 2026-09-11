@@ -750,15 +750,15 @@ const resolveCodexApiAgentSettings = (settings = {}) => {
   const profile = (requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null)
     || (String(settings?.agentEngine || "") === "codex_api" ? settings : null);
   if (!profile || profile.agentEngine !== "codex_api" || profile.adapter !== "api" || !isShensiAgentCompatibleProfile(profile)) {
-    throw Object.assign(new Error("当前 Agent 配置不属于神思运行器，已阻止跨引擎串用"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
+    throw Object.assign(new Error("当前 Agent 配置不属于内置 Agent，已阻止跨引擎串用"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
   }
   const provider = String(profile.provider || "").trim();
   const model = String(profile.agentModelId || profile.model || "").trim();
   const apiKey = String(profile.apiKey || "").trim();
   const baseUrl = String(profile.baseUrl || (provider === "OpenAI" ? "https://api.openai.com/v1" : "")).trim();
-  if (!apiKey && !isSystemManagedPublicAgentProfile(profile)) throw Object.assign(new Error("神思运行器缺少 API Key，请先在模型设置中完成连接测试"), { code: "CODEX_API_KEY_REQUIRED", statusCode: 409 });
-  if (!model) throw Object.assign(new Error("神思运行器缺少模型"), { code: "CODEX_API_MODEL_REQUIRED", statusCode: 409 });
-  if (!SHENSI_AGENT_API_PROTOCOLS.includes(String(profile.protocol || ""))) throw Object.assign(new Error("神思运行器需要 Responses、Chat Completions 或 Anthropic Messages Agent 协议"), { code: "CODEX_API_PROTOCOL_REQUIRED", statusCode: 409 });
+  if (!apiKey && !isSystemManagedPublicAgentProfile(profile)) throw Object.assign(new Error("内置 Agent 缺少 API Key，请先在模型设置中完成连接测试"), { code: "CODEX_API_KEY_REQUIRED", statusCode: 409 });
+  if (!model) throw Object.assign(new Error("内置 Agent 缺少模型"), { code: "CODEX_API_MODEL_REQUIRED", statusCode: 409 });
+  if (!SHENSI_AGENT_API_PROTOCOLS.includes(String(profile.protocol || ""))) throw Object.assign(new Error("内置 Agent 需要 Responses、Chat Completions 或 Anthropic Messages Agent 协议"), { code: "CODEX_API_PROTOCOL_REQUIRED", statusCode: 409 });
   return {
     ...settings,
     ...profile,
@@ -4871,7 +4871,7 @@ const handleApiRequest = async (request, response, pathname) => {
       const requestedWebSearch = body.webSearch === true;
       const supportedWebSearchMode = webSearchMode(runtimeSettings);
       if (requestedWebSearch && !supportedWebSearchMode) {
-        throw Object.assign(new Error("当前神思运行器配置未声明 Responses Web Search 能力，请切换到支持联网工具的配置"), {
+        throw Object.assign(new Error("当前内置 Agent 配置未声明 Responses Web Search 能力，请切换到支持联网工具的配置"), {
           code: "CODEX_API_WEB_SEARCH_UNSUPPORTED",
           statusCode: 409,
         });

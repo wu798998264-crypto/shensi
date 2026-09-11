@@ -80,7 +80,7 @@ assert.deepEqual(normalizedAggregate.executionModes, ["agent"]);
 const normalizedChatOnly = normalized.textConnections.find((profile) => profile.id === chatOnly.id);
 assert.equal(normalizedChatOnly.chatModelId, "", "旧 Chat-only 配置迁移后不得残留 Chat 模型字段");
 assert.equal(normalizedChatOnly.agentModelId, "deepseek-v4-pro", "旧 Chat-only API 配置必须迁移到统一 Agent 模型");
-assert.equal(normalizedChatOnly.agentEngine, "codex_api", "普通 API 文字配置默认使用神思运行器");
+assert.equal(normalizedChatOnly.agentEngine, "codex_api", "普通 API 文字配置默认使用内置 Agent");
 assert.deepEqual(normalizedChatOnly.executionModes, ["agent"]);
 
 const migratedOpenCode = normalized.textConnections.find((profile) => profile.id === "modern-deepseek-opencode");
@@ -93,7 +93,7 @@ assert.equal(normalized.textConnections.some((profile) => profile.id === legacyO
 assert.equal(normalized.textConnections.some((profile) => profile.agentEngine === "deepseek_opencode"), false, "归一化后不得再保存旧固定运行器");
 
 assert.deepEqual(normalized.textConnections.filter((profile) => profile.provider === "免费模型").map((profile) => profile.id), ["text-public-agent"],
-  "只提供限免 Agent 组合，不恢复旧的独立免费文字连接");
+  "只提供免费模型 Agent 组合，不恢复旧的独立免费文字连接");
 
 const agentPicker = visibleGenerationPickerProfiles(normalized, "text").filter((profile) => profile.executionModes.includes("agent"));
 assert.ok(agentPicker.some((profile) => profile.id === aggregate.id));
@@ -119,7 +119,7 @@ const forgedPublicContract = runtimeContractForProfile({
   },
   surface: "agent",
 });
-assert.equal(forgedPublicContract.ok, false, "任意配置不能仅靠伪造 public credentialSource 绕过神思运行器密钥校验");
+assert.equal(forgedPublicContract.ok, false, "任意配置不能仅靠伪造 public credentialSource 绕过内置 Agent 密钥校验");
 assert.equal(forgedPublicContract.code, "CODEX_API_KEY_REQUIRED");
 
 const aggregateAgentModels = agentModelsForEngine("codex_api", {
@@ -134,7 +134,7 @@ const aggregateAgentModels = agentModelsForEngine("codex_api", {
 assert.deepEqual(
   aggregateAgentModels.map((item) => item.slug),
   ["gpt-5.6-sol", "gpt-5.5", "o4-mini", "deepseek-v4-pro"],
-  "神思运行器模型下拉必须保留当前连接真实返回的全部模型，不按名称猜测兼容性",
+  "内置 Agent 模型下拉必须保留当前连接真实返回的全部模型，不按名称猜测兼容性",
 );
 
 const appSource = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../src/app.js", import.meta.url), "utf8"));

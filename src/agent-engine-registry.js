@@ -30,7 +30,7 @@ const ENGINE_DEFINITIONS = Object.freeze({
   }),
   codex_api: Object.freeze({
     id: "codex_api",
-    label: "神思运行器",
+    label: "内置 Agent",
     provider: "",
     adapter: "api",
     launcher: "responses-api",

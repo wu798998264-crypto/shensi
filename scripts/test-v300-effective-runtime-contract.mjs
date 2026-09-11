@@ -95,7 +95,7 @@ assert.equal(agent.model, "deepseek/deepseek-v4-pro");
 assert.equal(agent.credentialSource, "shensi");
 
 const explicitChat = effectiveRuntimeContract({ settings, surface: "chat", profileId: "deepseek-chat" });
-assert.equal(explicitChat.ok, true, "DeepSeek API 配置应由神思运行器按 Chat Completions 协议执行");
+assert.equal(explicitChat.ok, true, "DeepSeek API 配置应由内置 Agent 按 Chat Completions 协议执行");
 assert.equal(explicitChat.runner, "codex_api_agent");
 
 const explicitCustomApi = runtimeContractForProfile({

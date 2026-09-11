@@ -867,7 +867,7 @@ export class CodexAgentProvider {
       ok: true,
       provider: this.state.activeProvider,
       agentEngine,
-      agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : agentEngine === "trae_work" ? "Trae Work Agent" : agentEngine === "workbuddy" ? "WorkBuddy Agent" : agentEngine === "custom" ? "自定义运行器 Agent" : codexApiEngine ? "神思运行器" : "Codex Agent",
+      agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : agentEngine === "trae_work" ? "Trae Work Agent" : agentEngine === "workbuddy" ? "WorkBuddy Agent" : agentEngine === "custom" ? "自定义运行器 Agent" : codexApiEngine ? "内置 Agent" : "Codex Agent",
       permissionMode,
       permissionLabel: permissionContract.label,
       permissionContract,
@@ -876,7 +876,7 @@ export class CodexAgentProvider {
       approvalPolicy: permissionConfig.approvalPolicy,
       agentEngines: [
         { id: "codex", label: "Codex Agent", installed: this.process ? true : this.installed, requiresApiKey: false },
-        { id: "codex_api", label: "神思运行器", installed: true, requiresApiKey: true, credentialsManagedBy: "shensi" },
+        { id: "codex_api", label: "内置 Agent", installed: true, requiresApiKey: true, credentialsManagedBy: "shensi" },
         { id: "opencode", label: "OpenCode Agent", installed: this.openCodeInstalled, requiresApiKey: false, credentialsManagedBy: "opencode" },
         { id: "claude_code", label: "Claude Code Agent", installed: this.claudeCodeInstalled, requiresApiKey: false, credentialsManagedBy: "claude_code" },
         { id: "trae_work", label: "Trae Work Agent", installed: this.externalRunnerInstallations?.trae_work?.available === true, requiresApiKey: false, credentialsManagedBy: "trae_work" },
@@ -2919,10 +2919,10 @@ export class CodexAgentProvider {
   async startCodexApiTurnForProject(text, project, { taskRoute = null, contextBlocks = [], taskPacket = null, projectMode = "selected_project", runtimeSettings = {}, signal = null } = {}) {
     throwIfAgentStartCancelled(signal);
     if (!this.apiAgentRuntime?.supports?.({ settings: runtimeSettings, stage: "agent", sessionId: "codex-api-preflight" })) {
-      throw Object.assign(new Error("神思运行器配置不完整：请确认 OpenAI Responses API、API Key、地址和模型"), { code: "CODEX_API_AGENT_CONFIG_INVALID", statusCode: 409 });
+      throw Object.assign(new Error("内置 Agent 配置不完整：请确认 Agent 协议、API Key、地址和模型"), { code: "CODEX_API_AGENT_CONFIG_INVALID", statusCode: 409 });
     }
     if (workspaceFileMutationIntent(text, taskRoute)) {
-      throw Object.assign(new Error("神思运行器当前只负责神思受控上下文生成，不能直接修改本地文件；请切换到本地 Codex 或 OpenCode Agent 执行工作区文件操作"), { code: "CODEX_API_AGENT_WORKSPACE_MUTATION_UNSUPPORTED", statusCode: 409 });
+      throw Object.assign(new Error("内置 Agent 当前只负责神思受控上下文生成，不能直接修改本地文件；请切换到本地 Codex 或 OpenCode Agent 执行工作区文件操作"), { code: "CODEX_API_AGENT_WORKSPACE_MUTATION_UNSUPPORTED", statusCode: 409 });
     }
     const conversationId = String(taskPacket?.conversationId || "").trim();
     const duplicateConversationRun = conversationId && [...this.runs.values()].some((run) => (
@@ -3087,7 +3087,7 @@ export class CodexAgentProvider {
       this.completeRun(run, { status: "completed" });
     }).catch((error) => {
       const interrupted = error?.name === "AbortError" || error?.code === "TASK_CANCELLED";
-      run.text ||= interrupted ? "神思运行器任务已停止。" : `神思运行器启动失败：${safeMessage(error)}`;
+      run.text ||= interrupted ? "内置 Agent 任务已停止。" : `内置 Agent 启动失败：${safeMessage(error)}`;
       this.completeRun(run, {
         status: interrupted ? "interrupted" : "failed",
         phase: interrupted ? "interrupted" : "failed",

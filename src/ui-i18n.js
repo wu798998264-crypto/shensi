@@ -49,7 +49,7 @@ export const SKILL_UI_EN = Object.freeze({
   "完整 Agent 能力；受保护操作逐项确认": "Full Agent capabilities; approve protected actions individually",
   "使用当前系统账户能力，不逐项确认": "Use current system-account capabilities without per-action approval",
   "仅影响切换后启动的新任务；当前运行任务保持原权限。": "Only tasks started after the switch are affected; running tasks keep their original permissions.",
-  "适用于神思运行器和全部外置运行器；仅影响保存后启动的新任务。": "Applies to the Shensi runner and every external runner; only tasks started after saving are affected.",
+  "适用于内置 Agent 和全部外置运行器；仅影响保存后启动的新任务。": "Applies to the built-in Agent and every external runner; only tasks started after saving are affected.",
   "历史版本已创建": "History version created",
   "DeepSeek V4 Pro（质量优先）": "DeepSeek V4 Pro (quality first)",
   "DeepSeek V4 Flash 0731（最新·速度优先）": "DeepSeek V4 Flash 0731 (latest · speed first)",

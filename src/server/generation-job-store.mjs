@@ -345,7 +345,7 @@ export const publicGenerationJob = (job) => {
   delete safe.replacementReservationOwnerToken;
   delete safe.replacementReservationOwnerPid;
   delete safe.replacementSourceReservationId;
-  const serverMedia = safe.mode === "server" && ["image", "video"].includes(safe.channel);
+  const serverMedia = safe.mode === "server" && ["image", "video", "audio"].includes(safe.channel);
   const providerTerminalFailure = safe.status === "failed"
     && safe.providerStatus === "failed"
     && Boolean(safe.providerTaskId)
@@ -394,7 +394,7 @@ export const publicGenerationJob = (job) => {
 const normalizedIdentity = (value) => String(value || "").trim().toLowerCase();
 
 export const assertMediaGenerationProfileIdentity = ({ job, settings = {} } = {}) => {
-  if (job?.mode !== "server" || !["image", "video"].includes(job?.channel)) {
+  if (job?.mode !== "server" || !["image", "video", "audio"].includes(job?.channel)) {
     throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_PROFILE_IDENTITY_NOT_ALLOWED");
   }
   const expected = job.request?.settings || {};
@@ -877,7 +877,7 @@ export const mediaGenerationJobCanBeDismissed = (job = {}) => {
   const unresolvedStatus = MEDIA_RESUMABLE_STATUSES.has(status)
     || ["cancel_requested", "reconciliation_required"].includes(status);
   return job?.mode === "server"
-    && ["image", "video"].includes(String(job?.channel || ""))
+    && ["image", "video", "audio"].includes(String(job?.channel || ""))
     && unresolvedStatus
     && !job?.providerTaskId
     && !["complete", "cancelled", "superseded"].includes(status)
@@ -1362,7 +1362,7 @@ export const failClientGenerationJob = ({ jobId, message = "", retryRequired = t
 
 export const markGenerationJobApplied = ({ jobId, resultAssetId = "", cardReadback = null } = {}) => transitionJob(safeJobId(jobId), (job) => {
   if (job.status !== "complete") throw jobTransitionError("只有已完成且已落盘的任务可以标记为已应用", "GENERATION_JOB_NOT_COMPLETE");
-  if (["image", "video"].includes(job.channel) && (!job.result?.attachment?.relativePath || !job.result?.attachment?.sha256)) {
+  if (["image", "video", "audio"].includes(job.channel) && (!job.result?.attachment?.relativePath || !job.result?.attachment?.sha256)) {
     throw jobTransitionError("媒体任务缺少已落盘附件校验信息，不能标记为已应用", "MEDIA_ATTACHMENT_RECEIPT_REQUIRED");
   }
   const stopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped);
@@ -1388,7 +1388,7 @@ export const markGenerationJobApplied = ({ jobId, resultAssetId = "", cardReadba
 });
 
 export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false, requestId = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于可续接的后台媒体队列", "MEDIA_JOB_RESUME_NOT_ALLOWED");
   }
   if (job.supersededBy || job.replacementReservationId || job.status === "superseded") {
@@ -1516,7 +1516,7 @@ export const reconcileMediaGenerationProviderTask = ({ jobId, providerTaskId = "
 });
 
 export const requestMediaGenerationCancel = ({ jobId } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于可取消的后台媒体队列", "MEDIA_JOB_CANCEL_NOT_ALLOWED");
   }
   if (job.supersededBy || job.replacementReservationId || job.status === "superseded") {
@@ -1614,7 +1614,7 @@ const cancellationRequestedAtMs = (job = {}) => Date.parse(
 ) || 0;
 
 export const mediaGenerationCancellationFinalizationExpired = (job = {}, { nowMs = Date.now() } = {}) => {
-  if (job?.mode !== "server" || !["image", "video"].includes(job?.channel)) return false;
+  if (job?.mode !== "server" || !["image", "video", "audio"].includes(job?.channel)) return false;
   if (job?.desiredAction !== "cancel" || !job?.userStoppedAt) return false;
   const requestedAt = cancellationRequestedAtMs(job);
   return requestedAt > 0 && Number(nowMs) - requestedAt >= MEDIA_CANCELLATION_FINALIZATION_MS;
@@ -1624,7 +1624,7 @@ export const mediaGenerationCancellationFinalizationExpired = (job = {}, { nowMs
 // state again. Keep the remote task auditable, but end the local state machine
 // so it cannot retry forever or retain a scheduling resource.
 export const finalizeMediaGenerationCancellation = ({ jobId, force = false, reason = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于可终结的后台媒体队列", "MEDIA_JOB_CANCEL_NOT_ALLOWED");
   }
   if (["complete", "cancelled", "superseded"].includes(job.status) || job.supersededBy) return null;
@@ -1656,7 +1656,7 @@ export const reserveLegacyMediaGenerationReplacement = async ({ jobId, ownerToke
   const reservationId = `replacement-${randomUUID()}`;
   const normalizedOwnerToken = String(ownerToken || `process-${process.pid}`).slice(0, 200);
   const job = await transitionJob(safeJobId(jobId), (current) => {
-    if (current.mode !== "server" || !["image", "video"].includes(current.channel)) {
+    if (current.mode !== "server" || !["image", "video", "audio"].includes(current.channel)) {
       throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_REPLACE_NOT_ALLOWED");
     }
     if (current.supersededBy || current.replacementReservationId || current.status === "superseded") {
@@ -1778,7 +1778,7 @@ export const recoverOrphanedLegacyMediaGenerationReplacements = async ({ ownerTo
 };
 
 export const completeMediaGenerationJob = ({ jobId, patch = {}, allowProviderCompletionAfterCancel = false } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_COMPLETE_NOT_ALLOWED");
   }
   if (job.status === "complete") return null;
@@ -1823,7 +1823,7 @@ export const completeMediaGenerationJob = ({ jobId, patch = {}, allowProviderCom
 });
 
 export const confirmMediaGenerationCancelled = ({ jobId, patch = {} } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_CANCEL_NOT_ALLOWED");
   }
   if (["complete", "superseded"].includes(job.status) || job.supersededBy) return null;
@@ -1841,7 +1841,7 @@ export const confirmMediaGenerationCancelled = ({ jobId, patch = {} } = {}) => t
 });
 
 export const updateRunnableMediaGenerationJob = ({ jobId, patch = {} } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_UPDATE_NOT_ALLOWED");
   }
   if (["complete", "cancelled", "superseded"].includes(job.status) || job.supersededBy) return null;
@@ -1850,7 +1850,7 @@ export const updateRunnableMediaGenerationJob = ({ jobId, patch = {} } = {}) => 
 });
 
 export const updateActiveMediaGenerationJob = ({ jobId, expectedDesiredAction = "", expectedStatuses = [], expectedUpdatedAt = "", patch = {} } = {}) => transitionJob(safeJobId(jobId), (job) => {
-  if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
     throw jobTransitionError("此任务不属于后台媒体队列", "MEDIA_JOB_UPDATE_NOT_ALLOWED");
   }
   if (["complete", "cancelled", "superseded"].includes(job.status) || job.supersededBy) return null;
@@ -2026,7 +2026,7 @@ const recoverLegacyDreaminaConcurrencyFailure = async (job) => {
 const recoverTransientProviderTrackingFailure = async (job) => {
   const code = String(job?.providerErrorCode || "").toUpperCase();
   const recoverable = job?.mode === "server"
-    && ["image", "video"].includes(job.channel)
+    && ["image", "video", "audio"].includes(job.channel)
     && job.status === "failed"
     && Boolean(job.providerTaskId)
     && !["failed", "cancelled"].includes(String(job.providerStatus || "").toLowerCase())

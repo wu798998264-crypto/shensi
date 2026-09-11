@@ -13,6 +13,7 @@ const [app, server, mediaWorker] = await Promise.all([
 assert.match(app, /whiteboardMediaSubmissionLocks/u, "前端必须有白板媒体单飞锁");
 assert.match(app, /const submissionLockToken = acquireWhiteboardMediaSubmissionLock\(submissionLockKey, "image"\)/u, "图片提交必须使用本次点击专属锁令牌");
 assert.match(app, /const submissionLockToken = acquireWhiteboardMediaSubmissionLock\(submissionLockKey, "video"\)/u, "视频提交必须使用本次点击专属锁令牌");
+assert.match(app, /const submissionLockToken = acquireWhiteboardMediaSubmissionLock\(submissionLockKey, "audio"\)/u, "音频提交必须使用本次点击专属锁令牌");
 assert.match(app, /本次图片提交正在创建后台任务，请勿重复点击/u, "图片只应阻止同一次提交握手的重复点击");
 assert.match(app, /本次视频提交正在创建后台任务，请勿重复点击/u, "视频只应阻止同一次提交握手的重复点击");
 assert.match(app, /current\.token !== token/u, "旧请求结束时不得释放新请求的提交锁");
@@ -26,10 +27,16 @@ const videoSubmitSource = app.slice(
   app.indexOf('elements.whiteboardVideoForm.addEventListener("submit"'),
   app.indexOf('elements.whiteboardImageInput.addEventListener'),
 );
+const audioSubmitSource = app.slice(
+  app.indexOf('elements.whiteboardAudioForm.addEventListener("submit"'),
+  app.indexOf('elements.whiteboardImageInput.addEventListener'),
+);
 assert.match(imageSubmitSource, /图片生成未开始：/u, "图片提交前异常必须有统一提示，不能静默卡死按钮");
 assert.match(videoSubmitSource, /视频生成未开始：/u, "视频提交前异常必须有统一提示，不能静默卡死按钮");
+assert.match(audioSubmitSource, /音频生成未开始：/u, "音频提交前异常必须有统一提示，不能静默卡死按钮");
 assert.match(imageSubmitSource, /finishWhiteboardMediaSubmissionAttempt\([^\n]+channel: "image"[^\n]+\);[\s\S]{0,180}图片生成未开始：/u, "图片提交前异常必须释放本次锁令牌和按钮忙碌态");
 assert.match(videoSubmitSource, /finishWhiteboardMediaSubmissionAttempt\([^\n]+channel: "video"[^\n]+\);[\s\S]{0,180}视频生成未开始：/u, "视频提交前异常必须释放本次锁令牌和按钮忙碌态");
+assert.match(audioSubmitSource, /finishWhiteboardMediaSubmissionAttempt\([^\n]+channel: "audio"[^\n]+\);[\s\S]{0,120}音频生成未开始：/u, "音频提交前异常必须释放本次锁令牌和按钮忙碌态");
 assert.match(app, /A later deliberate click is a replacement request[\s\S]{0,240}finishWhiteboardMediaSubmissionAttempt/u, "后台任务创建成功后必须立即释放短时提交锁");
 assert.match(app, /A late terminal update from an older job must never release a newer[\s\S]{0,180}whiteboardMediaSubmissionLocks\.has\(key\)/u, "旧任务迟到结束不得解除新请求锁");
 assert.match(app, /生成文件已落盘，但目标卡片尚未确认写入/u, "后台结果未进入卡片时不能标记任务完成");
@@ -40,6 +47,9 @@ assert.match(app, /job\.mode === "server" && !stopped[\s\S]{0,220}!whiteboardCan
 assert.match(mediaWorker, /mediaJobAllowsTargetIndexWrite[\s\S]{0,280}resultSuppressed[\s\S]{0,280}desiredAction !== "cancel"/u, "旧 worker 保存文件后必须再次核对任务是否仍可更新目标索引");
 assert.match(mediaWorker, /completed\.resultSuppressed && completionPatch\.result\?\.attachment\?\.relativePath[\s\S]{0,260}allowProviderCompletionAfterCancel: true/u, "旧 worker 已下载的迟到结果必须保留记录但继续保持回填抑制");
 assert.match(app, /data-media-job-action="dismiss"/u, "租约到期任务必须提供可见的忽略旧任务动作");
+assert.match(app, /mediaGenerationActionMarkup\(documentArtifactJobSnapshot\(task\)/u, "正文配图任务必须复用可停止的媒体任务控件");
+assert.match(app, /mediaGenerationActionMarkup\(\{ jobId: execution\.generationJobId/u, "对话区媒体任务必须复用可停止的媒体任务控件");
+assert.match(app, /candidate \? mediaGenerationActionMarkup\(\{ jobId: candidate\.jobId/u, "白板媒体任务必须复用可停止的媒体任务控件");
 assert.match(app, /旧任务已忽略，当前卡片和配置选择已恢复/u, "忽略旧任务后必须明确告知卡片与配置选择已经恢复");
 assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面必须只显示真实阻塞软件操作的媒体任务");
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
@@ -82,7 +92,9 @@ try {
     completeMediaGenerationJob,
     dismissMediaGenerationJob,
     getGenerationJob,
+    markGenerationJobApplied,
     requestMediaGenerationCancel,
+    requestMediaGenerationResume,
     updateMediaGenerationJob,
   } = await import(`../src/server/generation-job-store.mjs?single-flight=${Date.now()}`);
   const target = {
@@ -277,6 +289,84 @@ try {
   const abandonedAudio = await getGenerationJob({ jobId: oldAudio.id });
   assert.equal(abandonedAudio.status, "cancelled");
   assert.equal(abandonedAudio.resultSuppressed, true);
+
+  const audioResumeTarget = { ...target, nodeId: "audio-card-resume" };
+  const audioResumeJob = await createMediaGenerationJob({
+    channel: "audio",
+    target: audioResumeTarget,
+    request: { ...audioRequest, prompt: "需要续接的音频任务" },
+    submissionId: "single-flight-audio-resume-0001",
+  });
+  await updateMediaGenerationJob({ jobId: audioResumeJob.id, patch: {
+    status: "retry_required",
+    providerStatus: "running",
+    providerTaskId: "audio-provider-task-resume-0001",
+    submissionState: "submitted",
+  } });
+  const resumedAudio = await requestMediaGenerationResume({ jobId: audioResumeJob.id, requestId: "audio-resume-request" });
+  assert.equal(resumedAudio.status, "polling", "音频任务必须能按原厂商任务 ID 续接");
+  assert.equal(resumedAudio.desiredAction, "run");
+
+  const audioCancelTarget = { ...target, nodeId: "audio-card-cancel" };
+  const audioCancelJob = await createMediaGenerationJob({
+    channel: "audio",
+    target: audioCancelTarget,
+    request: { ...audioRequest, prompt: "需要用户停止的音频任务" },
+    submissionId: "single-flight-audio-cancel-0001",
+  });
+  assert.equal((await getGenerationJob({ jobId: audioCancelJob.id })).availableActions.stop, true, "音频运行卡片必须显示停止任务动作");
+  await updateMediaGenerationJob({ jobId: audioCancelJob.id, patch: {
+    status: "polling",
+    providerStatus: "running",
+    providerTaskId: "audio-provider-task-cancel-0001",
+    submissionState: "submitted",
+  } });
+  const audioCancelPending = await requestMediaGenerationCancel({ jobId: audioCancelJob.id });
+  assert.equal(audioCancelPending.status, "cancel_requested", "用户必须能手动停止已提交的音频任务");
+  assert.equal(audioCancelPending.resultSuppressed, true);
+  const lateAudioCompletion = await completeMediaGenerationJob({
+    jobId: audioCancelJob.id,
+    allowProviderCompletionAfterCancel: true,
+    patch: {
+      completedAt: new Date().toISOString(),
+      result: { attachment: { relativePath: "media/late-audio.wav", sha256: "late-audio-sha" } },
+    },
+  });
+  assert.equal(lateAudioCompletion.status, "complete", "停止后到达的音频结果仍应保留为可审计资产");
+  assert.equal(lateAudioCompletion.desiredAction, "cancel");
+  assert.equal(lateAudioCompletion.resultSuppressed, true, "停止后的音频结果不得回填原卡片");
+  await updateMediaGenerationJob({ jobId: audioCancelJob.id, patch: { desiredAction: "run", resultSuppressed: false } });
+  const afterLateAudioWorkerWrite = await getGenerationJob({ jobId: audioCancelJob.id });
+  assert.equal(afterLateAudioWorkerWrite.desiredAction, "cancel", "音频后台迟到更新不得恢复已停止任务");
+  assert.equal(afterLateAudioWorkerWrite.resultSuppressed, true);
+
+  const audioCompleteTarget = { ...target, nodeId: "audio-card-complete" };
+  const audioCompleteJob = await createMediaGenerationJob({
+    channel: "audio",
+    target: audioCompleteTarget,
+    request: { ...audioRequest, prompt: "正常完成的音频任务" },
+    submissionId: "single-flight-audio-complete-0001",
+  });
+  const completedAudio = await completeMediaGenerationJob({
+    jobId: audioCompleteJob.id,
+    patch: {
+      result: { attachment: { relativePath: "media/audio-complete.wav", sha256: "audio-complete-sha" } },
+    },
+  });
+  assert.equal(completedAudio.status, "complete", "音频必须使用与图片和视频一致的持久完成事务");
+  const audioAssetId = "asset-audio-complete";
+  const appliedAudio = await markGenerationJobApplied({
+    jobId: audioCompleteJob.id,
+    resultAssetId: audioAssetId,
+    cardReadback: {
+      verified: true,
+      generationJobId: audioCompleteJob.id,
+      documentId: audioCompleteTarget.documentId,
+      resultAssetId: audioAssetId,
+      verifiedAt: new Date().toISOString(),
+    },
+  });
+  assert.ok(appliedAudio.appliedAt, "音频附件完成回读后必须能标记为已应用");
 
   const cancelledTarget = { ...target, nodeId: "image-card-cancelled-before-late-result" };
   const cancelledBeforeResult = await createMediaGenerationJob({

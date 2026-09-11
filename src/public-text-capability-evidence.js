@@ -55,7 +55,7 @@ export const classifyPublicTextCapabilityFailure = (error = {}, {
 
 export const describePublicTextCapabilityFailure = (error = {}, state = "unknown") => {
   const facts = failureFacts(error);
-  const raw = facts.message || "限免模型请求失败";
+  const raw = facts.message || "免费模型请求失败";
   const evidence = [
     facts.statusCode ? `HTTP ${facts.statusCode}` : "",
     facts.providerErrorCode
@@ -66,14 +66,14 @@ export const describePublicTextCapabilityFailure = (error = {}, state = "unknown
     facts.retryAfterMs ? `建议 ${Math.ceil(facts.retryAfterMs / 1000)} 秒后重试` : "",
   ].filter(Boolean).join(" · ");
   const withEvidence = evidence ? `${raw}（${evidence}）` : raw;
-  if (state === "quota_exhausted") return `当前限免模型额度已耗尽：${withEvidence}`;
+  if (state === "quota_exhausted") return `当前免费模型额度已耗尽：${withEvidence}`;
   if (state === "upstream_auth_unavailable") return `当前上游认证池没有可用凭据，用户配置未被清除：${withEvidence}`;
-  if (facts.statusCode === 429) return `当前限免模型正在限流或线路繁忙：${withEvidence}`;
-  if (facts.statusCode >= 500 || state === "temporarily_unavailable") return `当前限免模型上游暂时不可用：${withEvidence}`;
-  if (state === "unsupported") return `当前限免模型已下线、变更或不受支持：${withEvidence}`;
-  if (state === "authentication_required") return `当前限免模型认证失效：${withEvidence}`;
-  if (state === "permission_denied") return `当前限免模型没有调用权限：${withEvidence}`;
-  if (state === "response_without_text") return `当前限免模型有响应但没有产生可用正文：${withEvidence}`;
+  if (facts.statusCode === 429) return `当前免费模型正在限流或线路繁忙：${withEvidence}`;
+  if (facts.statusCode >= 500 || state === "temporarily_unavailable") return `当前免费模型上游暂时不可用：${withEvidence}`;
+  if (state === "unsupported") return `当前免费模型已下线、变更或不受支持：${withEvidence}`;
+  if (state === "authentication_required") return `当前免费模型认证失效：${withEvidence}`;
+  if (state === "permission_denied") return `当前免费模型没有调用权限：${withEvidence}`;
+  if (state === "response_without_text") return `当前免费模型有响应但没有产生可用正文：${withEvidence}`;
   if (state === "unknown") return `上游没有返回足以判断的错误证据，当前状态记为未知：${withEvidence}`;
-  return `当前限免模型不可用：${withEvidence}`;
+  return `当前免费模型不可用：${withEvidence}`;
 };

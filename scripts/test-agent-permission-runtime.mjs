@@ -100,7 +100,7 @@ try {
   assert.equal(await requestAgentCapabilityApproval({ permissionMode: "shensi_only", capability: "原生联网搜索", requestApproval: async () => ({ answer: "allow" }) }), false);
   assert.equal(await requestAgentCapabilityApproval({ permissionMode: "full_access", capability: "原生联网搜索", requestApproval: async () => ({ answer: "deny" }) }), true);
   let capabilityPrompt;
-  assert.equal(await requestAgentCapabilityApproval({ permissionMode: "approval_required", capability: "原生联网搜索", runner: "神思运行器", requestApproval: async (details) => { capabilityPrompt = details; return { answer: "allow" }; } }), true);
+  assert.equal(await requestAgentCapabilityApproval({ permissionMode: "approval_required", capability: "原生联网搜索", runner: "内置 Agent", requestApproval: async (details) => { capabilityPrompt = details; return { answer: "allow" }; } }), true);
   assert.equal(capabilityPrompt.detail.operation, "network_exfiltration");
   assert.match(capabilityPrompt.question, /原生联网搜索/u);
   await assert.rejects(() => requestAgentCapabilityApproval({ permissionMode: "approval_required", capability: "原生联网搜索" }), /缺少神思审批通道/u);

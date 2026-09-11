@@ -6523,20 +6523,20 @@ const modelFieldHelpDetails = (channel, field) => {
     ];
   } else if (field === "apiKey") {
     recommendation = publicProvider
-      ? "限免模型无需填写 API Key；保留为空即可"
+      ? "免费模型无需填写 API Key；保留为空即可"
       : adapter === "cli"
       ? `当前为 CLI 调用：先完成 ${cliPath || providerLabel + " CLI"} 自身登录${keyEnvironment ? `，或按 CLI 文档设置 ${keyEnvironment}` : ""}`
       : `在 ${providerLabel} 开发者控制台新建 API Key 或访问密钥`;
     summary = publicProvider
-      ? "限免模型通过免费模型 Agent 执行，工具调用能力以当前模型核验结果为准；服务可能限流、临时不可用或变更模型。"
+      ? "免费模型通过内置 Agent 执行，工具调用能力以当前模型核验结果为准；服务可能限流、临时不可用或变更模型。"
       : adapter === "cli"
       ? `当前使用 CLI，通常先完成 CLI 自身登录${keyEnvironment ? `或设置环境变量 ${keyEnvironment}` : ""}；改用 API 时再到 ${providerLabel} 控制台创建密钥。`
       : `登录 ${providerLabel} 开发者控制台，在 API Key、访问密钥或凭证页面新建密钥；输入后点击真实连接测试，成功后由系统凭证安全加密保存。`;
     steps = publicProvider
       ? [
           "API Key 留空，直接选择模型并刷新可用模型目录。",
-          "优先选择实时目录中返回成功的限免模型；限免线路可能因限流返回 429/503。",
-          "保存设置并执行文字真实连接测试；限免模型只接入文字接口，图片和视频由对应媒体配置执行。",
+          "优先选择实时目录中返回成功的免费模型；免费线路可能因限流返回 429/503。",
+          "保存设置并执行文字真实连接测试；免费模型只接入文字接口，图片和视频由对应媒体配置执行。",
         ]
       : [
           `登录 ${providerLabel} 的开发者控制台，并开通需要的${channelLabel}模型服务与额度。`,
@@ -8019,7 +8019,7 @@ root.innerHTML = `
                 <label class="wide generation-connection-remark">备注名称<input name="textRemarkName" data-generation-remark="text" type="text" maxlength="80" autocomplete="off" placeholder="例如：日常写作、长文创作、测试连接" /><small class="setting-field-help">仅用于界面区分连接；留空时自动显示服务商和模型名称。</small></label>
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
-                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="trae_work">Trae Work</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
+                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">内置 Agent</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="trae_work">Trae Work</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
@@ -8027,7 +8027,7 @@ root.innerHTML = `
                 <label>推理强度<select name="reasoningEffort"><option value="">自动</option><option value="none">关闭推理</option><option value="minimal">最小</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">极高</option><option value="max">最大</option><option value="ultra">超高</option></select></label>
                 <label>响应速度<select name="speedMode"><option value="default">标准</option><option value="fast">快速</option><option value="flex">灵活</option></select></label>
                 <label class="wide">${modelFieldHelpButton("text", "baseUrl", "Base URL")}<input name="baseUrl" type="url" /></label>
-                <label>${modelFieldHelpButton("text", "apiKey", "API Key")}<input name="apiKey" type="password" autocomplete="off" placeholder="真实连接成功后安全保存" /><small class="setting-field-help" id="publicProviderKeyHint" hidden>限免模型无需填写 API Key；留空即可调用。模型目录和服务可用性以实时刷新结果为准。</small></label>
+                <label>${modelFieldHelpButton("text", "apiKey", "API Key")}<input name="apiKey" type="password" autocomplete="off" placeholder="真实连接成功后安全保存" /><small class="setting-field-help" id="publicProviderKeyHint" hidden>免费模型无需填写 API Key；留空即可调用。模型目录和服务可用性以实时刷新结果为准。</small></label>
                 <label class="temperature-setting">温度<input name="temperature" type="number" min="0" max="2" step="0.1" /><small class="setting-field-help">控制输出的随机性。数值越低越稳定、可控，数值越高表达越多样、发散；部分推理模型可能忽略此参数。</small></label>
                 <label>最大输出 tokens<input name="maxOutputTokens" type="number" min="256" max="64000" step="1" /></label>
                 <label>超时（毫秒）<input name="timeoutMs" type="number" min="5000" max="600000" step="1000" /></label>
@@ -23449,7 +23449,7 @@ const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) =
     modelCatalogChecked: false,
     models: [],
     capabilityState: "checking",
-    statusDetail: "正在自动核验限免模型",
+    statusDetail: "正在自动核验免费模型",
     checkedAt,
   });
   persistCapabilityProbes();
@@ -23463,7 +23463,7 @@ const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) =
       const catalogPayload = await catalogResponse.json();
       if (!probeStillCurrent()) return null;
       if (!catalogResponse.ok || !catalogPayload.ok) {
-        const error = new Error(catalogPayload.message || "限免模型目录读取失败");
+        const error = new Error(catalogPayload.message || "免费模型目录读取失败");
         error.code = String(catalogPayload.code || `HTTP_${catalogResponse.status}`);
         error.statusCode = catalogResponse.status;
         throw error;
@@ -23471,7 +23471,7 @@ const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) =
       const models = catalogPayload.models ?? [];
       const modelIds = models.map((item) => item.slug).filter(Boolean);
       if (!modelIds.includes(profile.model)) {
-        const error = new Error(`所选限免模型 ${profile.model} 已不在实时目录中`);
+        const error = new Error(`所选免费模型 ${profile.model} 已不在实时目录中`);
         error.code = "MODEL_UNCONFIRMED";
         error.statusCode = 404;
         throw error;
@@ -23485,7 +23485,7 @@ const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) =
       const testPayload = await testResponse.json();
       if (!probeStillCurrent()) return null;
       if (!testResponse.ok || !testPayload.ok) {
-        const error = new Error(testPayload.message || "限免模型真实推理核验失败");
+        const error = new Error(testPayload.message || "免费模型真实推理核验失败");
         error.code = String(testPayload.code || `HTTP_${testResponse.status}`);
         error.statusCode = testResponse.status;
         error.providerErrorCode = String(testPayload.providerErrorCode || testPayload.code || "");
@@ -23493,7 +23493,7 @@ const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) =
         throw error;
       }
       if (testPayload.testLevel !== "real_inference") {
-        const error = new Error("限免模型连接已识别，但没有完成当前模型的真实文字推理");
+        const error = new Error("免费模型连接已识别，但没有完成当前模型的真实文字推理");
         error.code = "REAL_INFERENCE_UNCONFIRMED";
         throw error;
       }
@@ -56185,7 +56185,10 @@ elements.whiteboardAudioForm.addEventListener("submit", async (event) => {
       : null;
     stopWhiteboardGenerationCandidate(candidateKey, { remove: !whiteboardMediaJobHoldsCard(interruptedJob) });
     if (interruptedJob) showInterruptedWhiteboardGenerationJob(interruptedJob);
-    if (providerCompleted) {
+    if (!durableJob) {
+      finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "audio", form });
+      showToast(`音频生成未开始：${error.message}`);
+    } else if (providerCompleted) {
       retryCompletedWhiteboardGenerationApply(durableJob);
       showToast("音频已生成，正在重试写入卡片；不会重复提交或扣费");
     } else showToast(`音频生成失败：${error.message}`);
@@ -69627,7 +69630,7 @@ const customCapabilityModelsForChannel = (channel, models, selectedModel = "", {
 };
 
 const publicTextCapabilityFailureDetail = (profile, error, capabilityState) => {
-  const raw = String(error?.message || "限免模型请求失败").trim();
+  const raw = String(error?.message || "免费模型请求失败").trim();
   if (!publicTextModelProbeIsolated(profile)) return raw;
   return describePublicTextCapabilityFailure(error, capabilityState);
 };

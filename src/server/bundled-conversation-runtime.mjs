@@ -22,7 +22,7 @@ export const runBundledConversationAgent = async ({ appRoot, machineRoot, ...opt
         ? await requestAgentCapabilityApproval({
           permissionMode,
           capability: "原生联网搜索",
-          runner: "神思运行器",
+          runner: "内置 Agent",
           requestApproval: options.requestApproval,
         })
         : false;

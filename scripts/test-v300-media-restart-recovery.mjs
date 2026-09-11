@@ -36,10 +36,45 @@ try {
       landingReceipt: { relativePath: "assets/recovered.mp4", sha256: "b".repeat(64), mimeType: "video/mp4" },
     },
   });
+  const audio = await store.createMediaGenerationJob({
+    channel: "audio",
+    target: {
+      workspaceKind: "project",
+      workspacePath: join(root, "workspace"),
+      documentId: "board-1",
+      nodeId: "audio-card-1",
+      targetType: "whiteboard-node",
+    },
+    request: {
+      prompt: "重启后继续核对取消状态的音频",
+      settings: { id: "audio-a", connectionId: "audio-a", provider: "LibTV", adapter: "cli", model: "audio-test" },
+    },
+    submissionId: "submission-v300-audio-cancel-recovery-0001",
+  });
+  await store.updateMediaGenerationJob({
+    jobId: audio.id,
+    patch: {
+      status: "polling",
+      providerStatus: "running",
+      providerTaskId: "audio-provider-restart-1",
+      submissionState: "submitted",
+    },
+  });
+  const stoppedAudio = await store.requestMediaGenerationCancel({ jobId: audio.id });
+  assert.equal(stoppedAudio.status, "cancel_requested");
+  assert.equal(stoppedAudio.resultSuppressed, true);
   const visibleAfterRestart = await store.listGenerationJobs({ workspacePath: join(root, "workspace") });
-  assert.equal(visibleAfterRestart.length, 1, "未回填卡片的完成任务在重启后必须保留给前端恢复，不得重新提交");
-  assert.equal(visibleAfterRestart[0].providerTaskId, "provider-restart-1");
-  assert.equal(visibleAfterRestart[0].status, "complete");
+  assert.equal(visibleAfterRestart.length, 2, "未回填结果和未确认取消任务在重启后必须保留给前端恢复，不得重新提交");
+  const recoveredVideo = visibleAfterRestart.find((job) => job.id === created.id);
+  const recoveredAudio = visibleAfterRestart.find((job) => job.id === audio.id);
+  assert.equal(recoveredVideo.providerTaskId, "provider-restart-1");
+  assert.equal(recoveredVideo.status, "complete");
+  assert.equal(recoveredAudio.status, "cancel_requested", "音频停止意图必须跨重启持久化");
+  assert.equal(recoveredAudio.desiredAction, "cancel");
+  assert.equal(recoveredAudio.resultSuppressed, true);
+  const workerRecovery = await store.listMediaGenerationJobsForWorker();
+  assert.ok(workerRecovery.some((job) => job.id === audio.id && job.providerTaskId === "audio-provider-restart-1" && job.desiredAction === "cancel"),
+    "重启恢复必须按原音频厂商任务号继续核对取消状态");
 
   const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   assert.match(app, /if \(job\.status === "complete"\) \{[\s\S]{0,450}applyCompletedWhiteboardGenerationJob/u,

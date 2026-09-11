@@ -27,7 +27,7 @@ const profile = normalized.textConnections.find((item) => item.id === "custom-ch
 assert.ok(profile);
 assert.equal(profile.executionMode, "agent");
 assert.deepEqual(profile.executionModes, ["agent"]);
-assert.equal(profile.agentEngine, "codex_api", "API 文字配置必须默认使用神思运行器");
+assert.equal(profile.agentEngine, "codex_api", "API 文字配置必须默认使用内置 Agent");
 assert.equal(profile.agentModelId, "model-x");
 assert.equal(profile.chatModelId, "");
 assert.equal(normalized.activeTextAgentConnectionId, profile.id);
@@ -43,7 +43,7 @@ assert.equal(legacyChatContract.runner, "codex_api_agent");
 
 for (const protocol of ["responses", "chat_completions"]) {
   const contract = runtimeContractForProfile({ profile: { ...profile, protocol }, surface: "agent" });
-  assert.equal(contract.ok, true, `${protocol} 应由神思运行器建立 Agent 合同`);
+  assert.equal(contract.ok, true, `${protocol} 应由内置 Agent 建立 Agent 合同`);
 }
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
