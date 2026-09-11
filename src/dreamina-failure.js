@@ -36,6 +36,8 @@ export const dreaminaFailureDiagnosis = ({
   const raw = clean(message);
   const providerTaskCreated = Boolean(clean(providerTaskId));
   const submitted = providerTaskCreated || clean(submissionState).toLowerCase() === "submitted";
+  const referenceUploadTimedOut = /(?:Action=)?ApplyImageUpload/i.test(raw)
+    && /context deadline exceeded|Client\.Timeout exceeded|i\/o timeout|TLS handshake timeout|(?:request|connection|operation) (?:timed out|timeout)|connection (?:reset by peer|refused)|socket hang up|unexpected EOF|temporary failure|no such host/i.test(raw);
 
   let resolvedCode = errorCode;
   if (ACCOUNT_VERIFICATION_CODES.has(errorCode)) {
@@ -178,9 +180,13 @@ export const dreaminaFailureDiagnosis = ({
     }),
     DREAMINA_REFERENCE_UPLOAD_NO_TASK: diagnosis({
       category: "reference_upload_failed",
-      title: "即梦参考媒体上传失败",
-      cause: "参考图片、视频或音频未成功上传，系统确认没有创建收费任务。",
-      resolution: "检查参考文件是否存在、可读取且格式受支持，移除异常参考后重试。",
+      title: referenceUploadTimedOut ? "即梦参考媒体上传链路超时" : "即梦参考媒体上传失败",
+      cause: referenceUploadTimedOut
+        ? "即梦的 ApplyImageUpload 上传授权接口在创建视频任务前超时，系统确认没有创建收费任务。"
+        : "参考图片、视频或音频未成功上传，系统确认没有创建收费任务。",
+      resolution: referenceUploadTimedOut
+        ? "检查本机网络或代理到 imagex.bytedanceapi.com 的连接后重试；无需重新核验账号，也不会续接或重复提交旧任务。"
+        : "检查参考文件是否存在、可读取且格式受支持，移除异常参考后重试。",
       retryable: true,
     }),
     DREAMINA_REFERENCE_INVALID: diagnosis({

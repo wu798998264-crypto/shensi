@@ -275,7 +275,7 @@ try {
     status: "failed",
     providerStatus: "failed",
     providerTaskId: "",
-    providerErrorCode: "",
+    providerErrorCode: "DREAMINA_REFERENCE_UPLOAD_NO_TASK",
     submissionState: "not_submitted",
     progressPercent: 100,
     billingRisk: "",
@@ -301,7 +301,8 @@ try {
   })()`);
   assert.equal(failureView.status, "failed");
   assert.match(failureView.text, /柏物语/u);
-  assert.match(failureView.text, /DREAMINA_UNCLASSIFIED_FAILURE/u);
+  assert.match(failureView.text, /DREAMINA_REFERENCE_UPLOAD_NO_TASK/u);
+  assert.match(failureView.text, /上传授权接口在创建视频任务前超时/u);
   assert.match(failureView.text, /ApplyImageUpload/u);
   assert.match(failureView.text, /context deadline exceeded/u);
   assert.match(failureView.text, new RegExp(job.id));

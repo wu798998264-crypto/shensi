@@ -31,6 +31,15 @@ const generationRejected = dreaminaFailureDiagnosis({
 assert.equal(generationRejected.requiresAccountVerification, false, "生成阶段会话异常不得再次要求 OAuth 核验");
 assert.equal(generationRejected.category, "submission_outcome_unknown");
 assert.match(generationRejected.resolution, /幂等记录|不会重复提交|手动终止/u);
+const uploadTimeout = dreaminaFailureDiagnosis({
+  code: "DREAMINA_REFERENCE_UPLOAD_NO_TASK",
+  message: "upload resource: ApplyImageUpload http://imagex.bytedanceapi.com/?Action=ApplyImageUpload: context deadline exceeded",
+  submissionState: "not_submitted",
+});
+assert.equal(uploadTimeout.category, "reference_upload_failed");
+assert.match(uploadTimeout.title, /上传链路超时/u);
+assert.match(uploadTimeout.cause, /创建视频任务前超时|没有创建收费任务/u);
+assert.match(uploadTimeout.resolution, /网络或代理|无需重新核验账号/u);
 assert.equal(dreaminaFailureRequiresAccountVerification({
   code: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
   message: "authsdk: not logged in",
@@ -67,6 +76,7 @@ const fakeCliPath = join(runtimeRoot, "fake-dreamina-generation.mjs");
 const promptPath = join(runtimeRoot, "prompt.txt");
 await writeFile(promptPath, "测试一段不会触发任务号解析误判的提示词", "utf8");
 await writeFile(fakeCliPath, `
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 const operation = String(args[0] || "");
 const mode = String(process.env.SHENSI_TEST_DREAMINA_GENERATION_MODE || "");
@@ -83,6 +93,15 @@ if (operation === "list_task") {
   process.exit(0);
 }
 if (operation === "text2video") {
+  if (mode === "upload-timeout-once" || mode === "upload-timeout-always") {
+    const attemptFile = String(process.env.SHENSI_TEST_DREAMINA_ATTEMPT_FILE || "");
+    const attempt = attemptFile && existsSync(attemptFile) ? Number(readFileSync(attemptFile, "utf8")) + 1 : 1;
+    if (attemptFile) writeFileSync(attemptFile, String(attempt));
+    if (mode === "upload-timeout-always" || attempt === 1) {
+      process.stderr.write("upload resource: ApplyImageUpload http://imagex.bytedanceapi.com/?Action=ApplyImageUpload: context deadline exceeded\\n");
+      process.exit(1);
+    }
+  }
   if (mode === "task-auth") {
     process.stdout.write(JSON.stringify({ status: "failed", submit_id: "fixture-task-auth-123", fail_reason: "authsdk: not logged in" }));
     process.stderr.write("authsdk: not logged in\\n");
@@ -154,6 +173,35 @@ try {
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "control-auth" });
   assert.notEqual(controlAuth.code, 0, "控制面未登录必须失败");
   assert.match(controlAuth.stderr, /\[DREAMINA_AUTH_REQUIRED\]/u, "控制面未登录仍必须要求账号核验");
+
+  const recoveredAttemptFile = join(runtimeRoot, "upload-timeout-recovered-attempts.txt");
+  const uploadTimeoutRecovered = await runChild(process.execPath, [
+    videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-upload-timeout-recovered-key",
+  ], {
+    ...baseRuntimeEnv,
+    SHENSI_DREAMINA_UPLOAD_RETRIES: "1",
+    SHENSI_DREAMINA_UPLOAD_RETRY_DELAY_MS: "1",
+    SHENSI_TEST_DREAMINA_GENERATION_MODE: "upload-timeout-once",
+    SHENSI_TEST_DREAMINA_ATTEMPT_FILE: recoveredAttemptFile,
+  });
+  assert.equal(uploadTimeoutRecovered.code, 0, `ApplyImageUpload 首次超时应在创建任务前有限重试：${uploadTimeoutRecovered.stderr}`);
+  assert.equal(Number(await readFile(recoveredAttemptFile, "utf8")), 2, "上传授权超时恢复必须只重试到成功为止");
+  assert.equal(JSON.parse(uploadTimeoutRecovered.stdout.trim()).providerTaskId, "fixture-task-success-123");
+
+  const failedAttemptFile = join(runtimeRoot, "upload-timeout-failed-attempts.txt");
+  const uploadTimeoutFailed = await runChild(process.execPath, [
+    videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-upload-timeout-failed-key",
+  ], {
+    ...baseRuntimeEnv,
+    SHENSI_DREAMINA_UPLOAD_RETRIES: "1",
+    SHENSI_DREAMINA_UPLOAD_RETRY_DELAY_MS: "1",
+    SHENSI_TEST_DREAMINA_GENERATION_MODE: "upload-timeout-always",
+    SHENSI_TEST_DREAMINA_ATTEMPT_FILE: failedAttemptFile,
+  });
+  assert.notEqual(uploadTimeoutFailed.code, 0, "上传授权持续超时必须明确失败，不能静默结束");
+  assert.equal(Number(await readFile(failedAttemptFile, "utf8")), 2, "上传授权持续超时不得无限重试");
+  assert.match(uploadTimeoutFailed.stderr, /\[DREAMINA_REFERENCE_UPLOAD_NO_TASK\]/u);
+  assert.match(uploadTimeoutFailed.stderr, /ApplyImageUpload[\s\S]*context deadline exceeded/u);
 } finally {
   await rm(runtimeRoot, { recursive: true, force: true });
 }

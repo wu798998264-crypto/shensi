@@ -92,7 +92,13 @@ const retryCount = (name, fallback) => {
 const authRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_AUTH_RETRY_DELAY_MS) || 800);
 const uploadRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_UPLOAD_RETRY_DELAY_MS) || 1_200);
 const boundedRetryDelay = (base, attempt, cap = 10_000) => Math.min(cap, base * (2 ** Math.max(0, attempt)));
-const referenceUploadDidNotCreateTask = (value) => /upload resource[\s\S]*no file upload|upload (?:image|video|audio): upload phase, no file upload|no (?:reference )?files? (?:were )?uploaded|failed to upload (?:reference|image|video|audio)[\s\S]*(?:before (?:task )?submit|without creating (?:a )?task)/i.test(String(value || ""));
+const referenceUploadTransportDidNotCreateTask = (value) => {
+  const message = String(value || "");
+  return /(?:Action=)?ApplyImageUpload/i.test(message)
+    && /context deadline exceeded|Client\.Timeout exceeded|i\/o timeout|TLS handshake timeout|(?:request|connection|operation) (?:timed out|timeout)|connection (?:reset by peer|refused)|socket hang up|unexpected EOF|temporary failure|no such host/i.test(message);
+};
+const referenceUploadDidNotCreateTask = (value) => /upload resource[\s\S]*no file upload|upload (?:image|video|audio): upload phase, no file upload|no (?:reference )?files? (?:were )?uploaded|failed to upload (?:reference|image|video|audio)[\s\S]*(?:before (?:task )?submit|without creating (?:a )?task)/i.test(String(value || ""))
+  || referenceUploadTransportDidNotCreateTask(value);
 const DREAMINA_VIDEO_GENERATION_COMMANDS = new Set([
   "text2video", "image2video", "frames2video", "multiframe2video", "multimodal2video", "multiframe_video", "longvideo",
 ]);
