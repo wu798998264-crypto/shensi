@@ -40,6 +40,21 @@ export const dreaminaFailureDiagnosis = ({
     && /context deadline exceeded|Client\.Timeout exceeded|i\/o timeout|TLS handshake timeout|(?:request|connection|operation) (?:timed out|timeout)|connection (?:reset by peer|refused)|socket hang up|unexpected EOF|temporary failure|no such host/i.test(raw);
 
   let resolvedCode = errorCode;
+  if (referenceUploadTimedOut && (LEGACY_UNSTRUCTURED_CODES.has(errorCode)
+    || errorCode === "DREAMINA_UNCLASSIFIED_FAILURE"
+    || errorCode === "DREAMINA_REFERENCE_UPLOAD_NO_TASK" && providerTaskCreated)) {
+    return {
+      code: providerTaskCreated ? "DREAMINA_TASK_REFERENCE_UPLOAD_FAILED" : errorCode || "DREAMINA_REFERENCE_UPLOAD_FAILED",
+      raw, providerTaskCreated,
+      ...diagnosis({
+        category: "reference_upload_failed", title: "即梦参考媒体上传超时",
+        cause: "CLI 返回 ApplyImageUpload 上传请求超时；这条错误不能证明账号核验失效。",
+        resolution: providerTaskCreated
+          ? "任务号已保留，不自动重提。可核对原任务结果或终止本地跟踪；无需因上传超时重新核验账号。"
+          : "检查上传链路后重试；是否已经创建任务以提交回执为准，不因上传错误重复核验账号。",
+      }),
+    };
+  }
   if (ACCOUNT_VERIFICATION_CODES.has(errorCode)) {
     return {
       code: errorCode,
@@ -81,7 +96,9 @@ export const dreaminaFailureDiagnosis = ({
   // Older jobs did not persist a stable code. Only those records may use the
   // provider text as a compatibility signal; a real semantic code always wins.
   if (LEGACY_UNSTRUCTURED_CODES.has(errorCode) && legacyAuthRequiredMessage(raw)) {
-    resolvedCode = providerTaskCreated ? "DREAMINA_PROVIDER_SESSION_EXPIRED" : "DREAMINA_AUTH_REQUIRED";
+    resolvedCode = providerTaskCreated
+      ? /resource store\s*:|upload resource/i.test(raw) ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE" : "DREAMINA_PROVIDER_SESSION_EXPIRED"
+      : "DREAMINA_AUTH_REQUIRED";
     return dreaminaFailureDiagnosis({
       code: resolvedCode,
       message: raw,
@@ -91,6 +108,11 @@ export const dreaminaFailureDiagnosis = ({
   }
 
   const known = {
+    DREAMINA_TASK_REFERENCE_UPLOAD_FAILED: diagnosis({
+      category: "reference_upload_failed", title: "即梦任务中的参考媒体上传失败",
+      cause: "CLI 返回了任务编号，同时报告参考媒体上传失败；不是账号未核验的证据。",
+      resolution: "保留原任务号和报错，不自动重提；无需因该错误重新核验账号。",
+    }),
     DREAMINA_PROFILE_REQUIRED: diagnosis({
       category: "profile_selection_required",
       title: "未选择即梦账号配置",

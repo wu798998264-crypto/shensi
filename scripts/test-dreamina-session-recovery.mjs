@@ -62,9 +62,9 @@ for (const [name, source, invoke] of [
     `${name}桥接必须验证原命令，退出码 0 的未登录响应不得冒充成功`);
   assert.match(source, /isDreaminaAuthRefreshSessionRejected\(error\?\.message\)/,
     `${name}桥接必须识别 authsdk protocol server 10044 会话拒绝`);
-  assert.match(source, /const semanticAuthFailure = \(command = ""\) => \{[\s\S]{0,320}error\.code = "DREAMINA_AUTH_REQUIRED"/,
+  assert.match(source, /const semanticAuthFailure = \(command = "", raw = ""\) => \{[\s\S]{0,320}error\.code = "DREAMINA_AUTH_REQUIRED"/,
     `${name}桥接静默恢复后仍被服务器拒绝时必须显示当前配置核验入口`);
-  assert.match(source, /continue;[\s\S]{0,100}if \(authRejected\) throw semanticAuthFailure\(args\[0\]\)/,
+  assert.match(source, /continue;[\s\S]{0,100}if \(authRejected\) throw semanticAuthFailure\(args\[0\],/,
     `${name}桥接有界重试后仍被拒绝必须要求核验当前配置`);
   assert.match(source, /"DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY"/,
     `${name}桥接自动恢复失败后必须保留真实认证错误码`);
@@ -140,7 +140,7 @@ assert.match(app, /正在恢复查询会话；只续接原任务，不会重新�
   "恢复原任务查询会话时必须显示准确状态，不能继续伪装成正常生成");
 assert.match(app, /sessionRecoveryPending[\s\S]{0,500}Math\.max\(1, previousProgress\)/u,
   "对话区恢复查询会话时必须冻结百分比，不得继续推进虚假进度");
-assert.match(worker, /dreaminaSubmissionRecoveryPending[\s\S]{0,1400}providerStatus: "reconciling"[\s\S]{0,800}不会重新提交或重复扣费/u,
+assert.match(worker, /dreaminaSubmissionRecoveryPending \? \{[\s\S]{0,900}providerStatus: "reconciling"[\s\S]{0,900}不会重新提交/u,
   "即梦提交响应中断后必须立即进入自动核对状态，不能先显示 100% 失败");
 assert.match(worker, /原厂商任务 \$\{current\.providerTaskId\}[\s\S]{0,180}只续查原任务，不会重新提交或重复扣费/u,
   "核验提示必须明确保留原任务且不重复提交");

@@ -19,7 +19,7 @@ const classified = classifyMediaSubmissionFailure({
   job: { channel: "video", status: "submitting", transientFailures: 27 },
   error: brokerBusy,
 });
-assert.equal(classified.safeAutomaticRetry, true, "凭据槽繁忙不得被有限重试次数误判为最终失败");
+assert.equal(classified.safeAutomaticRetry, false, "凭据槽繁忙也必须遵守有限重试次数，不能无限占用");
 assert.equal(classified.submissionUnknown, false, "凭据槽繁忙发生在提交前，不能标记为扣费结果未知");
 assert.deepEqual(
   dreaminaProfileCommandFailure({ code: 75, stderr: "[DREAMINA_PROFILE_BROKER_BUSY] credential slot is busy" }),
@@ -106,7 +106,7 @@ const [runner, worker, drivers, imageBridge, store, app, server, styles] = await
 ]);
 assert.match(runner, /WaitOne\(\[TimeSpan\]::FromSeconds\(2\)\)/u, "账号凭据槽不能继续阻塞到外层超时");
 assert.match(runner, /DREAMINA_PROFILE_BROKER_BUSY/u, "凭据槽繁忙应返回可识别的未提交状态");
-assert.match(worker, /只有厂商明确返回失败才会结束/u, "已提交任务不能因为长时间排队或轮询超时被标记失败");
+assert.match(worker, /current\.providerTaskId \|\| dreaminaSubmissionRecoveryPending \? "retry_required" : "failed"/u, "连接重试耗尽后保留已提交任务，交由用户决定而非无限查询");
 assert.doesNotMatch(worker, /acquireJobLock\("dreamina-cli-global"\)/u, "工作进程不得用任务级锁覆盖厂商查询、下载和卡片回写");
 assert.match(runner, /Global\\ShensiDreaminaCredentialSwitchV1/u, "Windows 配置槽仍必须由单命令互斥保护");
 assert.match(worker, /本任务尚未提交、不会扣积分/u, "未提交的凭据槽等待应明确说明不会扣积分");

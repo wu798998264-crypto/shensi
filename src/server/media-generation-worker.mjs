@@ -7,6 +7,7 @@ import { generateImageWithAdapter } from "./adapters.mjs";
 import { OPENAI_IMAGE_CLI_ALIAS } from "../media-cli-presets.js";
 import { classifyCustomApiCapabilityFailure } from "../custom-api-capabilities.js";
 import { dreaminaFailureDiagnosis, dreaminaFailureRequiresAccountVerification } from "../dreamina-failure.js";
+import { boundedCliMediaJob, mediaConnectionRetry, clearedMediaConnectionRetry } from "../media-execution-policy.js";
 import { dreaminaResultRecoveryPolicy } from "../dreamina-result-recovery-policy.js";
 import { appDataRoot, initializeConfiguredDataRoot } from "./app-data.mjs";
 import { createUpdateWriteBarrier } from "./update-write-barrier.mjs";
@@ -21,6 +22,7 @@ import {
   updateRunnableMediaGenerationJob,
 } from "./generation-job-store.mjs";
 import { resolveMediaProviderDriver } from "./media-provider-drivers.mjs";
+import { recordMediaWorkerFailure } from "./media-worker-manager.mjs";
 import {
   aggregateImageRecoveryPolicy,
   builtInAggregateImageRecoveryJob,
@@ -211,10 +213,10 @@ const dreaminaAutomaticSubmissionRecoveryAllowed = (job = {}) => {
   const lease = dreaminaSubmissionReconciliationLease(job, { leaseMs: DREAMINA_SUBMISSION_RECONCILIATION_LEASE_MS });
   return !lease.stopped && !lease.expired;
 };
-const automaticSubmissionRecoveryJob = (job = {}) => submissionOutcomeUnknown(job)
+const automaticSubmissionRecoveryJob = (job = {}) => !job.connectionRetryExhausted && !job.userStoppedAt && submissionOutcomeUnknown(job)
   && (
     (normalizedIdentity(job.request?.settings?.adapter) === "cli"
-      && (openAiImageCliJob(job) || (dreaminaCliMediaJob(job) && dreaminaAutomaticSubmissionRecoveryAllowed(job))))
+      && (openAiImageCliJob(job) || (boundedCliMediaJob(job) && dreaminaAutomaticSubmissionRecoveryAllowed(job))))
     || (builtInAggregateImageRecoveryJob(job) && !aggregateImageRecoveryPolicy(job, {
       pollMs: AGGREGATE_IMAGE_RECOVERY_POLL_MS,
       windowMs: AGGREGATE_IMAGE_RECOVERY_WINDOW_MS,
@@ -338,9 +340,12 @@ const assertProviderStatus = (result, phase) => {
 
 const providerPatch = (result = {}) => ({
   ...(result.providerTaskId ? { providerTaskId: result.providerTaskId } : {}),
+  ...(result.providerTaskIdType ? { providerTaskIdType: result.providerTaskIdType } : {}),
+  ...(result.providerTaskIdType === "task" ? { submissionState: "submitted", billingRisk: "", resubmitConfirmationRequired: false } : {}),
   providerStatus: String(result.providerStatus || result.rawStatus || "running"),
   providerRawStatus: String(result.rawStatus || ""),
   providerErrorCode: String(result.errorCode || ""),
+  ...(result.error ? { lastProviderError: { code: String(result.errorCode || ""), message: String(result.error), phase: result.executionPhase || "provider_response", at: new Date().toISOString() } } : {}),
   ...(result.failureCategory ? { failureCategory: String(result.failureCategory) } : {}),
   ...(result.failureReason ? { failureReason: String(result.failureReason) } : {}),
   ...(result.failureResolution ? { failureResolution: String(result.failureResolution) } : {}),
@@ -775,6 +780,7 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
     }
   } catch (error) {
     if (!current.providerTaskId || !transientProviderFailure(error)) throw error;
+    if (boundedCliMediaJob(current)) throw error;
     const failures = Number(current.transientFailures || 0) + 1;
     const dreaminaResultRecovery = dreaminaCliMediaJob(current)
       ? dreaminaResultRecoveryPolicy({
@@ -1066,6 +1072,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     try {
       reconciled = await driver.reconcileSubmission({ job, settings, workRoot });
     } catch (error) {
+      if (boundedCliMediaJob(job)) throw error;
       const delayMs = transientBackoffMs(Number(job.transientFailures || 0) + 1, error.retryAfterMs);
       await update(job.id, {
         status: "retry_required",
@@ -1078,6 +1085,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       return;
     }
     if (!reconciled?.providerTaskId) {
+      if (boundedCliMediaJob(job)) throw Object.assign(new Error(reconciled?.error || `${providerName}暂未返回可认领的原任务；没有重新提交。`), {
+        providerErrorCode: reconciled?.errorCode || "MEDIA_SUBMISSION_NOT_VISIBLE",
+      });
       const delayMs = 20_000;
       await update(job.id, {
         status: "retry_required",
@@ -1181,6 +1191,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         submissionOutcomeKnown: true,
       });
     }
+    const references = await loadReferences(job);
     const attempt = Number(job.attempt || 0) + 1;
     const submitting = await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
       status: "submitting",
@@ -1193,15 +1204,21 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     } });
     if (submitting.status !== "submitting" || submitting.desiredAction === "cancel") return;
     job = submitting;
-    const references = await loadReferences(job);
-    const submitted = await driver.submit({ job, settings, references, workRoot });
+    const submitted = await driver.submit({ job, settings, references, workRoot, onPhase: async (executionPhase) => {
+      const progress = await updateRunnableMediaGenerationJob({ jobId: job.id, patch: { executionPhase } });
+      if (progress.desiredAction === "cancel" || progress.userStoppedAt || progress.forceReleasePendingAt) {
+        throw Object.assign(new Error("用户已经停止本次任务，未继续提交"), { providerErrorCode: "MEDIA_JOB_STOPPED", submissionOutcomeKnown: true });
+      }
+    } });
     if (!submitted.providerTaskId) throw new Error("媒体厂商提交成功响应缺少任务 ID，已停止轮询以防重复扣费");
     const submittedStatus = assertProviderStatus(submitted, "媒体厂商提交");
     if (submittedStatus === "failed" && providerCapacityLimited(submitted)) {
       const failures = Number(job.transientFailures || 0) + 1;
       const delayMs = capacityBackoffMs(failures, submitted.retryAfterMs);
+      const retry = mediaConnectionRetry(job);
       await update(job.id, {
-        status: "queued",
+        status: retry.connectionRetryExhausted ? "failed" : "queued",
+        ...retry,
         ...providerPatch(submitted),
         providerTaskId: null,
         rejectedProviderTaskId: submitted.providerTaskId,
@@ -1214,9 +1231,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         billingRisk: "",
         resubmitConfirmationRequired: false,
         failedAt: "",
-        nextPollAt: new Date(Date.now() + delayMs).toISOString(),
+        nextPollAt: retry.connectionRetryExhausted ? "" : new Date(Date.now() + Math.min(delayMs, 30_000)).toISOString(),
         heartbeatAt: new Date().toISOString(),
-        error: `即梦并发名额已满，本次未创建收费项目；任务已在本地排队，将在约 ${Math.ceil(delayMs / 1000)} 秒后自动重试。`,
+        error: `即梦并发名额已满，本次未创建收费项目；${retry.connectionRetryExhausted ? "自动重试已停止并释放占用" : "正在有限重试"}。${submitted.error || ""}`,
       });
       return;
     }
@@ -1235,7 +1252,8 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       safeNoTaskRetry: false,
       submittedAt: new Date().toISOString(),
       heartbeatAt: new Date().toISOString(),
-      error: submittedStatus === "failed" ? submitted.error || "媒体厂商拒绝创建任务" : "",
+      error: submitted.error || (submittedStatus === "failed" ? "媒体厂商拒绝创建任务" : ""),
+      ...clearedMediaConnectionRetry(),
       ...(submittedStatus === "failed" ? { failedAt: new Date().toISOString(), retryAllowed: true } : {}),
       ...(submittedStatus === "cancelled" ? { cancelledAt: new Date().toISOString() } : {}),
     });
@@ -1286,6 +1304,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     try {
       status = await driver.resume({ job, settings, workRoot });
     } catch (error) {
+      if (boundedCliMediaJob(job)) throw error;
       const failures = Number(job.transientFailures || 0) + 1;
       // An explicit login rejection is a terminal credential state, even when
       // an older bridge wrapped it as DRIVER_EXIT_FAILED. Do not spend twelve
@@ -1327,15 +1346,17 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     if (status.providerStatus === "failed" && providerCapacityLimited(status)) {
       const failures = Number(job.transientFailures || 0) + 1;
       const delayMs = capacityBackoffMs(failures, status.retryAfterMs);
+      const retry = mediaConnectionRetry(job);
       await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
-        status: "polling",
+        status: retry.connectionRetryExhausted ? "retry_required" : "polling",
+        ...retry,
         ...providerPatch(status),
         providerTaskId: job.providerTaskId,
         providerStatus: "queued",
         providerErrorCode: "DREAMINA_CONCURRENCY_LIMIT",
         transientFailures: failures,
-        nextPollAt: new Date(Date.now() + delayMs).toISOString(),
-        error: `即梦状态服务返回并发拥堵；已保留原厂商任务 ${job.providerTaskId}，将在约 ${Math.ceil(delayMs / 1000)} 秒后继续查询，不会重复提交。`,
+        nextPollAt: retry.connectionRetryExhausted ? "" : new Date(Date.now() + Math.min(delayMs, 30_000)).toISOString(),
+        error: `即梦状态服务返回并发拥堵；已保留原厂商任务 ${job.providerTaskId}，${retry.connectionRetryExhausted ? "自动查询已停止并释放占用" : "正在有限续查"}，不会重复提交。${status.error || ""}`,
         heartbeatAt: new Date().toISOString(),
       } });
       return;
@@ -1358,6 +1379,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     const polled = await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
       status: "polling",
       ...providerPatch(status),
+      ...clearedMediaConnectionRetry(),
       ...(providerTerminalStatus(status.providerStatus) ? {
         providerTerminalAt: job.providerTerminalAt || new Date().toISOString(),
       } : {}),
@@ -1388,7 +1410,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     }
     if (["complete", "cancelled", "superseded"].includes(polled.status)) return;
     job = polled;
-    if (status.providerStatus === "failed") throw Object.assign(new Error(status.error || "媒体厂商任务失败"), { providerErrorCode: status.errorCode || "PROVIDER_FAILED" });
+    if (status.providerStatus === "failed") throw Object.assign(new Error(status.error || "媒体厂商任务失败"), { providerErrorCode: status.errorCode || "PROVIDER_FAILED", providerTaskTerminal: true });
     if (status.providerStatus === "cancelled") {
       await confirmMediaGenerationCancelled({ jobId: job.id, patch: { cancelledAt: new Date().toISOString(), heartbeatAt: new Date().toISOString() } });
       return;
@@ -1402,6 +1424,16 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
 };
 
 const processJob = async (candidate) => {
+  if (candidate.connectionRetryExhausted || candidate.forceReleasePendingAt && !candidate.forceReleaseCompletedAt) return false;
+  const retryDeadline = Date.parse(candidate.connectionRetryDeadlineAt || "");
+  if (boundedCliMediaJob(candidate) && Number.isFinite(retryDeadline) && Date.now() >= retryDeadline) {
+    await updateActiveMediaGenerationJob({ jobId: candidate.id, expectedDesiredAction: "run", expectedStatuses: [candidate.status], patch: {
+      status: candidate.providerTaskId || submissionOutcomeUnknown(candidate) ? "retry_required" : "failed",
+      connectionRetryExhausted: true, nextPollAt: "", retryAllowed: true,
+      error: `连接重试已达到时限，已停止自动重试并释放配置占用。${candidate.error || ""}`,
+    } });
+    return false;
+  }
   if (recoveryScan && freshUnsubmittedJob(candidate)) return false;
   const nextPollAt = Date.parse(candidate.nextPollAt || "");
   if (Number.isFinite(nextPollAt) && nextPollAt > Date.now()) return false;
@@ -1480,7 +1512,7 @@ const processJob = async (candidate) => {
       clearInterval(heartbeat);
       heartbeat = null;
     }
-    const current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
+    let current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
     if (["complete", "cancelled", "superseded"].includes(current.status)) return false;
     const providerCode = String(error.providerErrorCode || error.code || "");
     const surfacedProviderCode = providerCode || (dreaminaCliMediaJob(current)
@@ -1489,6 +1521,14 @@ const processJob = async (candidate) => {
     const errorProviderTaskId = String(error?.providerTaskId || error?.provider_task_id || "").trim();
     const usableErrorProviderTaskId = errorProviderTaskId
       && !/^(?:0|-|none|null|undefined|unknown|missing|n\/?a|na)$/iu.test(errorProviderTaskId);
+    if (normalizedIdentity(current.request?.settings?.provider) === "libtv"
+      && current.status === "submitting" && !current.providerTaskId && usableErrorProviderTaskId) {
+      current = await updateActiveMediaGenerationJob({ jobId: current.id, expectedDesiredAction: "run", expectedStatuses: [current.status], patch: {
+        providerTaskId: errorProviderTaskId, providerTaskIdType: error.providerTaskIdType || "task",
+        submissionState: error.providerTaskIdType === "node" ? "uncertain" : "submitted", providerStatus: "unknown",
+        ...(error.providerTaskIdType === "node" ? { billingRisk: "submission_outcome_unknown" } : {}),
+      } });
+    }
     if (dreaminaCliMediaJob(current)
       && current.channel === "video"
       && current.status === "submitting"
@@ -1515,16 +1555,17 @@ const processJob = async (candidate) => {
           safeNoTaskRetry: false,
           nextPollAt: new Date().toISOString(),
           retryAllowed: true,
+          lastProviderError: { code: providerCode, message: errorMessage(error), phase: "submitting", at: new Date().toISOString() },
           error: taskAuthFailure
-            ? `即梦已返回原厂商任务 ${errorProviderTaskId}，但同时报告生成阶段会话异常；已保留任务号并改为只读续查，不会重新提交。`
-            : `即梦已返回原厂商任务 ${errorProviderTaskId}，但提交响应同时包含错误；已保留任务号并改为只读续查，不会重新提交。${providerCode ? ` 原始错误码：${providerCode}` : ""}`,
+            ? `即梦已返回原厂商任务 ${errorProviderTaskId}，但同时报告生成阶段会话异常；已保留任务号并改为只读续查，不会重新提交。原始报错：${errorMessage(error)}`
+            : `即梦已返回原厂商任务 ${errorProviderTaskId}，但提交响应同时包含错误；已保留任务号并改为只读续查，不会重新提交。原始报错：${errorMessage(error)}`,
           heartbeatAt: new Date().toISOString(),
         },
       });
       return false;
     }
     const explicitDreaminaAccountVerification = explicitDreaminaAccountVerificationFailure(current, error);
-    const providerControlPlaneTransient = transientProviderFailure(error)
+    const providerControlPlaneTransient = !error.providerTaskTerminal && transientProviderFailure(error)
       && Boolean(current.providerTaskId)
       && !explicitDreaminaAccountVerification;
     const capabilityFailure = classifyCustomApiCapabilityFailure({
@@ -1561,7 +1602,7 @@ const processJob = async (candidate) => {
       }))
       || providerCode === "LOCAL_RUNTIME_BINDING_REQUIRED"
       || providerCode === "MEDIA_JOB_CANONICAL_PROFILE_MISMATCH"
-      || capabilityFailure.invalidatesCredential;
+      || (!dreaminaCliMediaJob(current) && capabilityFailure.invalidatesCredential);
     const storageBlocked = ["MEDIA_QUOTA_EXCEEDED", "MEDIA_DISK_FULL", "ENOSPC"].includes(error.code);
     const failureText = errorMessage(error);
     const localImageRecoveryMissing = openAiImageCliJob(current) && /OPENAI_IMAGE_RECOVERY_MISSING/.test(failureText);
@@ -1569,8 +1610,9 @@ const processJob = async (candidate) => {
       && String(current.providerStatus || "").toLowerCase() === "completed"
       && (/WORKSPACE_STATE_CONFLICT|WORKSPACE_BUSY|\b(?:EBUSY|EPERM)\b/i.test(`${providerCode} ${failureText}`)
         || /正在被另一个神思任务写入|另一个窗口或任务中更新/.test(failureText));
-    const { submissionUnknown, safeAutomaticRetry, retryDelayMs, failureCount, upstreamStreamOpenTimeout } = classifyMediaSubmissionFailure({ job: current, error });
-    const dreaminaSubmissionRecoveryPending = dreaminaCliMediaJob(current) && submissionUnknown;
+    const { submissionUnknown, safeAutomaticRetry, retryDelayMs, failureCount, upstreamStreamOpenTimeout, connectionRetry } = classifyMediaSubmissionFailure({ job: current, error });
+    const dreaminaSubmissionRecoveryPending = boundedCliMediaJob(current) && !missingCredentials
+      && error.submissionOutcomeKnown !== true && (submissionUnknown || submissionOutcomeUnknown(current));
     const dreaminaProfileBrokerBusy = providerCode === "DREAMINA_PROFILE_BROKER_BUSY";
     const localImageRecoveryPending = openAiImageCliJob(current)
       && (submissionUnknown || /OPENAI_IMAGE_RECOVERY_PENDING/.test(failureText));
@@ -1598,10 +1640,22 @@ const processJob = async (candidate) => {
       nextPollAt: new Date(Date.now() + (missingCredentials ? 60_000 : transientBackoffMs(1, error.retryAfterMs))).toISOString(),
       retryAllowed: true,
       heartbeatAt: new Date().toISOString(),
+    } : boundedCliMediaJob(current) && !error.providerTaskTerminal && !missingCredentials
+      && connectionRetry.connectionRetryExhausted
+      && (providerControlPlaneTransient || dreaminaSubmissionRecoveryPending || error.submissionOutcomeKnown === true) ? {
+      status: current.providerTaskId || dreaminaSubmissionRecoveryPending ? "retry_required" : "failed",
+      providerStatus: current.providerTaskId || dreaminaSubmissionRecoveryPending ? "unknown" : "not_submitted",
+      providerErrorCode: surfacedProviderCode,
+      ...connectionRetry,
+      ...(error.submissionOutcomeKnown === true && !current.providerTaskId ? { submissionState: "not_submitted", billingRisk: "", resubmitConfirmationRequired: false } : {}),
+      nextPollAt: "", retryAllowed: true,
+      error: `连接重试已达到次数或时限，已停止自动重试并释放配置占用；原任务记录保留。原始报错：${errorMessage(error)}`,
+      heartbeatAt: new Date().toISOString(),
     } : dreaminaSubmissionRecoveryPending ? {
       status: "retry_required",
       providerStatus: "reconciling",
-      providerErrorCode: "DREAMINA_SUBMISSION_UNCERTAIN",
+      providerErrorCode: surfacedProviderCode,
+      ...connectionRetry,
       submissionState: "uncertain",
       progressPercent: Math.max(24, Number(current.progressPercent) || 0),
       failedAt: "",
@@ -1611,18 +1665,19 @@ const processJob = async (candidate) => {
       nextPollAt: new Date(Date.now() + 2_000).toISOString(),
       automaticRecoveryStartedAt: current.automaticRecoveryStartedAt || new Date().toISOString(),
       automaticRecoveryStoppedAt: "",
-      error: "即梦提交响应中断，正在按当前任务保存的原始配置和幂等键核对厂商任务；不会重新提交或重复扣费。",
+      error: `提交结果尚未确认，正在使用原记录有限核对；不会重新提交。原始报错：${errorMessage(error)}`,
       heartbeatAt: new Date().toISOString(),
     } : providerControlPlaneTransient ? {
-      status: "polling",
-      providerStatus: ["queued", "running"].includes(String(current.providerStatus || "")) ? current.providerStatus : "queued",
+      ...connectionRetry,
+      status: current.providerStatus === "completed" ? "downloading" : "polling",
+      providerStatus: ["queued", "running", "completed"].includes(String(current.providerStatus || "")) ? current.providerStatus : "queued",
       providerErrorCode: providerCode || "DREAMINA_QUERY_TRANSIENT",
       progressPercent: Math.max(24, Number(current.progressPercent) || 0),
       transientFailures: failureCount,
       failedAt: "",
       retryAllowed: true,
       nextPollAt: new Date(Date.now() + Math.max(durableProviderPollDelayMs(current), transientBackoffMs(failureCount, error.retryAfterMs))).toISOString(),
-        error: `暂时无法取得厂商最新进度；原任务已保留，神思会继续查询，只有厂商明确返回失败才会结束：${failureText}`,
+      error: `暂时无法取得厂商最新进度；原任务已保留，正在有限重试：${failureText}`,
       heartbeatAt: new Date().toISOString(),
     } : aggregateImageRecoveryPending && aggregateRecoveryPolicy.expired ? {
       status: "retry_required",
@@ -1734,6 +1789,7 @@ const processJob = async (candidate) => {
       error: `即梦原任务 ${current.providerTaskId} 的临时会话正在恢复（第 ${dreaminaTaskSessionRecovery.attempts} 次）；将使用原配置自动续查，不会重新核验、重新提交或切换账号。`,
       heartbeatAt: new Date().toISOString(),
     } : safeAutomaticRetry ? {
+      ...connectionRetry,
       status: "queued",
       providerStatus: "queued",
       providerErrorCode: providerCode,
@@ -1751,6 +1807,9 @@ const processJob = async (candidate) => {
         : `媒体服务已明确本次没有创建计费任务；将在约 ${Math.ceil(retryDelayMs / 1000)} 秒后自动重试（${failureCount}/3）：${errorMessage(error)}`,
       heartbeatAt: new Date().toISOString(),
     } : {
+      ...(boundedCliMediaJob(current) && error.submissionOutcomeKnown === true && !current.providerTaskId ? {
+        submissionState: "not_submitted", providerStatus: "not_submitted",
+      } : {}),
       status: missingCredentials
         ? "waiting_credentials"
         : storageBlocked && current.providerTaskId
@@ -1758,7 +1817,8 @@ const processJob = async (candidate) => {
           : submissionUnknown ? "retry_required" : "failed",
       providerStatus: providerCode.toUpperCase() === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
         ? "failed"
-        : current.providerStatus || "failed",
+        : boundedCliMediaJob(current) && error.submissionOutcomeKnown === true && !current.providerTaskId
+          ? "not_submitted" : current.providerStatus || "failed",
       providerErrorCode: surfacedProviderCode,
       ...dreaminaFailurePatch,
       progressPercent: storageBlocked ? 92 : missingCredentials ? Math.max(24, Number(current.progressPercent) || 0) : 100,
@@ -1769,7 +1829,7 @@ const processJob = async (candidate) => {
         : dreaminaTaskSessionRecovery.applies && dreaminaTaskSessionRecovery.expired
         ? `即梦原任务 ${current.providerTaskId} 已使用原配置自动恢复会话至安全时限，仍收到明确未登录响应。请仅核验该任务原来使用的即梦配置；任务号已保留，不会重新提交或扣费。`
         : submissionUnknown
-          ? "提交期间连接中断，未取得厂商任务 ID。为防重复计费，已禁止自动重投；请先在厂商后台核查任务。原始幂等键已保留。"
+          ? `提交期间未取得厂商任务 ID，已停止自动重投并保留原始幂等键。原始报错：${errorMessage(error)}`
           : errorMessage(error),
       billingRisk: submissionUnknown ? "submission_outcome_unknown" : current.billingRisk || "",
       ...(submissionUnknown ? {
@@ -1789,7 +1849,10 @@ const processJob = async (candidate) => {
       jobId: candidate.id,
       expectedDesiredAction: current.desiredAction || "run",
       expectedStatuses: [current.status],
-      patch: failurePatch,
+      patch: {
+        ...failurePatch,
+        lastProviderError: { code: surfacedProviderCode, message: errorMessage(error), phase: String(error.executionPhase || current.executionPhase || current.status), at: new Date().toISOString() },
+      },
     });
     return false;
   } finally {
@@ -1829,7 +1892,11 @@ const main = async () => {
   }
 };
 
-main().catch((error) => {
+main().catch(async (error) => {
+  if (targetJobId) {
+    try { await recordMediaWorkerFailure({ jobId: targetJobId, detail: errorMessage(error) }); }
+    catch (recordError) { process.stderr.write(`媒体错误状态保存失败：${errorMessage(recordError)}\n`); }
+  }
   process.stderr.write(`${errorMessage(error)}\n`);
   process.exitCode = 1;
 });

@@ -4,11 +4,14 @@ const DREAMINA_ACTIVE_STATUSES = new Set([
   "running",
   "polling",
   "downloading",
-  "waiting_credentials",
+  "preparing",
+  "uploading",
+  "retrying",
+  "applying",
 ]);
 
 const DREAMINA_CANCEL_SWITCH_GRACE_MS = 30 * 60_000;
-const DREAMINA_RECONCILIATION_SWITCH_GRACE_MS = 10 * 60_000;
+const DREAMINA_CARD_APPLY_GRACE_MS = 2 * 60_000;
 
 const normalized = (value) => String(value || "").trim().toLowerCase();
 
@@ -69,24 +72,29 @@ export const dreaminaJobRequiresCredentialProfile = (job = {}, { nowMs = Date.no
   if (!isDreaminaCliSettings(job.request?.settings || {})) return false;
   const status = normalized(job.status);
   const providerStatus = normalized(job.providerStatus);
-  // Provider terminal state releases profile switching immediately. Download,
-  // asset persistence and card readback have their own lifecycle and must not
-  // hold the single Windows credential slot hostage.
-  if (["completed", "complete", "succeeded", "success", "failed", "cancelled", "canceled"].includes(providerStatus)) return false;
+  if (["failed", "cancelled", "canceled"].includes(providerStatus)) return false;
   // A user stop is authoritative even if a recovery path subsequently moves
   // the job to waiting_credentials or retry_required. Cancellation auditing
   // must never reacquire the one shared Dreamina credential slot.
-  if (normalized(job.desiredAction) === "cancel" || job.userStoppedAt) return false;
+  if (normalized(job.desiredAction) === "cancel" || job.userStoppedAt || job.resultSuppressed || job.supersededBy) return false;
+  const retryDeadline = Date.parse(job.connectionRetryDeadlineAt || "");
+  if (job.connectionRetryExhausted || (Number.isFinite(retryDeadline) && nowMs >= retryDeadline)) return false;
+  // Provider completion is not local completion. Retain the serial sequence
+  // through download/integrity checks and card readback, but bound a stalled
+  // local apply so it is visible as pending work instead of an eternal lock.
+  if (status === "complete") {
+    if (job.appliedAt || job.cardApplyFailed || job.target?.targetType === "capability-smoke") return false;
+    const completedAt = Date.parse(job.completedAt || "") || 0;
+    return Boolean(job.result?.attachment || job.result?.attachments?.length)
+      && withinGraceWindow(completedAt, nowMs, DREAMINA_CARD_APPLY_GRACE_MS);
+  }
   if (DREAMINA_ACTIVE_STATUSES.has(status)) return true;
   // The user's cancel action immediately releases the profile-switch gate.
   // Provider-side cancellation may still be verified in the background, but
   // that audit work must never hold another Dreamina profile hostage.
   if (status === "cancel_requested") return false;
-  if (["retry_required", "reconciliation_required"].includes(status)
-    && normalized(job.providerStatus) === "reconciling") {
-    const reconciliationStartedAt = Date.parse(job.recoveryStartedAt || job.automaticRecoveryStartedAt || job.interruptedAt || job.createdAt || "") || 0;
-    return withinGraceWindow(reconciliationStartedAt, nowMs, DREAMINA_RECONCILIATION_SWITCH_GRACE_MS);
-  }
+  // Waiting for a person or reconciling an uncertain old submission never
+  // blocks a different profile. Each actual CLI command still owns the OS mutex.
   return false;
 };
 

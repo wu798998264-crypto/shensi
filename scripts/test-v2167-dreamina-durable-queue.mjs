@@ -52,7 +52,7 @@ const [worker, drivers, imageBridge, videoBridge, app] = await Promise.all([
 
 assert.match(worker, /One durable provider observation per worker invocation/);
 assert.match(worker, /providerControlPlaneTransient/);
-assert.match(worker, /只有厂商明确返回失败才会结束/);
+assert.match(worker, /current\.providerTaskId \|\| dreaminaSubmissionRecoveryPending \? "retry_required" : "failed"/, "查询失败达到上限时保留原任务、等待用户处理，不能无限轮询");
 assert.match(worker, /providerExecutionReceipt/);
 assert.match(drivers, /cachedDreaminaCapability/);
 assert.match(drivers, /\(pollCount \+ 1\) % 120 === 0/);

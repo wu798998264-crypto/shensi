@@ -145,10 +145,11 @@ const preserveDreaminaQueryErrorCode = (error) => {
   ].includes(code) ? code : "DREAMINA_QUERY_TRANSIENT";
 };
 
-const semanticAuthFailure = (command = "") => {
+const semanticAuthFailure = (command = "", raw = "") => {
   const operationLabel = String(command || "").trim();
   const error = new Error(`${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`);
   error.code = "DREAMINA_AUTH_REQUIRED";
+  if (raw) error.message += ` 原始报错：${raw}`;
   error.submissionOutcomeKnown = true;
   return error;
 };
@@ -178,7 +179,7 @@ const run = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RETRIE
         await sleep(boundedRetryDelay(authRetryDelayMs(), attempt));
         continue;
       }
-      if (authRejected) throw semanticAuthFailure(args[0]);
+      if (authRejected) throw semanticAuthFailure(args[0], [error.stdout, error.stderr].filter(Boolean).join("\n") || error.message);
       if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_BROKER_BUSY" && attempt < authRetries) {
         await sleep(boundedRetryDelay(400, attempt, 4_000));
         continue;
@@ -188,7 +189,7 @@ const run = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RETRIE
     }
   }
   if (isDreaminaAuthRefreshRetryableFailure(lastError?.message)) {
-    const recovered = new Error(dreaminaAuthRefreshFailureMessage(lastError.message, authRetries));
+    const recovered = new Error(`${dreaminaAuthRefreshFailureMessage(lastError.message, authRetries)} 原始报错：${lastError.message}`);
     recovered.code = "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED";
     recovered.submissionOutcomeKnown = true;
     throw recovered;

@@ -1,4 +1,5 @@
 import { appendGenerationAsset } from "./whiteboard.js";
+import { dreaminaJobRequiresCredentialProfile } from "./dreamina-manual-profile-policy.js";
 
 const defaultWorkspaceConflict = (error) => Number(error?.status) === 409
   || error?.code === "WORKSPACE_STATE_CONFLICT";
@@ -138,16 +139,16 @@ export const whiteboardMediaJobHoldsCard = (job = {}) => {
 };
 
 export const mediaRecoveryJobBlocksOperation = (job = {}) => {
+  if (job?.mode === "server" && ["image", "video", "audio"].includes(job.channel)
+    && job.forceReleasePendingAt && !job.forceReleaseCompletedAt) return true;
   if (!job || job.appliedAt || job.supersededBy || mediaGenerationResultSuppressed(job)) return false;
   if (job.mode !== "server" || !["image", "video"].includes(String(job.channel || ""))) return false;
   if (job.target?.targetType === "capability-smoke") return false;
   const status = String(job.status || "");
-  const whiteboardTarget = !job.target?.targetType
-    || job.target.targetType === "whiteboard-node"
-    || Boolean(job.target?.nodeId);
-  if (status === "complete") return whiteboardTarget;
+  if (dreaminaJobRequiresCredentialProfile(job)) return true;
+  if (status === "complete") return !job.appliedAt;
   if (!MEDIA_RECOVERY_BLOCKING_STATUSES.has(status)) return false;
-  if (whiteboardTarget && whiteboardMediaJobHoldsCard(job)) return true;
+  if (whiteboardMediaJobHoldsCard(job) || ["waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"].includes(status)) return true;
   return job.availableActions?.dismissUncertain === true;
 };
 

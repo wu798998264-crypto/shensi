@@ -3,7 +3,24 @@ import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
 import { appDataRoot } from "./app-data.mjs";
 import { generationRuntimeCredentialsSnapshot } from "./generation-runtime-store.mjs";
-import { updateMediaGenerationJob } from "./generation-job-store.mjs";
+import { readGenerationJobForWorker, updateActiveMediaGenerationJob, updateMediaGenerationJob } from "./generation-job-store.mjs";
+
+export const recordMediaWorkerFailure = async ({ jobId, detail = "", workerPid = 0, code = "MEDIA_WORKER_EXIT_FAILED" }) => {
+  const job = await readGenerationJobForWorker({ jobId });
+  if (workerPid && job.workerPid && Number(job.workerPid) !== Number(workerPid)) return;
+  if (job.mode !== "server" || job.userStoppedAt || job.forceReleasePendingAt
+    || !["queued", "submitting", "running", "polling", "downloading"].includes(job.status)) return;
+  const uncertain = !job.providerTaskId && ["submitting", "uncertain", "unknown"].includes(job.submissionState);
+  const now = new Date().toISOString();
+  return updateActiveMediaGenerationJob({ jobId, expectedDesiredAction: "run", expectedStatuses: [job.status], patch: {
+    status: job.providerTaskId || uncertain ? "retry_required" : "failed",
+    providerErrorCode: code, nextPollAt: "", retryAllowed: true,
+    connectionRetryExhausted: true,
+    ...(uncertain ? { submissionState: "uncertain", billingRisk: "submission_outcome_unknown", resubmitConfirmationRequired: true } : {}),
+    error: `媒体执行进程异常退出，自动执行已停止。${detail || "进程未返回具体原因"}`,
+    lastProviderError: { code, message: detail || "进程未返回具体原因", phase: job.executionPhase || job.status, at: now },
+  } });
+};
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "media-generation-worker.mjs");
 
@@ -58,16 +75,16 @@ const workerProcessMatchesJob = async (pid, jobId) => {
 };
 
 const findWindowsWorkerPid = (jobId) => new Promise((resolvePid) => {
-  if (process.platform !== "win32" || !/^generation-[a-z0-9-]{20,}$/i.test(String(jobId || ""))) return resolvePid(0);
+  if (process.platform !== "win32" || !/^generation-[a-z0-9-]{20,}$/i.test(String(jobId || ""))) return resolvePid({ pid: 0 });
   const powershell = `${process.env.SystemRoot || "C:\\Windows"}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
   const safeJobId = String(jobId);
   // Packaged Electron workers are launched with the app executable rather
   // than node.exe. Match the worker script and exact job argument across all
   // process names so a service restart can still find the detached worker.
-  const command = `(Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*media-generation-worker.mjs*' -and $_.CommandLine -like '*--job*' -and $_.CommandLine -like '*${safeJobId}*' } | Select-Object -First 1 -ExpandProperty ProcessId)`;
-  execFile(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], { windowsHide: true, timeout: 5_000, maxBuffer: 16 * 1024 }, (_error, stdout) => {
+  const command = `(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.Name -notmatch '^(powershell|pwsh)\\.exe$' -and $_.CommandLine -like '*media-generation-worker.mjs*' -and $_.CommandLine -like '*--job*' -and $_.CommandLine -like '*${safeJobId}*' } | Select-Object -First 1 -ExpandProperty ProcessId)`;
+  execFile(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], { windowsHide: true, timeout: 5_000, maxBuffer: 16 * 1024 }, (error, stdout) => {
     const pid = Number(String(stdout || "").trim());
-    resolvePid(Number.isInteger(pid) && pid > 0 ? pid : 0);
+    resolvePid({ pid: Number.isInteger(pid) && pid > 0 ? pid : 0, scanError: error ? String(error.message) : "" });
   });
 });
 
@@ -122,7 +139,19 @@ export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = nu
     shell: false,
     windowsHide: true,
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let errorOutput = "";
+  child.stderr?.on("data", (chunk) => { errorOutput = (errorOutput + String(chunk)).slice(-8192); });
+  child.stderr?.unref?.();
+  const reportExitFailure = (detail) => {
+    if (!jobId) return;
+    void recordMediaWorkerFailure({ jobId, detail, workerPid: child.pid }).catch((error) => {
+      process.stderr.write(`媒体执行进程错误记录失败：${error.message}\n`);
+    });
+  };
+  child.once("close", (code, signal) => {
+    if (code !== 0 || signal) reportExitFailure(errorOutput || `退出码 ${code ?? "无"}${signal ? `，信号 ${signal}` : ""}`);
   });
   activeWorkers.set(key, child);
   if (jobId && child.pid && /^generation-[a-z0-9-]{20,}$/i.test(String(jobId))) {
@@ -134,8 +163,9 @@ export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = nu
   child.once("exit", () => {
     if (activeWorkers.get(key) === child) activeWorkers.delete(key);
   });
-  child.once("error", () => {
+  child.once("error", (error) => {
     if (activeWorkers.get(key) === child) activeWorkers.delete(key);
+    reportExitFailure(error.message);
   });
   child.unref();
   return { pid: child.pid, jobId: String(jobId || ""), reused: false };
@@ -158,7 +188,8 @@ export const terminateMediaGenerationWorker = async ({ jobId = "", pid = 0 } = {
   };
   addCandidate(active?.pid);
   addCandidate(pid);
-  if (process.platform === "win32") addCandidate(await findWindowsWorkerPid(normalizedJobId));
+  const scan = process.platform === "win32" ? await findWindowsWorkerPid(normalizedJobId) : { pid: 0 };
+  addCandidate(scan.pid);
   for (const candidatePid of candidates) {
     if (!(await workerProcessMatchesJob(candidatePid, normalizedJobId))) continue;
     const terminated = await terminateProcessTree(candidatePid);
@@ -166,5 +197,5 @@ export const terminateMediaGenerationWorker = async ({ jobId = "", pid = 0 } = {
     if (terminated && active && activeWorkers.get(`job:${normalizedJobId}`) === active) activeWorkers.delete(`job:${normalizedJobId}`);
     return { terminated, verified: true, exited, pid: candidatePid };
   }
-  return { terminated: false, verified: false, pid: candidates.at(-1) || 0 };
+  return { terminated: false, verified: false, pid: candidates.at(-1) || 0, scanError: scan.scanError || "" };
 };

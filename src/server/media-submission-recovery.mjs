@@ -1,3 +1,4 @@
+import { boundedCliMediaJob, mediaConnectionRetry } from "../media-execution-policy.js";
 const normalizedProviderCode = (error = {}) => String(error.providerErrorCode || error.code || "").toUpperCase();
 const normalizedIdentity = (value) => String(value || "").trim().toLowerCase();
 const normalizedEndpoint = (value) => String(value || "").trim().replace(/\/+$/u, "").toLowerCase();
@@ -117,12 +118,14 @@ export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutoma
     && !job.providerTaskId
     && (error.submissionOutcomeKnown !== true || aggregateUpstreamStreamOpenTimeout);
   const code = normalizedProviderCode(error);
-  const brokerBusy = code === "DREAMINA_PROFILE_BROKER_BUSY";
+  const connectionRetry = boundedCliMediaJob(job) ? mediaConnectionRetry(job, { maxRetries: maxAutomaticRetries }) : {};
   const safeAutomaticRetry = error.submissionOutcomeKnown === true
+    && !job.providerTaskId
     && (safeKnownNoTaskRetry(code) || (job.channel === "image" && safeRejectedImageRetry(code)))
-    && (brokerBusy || failureCount <= Math.max(0, Number(maxAutomaticRetries) || 0));
+    && connectionRetry.connectionRetryExhausted !== true
+    && failureCount <= Math.max(0, Number(maxAutomaticRetries) || 0);
   const retryDelayMs = safeAutomaticRetry
     ? Math.max(Number(error.retryAfterMs) || 0, Math.min(30_000, 1_000 * (2 ** Math.max(0, failureCount - 1))))
     : 0;
-  return { submissionUnknown, safeAutomaticRetry, retryDelayMs, failureCount, upstreamStreamOpenTimeout };
+  return { submissionUnknown, safeAutomaticRetry, retryDelayMs, failureCount, upstreamStreamOpenTimeout, connectionRetry };
 };

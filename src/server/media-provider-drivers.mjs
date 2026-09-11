@@ -12,6 +12,7 @@ import { DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_VIDEO_CLI_ALIAS, LIBTV_CLI_ALIAS } f
 import { isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { sanitizeMediaProviderPrompt } from "../media-prompt.js";
 import { dreaminaCliEnvironment } from "./dreamina-cli-profile.mjs";
+import { libtvTaskFromPayload, parseLibTvCliOutput } from "../libtv-result.js";
 
 const moduleRoot = dirname(fileURLToPath(import.meta.url));
 const DREAMINA_IMAGE_BRIDGE_PATH = resolve(moduleRoot, "../cli/dreamina-image-cli.mjs");
@@ -63,7 +64,7 @@ const providerTaskIdFromOutput = (source = "") => {
     || payload?.data?.submit_id || payload?.data?.submitId || payload?.data?.task_id || payload?.data?.taskId;
   const directId = normalizeProviderTaskId(direct);
   if (directId) return directId;
-  const matches = text.matchAll(/(?:^|[\r\n{,])\s*["']?(?:providerTaskId|submit_id|submitId|task_id|taskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
+  const matches = text.matchAll(/^\s*["']?(?:providerTaskId|submit_id|submitId|task_id|taskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
   for (const match of matches) {
     const candidate = normalizeProviderTaskId(match?.[1]);
     if (candidate) return candidate;
@@ -97,17 +98,31 @@ const terminateSpawnTree = (child, timeoutMs = 5_000) => new Promise((resolveKil
   killer.once("close", finish);
 });
 
-const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_000, extractDreaminaTaskId = false }) => new Promise((resolveRun, rejectRun) => {
+const spawnJson = ({
+  executable,
+  args,
+  cwd,
+  env = process.env,
+  timeoutMs = 60_000,
+  extractDreaminaTaskId = false,
+  includeAllErrorOutput = false,
+  parseOutput = parsedJson,
+}) => new Promise((resolveRun, rejectRun) => {
   const child = spawn(executable, args, { cwd, env, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";
   let settled = false;
-  const timer = setTimeout(async () => {
+  const timeout = Number(timeoutMs);
+  const timer = Number.isFinite(timeout) && timeout > 0 ? setTimeout(async () => {
     if (settled) return;
     settled = true;
     await terminateSpawnTree(child);
-    rejectRun(asError(`媒体驱动命令超过 ${Math.ceil(timeoutMs / 1000)} 秒未响应`, "DRIVER_TIMEOUT"));
-  }, timeoutMs);
+    const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+    const error = asError(`媒体驱动命令超过 ${Math.ceil(timeout / 1000)} 秒未响应${output ? `。CLI 输出：${output.slice(-8192)}` : ""}`, "DRIVER_TIMEOUT");
+    error.stdout = stdout.trim(); error.stderr = stderr.trim();
+    if (extractDreaminaTaskId) error.providerTaskId = providerTaskIdFromOutput(stdout) || providerTaskIdFromOutput(stderr);
+    rejectRun(error);
+  }, timeout) : null;
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => { stdout += chunk; });
@@ -123,7 +138,7 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
     settled = true;
     clearTimeout(timer);
     if (code !== 0) {
-      const message = extractDreaminaTaskId
+      const message = extractDreaminaTaskId || includeAllErrorOutput
         ? [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") || `媒体驱动退出码 ${code}`
         : stderr.trim() || stdout.trim() || `媒体驱动退出码 ${code}`;
       const providerTaskId = extractDreaminaTaskId ? providerTaskIdFromOutput(message) : "";
@@ -156,7 +171,10 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
       }
       return rejectRun(error);
     }
-    resolveRun(parsedJson(stdout));
+    try { resolveRun(parseOutput(stdout)); } catch (error) {
+      error.stdout = stdout.trim(); error.stderr = stderr.trim();
+      rejectRun(error);
+    }
   });
 });
 
@@ -981,43 +999,41 @@ const libtvExecutable = (settings = {}) => {
   return configured || LIBTV_CLI_ALIAS;
 };
 
-const libtvStatus = (value) => {
-  const numeric = Number(value);
-  if (numeric === 2) return "completed";
-  if (numeric === 3) return "failed";
-  if (numeric === 4 || numeric === 5) return "cancelled";
-  const normalized = String(value || "").toLowerCase();
-  if (["completed", "complete", "success", "succeeded", "done"].includes(normalized)) return "completed";
-  if (["failed", "fail", "error"].includes(normalized)) return "failed";
-  if (["cancelled", "canceled"].includes(normalized)) return "cancelled";
-  return ["queued", "pending", "created", "waiting"].includes(normalized) ? "queued" : "running";
-};
-
-const libtvTaskFromPayload = (payload = {}) => {
-  const data = payload.data || payload;
-  const info = data.taskInfo || data.task_info || {};
-  const taskId = String(payload.taskId || payload.task_id || info.taskId || info.task_id || "").trim();
-  const statusValue = info.status ?? info.taskStatus ?? data.status ?? payload.status ?? "queued";
-  const status = libtvStatus(statusValue);
-  const urls = Array.isArray(data.url) ? data.url : [data.url || data.resultUrl || data.result_url].filter(Boolean);
-  const error = String(info.failedReason || info.error || data.failedReason || payload.message || "");
-  const progress = Number(info.progressPercent ?? info.progress ?? data.progressPercent);
-  return {
-    providerTaskId: taskId,
-    providerStatus: status,
-    rawStatus: String(statusValue),
-    ...(urls[0] ? { resultUrl: String(urls[0]) } : {}),
-    ...(error ? { error, errorCode: status === "failed" ? "LIBTV_PROVIDER_FAILED" : "" } : {}),
-    ...(Number.isFinite(progress) ? { progressPercent: progress } : {}),
-    raw: payload,
-  };
-};
-
 const LIBTV_MODEL_SCHEMA_CACHE_TTL_MS = 15 * 60_000;
 const libTvModelCatalogCache = new Map();
 const libTvModelSchemaCache = new Map();
 
 const libTvCacheKey = (settings = {}, suffix = "") => `${libtvExecutable(settings)}\0${suffix}`;
+
+const libTvKnownPreSubmitFailure = (error, fallbackCode = "LIBTV_PRE_SUBMIT_FAILED") => {
+  const failure = error instanceof Error ? error : asError(String(error || "LibTV 提交前检查失败"), fallbackCode);
+  const currentCode = String(failure.providerErrorCode || failure.code || "").trim().toUpperCase();
+  if (!currentCode || ["DRIVER_EXIT_FAILED", "DRIVER_TIMEOUT"].includes(currentCode)) {
+    failure.providerErrorCode = fallbackCode;
+  }
+  failure.submissionOutcomeKnown = true;
+  failure.executionPhase ||= "preparing";
+  return failure;
+};
+
+const libTvPromptMaxLength = (schema = {}) => {
+  const limit = Number(schema?.properties?.prompt?.maxLength);
+  return Number.isInteger(limit) && limit > 0 ? limit : 0;
+};
+
+const assertLibTvPromptLength = ({ prompt = "", schema = {}, modelName = "" } = {}) => {
+  const maxLength = libTvPromptMaxLength(schema);
+  if (!maxLength) return;
+  const length = Array.from(String(prompt || "")).length;
+  if (length <= maxLength) return;
+  throw libTvKnownPreSubmitFailure(
+    asError(
+      `LibTV 模型 ${modelName || "当前模型"} 的提示词上限为 ${maxLength} 字符，本次为 ${length} 字符；已在上传素材和创建生成任务前停止，请压缩提示词后重试`,
+      "LIBTV_PROMPT_TOO_LONG",
+    ),
+    "LIBTV_PROMPT_TOO_LONG",
+  );
+};
 
 const libTvEnumValues = (property = {}) => (Array.isArray(property?.enum) ? property.enum : [])
   .map((item) => (item && typeof item === "object" ? item.value : item))
@@ -1113,6 +1129,7 @@ export const summarizeLibTvModelSchema = ({ modelKey = "", modelName = "", schem
   return {
     modelKey: String(modelKey || "").trim(),
     modelName: String(modelName || modelKey || "").trim(),
+    promptMaxLength: libTvPromptMaxLength(schema),
     durationSeconds: collect("duration").map(Number).filter((value) => Number.isFinite(value) && value > 0).sort((left, right) => left - right),
     resolutions: collect("resolution"),
     aspectRatios: collect("ratio"),
@@ -1314,24 +1331,48 @@ export class LibTvMediaDriver extends MediaProviderDriver {
 
   async invoke(args, { cwd, timeoutMs = 60_000, raw = false } = {}) {
     const request = { executable: this.executable(), args, cwd, timeoutMs };
-    return raw ? spawnRaw(request) : spawnJson(request);
+    const isRun = args.includes("--run");
+    let result;
+    try {
+      result = await (raw ? spawnRaw(request) : spawnJson({ ...request, includeAllErrorOutput: true, parseOutput: parseLibTvCliOutput }));
+    } catch (error) {
+      // Nonzero exit may still carry a valid terminal task result in stdout.
+      // Keep that result and its reason; progress on stderr must not hide it.
+      if (isRun && error.stdout) {
+        try {
+          const payload = parseLibTvCliOutput(error.stdout);
+          const task = libtvTaskFromPayload(payload);
+          if (["failed", "cancelled"].includes(task.providerStatus)) return payload;
+        } catch {}
+      }
+      throw error;
+    }
+    if (!raw && !isRun && (result?.ok === false || result?.success === false || result?.error)) {
+      const task = libtvTaskFromPayload({ ...result, ok: false });
+      throw asError(task.error, task.errorCode);
+    }
+    return result;
   }
+
+  async modelSchema(settings) { return loadLibTvModelSchema({ modelKey: settings.model, settings }); }
 
   async project(workRoot) {
     const metadataPath = join(workRoot, "libtv-project.json");
     await mkdir(join(workRoot, ".libtv"), { recursive: true });
+    let metadata;
     try {
-      const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
-      if (metadata.projectUuid) {
-        await this.invoke(["project", "use", metadata.projectUuid], { cwd: workRoot, timeoutMs: 30_000 });
-        return metadata;
-      }
-    } catch {}
+      metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+    } catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (metadata) {
+      if (!metadata.projectUuid) throw asError("LibTV 原画布记录缺少 UUID，已停止创建替代画布", "LIBTV_PROJECT_METADATA_INVALID");
+      await this.invoke(["project", "use", metadata.projectUuid], { cwd: workRoot, timeoutMs: 30_000 });
+      return metadata;
+    }
     const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000 });
     const projectUuid = String(created.projectMeta?.uuid || created.uuid || "").trim();
     if (!projectUuid) throw asError("LibTV 创建临时画布未返回 UUID", "LIBTV_PROJECT_CREATE_FAILED");
     await this.invoke(["project", "use", projectUuid], { cwd: workRoot, timeoutMs: 30_000 });
-    const metadata = { projectUuid };
+    metadata = { projectUuid };
     await writeFile(metadataPath, JSON.stringify(metadata), "utf8");
     return metadata;
   }
@@ -1359,17 +1400,25 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     };
   }
 
-  async submit({ job, references = [], workRoot }) {
-    await mkdir(workRoot, { recursive: true });
+  async submit({ job, references = [], workRoot, onPhase = async () => {} }) {
+    try { await mkdir(workRoot, { recursive: true }); }
+    catch (error) { throw libTvKnownPreSubmitFailure(error, "LIBTV_PREPARE_FAILED"); }
     const metadataPath = join(workRoot, "libtv-node.json");
     const modelKey = String(job.request.settings?.model || "").trim();
     let libTvVideoSchema = null;
     let libTvVideoCapability = null;
     let libTvVideoMode = "";
+    let libTvModelName = modelKey;
     if (job.channel === "video") {
-      const schemaPayload = await loadLibTvModelSchema({ modelKey, settings: job.request.settings || {} });
+      let schemaPayload;
+      try {
+        schemaPayload = await this.modelSchema(job.request.settings || {});
+      } catch (error) {
+        throw libTvKnownPreSubmitFailure(error, "LIBTV_MODEL_SCHEMA_FAILED");
+      }
       libTvVideoSchema = schemaPayload.schema || {};
-      libTvVideoCapability = summarizeLibTvModelSchema({ modelKey, schema: libTvVideoSchema });
+      libTvModelName = String(libTvVideoSchema.modelName || schemaPayload.modelName || LIBTV_VIDEO_NAMES[modelKey] || modelKey).trim();
+      libTvVideoCapability = summarizeLibTvModelSchema({ modelKey, modelName: libTvModelName, schema: libTvVideoSchema });
       libTvVideoMode = resolveLibTvVideoMode({
         capability: libTvVideoCapability,
         references,
@@ -1378,72 +1427,117 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       });
       if (!libTvVideoMode) {
         const referenceKinds = [...new Set(references.map((item) => String(item?.mimeType || "").split("/", 1)[0]).filter(Boolean))];
-        throw asError(
-          `LibTV 当前模型 ${modelKey} 不支持本次参考组合${referenceKinds.length ? `（${referenceKinds.join("、")}）` : ""}；请选择支持该输入模式的模型`,
+        throw libTvKnownPreSubmitFailure(
+          asError(
+            `LibTV 当前模型 ${modelKey} 不支持本次参考组合${referenceKinds.length ? `（${referenceKinds.join("、")}）` : ""}；请选择支持该输入模式的模型`,
+            "LIBTV_REFERENCE_MODE_UNSUPPORTED",
+          ),
           "LIBTV_REFERENCE_MODE_UNSUPPORTED",
         );
       }
+      assertLibTvPromptLength({ prompt: providerPrompt(job), schema: libTvVideoSchema, modelName: libTvModelName || modelKey });
     }
-    const project = await this.project(workRoot);
+    let project;
+    try {
+      await onPhase("preparing_project");
+      project = await this.project(workRoot);
+    } catch (error) {
+      throw libTvKnownPreSubmitFailure(error, "LIBTV_PROJECT_SETUP_FAILED");
+    }
     let node;
-    try { node = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
+    try { node = JSON.parse(await readFile(metadataPath, "utf8")); }
+    catch (error) {
+      if (error.code !== "ENOENT") throw asError(`LibTV 原节点记录无法读取，已停止重复生成：${error.message}`, "LIBTV_NODE_METADATA_INVALID");
+    }
     const nodeName = `神思-${job.channel}-${job.id}`;
     if (!node?.nodeKey) {
-      const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
-      const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${names[modelKey] || modelKey}`];
-      if (job.channel === "image") {
-        if (job.request.aspectRatio) args.push("-s", `ratio=${job.request.aspectRatio}`);
-        if (job.request.quality) args.push("-s", `quality=${String(job.request.quality).toLowerCase()}`);
-        if (job.request.resolution) args.push("-s", `resolution=${String(job.request.resolution).replace(/p$/i, "K")}`);
-        args.push("-s", `count=${Math.max(1, Math.min(4, Number(job.request.imageCount) || 1))}`);
-      } else if (job.channel === "video") {
-        appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "ratio", job.request.aspectRatio);
-        appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "duration", job.request.duration, { required: true });
-        appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "resolution", job.request.resolution, { required: true });
-        appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "enableSound", job.request.generateAudio === false ? "off" : "on");
-        args.push("-s", `modeType=${libTvVideoMode}`);
-      } else {
-        if (/^speech-|^vocal-v3$/i.test(modelKey)) {
-          args.push(
-            "-s", `scene=${String(job.request.scene || "Text-to-Speech")}`,
-            "-s", `voice_setting_voice_id=${String(job.request.voiceId || "female-shaonv")}`,
-          );
-          const speed = Number(job.request.speed);
-          if (Number.isFinite(speed) && speed > 0 && speed !== 1) args.push("-s", `voice_setting_speed=${speed}`);
+      let phase = "validating_parameters";
+      try {
+        const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
+        const resolvedModelName = job.channel === "video" ? libTvModelName : names[modelKey] || modelKey;
+        const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${resolvedModelName}`];
+        if (job.channel === "image") {
+          if (job.request.aspectRatio) args.push("-s", `ratio=${job.request.aspectRatio}`);
+          if (job.request.quality) args.push("-s", `quality=${String(job.request.quality).toLowerCase()}`);
+          if (job.request.resolution) args.push("-s", `resolution=${String(job.request.resolution).replace(/p$/i, "K")}`);
+          args.push("-s", `count=${Math.max(1, Math.min(4, Number(job.request.imageCount) || 1))}`);
         } else {
-          args.push(
-            "-s", "modeType=text2audio",
-            "-s", `language=${String(job.request.language || "zh")}`,
-            "-s", `sample_rate=${Math.max(8000, Number(job.request.sampleRate) || 24000)}`,
-            "-s", `format=${String(job.request.format || "wav").toLowerCase()}`,
-          );
+          if (job.channel === "video") {
+            appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "ratio", job.request.aspectRatio);
+            appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "duration", job.request.duration, { required: true });
+            appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "resolution", job.request.resolution, { required: true });
+            appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "enableSound", job.request.generateAudio === false ? "off" : "on");
+            args.push("-s", `modeType=${libTvVideoMode}`);
+          } else if (/^speech-|^vocal-v3$/i.test(modelKey)) {
+            args.push(
+              "-s", `scene=${String(job.request.scene || "Text-to-Speech")}`,
+              "-s", `voice_setting_voice_id=${String(job.request.voiceId || "female-shaonv")}`,
+            );
+            const speed = Number(job.request.speed);
+            if (Number.isFinite(speed) && speed > 0 && speed !== 1) args.push("-s", `voice_setting_speed=${speed}`);
+          } else {
+            args.push(
+              "-s", "modeType=text2audio",
+              "-s", `language=${String(job.request.language || "zh")}`,
+              "-s", `sample_rate=${Math.max(8000, Number(job.request.sampleRate) || 24000)}`,
+              "-s", `format=${String(job.request.format || "wav").toLowerCase()}`,
+            );
+          }
         }
-      }
-      const leftNodes = [];
-      for (let index = 0; index < references.length; index += 1) {
-        const reference = references[index];
-        if (!reference?.absolutePath) continue;
-        const uploaded = await this.invoke(["upload", `神思参考-${index + 1}-${job.id}`, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000 });
-        if (uploaded.nodeKey) {
-          args.push("--left", String(uploaded.nodeKey));
-          leftNodes.push(uploaded.nodeKey);
+        const leftNodes = [];
+        phase = "uploading_references";
+        await onPhase(phase);
+        for (let index = 0; index < references.length; index += 1) {
+          const reference = references[index];
+          if (!reference?.absolutePath) throw asError(`LibTV 第 ${index + 1} 个参考素材缺少可读取的文件路径`, "LIBTV_REFERENCE_MISSING");
+          const uploaded = await this.invoke(["upload", `神思参考-${index + 1}-${job.id}`, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000 });
+          if (uploaded.nodeKey || uploaded.newNodeKey) {
+            uploaded.nodeKey ||= uploaded.newNodeKey;
+            args.push("--left", String(uploaded.nodeKey));
+            leftNodes.push(uploaded.nodeKey);
+          } else throw asError(`LibTV 第 ${index + 1} 个参考上传没有返回资源节点：${JSON.stringify(uploaded).slice(0, 2000)}`, "LIBTV_REFERENCE_UPLOAD_FAILED");
         }
+        phase = "creating_node";
+        await onPhase(phase);
+        const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000 });
+        node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || created.newNodeKey || "").trim(), nodeName, leftNodes };
+        if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
+        await writeFile(metadataPath, JSON.stringify(node), "utf8");
+      } catch (error) {
+        error.executionPhase = phase;
+        throw libTvKnownPreSubmitFailure(error, phase === "uploading_references" ? "LIBTV_REFERENCE_UPLOAD_FAILED" : "LIBTV_NODE_CREATE_FAILED");
       }
-      const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000 });
-      node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || "").trim(), nodeName, leftNodes };
-      if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
-      await writeFile(metadataPath, JSON.stringify(node), "utf8");
     }
-    const run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: Math.max(Number(job.request.settings?.timeoutMs) || 0, 30 * 60_000) });
-    return { ...libtvTaskFromPayload(run), providerTaskId: libtvTaskFromPayload(run).providerTaskId || node.nodeKey };
+    // This persisted receipt is the submission boundary. A second invocation
+    // must only inspect the original node, including after a process crash.
+    if (node.runStartedAt) return this.getStatus({ job, workRoot });
+    await onPhase("provider_run");
+    node.runStartedAt = new Date().toISOString();
+    try { await writeFile(metadataPath, JSON.stringify(node), "utf8"); }
+    catch (error) { throw libTvKnownPreSubmitFailure(error, "LIBTV_RUN_RECEIPT_FAILED"); }
+    let run;
+    try {
+      // `libtv node --run` owns task submission and polling and returns only
+      // after a terminal provider result. An outer timeout can orphan a paid
+      // task and manufacture an ambiguous local failure, so wait for the CLI.
+      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: 0 });
+    } catch (error) {
+      error.providerTaskId = error.providerTaskId || node.nodeKey;
+      error.providerTaskIdType = "node";
+      error.executionPhase = "provider_run";
+      throw error;
+    }
+    const task = libtvTaskFromPayload(run);
+    return { ...task, providerTaskId: task.providerTaskId || node.nodeKey, providerTaskIdType: task.providerTaskId ? "task" : "node" };
   }
 
   async getStatus({ job, workRoot }) {
     let node;
     try { node = JSON.parse(await readFile(join(workRoot, "libtv-node.json"), "utf8")); } catch { node = {}; }
-    if (!node.nodeKey) return { providerTaskId: job.providerTaskId, providerStatus: "queued", rawStatus: "queued" };
+    if (!node.nodeKey) throw asError("LibTV 原任务缺少节点记录，无法自动找回；已停止重提，请核对原画布", "LIBTV_NODE_METADATA_MISSING");
     const payload = await this.invoke(["node", node.nodeKey, "-p", node.projectUuid], { cwd: workRoot, timeoutMs: 45_000 });
-    return { ...libtvTaskFromPayload(payload), providerTaskId: libtvTaskFromPayload(payload).providerTaskId || job.providerTaskId || node.nodeKey };
+    const task = libtvTaskFromPayload(payload);
+    return { ...task, providerTaskId: task.providerTaskId || job.providerTaskId || node.nodeKey, providerTaskIdType: task.providerTaskId ? "task" : "node" };
   }
 
   async reconcileSubmission({ job, workRoot }) { return this.getStatus({ job, workRoot }); }

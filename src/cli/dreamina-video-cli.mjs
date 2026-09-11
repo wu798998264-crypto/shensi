@@ -138,7 +138,7 @@ const normalizeDreaminaTaskId = (value) => {
   return PLACEHOLDER_DREAMINA_TASK_IDS.has(normalized.toLowerCase()) ? "" : normalized;
 };
 const dreaminaTaskIdInText = (value = "") => {
-  const matches = String(value || "").matchAll(/(?:^|[\r\n{,])\s*["']?(?:submit_id|submitId|task_id|taskId|providerTaskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
+  const matches = String(value || "").matchAll(/^\s*["']?(?:submit_id|submitId|task_id|taskId|providerTaskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
   for (const match of matches) {
     const candidate = normalizeDreaminaTaskId(match?.[1]);
     if (candidate) return candidate;
@@ -203,6 +203,10 @@ const runCliOnce = async (args) => {
     const timer = setTimeout(() => {
       terminateProcessTree(child);
       const timeoutError = new Error(`Dreamina CLI 命令 ${String(args[0] || "unknown")} 超过 ${Math.ceil(timeoutMs / 1000)} 秒未响应`);
+      timeoutError.stdout = stdout.trim(); timeoutError.stderr = stderr.trim();
+      const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+      if (output) timeoutError.message += `。CLI 输出：${output.slice(-8192)}`;
+      if (dreaminaVideoGenerationCommand(args[0])) timeoutError.providerTaskId = submitId(parsePayload(stdout)) || dreaminaTaskIdInText(stderr);
       timeoutError.code = String(args[0] || "").toLowerCase() === "user_credit"
         ? "DREAMINA_CREDIT_QUERY_TIMEOUT"
         : "DREAMINA_CONTROL_PLANE_TRANSIENT";
@@ -227,6 +231,7 @@ const runCliOnce = async (args) => {
             stdout: stdout.trim() || JSON.stringify(payload),
             stderr: stderr.trim(),
             providerTaskId,
+            exitCode: code,
           }, args[0]));
           return;
         }
@@ -256,7 +261,7 @@ const runCliOnce = async (args) => {
   });
 };
 
-const semanticAuthFailure = (command = "") => {
+const semanticAuthFailure = (command = "", raw = "") => {
   const operationLabel = String(command || "").trim();
   const generationCommand = dreaminaVideoGenerationCommand(operationLabel);
   const error = new Error();
@@ -265,12 +270,13 @@ const semanticAuthFailure = (command = "") => {
     ? `即梦视频生成命令 ${operationLabel || "unknown"} 的会话被厂商拒绝，且没有返回任务 ID。账号核验状态保持有效；神思将保留幂等记录并只读核对本次提交结果。`
     : `${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`;
   if (generationCommand) error.code = "DREAMINA_GENERATION_SESSION_REJECTED";
+  if (raw) error.message += ` 原始报错：${raw}`;
   error.submissionOutcomeKnown = !generationCommand;
   return error;
 };
 
 const verifiedSemanticResult = (result = {}) => {
-  if (dreaminaSessionMissingOutput(result)) throw semanticAuthFailure(result.__dreaminaCommand || "");
+  if (dreaminaSessionMissingOutput(result)) throw semanticAuthFailure(result.__dreaminaCommand || "", [result.stdout, result.stderr].filter(Boolean).join("\n"));
   return result;
 };
 
@@ -293,7 +299,7 @@ const runCli = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RET
         await new Promise((resolveDelay) => setTimeout(resolveDelay, boundedRetryDelay(authRetryDelayMs(), attempt)));
         continue;
       }
-      if (authRejected) throw semanticAuthFailure(args[0]);
+      if (authRejected) throw semanticAuthFailure(args[0], [error.stdout, error.stderr].filter(Boolean).join("\n") || error.message);
       if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_BROKER_BUSY" && attempt < authRetries) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, boundedRetryDelay(400, attempt, 4_000)));
         continue;
@@ -303,7 +309,7 @@ const runCli = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RET
     }
   }
   if (isDreaminaAuthRefreshRetryableFailure(lastError?.message)) {
-    const recovered = new Error(dreaminaAuthRefreshFailureMessage(lastError.message, authRetries));
+    const recovered = new Error(`${dreaminaAuthRefreshFailureMessage(lastError.message, authRetries)} 原始报错：${lastError.message}`);
     recovered.code = "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED";
     recovered.submissionOutcomeKnown = true;
     throw recovered;
@@ -313,16 +319,17 @@ const runCli = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RET
 
 const runGenerationSubmitCli = async (args, { uploadRetries = retryCount("SHENSI_DREAMINA_UPLOAD_RETRIES", 4) } = {}) => {
   let lastError = null;
+  const deadline = Date.now() + 120_000;
   for (let attempt = 0; attempt <= uploadRetries; attempt += 1) {
     try {
       return await runCli(args);
     } catch (error) {
       lastError = error;
-      if (!referenceUploadDidNotCreateTask(error?.message) || attempt >= uploadRetries) break;
+      if (error?.providerTaskId || Date.now() >= deadline || !referenceUploadDidNotCreateTask(error?.message) || attempt >= uploadRetries) break;
       await sleep(boundedRetryDelay(uploadRetryDelayMs(), attempt));
     }
   }
-  if (referenceUploadDidNotCreateTask(lastError?.message)) {
+  if (!lastError?.providerTaskId && referenceUploadDidNotCreateTask(lastError?.message)) {
     lastError.code = "DREAMINA_REFERENCE_UPLOAD_NO_TASK";
     lastError.submissionOutcomeKnown = true;
   }
@@ -1134,18 +1141,20 @@ const acquireIdempotencyLock = async ({ lockPath, journalPath }) => {
 const publicPayload = (payload, fallbackId = "", options = {}) => {
   const status = normalizedStatus(payload, options);
   const queue = queueInfo(payload);
-  const rawError = status === "failed" ? rawFailureReason(payload) : "";
+  const rawError = status === "failed" ? rawFailureReason(payload) : String(payload?.__cliWarning || "");
   const capacityLimited = status === "failed" && concurrencyLimited(`${rawError} ${failureCode(payload)}`);
   const providerTaskId = submitId(payload) || fallbackId;
   const providerTaskAuthFailure = status === "failed" && Boolean(providerTaskId) && isDreaminaAuthRequiredResponse(rawError);
   const providerSessionExpired = status === "failed" && !providerTaskId && isDreaminaAuthRequiredResponse(rawError);
   const errorCode = capacityLimited
     ? "DREAMINA_CONCURRENCY_LIMIT"
+    : status === "failed" && providerTaskId && referenceUploadDidNotCreateTask(rawError)
+      ? "DREAMINA_TASK_REFERENCE_UPLOAD_FAILED"
     : providerTaskAuthFailure
       ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
     : providerSessionExpired
       ? "DREAMINA_PROVIDER_SESSION_EXPIRED"
-      : status === "failed" ? failureCode(payload) : status === "unknown" ? "DREAMINA_UNKNOWN_STATUS" : "";
+      : status === "failed" ? failureCode(payload) || "DREAMINA_UNCLASSIFIED_FAILURE" : status === "unknown" ? "DREAMINA_UNKNOWN_STATUS" : rawError ? "DREAMINA_SUBMISSION_RESPONSE_WITH_ERROR" : "";
   const failure = status === "failed" || status === "unknown"
     ? dreaminaFailureDiagnosis({ code: errorCode, message: rawError, providerTaskId })
     : null;
@@ -1155,7 +1164,7 @@ const publicPayload = (payload, fallbackId = "", options = {}) => {
     rawStatus: rawStatus(payload),
     error: status === "failed"
       ? friendlyFailureReason(rawError)
-      : status === "unknown" ? `Dreamina CLI 返回无法识别的任务状态：${rawStatus(payload) || "空状态"}` : "",
+      : status === "unknown" ? `Dreamina CLI 返回无法识别的任务状态：${rawStatus(payload) || "空状态"}` : rawError,
     errorCode,
     ...(failure ? {
       failureCategory: failure.category,
@@ -1311,6 +1320,9 @@ const submit = async () => {
       payload = parsePayload([cliResult.stdout || "", cliResult.stderr || ""].filter(Boolean).join("\n"));
       if (!submitId(payload) && cliResult.providerTaskId) {
         payload = { ...payload, submit_id: normalizeDreaminaTaskId(cliResult.providerTaskId) };
+      }
+      if (cliResult.exitCode && !["failed", "completed", "cancelled"].includes(normalizedStatus(payload))) {
+        payload.__cliWarning = `CLI 退出码 ${cliResult.exitCode}，任务号已保留。${cliResult.stderr || cliResult.stdout || "未返回具体原因"}`;
       }
     } catch (error) {
       if (error?.submissionOutcomeKnown === true) {

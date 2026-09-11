@@ -67,7 +67,7 @@ assert.match(driver, /providerTaskIdFromOutput/u);
 assert.match(driver, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
 assert.match(worker, /errorProviderTaskId/u);
 assert.match(worker, /providerStatus: providerCode\.toUpperCase\(\) === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"[\s\S]{0,120}\? "failed"/u);
-assert.match(worker, /dreaminaSubmissionRecoveryPending[\s\S]{0,600}DREAMINA_SUBMISSION_UNCERTAIN/u);
+assert.match(worker, /dreaminaSubmissionRecoveryPending \? \{[\s\S]{0,200}providerErrorCode: surfacedProviderCode/u, "恢复提示不得覆盖原 CLI 错误码");
 assert.match(app, /promptDreaminaSubmissionBlockForJob/u);
 assert.match(app, /手动终止本机任务/u);
 
@@ -93,6 +93,11 @@ if (operation === "list_task") {
   process.exit(0);
 }
 if (operation === "text2video") {
+  if (mode === "task-upload" || mode === "task-warning") {
+    process.stdout.write(JSON.stringify({ status: mode === "task-upload" ? "fail" : "submit", submit_id: "fixture-task-preserve-123", fail_reason: "ApplyImageUpload: context deadline exceeded" }));
+    process.stderr.write("ApplyImageUpload: context deadline exceeded\\n");
+    process.exit(1);
+  }
   if (mode === "upload-timeout-once" || mode === "upload-timeout-always") {
     const attemptFile = String(process.env.SHENSI_TEST_DREAMINA_ATTEMPT_FILE || "");
     const attempt = attemptFile && existsSync(attemptFile) ? Number(readFileSync(attemptFile, "utf8")) + 1 : 1;
@@ -139,6 +144,15 @@ const baseRuntimeEnv = {
   SHENSI_DREAMINA_AUTH_RETRY_DELAY_MS: "1",
 };
 try {
+  for (const mode of ["task-upload", "task-warning"]) {
+    const result = await runChild(process.execPath, [videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", `fixture-${mode}`], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: mode });
+    assert.equal(result.code, 0, result.stderr);
+    const payload = JSON.parse(result.stdout);
+    assert.equal(payload.providerTaskId, "fixture-task-preserve-123");
+    assert.match(payload.error, /ApplyImageUpload/);
+    assert.equal(payload.errorCode, mode === "task-upload" ? "DREAMINA_TASK_REFERENCE_UPLOAD_FAILED" : "DREAMINA_SUBMISSION_RESPONSE_WITH_ERROR");
+    assert.equal(dreaminaFailureRequiresAccountVerification({ code: payload.errorCode, message: payload.error, providerTaskId: payload.providerTaskId }), false);
+  }
   const taskAuth = await runChild(process.execPath, [
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-task-auth-key",
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "task-auth" });
@@ -259,7 +273,7 @@ try {
   assert.equal(migrated.billingRisk, "submission_outcome_unknown");
   assert.equal(migrated.safeNoTaskRetry, false);
   const occupants = await listDreaminaProfileBlockingJobs();
-  assert.equal(occupants.some((item) => item.id === job.id), true, "不确定提交必须继续显示为凭证锁占用任务");
+  assert.equal(occupants.some((item) => item.id === job.id), false, "不确定提交保留在待处理中，不能继续占用其他配置");
   console.log("Dreamina generation-stage auth semantics and legacy migration checks passed");
 } finally {
   const resolved = resolve(root);

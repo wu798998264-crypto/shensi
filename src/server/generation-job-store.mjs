@@ -29,6 +29,8 @@ import {
 } from "../dreamina-manual-profile-policy.js";
 import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
 import { builtInAggregateImageRecoveryJob, legacyAggregateReferencePreflightFailurePatch } from "./media-submission-recovery.mjs";
+import { boundedCliMediaJob, clearedMediaConnectionRetry } from "../media-execution-policy.js";
+import { mediaRecoveryJobBlocksOperation } from "../media-generation-coordination.js";
 
 const JOB_SCHEMA_VERSION = 3;
 const RUNNING_STALE_MS = 15_000;
@@ -991,16 +993,50 @@ export const listDreaminaProfileBlockingJobs = async () => {
   return jobs.sort((left, right) => Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
 };
 
+export const beginLocalMediaStop = ({ jobId } = {}) => transitionJob(safeJobId(jobId), (job) => {
+  if (job.mode !== "server" || !["image", "video", "audio"].includes(job.channel)) {
+    throw jobTransitionError("只能终止媒体任务，不能修改文档 Agent 任务", "MEDIA_LOCAL_STOP_NOT_ALLOWED");
+  }
+  if (job.forceReleaseCompletedAt || job.supersededBy) return null;
+  const now = new Date().toISOString();
+  return {
+    forceReleasePendingAt: job.forceReleasePendingAt || now, forceReleaseCompletedAt: "",
+    desiredAction: "cancel", userStoppedAt: job.userStoppedAt || now, resultSuppressed: true,
+    nextPollAt: "", retryAllowed: false,
+    lastProviderError: job.lastProviderError || (job.error ? { message: job.error, code: job.providerErrorCode || "", at: now } : null),
+  };
+});
+
+export const finishLocalMediaStop = ({ jobId } = {}) => transitionJob(safeJobId(jobId), (job) => {
+  if (job.forceReleaseCompletedAt || job.supersededBy) return null;
+  if (!job.forceReleasePendingAt || job.desiredAction !== "cancel") {
+    throw jobTransitionError("任务尚未登记本地终止意图", "MEDIA_LOCAL_STOP_NOT_REQUESTED");
+  }
+  const remoteUnknown = Boolean(job.providerTaskId || job.billingRisk || ["submitting", "submitted", "uncertain", "unknown"].includes(job.submissionState));
+  const remoteTerminal = ["failed", "completed", "cancelled"].includes(job.providerStatus);
+  const now = new Date().toISOString();
+  return {
+    status: "cancelled", desiredAction: "cancel", resultSuppressed: true,
+    providerStatus: remoteTerminal ? job.providerStatus : remoteUnknown ? "cancel_unconfirmed" : "not_submitted",
+    forceReleaseCompletedAt: now, profileSwitchReleasedAt: now, cancelledAt: now,
+    retryAllowed: false, nextPollAt: "", automaticRecoveryStoppedAt: now,
+    error: remoteUnknown
+      ? "已终止本地执行并释放占用，不会自动重启或重新提交。原任务和错误记录已保留；厂商远端结果及费用以实际回执为准。"
+      : "已终止本地执行并释放占用；任务没有提交，原参数和错误记录已保留。",
+  };
+});
+
 export const forceReleaseDreaminaJob = ({ jobId = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
   const forceReleasePending = Boolean(job?.forceReleasePendingAt && !job?.forceReleaseCompletedAt);
   if (!dreaminaJobRequiresCredentialProfile(job) && !forceReleasePending) {
     throw jobTransitionError("当前任务已经不占用即梦凭证锁", "DREAMINA_PROFILE_NOT_HELD");
   }
   const now = new Date().toISOString();
+  const mayBeSubmitted = Boolean(job.providerTaskId || job.billingRisk || ["submitting", "submitted", "uncertain", "unknown"].includes(job.submissionState));
   return {
     status: "cancelled",
     desiredAction: "cancel",
-    providerStatus: job.providerTaskId ? "cancel_unconfirmed" : "not_submitted",
+    providerStatus: mayBeSubmitted ? "cancel_unconfirmed" : "not_submitted",
     userStoppedAt: job.userStoppedAt || now,
     resultSuppressed: true,
     cancelRequestedAt: job.cancelRequestedAt || now,
@@ -1012,7 +1048,7 @@ export const forceReleaseDreaminaJob = ({ jobId = "" } = {}) => transitionJob(sa
     forceReleaseCompletedAt: now,
     retryAllowed: false,
     nextPollAt: "",
-    error: job.providerTaskId
+    error: mayBeSubmitted
       ? "用户已强制释放本机即梦凭证锁；远端任务状态未确认，任务记录与任务编号仍保留，不会自动重新提交。"
       : "用户已强制释放本机即梦凭证锁；任务尚未提交给厂商，任务记录仍保留。",
     heartbeatAt: now,
@@ -1297,7 +1333,7 @@ export const getGenerationJob = async ({ jobId } = {}) => {
   return publicGenerationJob(await recoverStaleJob(job));
 };
 
-export const listGenerationJobs = async ({ workspacePath = "", includeApplied = false, targetType = "", profileSignature = "" } = {}) => {
+export const listGenerationJobs = async ({ workspacePath = "", includeApplied = false, targetType = "", profileSignature = "", pendingMediaOnly = false } = {}) => {
   const requestedPath = String(workspacePath || "").trim();
   const targetPath = requestedPath ? resolve(requestedPath).toLowerCase() : "";
   const requestedTargetType = String(targetType || "").trim();
@@ -1314,13 +1350,15 @@ export const listGenerationJobs = async ({ workspacePath = "", includeApplied = 
     if (requestedTargetType && job.target?.targetType !== requestedTargetType) continue;
     const recovered = await recoverStaleJob(job);
     if (!includeApplied && recovered.appliedAt) continue;
-    jobs.push(publicGenerationJob(recovered));
+    const publicJob = publicGenerationJob(recovered);
+    if (pendingMediaOnly && !mediaRecoveryJobBlocksOperation(publicJob)) continue;
+    jobs.push(publicJob);
   }
   // Workspace card reconciliation must be able to inspect older applied jobs:
   // their media can still exist in the asset ledger while a legacy card lost
   // its display binding. Keep global polling bounded, but widen the explicitly
   // scoped applied audit so startup can repair those cards without resubmitting.
-  const resultLimit = includeApplied && targetPath ? 500 : 100;
+  const resultLimit = pendingMediaOnly ? undefined : includeApplied && targetPath ? 500 : 100;
   return jobs.sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)).slice(0, resultLimit);
 };
 
@@ -1405,6 +1443,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
   }
   if (job.providerTaskId) {
     return {
+      ...clearedMediaConnectionRetry(),
       status: job.providerStatus === "completed" || job.status === "waiting_storage" ? "downloading" : "polling",
       desiredAction: "run",
       resumeKind: "continue_original",
@@ -1423,6 +1462,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
     && !job.billingRisk;
   if (safeNoTaskResubmit) {
     return {
+      ...clearedMediaConnectionRetry(),
       status: "queued",
       providerStatus: "queued",
       submissionState: "not_submitted",
@@ -1444,6 +1484,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
     providerStatus: "queued",
     desiredAction: "run",
     resumeKind: "confirmed_new_submission",
+    ...clearedMediaConnectionRetry(),
     resumeRequestId: String(requestId || ""),
     explicitRetryAt: new Date().toISOString(),
     resubmitConfirmedAt: new Date().toISOString(),
@@ -1484,6 +1525,7 @@ export const reconcileMediaGenerationProviderTask = ({ jobId, providerTaskId = "
       submissionState: "uncertain",
       desiredAction: "run",
       resumeKind: "automatic_submission_reconciliation",
+      ...clearedMediaConnectionRetry(),
       automaticRecoveryStartedAt: new Date().toISOString(),
       automaticRecoveryStoppedAt: "",
       billingRisk: "submission_outcome_unknown",
@@ -1504,6 +1546,7 @@ export const reconcileMediaGenerationProviderTask = ({ jobId, providerTaskId = "
     submissionState: "submitted",
     desiredAction: "run",
     resumeKind: "reconcile_existing_provider_task",
+    ...clearedMediaConnectionRetry(),
     reconciledProviderTaskAt: new Date().toISOString(),
     billingRisk: "",
     resubmitConfirmationRequired: false,
@@ -2072,14 +2115,14 @@ export const listMediaGenerationJobsForWorker = async () => {
     // record auditable, but do not let the watchdog launch it again while the
     // credential-slot probe is waiting for every competing task to finish.
     const forceReleasePending = Boolean(job.forceReleasePendingAt && !job.forceReleaseCompletedAt);
-    if (forceReleasePending) continue;
+    if (forceReleasePending || job.connectionRetryExhausted) continue;
     const automaticSubmissionReconciliation = job?.mode === "server"
       && ["image", "video"].includes(job.channel)
       && job.status === "retry_required"
       && !job.providerTaskId
       && (job.billingRisk === "submission_outcome_unknown" || job.resubmitConfirmationRequired === true || ["submitting", "uncertain", "unknown"].includes(String(job.submissionState || "")))
       && ((normalizedIdentity(job.request?.settings?.adapter) === "cli"
-        && (["即梦", "dreamina"].includes(normalizedIdentity(job.request?.settings?.provider))
+        && (boundedCliMediaJob(job)
           || (job.channel === "image"
             && normalizedIdentity(job.request?.settings?.provider) === "openai"
             && normalizedIdentity(job.request?.settings?.cliPath || "shensi-openai-image") === "shensi-openai-image")))
