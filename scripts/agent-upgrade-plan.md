@@ -62,3 +62,31 @@
 17. `test-v219-runtime-memory-documents.mjs`
 
 本阶段定向回归通过：结构事务、结构工具、完整历史写入、双会话并行、HTTP Agent、动态选择流程、Agent UI 决策、统一 Agent 模式、运行边界、工作区隔离、文档跳转和打包内容白名单。未运行全量 `npm test`，未进行安装包构建或覆盖安装；真实付费媒体回归未运行。另一个窗口的爆款扫榜与浏览器改动不属于本阶段提交。
+
+## 最终收尾验收（2026-09-11）
+
+工作树：`C:\Users\Administrator\Documents\神思\shensi-agent-finalization`
+
+分支：`codex/agent-finalization`
+
+基线：`baseline-before-agent-runtime-refactor`（`04a5908`）
+
+本次收尾提交：
+
+1. `f656478`：统一 Agent 的语义决策成为唯一权威，旧关键词结果不能覆盖 Agent 判断。
+2. `4f67132`：执行语义、上下文、Skill 路由和写入授权统一由 Agent 合同驱动；保留白板独立通道。
+3. `23b0818`：完成“免费模型”命名、退役运行器迁移清理、媒体手动终止与迟到结果抑制。
+4. `f0738fd`：修复 Codex/OpenCode/Claude Code 的 npm 安装策略，并公开 Trae Work、WorkBuddy、自定义运行器的真实状态。
+5. `cc7fcfa`：将文档、历史、选择框、创作引导、回收站和工作区确认测试同步到统一 Agent 合同。
+6. `f58df1f`：移除测试中对关键词媒体向导的旧假设，新增 Agent 动态缺项选择、单次取消和禁止重复提交验收。
+
+最终结果：
+
+- `npm run build` 通过。
+- `npm test`（含 pretest）通过。
+- `npm run test:package-content-policy` 通过：模拟安装包仅包含 201 个运行文件，不含个人作品、测试工作区、原始资料或 reference-only 文件。
+- 真实桌面 Agent 选择框、三档权限、双对话并行和文档链接跳转通过；截图位于 `artifacts/conversation-agent-native.png` 与 `artifacts/agent-permission-levels.png`。
+- 媒体仅运行模拟回归：用户停止后只取消原持久任务，不重复提交；停止意图与结果抑制可跨重启恢复。未消耗真实供应商积分。
+- 白板规则、白板配置、媒体供应商配置、模型、端点、凭证和受保护跨配置串行生图流程未修改。
+
+回退方式：先切到目标提交检查，再用 `git revert <提交号>` 生成可审计的反向提交；不得使用强制重置。若需整体回到大改前状态，从标签 `baseline-before-agent-runtime-refactor` 新建分支或 worktree，不覆盖当前分支和用户修改。
