@@ -953,7 +953,6 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     : null;
   const taskContractDecision = validateTaskContractForExecution(taskContract);
   const authoritativeTaskContract = taskContractDecision.authoritative ? taskContract : null;
-  const classifiedRoute = classifyRequestMode(input);
   const contractRoute = routeFromTaskContract(authoritativeTaskContract, taskContractDecision);
   const semanticMode = ["general", "creative_guidance", "creative", "quick_revision", "workspace_operation", "visual_prompt"].includes(semanticDecision?.requestMode)
     ? semanticDecision.requestMode
@@ -965,6 +964,11 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     : [];
   const semanticQualityReview = semanticDecision?.taskKind === "quality_review"
     || semanticCapabilities.includes("effect_reviewer");
+  // Once the unified Agent has supplied a structured decision, that decision
+  // is the sole source of task routing.  Do not even evaluate the legacy
+  // keyword classifier: besides avoiding false positives, this keeps
+  // downstream review/landing policy from silently re-introducing it.
+  const classifiedRoute = semanticDecision ? null : classifyRequestMode(input);
   const semanticRoute = semanticMode ? {
     mode: semanticQualityReview && semanticMode === "general" ? "creative" : semanticMode,
     taskKind: String(semanticDecision.taskKind || (semanticQualityReview ? "quality_review" : "task_execution")),
@@ -982,14 +986,14 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   // persistence, not whether the user needs creative guidance. Let an
   // exploratory creative request enter guidance instead of being flattened
   // into a long general reply merely because no target document exists yet.
-  const route = semanticRoute || (contractRoute?.mode === "general" && classifiedRoute.mode === "creative_guidance"
+  const route = semanticRoute || (contractRoute?.mode === "general" && classifiedRoute?.mode === "creative_guidance"
     ? {
         ...classifiedRoute,
         reason: `${classifiedRoute.reason}；当前 TaskContract 尚未声明正式写入，不阻断创作引导`,
       }
     : contractRoute
       || blockedRouteFromTaskContract(authoritativeTaskContract, taskContractDecision)
-      || classifiedRoute);
+      || classifiedRoute || { mode: "general", reason: "未提供统一 Agent 决策，按通用任务处理", shensiLed: false });
   const contractDeliverables = Array.isArray(authoritativeTaskContract?.deliverables)
     ? authoritativeTaskContract.deliverables.filter((item) => item?.required !== false && item?.targetDocumentId)
     : [];
@@ -1004,16 +1008,21 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
         ? "script"
         : "novel"
     : "";
-  const reviewContextDomain = contractContextDomain || (requestedContextDomain === "script-adaptation"
+  const semanticAuthority = Boolean(semanticDecision);
+  const reviewContextDomain = semanticAuthority
+    ? (contractContextDomain || requestedContextDomain || "novel")
+    : (contractContextDomain || (requestedContextDomain === "script-adaptation"
     || String(input.targetDocumentId || "") === "report-adaptation"
     || (Array.isArray(input.targetDocumentIds) && input.targetDocumentIds.includes("report-adaptation"))
     || /小说.{0,20}(?:改编|改成|改写成|转换成|转成).{0,10}(?:短剧|剧本|漫剧)|改编剧本|改编报告|小说改剧本/u.test(String(input.text || ""))
     ? "script-adaptation"
     : requestedContextDomain === "script" || String(input.targetDocumentId || "").startsWith("script-")
       ? "script"
-      : "novel");
+      : "novel"));
   const reviewDelivery = reviewDeliveryFromTaskContract(taskContract, taskContractDecision)
-    || (taskContractDecision.authoritative
+    || (semanticAuthority
+      ? { active: false, reportRequested: false, landingEligible: false, candidatePreviewRequired: false, target: null, reason: "统一 Agent 决策未声明报告交付物" }
+      : taskContractDecision.authoritative
       ? { active: false, reportRequested: false, landingEligible: false, candidatePreviewRequired: false, target: null, reason: "TaskContract 未声明报告交付物" }
       : reviewDeliveryPolicy({ text: input.text, contextDomain: reviewContextDomain }));
   const guidancePolicy = route.mode === "creative_guidance"
@@ -1069,7 +1078,8 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const expectedRevisions = input.expectedRevisions && typeof input.expectedRevisions === "object"
     ? input.expectedRevisions
     : Object.fromEntries(targetDocumentIds.map((id) => [id, id === target?.documentId ? target?.revision ?? "" : ""]));
-  const confirmWhenLandingUncertain = !taskContractDecision.authoritative
+  const confirmWhenLandingUncertain = !semanticAuthority
+    && !taskContractDecision.authoritative
     && route.shensiLed === true
     && ["creative", "visual_prompt", "quick_revision"].includes(route.mode)
     && shouldSuppressAutomaticFormalLanding({
