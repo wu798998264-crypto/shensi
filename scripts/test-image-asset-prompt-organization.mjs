@@ -8,7 +8,7 @@ import {
   resolveCapabilityTemplateRouting,
 } from "../src/capability-template.js";
 import { FIXED_SKILL_SLOT_CATALOG } from "../src/module-registry.js";
-import { classifyRequestMode } from "../src/request-routing.js";
+import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
 import { loadOfficialSkill } from "../src/server/skill-store.mjs";
 import { loadShensiContext } from "../src/server/shensi-context.mjs";
 
@@ -139,7 +139,7 @@ const extractedVideoAssetsRoute = resolveCapabilityTemplateRouting(template, {
   requiredCapabilities: ["visual_prompt_writer"],
   fixedSlots: FIXED_SKILL_SLOT_CATALOG,
 });
-assert.equal(classifyRequestMode({ text: videoPromptAssetExtraction, workspaceKind: "project" }).mode, "visual_prompt");
+assert.equal(buildAdaptiveTaskRoute({ text: videoPromptAssetExtraction, workspaceKind: "project", agentDecision: { lane: "task_execution", requestMode: "visual_prompt", deliverableType: "visual_prompt", writePlan: { intent: "none" } } }).mode, "visual_prompt");
 assert.deepEqual(extractedVideoAssetsRoute.activatedSelections.map((selection) => selection.id).filter((id) => [
   "builtin:visual-asset-prompt-writer",
   "builtin:industrial-character-prompt-writer",
@@ -160,7 +160,8 @@ assert.match(characterSkill.content, /百分之三十四、二十二、二十二
 assert.match(sceneSkill.content, /# 三维国漫场景提示词/u);
 assert.match(sceneSkill.content, /完整三维几何建模/u);
 
-const contextFor = (prompt, targetDocumentId = "prompt-visual-assets") => loadShensiContext({
+const contextFor = (prompt, taskFacets, targetDocumentId = "prompt-visual-assets") => loadShensiContext({
+  taskFacets, semanticAuthority: true, deliverableType: "visual_prompt",
   shensiRoot,
   prompt,
   routingText: "",
@@ -170,27 +171,27 @@ const contextFor = (prompt, targetDocumentId = "prompt-visual-assets") => loadSh
   contextDomain: "script",
   workspaceKind: "project",
 });
-const directCharacter = await contextFor("设计一个白发少女的角色提示词");
+const directCharacter = await contextFor("设计一个白发少女的角色提示词", ["character_prompt"]);
 assert.match(directCharacter.promptText, /# 工业角色提示词/u);
 assert.doesNotMatch(directCharacter.promptText, /# AI漫剧图片资产提示词skill/u);
-const directScene = await contextFor("生成一条荒废地铁站的场景提示词");
+const directScene = await contextFor("生成一条荒废地铁站的场景提示词", ["scene_prompt"]);
 assert.match(directScene.promptText, /# 三维国漫场景提示词/u);
 assert.doesNotMatch(directScene.promptText, /# AI漫剧图片资产提示词skill/u);
-const extractedCharacter = await contextFor("从这段小说中提取人物并生成角色提示词");
+const extractedCharacter = await contextFor("从这段小说中提取人物并生成角色提示词", ["image_asset_extraction", "character_prompt"]);
 assert.match(extractedCharacter.promptText, /# AI漫剧图片资产提示词skill/u);
 assert.match(extractedCharacter.promptText, /# 工业角色提示词/u);
-const extractedScene = await contextFor("根据剧本提取地点并生成场景提示词");
+const extractedScene = await contextFor("根据剧本提取地点并生成场景提示词", ["image_asset_extraction", "scene_prompt"]);
 assert.match(extractedScene.promptText, /# AI漫剧图片资产提示词skill/u);
 assert.match(extractedScene.promptText, /# 三维国漫场景提示词/u);
-const extractedVideoAssets = await contextFor(videoPromptAssetExtraction, "");
+const extractedVideoAssets = await contextFor(videoPromptAssetExtraction, ["image_asset_extraction", "character_prompt", "scene_prompt"], "");
 assert.match(extractedVideoAssets.promptText, /# AI漫剧图片资产提示词skill/u);
 assert.match(extractedVideoAssets.promptText, /# 工业角色提示词/u);
 assert.match(extractedVideoAssets.promptText, /# 三维国漫场景提示词/u);
 assert.doesNotMatch(extractedVideoAssets.promptText, /视频导演二（30秒）/u);
-const genuineVideoPrompt = await contextFor("根据这段剧本生成 8 秒视频提示词", "prompt-video-1");
+const genuineVideoPrompt = await contextFor("根据这段剧本生成 8 秒视频提示词", ["video_prompt"], "prompt-video-1");
 assert.match(genuineVideoPrompt.promptText, /视频导演二（30秒）/u);
 assert.doesNotMatch(genuineVideoPrompt.promptText, /# AI漫剧图片资产提示词skill|# 工业角色提示词|# 三维国漫场景提示词/u);
-const panorama = await contextFor("生成多人站位线稿图", "prompt-panorama-1");
+const panorama = await contextFor("生成多人站位线稿图", ["panorama"], "prompt-panorama-1");
 assert.match(panorama.promptText, /多人物场景站位线稿图/u);
 assert.doesNotMatch(panorama.promptText, /# 三维国漫场景提示词|# 工业角色提示词/u);
 

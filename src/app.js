@@ -221,9 +221,7 @@ import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPerm
 import { journalManualConversation, forgetManualConversation, restoreManualConversations } from "./manual-conversation-journal.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelsForEngine, agentProfilesForEngine } from "./agent-engine-registry.js";
 import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js";
-import { executionModeOptionState } from "./model-execution-capabilities.js";
 import {
-  CODEX_AGENT_MODE_LABEL,
   DETECTED_CODEX_CONNECTION_ID,
   codexCliProfile,
   codexSettingsProfile,
@@ -6087,39 +6085,12 @@ const syncModelCapabilityControls = () => {
   const workingProfile = activeGenerationProfile(generationWorkingSettings(), "text") || {};
   const savedProfile = (state.settings.textConnections || []).find((profile) => profile.id === workingProfile.id);
   const formEngine = field("textAgentEngine")?.value || workingProfile.agentEngine || "";
-  const profileForCapability = {
-    ...workingProfile,
-    adapter: field("adapter")?.value,
-    provider: field("provider")?.value,
-    agentEngine: formEngine,
-    credentialSource: field("textCredentialSource")?.value,
-    protocol: field("protocol")?.value,
-    baseUrl: field("baseUrl")?.value,
-  };
-  const unchangedLegacyShape = Boolean(savedProfile)
-    && savedProfile.adapter === profileForCapability.adapter
-    && (savedProfile.agentEngine || agentEngineForProfile(savedProfile)) === (profileForCapability.agentEngine || agentEngineForProfile(profileForCapability))
-    && !(formEngine === "opencode" && field("textCredentialSource")?.value === "shensi");
-  const capability = executionModeOptionState(profileForCapability, { existing: unchangedLegacyShape });
   const openCodeEngine = formEngine === "opencode";
   const externalAgentEngine = ["opencode", "claude_code", ...EXTERNAL_AGENT_RUNNER_IDS].includes(formEngine);
   const credentialSource = field("textCredentialSource")?.value === "shensi"
     ? "shensi"
     : formEngine === "claude_code" ? "claude" : "opencode";
   const isDeepSeekOpenCode = isCli && field("provider")?.value === "DeepSeek" && !openCodeEngine;
-  const executionModeSelect = field("textExecutionMode");
-  if (executionModeSelect) {
-    executionModeSelect.value = "agent";
-    for (const option of executionModeSelect.options) {
-      const stateKey = option.value === "both" ? "both" : option.value;
-      const optionState = capability.options[stateKey];
-      option.disabled = false;
-      option.title = optionState?.enabled === false
-        ? `${optionState?.reason || "当前配置尚未完成对应能力检查"}；仍可选择，保存、检查或执行时会再次校验。`
-        : "";
-    }
-    executionModeSelect.disabled = false;
-  }
   const agentEngineField = document.querySelector("#textAgentEngineField");
   if (agentEngineField) agentEngineField.hidden = false;
   const credentialSourceField = document.querySelector("#textCredentialSourceField");
@@ -6138,7 +6109,6 @@ const syncModelCapabilityControls = () => {
     profile: workingProfile,
     saved: Boolean(savedProfile),
     hasSavedCodexProfile: (state.settings.textConnections || []).some(codexCliProfile),
-    executionMode: executionModeSelect?.value || "",
     agentEngine: formEngine,
     codexCapability: ui.localCodex || {},
   });
@@ -6431,7 +6401,6 @@ const renderAudioModelOptions = (providerId = state.settings.audioProvider || "L
 const GENERATION_FORM_FIELDS = {
   text: {
     remarkName: "textRemarkName",
-    executionMode: "textExecutionMode",
     agentEngine: "textAgentEngine",
     credentialSource: "textCredentialSource",
     adapter: "adapter", provider: "provider", protocol: "protocol", baseUrl: "baseUrl", model: "model",
@@ -6782,7 +6751,7 @@ const applyGenerationProfileToForm = (channel) => {
   if (channel === "text") {
     const systemManaged = profile.systemManaged === true;
     for (const fieldName of [
-      "textRemarkName", "textExecutionMode", "adapter", "textAgentEngine", "textCredentialSource",
+      "textRemarkName", "adapter", "textAgentEngine", "textCredentialSource",
       "provider", "protocol", "baseUrl", "apiKey", "cliPath", "cliArgs",
     ]) {
       const field = control(fieldName);
@@ -7999,7 +7968,6 @@ root.innerHTML = `
               <div class="settings-grid">
                 <div class="wide generation-connection-manager" data-generation-manager="text"><label>当前文字配置<div class="generation-profile-picker"><select id="textConnectionSelect" aria-label="文字模型连接" hidden></select><button class="generation-profile-picker-button" type="button" data-generation-profile-toggle="text" aria-haspopup="listbox" aria-expanded="false"><span data-generation-profile-current="text"></span>${icon("\uE70D", "展开配置")}</button><div class="generation-order-list" data-generation-order-list="text" role="listbox" hidden></div></div></label><div><button class="secondary-button" type="button" data-remove-generation-connection="text">删除配置</button></div></div>
                 <label class="wide generation-connection-remark">备注名称<input name="textRemarkName" data-generation-remark="text" type="text" maxlength="80" autocomplete="off" placeholder="例如：日常写作、长文创作、测试连接" /><small class="setting-field-help">仅用于界面区分连接；留空时自动显示服务商和模型名称。</small></label>
-                <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
                 <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">内置 Agent</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="trae_work">Trae Work</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
@@ -23490,137 +23458,6 @@ const storeTextModelCapabilityProbe = (profile, probe = {}, { activate = true, p
   return normalized;
 };
 
-const PUBLIC_TEXT_AUTO_VERIFY_COOLDOWN_MS = 5 * 60_000;
-const publicTextVerificationRuns = new Map();
-
-const publicTextConnectionNeedsAutoVerification = (profile) => {
-  if (!profile?.id || profile.adapter !== "api" || getProviderPreset(profile.provider).public !== true) return false;
-  const probe = textModelCapabilityProbe(profile);
-  const signature = textCapabilityProfileSignature(profile);
-  const signatureMatches = probe?.profileSignature === signature;
-  const verified = signatureMatches
-    && probe?.connected === true
-    && probe?.realInference === true
-    && probe?.modelCatalogChecked === true
-    && probe?.models?.includes(profile.model)
-    && publicTextModelProbeSuccessIsFresh(profile, probe);
-  if (verified || (signatureMatches && probe?.capabilityState === "checking")) return false;
-  if (!signatureMatches || !probe || !String(probe.capabilityState || "").trim() || probe.capabilityState === "unknown") return true;
-  const checkedAt = Date.parse(String(probe?.checkedAt || ""));
-  return !Number.isFinite(checkedAt) || Date.now() - checkedAt >= PUBLIC_TEXT_AUTO_VERIFY_COOLDOWN_MS;
-};
-
-const autoVerifyPublicTextConnection = (sourceProfile, { force = false } = {}) => {
-  const profile = withReusableTextProviderCredential(sourceProfile);
-  if (!force && !publicTextConnectionNeedsAutoVerification(profile)) return Promise.resolve(null);
-  const signature = textCapabilityProfileSignature(profile);
-  const runKey = `${profile.id}:${signature}`;
-  if (publicTextVerificationRuns.has(runKey)) return publicTextVerificationRuns.get(runKey);
-  const probeStillCurrent = () => textModelCapabilityProbe(profile)?.profileSignature === signature;
-  const checkedAt = new Date().toISOString();
-  storeTextModelCapabilityProbe(profile, {
-    connected: false,
-    realInference: false,
-    modelCatalogChecked: false,
-    models: [],
-    capabilityState: "checking",
-    statusDetail: "正在自动核验免费模型",
-    checkedAt,
-  });
-  persistCapabilityProbes();
-  const run = (async () => {
-    try {
-      const catalogResponse = await fetch("/api/models/list", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profile),
-      });
-      const catalogPayload = await catalogResponse.json();
-      if (!probeStillCurrent()) return null;
-      if (!catalogResponse.ok || !catalogPayload.ok) {
-        const error = new Error(catalogPayload.message || "免费模型目录读取失败");
-        error.code = String(catalogPayload.code || `HTTP_${catalogResponse.status}`);
-        error.statusCode = catalogResponse.status;
-        throw error;
-      }
-      const models = catalogPayload.models ?? [];
-      const modelIds = models.map((item) => item.slug).filter(Boolean);
-      if (!modelIds.includes(profile.model)) {
-        const error = new Error(`所选免费模型 ${profile.model} 已不在实时目录中`);
-        error.code = "MODEL_UNCONFIRMED";
-        error.statusCode = 404;
-        throw error;
-      }
-      cacheTextModelsForProfile(profile, models);
-      const testResponse = await fetch("/api/adapters/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profile),
-      });
-      const testPayload = await testResponse.json();
-      if (!probeStillCurrent()) return null;
-      if (!testResponse.ok || !testPayload.ok) {
-        const error = new Error(testPayload.message || "免费模型真实推理核验失败");
-        error.code = String(testPayload.code || `HTTP_${testResponse.status}`);
-        error.statusCode = testResponse.status;
-        error.providerErrorCode = String(testPayload.providerErrorCode || testPayload.code || "");
-        error.retryAfterMs = Math.max(0, Number(testPayload.retryAfterMs) || 0);
-        throw error;
-      }
-      if (testPayload.testLevel !== "real_inference") {
-        const error = new Error("免费模型连接已识别，但没有完成当前模型的真实文字推理");
-        error.code = "REAL_INFERENCE_UNCONFIRMED";
-        throw error;
-      }
-      const verifiedProbe = storeTextModelCapabilityProbe(profile, {
-        connected: true,
-        realInference: testPayload.testLevel === "real_inference",
-        modelCatalogChecked: true,
-        models: modelIds,
-        capabilityState: "available",
-        statusDetail: "当前模型已完成真实推理核验",
-        verificationLevel: "real_inference",
-        providerErrorCode: "",
-        statusCode: 0,
-        retryAfterMs: 0,
-        providerResponseId: testPayload.providerResponseId || "",
-        checkedAt: new Date().toISOString(),
-      });
-      return verifiedProbe;
-    } catch (error) {
-      if (!probeStillCurrent()) return null;
-      const failure = classifyCustomApiCapabilityFailure({
-        code: error?.code,
-        statusCode: error?.statusCode,
-        message: error?.message,
-      });
-      const responseWithoutText = /MODEL_(?:REASONING_WITHOUT_TEXT|EMPTY_TEXT)|没有可用文本|未产生正文/iu.test(`${error?.code || ""} ${error?.message || ""}`);
-      const capabilityState = publicTextCapabilityFailureState(profile, error, failure.state, { responseWithoutText });
-      storeTextModelCapabilityProbe(profile, {
-        connected: false,
-        realInference: false,
-        modelCatalogChecked: false,
-        models: [],
-        capabilityState,
-        statusDetail: publicTextCapabilityFailureDetail(profile, error, capabilityState).slice(0, 500),
-        verificationLevel: capabilityState === "unknown" ? "indeterminate_failure" : "provider_failure",
-        providerErrorCode: String(error?.providerErrorCode || error?.code || "").slice(0, 100),
-        statusCode: Math.max(0, Number(error?.statusCode) || Number(String(error?.code || "").match(/^HTTP_(\d{3})$/u)?.[1]) || 0),
-        retryAfterMs: Math.max(0, Number(error?.retryAfterMs) || 0),
-        checkedAt: new Date().toISOString(),
-      });
-      return null;
-    } finally {
-      publicTextVerificationRuns.delete(runKey);
-      persistCapabilityProbes();
-      renderQuickModelSelector();
-      renderWhiteboardGenerateControls();
-    }
-  })();
-  publicTextVerificationRuns.set(runKey, run);
-  return run;
-};
-
 let quickTextModelCheckSequence = 0;
 let quickTextModelCheckController = null;
 
@@ -32711,52 +32548,6 @@ const discoverUnfinishedGenerationAttempts = async () => {
   return recoveredCount;
 };
 
-const requestWorkspaceOperationPlan = async ({ prompt, requestId, taskContextSnapshot = null, workspaceState = state }) => {
-  if (/作品/.test(prompt) && !ui.projects.length) await refreshProjects();
-  const requestState = workspaceState || state;
-  const inventory = withSynchronousWorkspaceState(requestState, () => workspaceOperationInventory());
-  const trashAccess = buildDeletedContentRecoveryContext({ entries: requestState.trash ?? [], prompt });
-  const workspaceMeta = withSynchronousWorkspaceState(requestState, () => workspaceOperationMeta({ trashAccess }));
-  let documentContext = withSynchronousWorkspaceState(requestState, () => workspaceOperationDocumentContext(prompt, { taskContextSnapshot }));
-  if (trashAccess.contextText) documentContext = [documentContext, trashAccess.contextText].filter(Boolean).join("\n\n");
-  const response = await fetch("/api/agent/execute", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      settings: requestState.settings,
-      messages: [{ role: "user", content: prompt }],
-      inventory,
-      workspaceMeta,
-      documentContext,
-      requestId,
-      mode: "workspace_operation",
-    }),
-  });
-  const payload = await response.json();
-  if (payload.cancelled) throw new Error("任务已终止");
-  if (!response.ok || !payload.ok) throw new Error(payload.message || "操作计划生成失败");
-  const workspacePlan = bindWorkspaceOperationConfirmation(normalizeWorkspaceOperationPlan(payload.workspacePlan, {
-    documentIds: inventory.map((item) => item.id),
-    documentRevisions: Object.fromEntries(inventory.map((item) => [item.id, item.revision])),
-    documentTitles: Object.fromEntries(inventory.map((item) => [item.id, item.title])),
-    historyEntries: workspaceMeta.histories,
-    trashIds: workspaceMeta.trash.map((entry) => entry.trashId),
-    projectNames: workspaceMeta.projects.map((entry) => entry.name),
-    folders: workspaceMeta.folders,
-  }), {
-    required: true,
-    source: "model_planner",
-    reason: "新建、写入、移动或其他工作区影响由模型规划，需要在对话区确认具体目标和范围",
-    workspaceRevision: workspaceOperationStateRevision({ inventory, folders: workspaceMeta.folders }),
-  });
-  return {
-    content: workspacePlan?.summary || payload.text || "",
-    workspacePlan,
-    engineExecution: payload.execution ?? null,
-    memoryUpdate: null,
-  };
-};
-
 const deterministicStructuralWorkspacePlan = (prompt = "") => {
   const source = String(prompt || "");
   const range = source.match(/第\s*(\d+)\s*章\s*(?:至|到|[-~～—])\s*第?\s*(\d+)\s*章/u);
@@ -32982,6 +32773,8 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
           targetTitle: candidateTargetIds.length === 1 ? state.documents[candidateTargetIds[0]]?.title || "" : "",
           candidate: candidateState.currentCandidate,
           candidateAuthorization: candidateState.currentCandidateAuthorization,
+          adoptCandidate: candidateState.currentCandidateAuthorization?.state === "candidate_only",
+          contextualWriteAction: candidateState.currentCandidateAuthorization?.action || "replace",
         });
     const landingAuthorizationInstruction = existingCommitCheck.valid ? authorizedSourceMessage?.content || "" : command;
     const landingAuthorizationSourceMessageId = existingCommitCheck.valid ? authorizedSourceMessage?.id || "" : landingSourceMessage?.id || "";
@@ -35862,37 +35655,6 @@ const runLongFormJob = async ({ job, pendingId, conversation = null, messages = 
     }
     throw Object.assign(error, { jobId: currentJob.id });
   }
-};
-
-const isRecoverableOrdinaryScaffoldRetry = ({
-  text = "",
-  previousUserMessage = null,
-  previousAssistantMessage = null,
-  target = null,
-  executionSurface = "agent",
-} = {}) => {
-  const retryText = String(text).trim();
-  if (!/^(?:继续(?:执行)?|仍然执行|直接执行|坚持执行|从零开始(?:继续执行上一条任务)?|只依据现有资料继续|按现有资料继续|选择当前打开文档作为资料|不用(?:这些|该)?资料(?:也)?继续|不用 Skill 继续|用你(?:自己|本身|原生|Codex)?的能力继续|重试|再试(?:一次|一下)?|重新执行|按上条执行|就按上条|可以|就这样|按这个来|1)[。！!，,\s]*$/.test(retryText)) return false;
-  const previousAssistantText = String(previousAssistantMessage?.content || previousAssistantMessage?.lead || "").trim();
-  const previousBlockingContextIds = Array.isArray(previousAssistantMessage?.execution?.blockingContextIds)
-    ? previousAssistantMessage.execution.blockingContextIds.map(String).filter(Boolean)
-    : [];
-  const previousPrompt = String(previousUserMessage?.modelContent || previousUserMessage?.content || "").trim();
-  const previousRoute = buildAdaptiveTaskRoute({
-    text: previousPrompt,
-    targetDocumentId: previousUserMessage?.target?.documentId || target?.documentId || "",
-    targetModuleId: previousUserMessage?.target?.moduleId || target?.moduleId || moduleForDocument(target?.documentId || ""),
-    workspaceKind: state.workspaceKind,
-  }, { executionSurface });
-  const matchesContextBlock = previousAssistantMessage?.execution?.result === "必要创作依据尚未齐备"
-    || previousAssistantMessage?.execution?.result === "缺少必读资料"
-    || previousAssistantMessage?.execution?.result === "等待作者确认资料读取范围"
-    || previousAssistantMessage?.execution?.result === "等待选择 Skill"
-    || previousAssistantText.includes("只依据现有资料继续")
-    || previousAssistantText.includes("本轮仍缺少用户明确指定的必读资料或不可替代的连续性依据")
-    || previousAssistantText.startsWith("缺少必读资料：")
-    || /(?:缺少必读 Skill|没有选中可确定执行的 Skill|Skill 已删除|Skill.*(?:未通过测试|重新加载失败))/i.test(previousAssistantText);
-  return Boolean(matchesContextBlock && (previousRoute || previousBlockingContextIds));
 };
 
 const contextDependencyTitle = (documentId = "", messages = []) => {
@@ -60259,23 +60021,14 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       || activeReferenceScope.skillReferences.length
       || activeReferenceScope.attachments.length,
     );
-    const recoverableContextGateRetry = isRecoverableOrdinaryScaffoldRetry({
-      text: prompt,
-      previousUserMessage,
-      previousAssistantMessage,
-      target,
-      executionSurface: "agent",
-    });
-    const continuesCreativeThread = Boolean(contextualRepair) || recoverableContextGateRetry || continuesPriorCreativeTask({
+    const continuesCreativeThread = Boolean(contextualRepair) || continuesPriorCreativeTask({
       text: prompt,
       previousRequestMode: previousUserMessage?.taskRouteMode || previousUserMessage?.requestMode,
       previousAssistantAwaitingChoice: previousAssistantMessage?.execution?.result === "等待作者确认关键创作取舍",
       previousAssistantHasCreativeContext: Boolean(contextualPreviousAssistant && /(?:自检|检查|诊断|问题|不足|修复|章节|正文|剧情|设定|人物|节奏|伏笔)/u.test(String(contextualPreviousAssistant.content || ""))),
       hasResources,
     });
-    const routingPrompt = contextualRepair?.expandedPrompt || (recoverableContextGateRetry
-      ? String(previousUserMessage?.modelContent || previousUserMessage?.content || prompt)
-      : prompt);
+    const routingPrompt = contextualRepair?.expandedPrompt || prompt;
     const agentGenerationAndLandingRequested = isGenerationAndLandingRequest(routingPrompt);
     const agentLandingOnlyRequested = isLandingRequest(routingPrompt) && !agentGenerationAndLandingRequested;
     // Creative production that also asks to create/write a Shensi document is
@@ -61162,11 +60915,6 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
     showToast(error.message || "Agent 引擎切换失败");
     await refreshCodexAgentStatus();
   }
-});
-
-elements.settingsForm.elements.textExecutionMode?.addEventListener("change", () => {
-  syncGenerationProfilePreview("text");
-  syncModelCapabilityControls();
 });
 
 elements.quickAgentModel.addEventListener("change", async () => {
@@ -71326,7 +71074,6 @@ document.querySelector("#addOpenCodeConnection").addEventListener("click", async
   const saved = (state.settings.textConnections || []).some((profile) => profile.id === current?.id);
   const eligible = current?.draft === true
     && !saved
-    && ["agent", "both"].includes(String(current.executionMode || elements.settingsForm.elements.textExecutionMode.value || ""))
     && !String(current.agentEngine || elements.settingsForm.elements.textAgentEngine.value || "").trim();
   if (!eligible) return;
   const profile = {
@@ -71371,7 +71118,6 @@ document.querySelector("#connectLocalCodex").addEventListener("click", async () 
   const eligible = current?.draft === true
     && !saved
     && !hasSavedCodexProfile
-    && ["agent", "both"].includes(String(current.executionMode || elements.settingsForm.elements.textExecutionMode.value || ""))
     && !String(current.agentEngine || elements.settingsForm.elements.textAgentEngine.value || "").trim();
   if (!eligible) return;
   const withoutBlankDraft = {
@@ -71545,7 +71291,6 @@ agentEngineSelect?.addEventListener("change", (event) => {
 elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("change", async (event) => {
   const form = elements.settingsForm.elements;
   const control = (name) => form.namedItem(name);
-  const selectedExecutionMode = control("textExecutionMode").value || "chat";
   if (event.target.value === "codex_api") {
     const provider = control("provider").value || "OpenAI";
     const preset = getProviderPreset(provider);
@@ -71613,7 +71358,6 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
     control("model").value = "";
     await hydrateLocalCapabilities();
   }
-  control("textExecutionMode").value = selectedExecutionMode;
   syncGenerationProfilePreview("text");
   renderModelOptions(control("provider").value, { allowBlank: true, preferredModel: "" });
   syncModelCapabilityControls();
@@ -71622,7 +71366,6 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
 elements.settingsForm.elements.namedItem("textCredentialSource")?.addEventListener("change", async (event) => {
   const form = elements.settingsForm.elements;
   const control = (name) => form.namedItem(name);
-  const selectedExecutionMode = control("textExecutionMode").value || "chat";
   control("model").value = "";
   if (["opencode", "claude"].includes(event.target.value)) {
     control("apiKey").value = "";
@@ -71641,7 +71384,6 @@ elements.settingsForm.elements.namedItem("textCredentialSource")?.addEventListen
       control("baseUrl").value = preset.custom ? control("baseUrl").value : preset.api.baseUrl;
     }
   }
-  control("textExecutionMode").value = selectedExecutionMode;
   syncGenerationProfilePreview("text");
   renderModelOptions(control("provider").value, { allowBlank: true, preferredModel: "" });
   syncModelCapabilityControls();

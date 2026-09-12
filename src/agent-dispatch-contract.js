@@ -7,17 +7,14 @@ const SHENSI_ORCHESTRATED_MODES = new Set([
   "quick_revision",
 ]);
 
-export const compileAgentDispatchContract = (route = {}, { executionSurface = "agent" } = {}) => {
+export const compileAgentDispatchContract = (route = {}) => {
   const mode = String(route.mode || route.recommendedMode || "general");
-  const surface = "agent";
   const shensiOrchestrated = route.shensiLed === true && SHENSI_ORCHESTRATED_MODES.has(mode);
   const executionOwner = shensiOrchestrated
     ? "shensi_orchestrator"
     : mode === "operation"
       ? "shensi_workspace_controller"
-      : surface === "agent"
-        ? "workspace_agent"
-        : "workspace_agent";
+      : "workspace_agent";
   const commitDisposition = String(route.commitDisposition || route.taskPolicy?.commitDisposition || "no_artifact");
   const commitOwner = String(route.commitOwner || route.taskPolicy?.commitOwner || "none");
   const landingPolicy = commitOwner === "shensi_transaction"

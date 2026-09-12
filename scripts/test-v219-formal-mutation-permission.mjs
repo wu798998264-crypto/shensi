@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reportContract } from "./fixtures/agent-decision.mjs";
 
 import { authorizeFormalMutation } from "../src/formal-mutation-permission.js";
 import { reviewDeliveryPolicy, reviewIncludesContentMutation } from "../src/review-delivery-policy.js";
@@ -77,6 +78,7 @@ const adaptationReview = reviewDeliveryPolicy({
 assert.equal(adaptationReview.reportRequested, true);
 assert.equal(adaptationReview.target?.documentId, "report-adaptation");
 const adaptationRoute = buildAdaptiveTaskRoute({
+  taskContract: reportContract({ documentId: "report-adaptation", sourceMessageId: "adaptation-review-1" }),
   text: "请自检改编剧本并将报告保存到改编报告",
   contextDomain: "script-adaptation",
   targetDocumentId: "report-adaptation",

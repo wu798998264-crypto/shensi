@@ -36,7 +36,7 @@ assert.deepEqual(freePublicModels([
 
 const freshInstall = normalizeGenerationProfiles({});
 assert.equal(freshInstall.activeTextConnectionId, "text-public-agent", "全新安装默认免费模型 Agent 配置");
-assert.equal(freshInstall.activeTextChatConnectionId, "text-public-agent", "旧 Chat 指针必须跟随统一 Agent 配置");
+assert.equal(Object.hasOwn(freshInstall, "activeTextChatConnectionId"), false, "归一化后只保留当前 Agent 指针");
 assert.deepEqual(freshInstall.textConnections.filter((item) => item.provider === "免费模型").map((item) => item.id), ["text-public-agent"]);
 
 const legacyCustom = normalizeGenerationProfiles({

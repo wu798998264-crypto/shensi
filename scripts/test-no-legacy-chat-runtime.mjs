@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { normalizeGenerationProfiles } from "../src/generation-profiles.js";
-import { executionModeCapabilities } from "../src/model-execution-capabilities.js";
 
 const [app, server, runtime, profiles, skillRoute] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
@@ -16,7 +15,6 @@ for (const [name, source] of [["app", app], ["server", server], ["runtime", runt
 }
 assert.match(server, /pathname === "\/api\/agent\/execute"/u);
 assert.doesNotMatch(server, /pathname === "\/api\/chat"/u);
-assert.deepEqual(executionModeCapabilities().modes, ["agent"]);
 const migrated = normalizeGenerationProfiles({
   activeTextChatConnectionId: "old-selected",
   textConnections: [{ id: "old-selected", provider: "自定义兼容接口", adapter: "api", protocol: "responses", baseUrl: "https://example.invalid/v1", model: "model-x", executionModes: ["chat"] }],

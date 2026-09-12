@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 import {
   classifyDocumentWriteIntent,
   extractFormalArtifacts,
@@ -28,6 +29,7 @@ assert.equal(polluted.artifacts.length, 1);
 assert.equal(polluted.artifacts[0].content, "第二章 北灵台\n\n月光落在窗前。");
 assert.equal(polluted.landingPolicy.shouldLand, false, "没有授权合同时即使内容像正文也不能落盘");
 const pollutedRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ operation: "append" }),
   text: pollutedInstruction,
   sourceMessageId: "user-polluted",
   target: { documentId: "chapter-2", revision: "revision-2" },

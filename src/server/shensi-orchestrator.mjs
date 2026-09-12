@@ -6,7 +6,7 @@ import {
   protectConfidentialOutput,
 } from "./shensi-context.mjs";
 import { blockingLanguageIssues, scanInternalArtifactLeakage, scanNovelLanguage } from "../content-guard.js";
-import { creativeDeliverableLabel, creativeDeliverableType, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasSufficientCreativeBrief, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isStructuralNumberingRevisionRequest, reviewDeliveryFromTaskContract } from "../request-routing.js";
+import { creativeDeliverableLabel, creativeDeliverableType, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isStructuralNumberingRevisionRequest, reviewDeliveryFromTaskContract } from "../request-routing.js";
 import { validateTaskContractForExecution } from "../task-contract.js";
 import { parseContextGate } from "../context-compiler.js";
 import { requestedChapterTarget } from "../chapter-target.js";
@@ -22,7 +22,6 @@ import { inspectVisualPrompt } from "../visual-prompt-quality.js";
 import { skillPromptForStage, skillRuntimeHasUntrustedSkillAtStage, userTheoryAdvisorContext } from "../skill-routing.js";
 import { untrustedSkillMessage, validateSkillSandboxOutput } from "../skill-security.js";
 import { deduplicateAttachments } from "../context-source-registry.js";
-import { inferCreativeTaskFacets } from "../adaptive-creative-context.js";
 import { reviewDeliveryPolicy } from "../review-delivery-policy.js";
 import { extractFormalArtifacts } from "../formal-artifact-extractor.js";
 import { supplementAdjustmentPrompt, supplementDisposition } from "../supplement-policy.js";
@@ -44,13 +43,6 @@ import { scanWritingRepetition } from "../writing-repetition-scanner.js";
 import { runWritingStyleQualityControl } from "../writing-style-revision.js";
 import { normalizeSingleCandidateOutput } from "../formal-candidate-normalization.js";
 
-const PRODUCTION_PATTERN = /(?:写|生成|续写|改写|重写|改编|转换|转化|修复|返修|润色|扩写|压缩|微增|增补|补写|创作|完善|调整|修改|优化).{0,18}(?:正文|章节|本章|下一章|大纲|卷纲|章纲|设定|人物|世界观|剧本|集纲|提示词|分镜|文案|段落|文字)?|(?:正文|章节|本章|下一章|大纲|卷纲|章纲|设定|剧本|提示词|分镜).{0,18}(?:写|生成|续写|改写|重写|改编|转换|转化|修复|返修|完善|调整|修改|优化|微增|增补|补写)/;
-const FULL_AUDIT_PATTERN = /满血|终稿|投稿前|发布前|全量(?:自检|检查|验收)|全面(?:自检|检查|验收)|完整(?:自检|检查|验收)|最终验收|质量争议/;
-const DIAGNOSTIC_PATTERN = /自检|检查|验收|审稿|诊断|评估|分析问题|质量报告/;
-const REVIEW_CONTENT_MUTATION_PATTERN = /(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写).{0,18}(?:正文|章节|本章|稿件|文稿|剧本|单集)|(?:正文|章节|本章|稿件|文稿|剧本|单集).{0,18}(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写)|(?:并|然后|同时|检查后|自检后).{0,4}(?:直接)?(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写)(?!建议|意见|方案)/u;
-const REVIEW_ADVICE_PHRASE_PATTERN = /(?:(?:给出|提供|只要|仅要|列出|说明|告诉我).{0,10})?(?:修改|修复|优化|返修|调整)(?:建议|意见|方案)/gu;
-const PLOT_DIRECTION_REVIEW_PATTERN = /(?:剧情|情节|桥段|人物动机|发展|走向).{0,18}(?:合理|成立|合适|可行|行吗|可以吗|怎么样|怎么改|怎么发展|如何发展)|(?:这样|这么|这个).{0,10}(?:写|安排|发展|处理).{0,10}(?:合理|成立|行吗|可以吗|怎么样)|(?:突然|无缘无故).{0,24}(?:合理|成立|行吗|怎么样)|不合理剧情/;
-const HIGH_IMPACT_PATTERN = /开篇|开场|前三章|高潮|强反转|重大反转|关系转折|身份揭示|重大打脸|关键虐点|结局|大结局|终章|收官|付费点|付费钩子|更狠|更爽|更意外|更自然|不对味/;
 const SINGLE_CANDIDATE_PATTERN = /单一(?:完整)?候选|只(?:要|生成|输出|保留)(?:一|1)个(?:完整)?候选|候选稿?.{0,4}只(?:要|需|保留|输出)?(?:一|1)个|不要多稿|不(?:要|需)多候选|只定向修复|基于(?:当前|保留)(?:候选|稿件).{0,12}(?:修复|修改|调整)/;
 const EXPLICIT_MULTI_CANDIDATE_PATTERN = /(?:多个|多篇|多份|多版|几篇|几份|若干)(?:不同|可比较|可对比)?(?:的)?(?:候选稿?|候选|稿件|版本)|(?:候选稿?|候选|稿件).{0,8}(?:多个|多篇|多份|多版|几篇|几份|若干)|(?:两|三|2|3)(?:个|篇|份|版|种)(?:不同|可比较|可对比)?(?:的)?(?:候选稿?|候选|稿件|版本)|(?:双稿|三稿|双版本|三版本|对比稿|备选稿)/u;
 const EXPLICIT_PROSE_LENGTH_RANGE_PATTERN = /(\d{3,5})\s*(?:-|—|–|~|～|至|到)\s*(\d{3,5})\s*(?:个\s*)?(?:中文字符|汉字|字符|字)/u;
@@ -328,7 +320,6 @@ const taskLabel = ({ activeModule = "manuscript", contextDomain = "novel" }) => 
 };
 
 export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", requestMode = "creative", targetDocumentId = "", semanticDeliverableType = "", semanticLane = "", semanticTaskKind = "", semanticWriteIntent = "", semanticWriteOperation = "", semanticSourceMode = "", semanticExecutionPlan = null, semanticGuidanceCompleted = false, taskContract = null } = {}) => {
-  const normalizedPrompt = String(prompt);
   const contractDecision = validateTaskContractForExecution(taskContract);
   const semanticQualityReview = semanticTaskKind === "quality_review";
   const semanticProduction = semanticLane === "task_execution"
@@ -348,8 +339,7 @@ export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeMo
   ));
   const semanticGuidance = semanticLane === "guided_dialogue";
   const guideFirst = !contractProduction && (semanticGuidance || requestMode === "creative_guidance");
-  const semanticAuthority = semanticGuidance || semanticLane === "task_execution";
-  if (semanticAuthority) {
+  const semanticAuthority = true;
     const plan = semanticExecutionPlan && typeof semanticExecutionPlan === "object" ? semanticExecutionPlan : {};
     const deliverableType = requestMode === "visual_prompt"
       ? "visual_prompt"
@@ -422,80 +412,6 @@ export const detectShensiRunProfile = ({ prompt = "", routingText = "", activeMo
       taskFacets,
       taskLabel: deliverableType ? creativeDeliverableLabel(deliverableType) : taskLabel({ activeModule, contextDomain }),
     };
-  }
-  const explicitGuidanceOnly = semanticGuidance || (guideFirst
-    && /(?:只|仅)(?:需要|要|先)?[\s\S]{0,40}(?:提问|追问|讨论|梳理|确认)|(?:提问|追问|提出[\s\S]{0,12}(?:问题|疑问)|创作引导|讨论|梳理|确认)/u.test(normalizedPrompt)
-    && /(?:不要|无需|不必|先不|先不要|暂不|不)\s*(?:写|生成|创作|落盘|创建|新建)?\s*(?:正文|章节|文档|稿件|成稿|正式内容)/u.test(normalizedPrompt)
-    && !/(?:写入|落盘|保存|记录|同步)[^。；\n]{0,36}(?:资料|设定|大纲|记忆|伏笔|信息台阶|正式内容)/u.test(normalizedPrompt));
-  const routedPrompt = guideFirst || requestMode === "visual_prompt"
-    ? `${String(routingText)}\n${normalizedPrompt}`.trim()
-    : normalizedPrompt;
-  const explicitChapter = requestedChapterTarget(routedPrompt);
-  const explicitSingleChapterProduction = Boolean(
-    explicitChapter?.documentId
-    && explicitChapter.documentId === effectiveTargetDocumentId
-  );
-  const formalAssetWrite = hasExplicitFormalAssetWriteIntent({ text: routedPrompt }) && !explicitSingleChapterProduction;
-  const formalAssetTargets = formalAssetWrite
-    ? requestedArtifactTargets(routedPrompt, { contextDomain }).map(({ documentId, moduleId, title }) => ({ documentId, moduleId, title }))
-    : [];
-  const deliverableType = requestMode === "visual_prompt"
-    ? "visual_prompt"
-    : ["novel", "short_fiction", "short_drama_script", "short_video_script", "public_account", "visual_prompt", "document", "report"].includes(semanticDeliverableType)
-      ? semanticDeliverableType
-      : creativeDeliverableType({ text: routedPrompt, targetDocumentId: effectiveTargetDocumentId });
-  const taskFacets = inferCreativeTaskFacets({ prompt: routedPrompt, deliverableType });
-  const pipeline = requestMode === "quick_revision"
-    ? "quick_revision"
-    : requestMode === "visual_prompt"
-      ? "visual_prompt"
-      : "standard";
-  const freshStart = isExplicitFreshCreativeStart({ text: normalizedPrompt });
-  const direct = !semanticGuidance && (freshStart || isExplicitDirectCreationRequest({ text: normalizedPrompt }));
-  const reviewDelivery = reviewDeliveryPolicy({ text: routedPrompt, contextDomain });
-  const reviewMutationPrompt = routedPrompt.replace(REVIEW_ADVICE_PHRASE_PATTERN, "");
-  const reviewOnly = reviewDelivery.active && !REVIEW_CONTENT_MUTATION_PATTERN.test(reviewMutationPrompt);
-  const production = semanticProduction || contractProduction || (!reviewOnly && (direct
-    || hasExplicitCreativeProductionIntent({ text: routedPrompt, targetDocumentId: effectiveTargetDocumentId })
-    || PRODUCTION_PATTERN.test(routedPrompt)));
-  const fullAudit = FULL_AUDIT_PATTERN.test(routedPrompt);
-  const diagnostic = !contractProduction && (reviewOnly || (DIAGNOSTIC_PATTERN.test(routedPrompt) && !production));
-  const plotDirectionReview = PLOT_DIRECTION_REVIEW_PATTERN.test(routedPrompt);
-  const explicitlyRequestedChapterNumber = Number(explicitChapter?.chapterNumber ?? 0);
-  const highImpact = fullAudit || HIGH_IMPACT_PATTERN.test(routedPrompt) || (production && explicitlyRequestedChapterNumber === 1);
-  const singleCandidateRequested = SINGLE_CANDIDATE_PATTERN.test(routedPrompt);
-  const explicitCandidateCount = production ? requestedCandidateVariantCount(routedPrompt) : 0;
-  return {
-    direct,
-    semanticGuidance,
-    semanticGuidanceCompleted: semanticGuidance && semanticGuidanceCompleted === true,
-    freshStart,
-    guideFirst,
-    explicitGuidanceOnly: contractProduction ? false : explicitGuidanceOnly,
-    formalAssetWrite,
-    formalAssetTargets,
-    production,
-    fullAudit,
-    diagnostic,
-    plotDirectionReview,
-    highImpact,
-    singleCandidateRequested,
-    explicitCandidateCount,
-    pipeline,
-    candidateCount: pipeline !== "standard" ? 1 : production ? explicitCandidateCount || 1 : 0,
-    maxRepairRounds: pipeline !== "standard" ? 0 : production && explicitSelfCheckRequested(routedPrompt) ? 2 : 0,
-    riskLevel: pipeline !== "standard" ? "low" : fullAudit ? "full" : highImpact ? "high" : production ? "standard" : diagnostic ? "diagnostic" : "low",
-    strength: guideFirst
-      ? "guidance"
-      : pipeline === "quick_revision"
-      ? "quick"
-      : pipeline === "visual_prompt"
-        ? "visual"
-        : fullAudit ? "full" : production ? "standard" : diagnostic ? "diagnostic" : "guidance",
-    deliverableType,
-    taskFacets,
-    taskLabel: deliverableType ? creativeDeliverableLabel(deliverableType) : taskLabel({ activeModule, contextDomain }),
-  };
 };
 
 const EXPLICIT_SELF_CHECK_PATTERN = /(?:自检|检查|审查|验收|复核|校对|质量评估|质量检查|检查并修改|自检并修改)/u;
@@ -2188,12 +2104,7 @@ export const runShensiOrchestration = async ({
   const notebookUserPrimaryReady = !profile.guideFirst
     && workspaceKind === "notebook"
     && Boolean(userSkillRuntime?.primarySkill)
-    && !integrityPlanningRequired
-    && (profile.semanticAuthority === true || hasSufficientCreativeBrief({
-        text: prompt,
-        deliverableType: profile.deliverableType,
-        hasResources: Boolean(projectContext || attachments.length),
-      }));
+    && !integrityPlanningRequired;
   const languageGuardEnabled = (
     activeModule === "manuscript"
     && ["novel", "short_fiction", "public_account", "short_video_script", "short_drama_script"].includes(profile.deliverableType)
@@ -2239,7 +2150,7 @@ export const runShensiOrchestration = async ({
   const routeAction = profile.guideFirst ? "专项创作引导" : profile.production ? "调用专项写作技能" : profile.diagnostic ? "创作诊断" : "创作协作";
   const stages = [publicStage("routing", "任务识别", `${profile.taskLabel}，${routeAction}`)];
   if (capabilityPlanSummary) {
-    const unresolved = capabilityPlanSummary.capabilityStatus.filter((item) => !["template_declared_active", "slot_implementation_invalid_official_fallback", "template_declared_not_activated", "chat_model_runtime_fallback", "model_runtime_fallback"].includes(item.status));
+    const unresolved = capabilityPlanSummary.capabilityStatus.filter((item) => !["template_declared_active", "slot_implementation_invalid_official_fallback", "template_declared_not_activated", "model_runtime_fallback"].includes(item.status));
     stages.push(publicStage(
       "capability-plan",
       "能力计划",
@@ -2305,7 +2216,7 @@ export const runShensiOrchestration = async ({
     ));
   }
   if (userSkillRuntime?.modelNativeAssistance) {
-    const modelSurfaceLabel = userSkillRuntime.modelAssistanceSurface === "agent" ? "Agent" : "Chat";
+    const modelSurfaceLabel = "Agent";
     const fallbackDetail = userSkillRuntime.modelFallbackCapabilities?.length
       ? `，并临时补位 ${userSkillRuntime.modelFallbackCapabilities.join("、")}`
       : "";

@@ -57,7 +57,7 @@ assert.deepEqual(normalized.textConnections.map((profile) => profile.id), [
   "text-public-agent",
 ]);
 assert.equal(normalized.activeTextConnectionId, "text-claude-code-deepseek");
-assert.equal(normalized.activeTextChatConnectionId, "text-claude-code-deepseek");
+assert.equal(Object.hasOwn(normalized, "activeTextChatConnectionId"), false);
 assert.equal(normalized.activeTextAgentConnectionId, "text-claude-code-deepseek");
 assert.equal(normalized.textProfileCleanupVersion, TEXT_PROFILE_CLEANUP_VERSION);
 const normalizedDeepSeek = normalized.textConnections.find((profile) => profile.id === "text-claude-code-deepseek");

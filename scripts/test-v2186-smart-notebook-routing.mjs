@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 
 import { compileAgentTaskPolicy } from "../src/agent-task-policy.js";
 import { codexAgentCandidatePreview, codexAgentCompletionNeedsLandingProof } from "../src/codex-agent-candidate-preview.js";
@@ -84,7 +85,7 @@ assert.equal(agentPromptRequiresSkillSelection("你刚才使用了哪些 Skill�
 assert.equal(agentPromptRequiresSkillSelection("Skill 是什么？"), false);
 assert.equal(agentPromptRequiresSkillSelection("使用写作 Skill 续写第四章"), true);
 assert.equal(agentPromptRequiresSkillSelection("不要使用 Skill，直接续写第四章"), false);
-const provenancePolicy = compileAgentTaskPolicy({ text: provenanceQuestion, route: { mode: "general" } });
+const provenancePolicy = compileAgentTaskPolicy({ text: provenanceQuestion, route: { mode: "general", diagnosisIntent: true } });
 assert.equal(provenancePolicy.action, "analyze");
 assert.equal(provenancePolicy.commitOwner, "none");
 assert.equal(provenancePolicy.commitDisposition, "no_artifact");
@@ -145,6 +146,7 @@ assert.deepEqual(batchRepairFollowup.batchRequest.documentIds, ["chapter-1", "ch
 assert.match(batchRepairFollowup.expandedPrompt, /一次批量落盘事务/u);
 assert.match(batchRepairFollowup.expandedPrompt, /每章都要保存修改前历史版本/u);
 const batchRepairRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ taskKind: "content_revision" }),
   text: batchRepairFollowup.expandedPrompt,
   sourceMessageId: "user-batch-repair",
   contextualWriteAction: "replace",

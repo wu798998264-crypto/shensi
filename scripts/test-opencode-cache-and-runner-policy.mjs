@@ -87,8 +87,8 @@ const dualBindings = generationRuntimeBindings({
     executionModes: ["chat", "agent"],
   }],
 }).bindings;
-assert.equal(dualBindings[0].chatAdapter, "api");
-assert.equal(dualBindings[0].chatProtocol, "chat_completions");
-assert.equal(dualBindings[0].chatBaseUrl, "https://api.deepseek.com/v1");
+assert.equal(Object.hasOwn(dualBindings[0], "chatAdapter"), false);
+assert.equal(Object.hasOwn(dualBindings[0], "chatProtocol"), false);
+assert.equal(Object.hasOwn(dualBindings[0], "chatBaseUrl"), false);
 
 console.log("OpenCode cache isolation and atomic runner defaults tests passed");

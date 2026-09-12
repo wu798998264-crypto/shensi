@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 import { readFile } from "node:fs/promises";
 
 import { classifyAssistantOutput } from "../src/assistant-output-kind.js";
 import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
 
 const target = { documentId: "chapter-8", title: "未命名", exists: true, revision: "rev-1" };
-const routeFor = (text, sourceMessageId) => buildAdaptiveTaskRoute({
+const routeFor = (text, sourceMessageId, decision) => buildAdaptiveTaskRoute({
+  agentDecision: decision,
   text,
   sourceMessageId,
   target,
@@ -14,7 +16,7 @@ const routeFor = (text, sourceMessageId) => buildAdaptiveTaskRoute({
   expectedRevisions: { [target.documentId]: target.revision },
 }, { executionSurface: "chat" });
 
-const directRoute = routeFor("直接续写当前章节并落盘", "user-direct");
+const directRoute = routeFor("直接续写当前章节并落盘", "user-direct", agentDecision({ operation: "append" }));
 assert.equal(directRoute.writeAuthorization.state, "commit");
 assert.equal(classifyAssistantOutput({
   instruction: "直接续写当前章节并落盘",
@@ -22,7 +24,7 @@ assert.equal(classifyAssistantOutput({
   result: { candidate: "正文第一段。\n\n正文第二段。" },
 }).kind, "formal_artifact", "普通正式写作不得被当成多候选");
 
-const candidateRoute = routeFor("先写三版候选，不要落盘", "user-candidates");
+const candidateRoute = routeFor("先写三版候选，不要落盘", "user-candidates", agentDecision({ intent: "candidate" }));
 assert.equal(candidateRoute.writeAuthorization.state, "candidate_only");
 assert.equal(classifyAssistantOutput({
   instruction: "先写三版候选，不要落盘",
@@ -31,7 +33,7 @@ assert.equal(classifyAssistantOutput({
   candidateCount: 3,
 }).kind, "candidate_group");
 
-const discussionRoute = routeFor("只分析一下这章的问题，不要改正文", "user-discussion");
+const discussionRoute = routeFor("只分析一下这章的问题，不要改正文", "user-discussion", agentDecision({ mode: "general", intent: "none" }));
 assert.equal(discussionRoute.writeAuthorization.state, "none");
 assert.equal(classifyAssistantOutput({
   instruction: "只分析一下这章的问题，不要改正文",

@@ -8,7 +8,7 @@ import {
 } from "../src/server/execution-source-proof.mjs";
 import { loadAgentSkillContext } from "../src/server/agent-skill-context.mjs";
 import { compileAgentSkillFallbackPolicy } from "../src/agent-skill-fallback-policy.js";
-import { skillPromptForStage, withChatModelCapabilityFallback } from "../src/skill-routing.js";
+import { skillPromptForStage, withModelCapabilityFallback } from "../src/skill-routing.js";
 
 const longDocument = `开头证据\n${"正文细节".repeat(9_000)}\n结尾证据`;
 const compiled = compileContextSections({
@@ -125,7 +125,7 @@ assert.equal(disabledLoaderCalled, false, "禁用 Skill 不得进入真实全文
 assert.deepEqual(disabledAgentContext.requestedIds, []);
 assert.deepEqual(disabledAgentContext.loadedSkills, []);
 
-const nativeCapabilityFallback = withChatModelCapabilityFallback({
+const nativeCapabilityFallback = withModelCapabilityFallback({
   blockingTemplateCapabilities: ["novel_prose_writer"],
   missingTemplateCapabilities: ["effect_reviewer"],
   invalidTemplateCapabilities: [],

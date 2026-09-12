@@ -126,6 +126,7 @@ try {
     const authorizedCandidate = JSON.stringify(operations[0].patches);
     const writeAuthorization = bindFormalWriteCandidate(createFormalWriteAuthorization({
       instruction,
+      semanticWritePlan: { intent: "commit", operation: "patch" },
       sourceMessageId: `${surface}-local-replace-user`,
       targetDocumentIds: ["chapter-1"],
       expectedRevisions,

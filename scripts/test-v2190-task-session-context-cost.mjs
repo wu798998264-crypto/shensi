@@ -29,7 +29,7 @@ const {
 const { skillIdsForStage, skillPromptForStage } = await import("../src/skill-routing.js");
 const { createCodexAgentProvider } = await import("../src/server/codex-agent-provider.mjs");
 const { inheritCandidateTargetProvenance } = await import("../src/candidate-chapters.js");
-const { canonicalNovelChapterRequestTarget, classifyRequestMode, hasExplicitFormalAssetWriteIntent } = await import("../src/request-routing.js");
+const { canonicalNovelChapterRequestTarget, buildAdaptiveTaskRoute, hasExplicitFormalAssetWriteIntent } = await import("../src/request-routing.js");
 const { normalizeGenerationProfiles } = await import("../src/generation-profiles.js");
 const { detectShensiRunProfile } = await import("../src/server/shensi-orchestrator.mjs");
 
@@ -92,7 +92,7 @@ try {
 
   const guidanceDecisionCommit = "请把这项决定记入当前作品相关设定、大纲和记忆，然后继续按既定结构推进；此时不写正文。";
   assert.equal(hasExplicitFormalAssetWriteIntent({ text: guidanceDecisionCommit }), true, "创作引导中的明确‘记入’动作必须进入正式资产写入链");
-  assert.equal(classifyRequestMode({ text: guidanceDecisionCommit, targetDocumentId: "canon-world", targetModuleId: "canon" }).mode, "creative");
+  assert.equal(buildAdaptiveTaskRoute({ text: guidanceDecisionCommit, targetDocumentId: "canon-world", targetModuleId: "canon", agentDecision: { lane: "task_execution", requestMode: "creative", writePlan: { intent: "commit", operation: "create" } } }).mode, "creative");
   assert.doesNotMatch(
     composerDispatch,
     /conversationCreativeGuidanceIsActive|activeGuidanceFlow|hasExplicitFormalAssetWriteIntent/u,

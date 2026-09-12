@@ -61,11 +61,10 @@ app.whenReady().then(async () => {
       baseUrl: "http://127.0.0.1:5317/v1",
       model,
       agentEngine: "codex_api",
-      executionMode: "both",
-      executionModes: ["chat", "agent"],
+      executionMode: "agent",
+      executionModes: ["agent"],
       credentialSource: "shensi",
       agentModelId: model,
-      chatModelId: model,
       cliPath: "",
       cliArgs: "",
       draft: false,
@@ -74,7 +73,6 @@ app.whenReady().then(async () => {
       ...state.settings,
       textConnections: profiles.map((item, index) => index === profileIndex ? configuredProfile : item),
       activeTextConnectionId: configuredProfile.id,
-      activeTextChatConnectionId: configuredProfile.id,
       activeTextAgentConnectionId: configuredProfile.id,
       adapter: "api",
       provider: "自定义兼容接口",
@@ -115,7 +113,7 @@ app.whenReady().then(async () => {
     if (verifiedProfile?.remarkName !== "聚合api"
       || verifiedProfile?.protocol !== "responses"
       || verifiedProfile?.agentEngine !== "codex_api"
-      || verifiedProfile?.executionMode !== "both"
+      || verifiedProfile?.executionMode !== "agent"
       || verifiedVault.secrets?.text?.[configuredProfile.id] !== currentKey) {
       throw new Error("聚合 API 配置保存后回读不一致");
     }

@@ -96,6 +96,10 @@ assert.match(transferSource, /"reports", "library", "index"/u);
 
 const invokedStages = [];
 const orchestration = await runShensiOrchestration({
+  semanticLane: "task_execution",
+  semanticWriteIntent: "commit",
+  semanticDeliverableType: "novel",
+  semanticExecutionPlan: { reviewTier: "none", candidateCount: 1 },
   shensiRoot: root,
   settings: {},
   messages: [{ role: "user", content: "直接写第一章正文并落盘，不要自检。主角在雨夜收到一封来自未来的信。" }],

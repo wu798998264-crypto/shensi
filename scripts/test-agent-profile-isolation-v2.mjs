@@ -73,12 +73,12 @@ const normalized = normalizeGenerationProfiles({
 });
 
 const normalizedAggregate = normalized.textConnections.find((profile) => profile.id === aggregate.id);
-assert.equal(normalizedAggregate.chatModelId, "", "统一 Agent 配置不得继续保存独立 Chat 模型");
+assert.equal(normalizedAggregate.chatModelId, undefined, "统一 Agent 配置不得继续保存独立 Chat 模型");
 assert.equal(normalizedAggregate.agentModelId, "gpt-5.6-sol", "Responses Agent 模型必须与当前配置模型一致");
 assert.deepEqual(normalizedAggregate.executionModes, ["agent"]);
 
 const normalizedChatOnly = normalized.textConnections.find((profile) => profile.id === chatOnly.id);
-assert.equal(normalizedChatOnly.chatModelId, "", "旧 Chat-only 配置迁移后不得残留 Chat 模型字段");
+assert.equal(normalizedChatOnly.chatModelId, undefined, "旧 Chat-only 配置迁移后不得残留 Chat 模型字段");
 assert.equal(normalizedChatOnly.agentModelId, "deepseek-v4-pro", "旧 Chat-only API 配置必须迁移到统一 Agent 模型");
 assert.equal(normalizedChatOnly.agentEngine, "codex_api", "普通 API 文字配置默认使用内置 Agent");
 assert.deepEqual(normalizedChatOnly.executionModes, ["agent"]);

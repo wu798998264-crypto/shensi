@@ -41,14 +41,13 @@ try {
     apiKey: "test-only-secret",
   };
   const chat = await runtime.resolveTrustedGenerationSettings({ channel: "text", settings: profile, route: "chat" });
-  assert.equal(chat.adapter, "api");
-  assert.equal(chat.model, "deepseek-chat");
+  assert.equal(chat.adapter, "cli");
+  assert.equal(chat.model, "deepseek/deepseek-chat");
   assert.equal(chat.baseUrl, binding.chatBaseUrl);
-  assert.equal(chat.cliPath, "");
+  assert.equal(chat.cliPath, "opencode");
   assert.equal(chat.apiKey, "test-only-secret");
-  assert.equal(chat.agentEngine, "", "Chat 投影不得残留 OpenCode 运行器，避免误启动 Agent CLI");
-  assert.deepEqual(chat.executionModes, ["chat"]);
-  assert.equal(chat.agentModelId, "");
+  assert.equal(chat.agentEngine, "opencode", "历史 route 参数不得恢复 API 双模式投影");
+  assert.equal(chat.agentModelId, "deepseek/deepseek-chat");
 
   const agent = await runtime.resolveTrustedGenerationSettings({ channel: "text", settings: profile });
   assert.equal(agent.adapter, "cli");

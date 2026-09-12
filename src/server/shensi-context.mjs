@@ -1,11 +1,6 @@
 ﻿import { readFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { creativeDeliverableType } from "../request-routing.js";
-import {
-  IMAGE_ASSET_SOURCE_EXTRACTION_PATTERN,
-  isImageAssetSourceExtractionRequest,
-} from "../image-asset-routing.js";
-import { moduleRuleSources, resolveProjectModule } from "../module-registry.js";
+import { moduleRuleSources } from "../module-registry.js";
 
 const SKIP_DIRECTORIES = new Set(["_备份_不参与规则扫描", "原始资料", "版本草案", "废弃设定", "回收站", ".git", "node_modules"]);
 const TYPE_THEORY_ROUTER = "小说类型理论研究.md";
@@ -70,12 +65,6 @@ const PUBLIC_ACCOUNT_ILLUSTRATION_SOURCES = Object.freeze([
 ]);
 const AMBIGUOUS_TYPE_KEYWORDS = new Set(["爽文", "短剧", "漫剧", "科幻", "网文"]);
 const FEMALE_TRANSITION_TO_PAYOFF_PATTERN = /先虐后爽|虐转爽|虐后转爽|后期转爽|虐后翻盘|追妻成功后翻盘/i;
-const PROMPT_TASK_PATTERN = /提示词|分镜|镜头脚本|视觉资产|图片资产|角色资产|场景资产|道具资产|全景调度|站位(?:图|线稿图)?|多人站位|空间调度|(?:小说|剧本|脚本|短视频|漫剧).{0,12}(?:转\s*AI|转视频|视觉化)/i;
-const VIDEO_PROMPT_TASK_PATTERN = /视频提示词|分镜提示词|漫剧提示词|镜头提示词|(?:剧本|脚本|短视频|漫剧).{0,12}(?:视觉提示词|转\s*AI|转视频|视频化|视觉化)|(?:把|将|根据|基于).{0,28}(?:剧本|脚本|短视频|小说|章节).{0,16}(?:转成|转换成|生成|制作).{0,8}(?:视频|镜头|分镜|视觉)提示词/i;
-const VISUAL_ASSET_TASK_PATTERN = /视觉资产|图片资产|角色资产|场景资产|道具资产|(?:人物|角色|物品|物件|道具|产品|设备|武器|载具|服装|建筑|场景|环境|生物|怪物).{0,18}(?:具体|单独|完整|定妆|设定)?(?:图片|图像|设定图|概念图|定妆图|三视图|提示词)/i;
-const CHARACTER_PROMPT_TASK_PATTERN = /(?:人物|角色|定妆|三视图|四视图).{0,24}(?:提示词|设定图|反推|建模|设计|资产)|(?:提示词|设定图|反推|建模|设计|资产).{0,24}(?:人物|角色|定妆|三视图|四视图)|(?:提取|抽取|识别).{0,18}(?:人物|角色)/iu;
-const SCENE_PROMPT_TASK_PATTERN = /(?:场景|环境|地点|空间|建筑|道具).{0,24}(?:提示词|设定图|建模|设计|资产)|(?:提示词|设定图|建模|设计|资产).{0,24}(?:场景|环境|地点|空间|建筑|道具)|(?:提取|抽取|识别).{0,18}(?:场景|环境|地点|空间|建筑|道具)/iu;
-const GENERAL_IMAGE_ASSET_TASK_PATTERN = /视觉资产|图片资产|图像资产|资产总表/iu;
 const sourceContentCache = new Map();
 const sourceContentCacheMetrics = { hits: 0, misses: 0 };
 export const CONFIDENTIAL_REFUSAL = "不能提供密钥、访问令牌、密码或其他凭据。神思规则、内置 Skill、任务路由和实现机制均可正常说明与审计。";
@@ -301,11 +290,11 @@ const loadTheoryFamilyContext = async ({
 
 export const loadTypeTheoryContext = async ({ shensiRoot, prompt = "", projectContext = "", workspaceKind = "project", publicAccountLayers = null, deliverableType: semanticDeliverableType = "", semanticAuthority = false, theoryMode = "auto" }) => {
   const requestText = String(prompt ?? "");
-  if (theoryMode === "off" || !semanticAuthority && /(?:不要|无需|不需要|跳过|关闭|禁用).{0,20}(?:理论|顾问)|(?:理论|顾问).{0,20}(?:不要|无需|不需要|跳过|关闭|禁用)/.test(requestText)) {
+  if (theoryMode === "off") {
     return emptyTheoryContext();
   }
   const root = resolve(shensiRoot);
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text: requestText });
+  const deliverableType = semanticDeliverableType;
   if (deliverableType === "public_account") {
     return loadTheoryFamilyContext({
       root,
@@ -358,41 +347,19 @@ export const loadTypeTheoryContext = async ({ shensiRoot, prompt = "", projectCo
 };
 
 const isScriptContext = (contextDomain) => ["script", "script-adaptation"].includes(contextDomain);
-const STRONG_STORY_PATTERN = /开篇|开场|第一章|第1章|前三章|高潮|强反转|重大反转|结局|大结局|终章|收官|付费点|付费钩子|不够刺激|更刺激|不够爽|更爽|强剧情|爆点/;
-const LONG_STRUCTURE_PATTERN = /长篇|全集大纲|全书大纲|总纲|卷纲|阶段规划|整卷|整本|全书|完稿|连载中期|\d{2,4}\s*章/;
-const SINGLE_CHAPTER_PATTERN = /只生成这一章|单章(?:正文|续写|改写|检查)|本章(?:正文|续写|改写)/;
-const ADAPTATION_PATTERN = /小说.{0,12}改编?(?:成|为)?(?:短剧|剧本|漫剧)|改编(?:成|为)?(?:短剧|剧本|漫剧)|根据.{0,24}(?:小说|原著|原作|章节|原文)|原著改编|原作改编/;
-const isAdaptationTask = ({ text = "", sourceMode = "" } = {}) => sourceMode === "adaptation" || (!sourceMode && ADAPTATION_PATTERN.test(text));
-const TOP_TIER_DRAMA_PATTERN = /顶级|人类编剧|爆款|投流|投稿|平台重点|满血|终稿|高级|冲顶级|破圈/;
-const STRONG_CLOSURE_PATTERN = /顶级|人类编剧|爆款|投流|投稿|发布前|平台重点|满血|终稿|全量|质量争议|多章|多集|批量|跨媒介|生产链|入库|回写|落盘|状态机|规则包|闭环|结构化自检|返修协议/;
-const NAMING_TASK_PATTERN = /(?:取名|起名|命名|姓名|名字).{0,20}(?:人物|角色|主角|女主|男主|配角|势力|地点|原创|新)|(?:原创|新建|新增).{0,20}(?:人物|角色|主角|女主|男主|配角).{0,20}(?:取名|起名|命名|姓名|名字)/;
-const ORIGINALITY_TASK_PATTERN = /原创化|去同质化|去模板化|素材重构|借鉴型创作|改编痕迹|脱离原作|保留.{0,12}(?:功能|卖点|情绪).{0,12}重构|重构.{0,12}(?:人物|剧情|设定|素材)/;
-const AUTHORSHIP_TASK_PATTERN = /AI味|机器味|生成腔|AIGC|AI检测|朱雀|作者化|人工写作感|真人作者|去AI/;
-const UNCONVENTIONAL_TASK_PATTERN = /非常规|特殊叙事|非线性|多线叙事|倒叙|插叙|意识流|不可靠叙事|循环叙事|碎片化叙事|嵌套叙事|梦境叙事|象征叙事|民俗异常|怪谈规则|超现实概念|自造概念|原创概念|自定义概念/;
-const NOVEL_PROTOTYPE_PATTERN = /(?:从零|新建|新开|立项|只有|基于).{0,18}(?:小说|故事|脑洞|人物|世界观|题材)|小说原型|原型验证|样章|书名|新小说/;
-const STRUCTURE_TASK_PATTERN = /结构化管理|结构树|建档|批量落盘|多文件落盘|入库|回写|文档拆分|拆分为.{0,8}(?:文档|文件)|目录模板|状态快照|章节记忆|上下文包|信息释放表|读者当前知识库|重要信息登场账本|伏笔管理|文档索引|待确认事项|更新日志|wikilink|双向链接/;
+const isAdaptationTask = ({ sourceMode = "" } = {}) => sourceMode === "adaptation";
 const taskFacetSet = (value = []) => new Set((Array.isArray(value) ? value : []).map(String).filter(Boolean));
-const needsLongStructure = ({ text, activeModule }) => LONG_STRUCTURE_PATTERN.test(text)
-  && !(activeModule === "manuscript" && SINGLE_CHAPTER_PATTERN.test(text));
-
 const classifyClosure = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, semanticAuthority = false, reviewTier = "" }) => {
-  if (semanticAuthority) {
-    if (stage === "quick-revision") return "light";
-    if (fullAudit || reviewTier === "full" || ["audit", "audit-final", "combined-check", "memory-check"].includes(stage)) return "strong";
-    if (["creative", "revision", "planning", "evaluation", "drama-development", "drama-development-revision"].includes(stage)) return "standard";
-    return "light";
-  }
-  const text = `${prompt} ${routingText} ${activeModule} ${contextDomain} ${targetDocumentId} ${stage}`;
-  if (stage === "quick-revision" || /局部|润色|改句|试写|先试|快写一版|只改/.test(text)) return "light";
-  if (fullAudit || ["audit", "audit-final", "combined-check", "memory-check"].includes(stage) || STRONG_CLOSURE_PATTERN.test(text)) return "strong";
-  if (["creative", "revision", "planning", "evaluation", "drama-development", "drama-development-revision"].includes(stage) || /正式|继续写|正文|剧本|大纲|设定|提示词/.test(text)) return "standard";
+  if (stage === "quick-revision") return "light";
+  if (fullAudit || reviewTier === "full" || ["audit", "audit-final", "combined-check", "memory-check"].includes(stage)) return "strong";
+  if (["creative", "revision", "planning", "evaluation", "drama-development", "drama-development-revision"].includes(stage)) return "standard";
   return "light";
 };
 
 const ruleBundleId = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", sourceMode = "", deliverableType: semanticDeliverableType = "", semanticAuthority = false, reviewTier = "" }) => {
   const text = `${prompt} ${routingText} ${targetDocumentId}`;
   const closure = classifyClosure({ prompt, routingText, activeModule, contextDomain, targetDocumentId, stage, fullAudit, semanticAuthority, reviewTier });
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text, targetDocumentId });
+  const deliverableType = semanticDeliverableType;
   if (deliverableType === "book_deconstruction") return "book_deconstruction";
   if (deliverableType === "public_account") return "public_account";
   if (deliverableType === "short_video_script") return "short_video_script";
@@ -406,173 +373,68 @@ const ruleBundleId = ({ prompt = "", routingText = "", activeModule = "manuscrip
     return `note_${closure}`;
   }
   if (isScriptContext(contextDomain)) {
-    if (targetDocumentId.startsWith("prompt-") || !semanticAuthority && /视频提示词|分镜提示词|漫剧提示词|视觉资产|图片资产|站位|全景调度/.test(text)) return "visual_production_chain";
+    if (targetDocumentId.startsWith("prompt-")) return "visual_production_chain";
     if (isAdaptationTask({ text, sourceMode })) return "adapted_short_drama_standard";
     return closure === "strong" ? "original_short_drama_strong" : "original_short_drama_standard";
   }
-  const moduleId = semanticAuthority ? activeModule : resolveProjectModule({ activeModule, prompt: text });
+  const moduleId = activeModule;
   if (moduleId === "manuscript") return closure === "strong" ? "novel_strong" : closure === "standard" ? "novel_standard" : "novel_light";
   return `${moduleId}_${closure}`;
 };
 
 const auxiliarySourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", stage = "response", workspaceKind = "project", semanticAuthority = false, taskFacets = [] }) => {
   if (stage === "visual-generation") return [];
-  const text = `${prompt} ${routingText}`;
   const refs = [];
   const scriptContext = isScriptContext(contextDomain);
   const quickRevision = stage === "quick-revision";
 
-  if (semanticAuthority) {
-    const facets = taskFacetSet(taskFacets);
-    if (!scriptContext && facets.has("naming") && ["planning", "creative", "revision", "response"].includes(stage)) refs.push(NAMING_CLEAN_SOURCE);
-    if (!scriptContext && facets.has("originality") && ["planning", "creative", "revision", "evaluation", "audit", "audit-final", "response"].includes(stage)) refs.push(ORIGINALITY_SKILL_SOURCE, ORIGINALITY_RULE_SOURCE);
-    if (!scriptContext && facets.has("authorship") && ["creative", "revision", "evaluation", "audit", "audit-final", "response", "quick-revision"].includes(stage)) refs.push(AUTHORSHIP_RULE_SOURCE);
-    if (!quickRevision && facets.has("unconventional") && ["planning", "creative", "revision", "response"].includes(stage)) {
-      refs.push(UNCONVENTIONAL_GUIDE_SOURCE);
-      if (activeModule === "outline" || facets.has("long_structure")) refs.push(UNCONVENTIONAL_OUTLINE_SOURCE);
-    }
-    if (!quickRevision && !scriptContext && facets.has("novel_prototype") && ["planning", "response"].includes(stage)) refs.push(NOVEL_PROTOTYPE_SOURCE);
-    const structureTask = workspaceKind !== "notebook" && (facets.has("structure_management") || ["memory", "index"].includes(activeModule));
-    if (!quickRevision && structureTask && ["planning", "memory-check", "response"].includes(stage)) {
-      refs.push(STRUCTURE_SKILL_SOURCE, STRUCTURE_INGEST_SOURCE);
-      if (facets.has("structure_directory")) refs.push(STRUCTURE_DIRECTORY_SOURCE, STRUCTURE_BUILD_FLOW_SOURCE);
-      if (facets.has("structure_setting")) refs.push(STRUCTURE_SETTING_FLOW_SOURCE);
-      if (facets.has("structure_postwrite")) refs.push(STRUCTURE_POSTWRITE_FLOW_SOURCE, STRUCTURE_MEMORY_TEMPLATE_SOURCE);
-      if (facets.has("structure_links")) refs.push(STRUCTURE_LINK_SOURCE, STRUCTURE_LINK_FLOW_SOURCE);
-    }
-    return refs;
-  }
-
-  if (!scriptContext && NAMING_TASK_PATTERN.test(text) && ["planning", "creative", "revision", "response"].includes(stage)) refs.push(NAMING_CLEAN_SOURCE);
-  if (!scriptContext && ORIGINALITY_TASK_PATTERN.test(text) && ["planning", "creative", "revision", "evaluation", "audit", "audit-final", "response"].includes(stage)) {
-    refs.push(ORIGINALITY_SKILL_SOURCE, ORIGINALITY_RULE_SOURCE);
-  }
-  if (!scriptContext && AUTHORSHIP_TASK_PATTERN.test(text) && ["creative", "revision", "evaluation", "audit", "audit-final", "response", "quick-revision"].includes(stage)) {
-    refs.push(AUTHORSHIP_RULE_SOURCE);
-  }
-  if (!quickRevision && UNCONVENTIONAL_TASK_PATTERN.test(text) && ["planning", "creative", "revision", "response"].includes(stage)) {
+  const facets = taskFacetSet(taskFacets);
+  if (!scriptContext && facets.has("naming") && ["planning", "creative", "revision", "response"].includes(stage)) refs.push(NAMING_CLEAN_SOURCE);
+  if (!scriptContext && facets.has("originality") && ["planning", "creative", "revision", "evaluation", "audit", "audit-final", "response"].includes(stage)) refs.push(ORIGINALITY_SKILL_SOURCE, ORIGINALITY_RULE_SOURCE);
+  if (!scriptContext && facets.has("authorship") && ["creative", "revision", "evaluation", "audit", "audit-final", "response", "quick-revision"].includes(stage)) refs.push(AUTHORSHIP_RULE_SOURCE);
+  if (!quickRevision && facets.has("unconventional") && ["planning", "creative", "revision", "response"].includes(stage)) {
     refs.push(UNCONVENTIONAL_GUIDE_SOURCE);
-    if (/大纲|卷纲|章纲|结构|走向/.test(text) || activeModule === "outline") refs.push(UNCONVENTIONAL_OUTLINE_SOURCE);
+    if (activeModule === "outline" || facets.has("long_structure")) refs.push(UNCONVENTIONAL_OUTLINE_SOURCE);
   }
-  if (!quickRevision && !scriptContext && NOVEL_PROTOTYPE_PATTERN.test(text) && ["planning", "response"].includes(stage)) refs.push(NOVEL_PROTOTYPE_SOURCE);
-
-  const structureTask = workspaceKind !== "notebook" && (STRUCTURE_TASK_PATTERN.test(text) || ["memory", "index"].includes(activeModule));
+  if (!quickRevision && !scriptContext && facets.has("novel_prototype") && ["planning", "response"].includes(stage)) refs.push(NOVEL_PROTOTYPE_SOURCE);
+  const structureTask = workspaceKind !== "notebook" && (facets.has("structure_management") || ["memory", "index"].includes(activeModule));
   if (!quickRevision && structureTask && ["planning", "memory-check", "response"].includes(stage)) {
     refs.push(STRUCTURE_SKILL_SOURCE, STRUCTURE_INGEST_SOURCE);
-    if (/建档|目录|导入|文档拆分|拆分为.{0,8}(?:文档|文件)|结构树/.test(text)) refs.push(STRUCTURE_DIRECTORY_SOURCE, STRUCTURE_BUILD_FLOW_SOURCE);
-    if (/设定.{0,12}(?:拆分|入库|回写)|(?:拆分|入库|回写).{0,12}设定/.test(text)) refs.push(STRUCTURE_SETTING_FLOW_SOURCE);
-    if (/正文.{0,12}(?:写后|同步|回写)|章节记忆|状态快照|上下文包|信息释放|读者当前知识|重要信息登场|伏笔/.test(text)) refs.push(STRUCTURE_POSTWRITE_FLOW_SOURCE, STRUCTURE_MEMORY_TEMPLATE_SOURCE);
-    if (/链接|索引|日志|待确认/.test(text)) refs.push(STRUCTURE_LINK_SOURCE, STRUCTURE_LINK_FLOW_SOURCE);
+    if (facets.has("structure_directory")) refs.push(STRUCTURE_DIRECTORY_SOURCE, STRUCTURE_BUILD_FLOW_SOURCE);
+    if (facets.has("structure_setting")) refs.push(STRUCTURE_SETTING_FLOW_SOURCE);
+    if (facets.has("structure_postwrite")) refs.push(STRUCTURE_POSTWRITE_FLOW_SOURCE, STRUCTURE_MEMORY_TEMPLATE_SOURCE);
+    if (facets.has("structure_links")) refs.push(STRUCTURE_LINK_SOURCE, STRUCTURE_LINK_FLOW_SOURCE);
   }
   return refs;
 };
 
 const specialtySourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", workspaceKind = "project", stage = "response", sourceMode = "", deliverableType: semanticDeliverableType = "", semanticAuthority = false, taskFacets = [], reviewTier = "" }) => {
-  const text = `${prompt} ${routingText} ${activeModule} ${targetDocumentId}`;
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text, targetDocumentId });
-  if (semanticAuthority) {
-    const facets = taskFacetSet(taskFacets);
-    if (facets.has("panorama")) return ["神思-短剧与视觉资产规则.md", PANORAMA_SOURCE];
-    if (facets.has("image_asset_extraction") || facets.has("character_prompt") || facets.has("scene_prompt")) {
-      return [
-        "神思-短剧与视觉资产规则.md",
-        ...(facets.has("image_asset_extraction") ? [VISUAL_ASSET_SOURCE] : []),
-        ...(facets.has("character_prompt") ? [INDUSTRIAL_CHARACTER_PROMPT_SOURCE] : []),
-        ...(facets.has("scene_prompt") ? [GUOMAN_SCENE_PROMPT_SOURCE] : []),
-      ];
-    }
-    if (facets.has("video_prompt")) return ["神思-短剧与视觉资产规则.md", VIDEO_PROMPT_SOURCE];
-    if (facets.has("visual_asset")) return ["神思-短剧与视觉资产规则.md", VISUAL_ASSET_SOURCE];
-    if (deliverableType === "visual_prompt") return ["神思-短剧与视觉资产规则.md"];
-    if (deliverableType === "public_account") {
-      return [
-        PUBLIC_ACCOUNT_MODULE_SOURCE,
-        ...(stage === "artifact-planning" ? PUBLIC_ACCOUNT_ILLUSTRATION_SOURCES : []),
-        ...(facets.has("public_account_humanize") ? [PUBLIC_ACCOUNT_HUMANIZER_SOURCE, PUBLIC_ACCOUNT_DEAI_RULE_SOURCE] : []),
-      ];
-    }
-    if (deliverableType === "short_fiction") return ["神思-正文写作规则.md"];
-    if (deliverableType === "short_video_script") return ["神思-短剧与视觉资产规则.md", SHORT_VIDEO_GENERAL_SOURCE];
-    if (deliverableType === "short_drama_script" || isScriptContext(contextDomain)) {
-      if (sourceMode === "adaptation") {
-        return [
-          "神思-短剧与视觉资产规则.md",
-          ADAPTED_SHORT_DRAMA_SOURCE,
-          ADAPTED_SHORT_DRAMA_THEORY_SOURCE,
-          SHORT_DRAMA_FORMAT_SOURCE,
-          SHORT_DRAMA_CHECK_SOURCE,
-        ];
-      }
-      const refs = [
-        "神思-短剧与视觉资产规则.md",
-        ORIGINAL_SHORT_DRAMA_SOURCE,
-        SHORT_DRAMA_FORMAT_SOURCE,
-        SHORT_DRAMA_CHECK_SOURCE,
-      ];
-      if (["planning", "drama-development", "drama-development-check", "drama-development-revision", "creative", "revision"].includes(stage)) {
-        refs.push(ORIGINAL_SHORT_DRAMA_STORY_SOURCE, ORIGINAL_SHORT_DRAMA_SETTING_SOURCE, ORIGINAL_SHORT_DRAMA_WORKFLOW_SOURCE, ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE, ADAPTED_SHORT_DRAMA_THEORY_SOURCE);
-      } else if (["evaluation", "combined-check", "audit", "audit-final", "theory-support"].includes(stage)) {
-        refs.push(ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE, ADAPTED_SHORT_DRAMA_THEORY_SOURCE);
-      } else if (stage === "memory-check") {
-        refs.push(ORIGINAL_SHORT_DRAMA_SETTING_SOURCE, ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE);
-      }
-      if (reviewTier === "full" || facets.has("strong_story")) refs.push(ORIGINAL_SHORT_DRAMA_BENCHMARK_SOURCE, ORIGINAL_SHORT_DRAMA_REWRITE_SOURCE);
-      return refs;
-    }
-    return workspaceKind !== "notebook" ? moduleRuleSources({ activeModule, prompt: "" }) : ["神思-正文写作规则.md"];
-  }
+  const deliverableType = semanticDeliverableType;
+  const facets = taskFacetSet(taskFacets);
   if (deliverableType === "book_deconstruction") return [BOOK_DECONSTRUCTION_SOURCE];
-  if (targetDocumentId.startsWith("prompt-panorama-") || /全景调度|站位线稿|多人站位|空间调度/.test(text)) {
-    return ["神思-短剧与视觉资产规则.md", PANORAMA_SOURCE];
-  }
-  const sourceExtraction = IMAGE_ASSET_SOURCE_EXTRACTION_PATTERN.test(text);
-  const characterTask = CHARACTER_PROMPT_TASK_PATTERN.test(text);
-  const sceneTask = SCENE_PROMPT_TASK_PATTERN.test(text);
-  const imageAssetExtraction = isImageAssetSourceExtractionRequest(text);
-  if (imageAssetExtraction || characterTask || sceneTask) {
-    const lowerSources = [
-      ...(characterTask || sourceExtraction && GENERAL_IMAGE_ASSET_TASK_PATTERN.test(text) && !sceneTask ? [INDUSTRIAL_CHARACTER_PROMPT_SOURCE] : []),
-      ...(sceneTask || sourceExtraction && GENERAL_IMAGE_ASSET_TASK_PATTERN.test(text) && !characterTask ? [GUOMAN_SCENE_PROMPT_SOURCE] : []),
-    ];
+  if (facets.has("panorama")) return ["神思-短剧与视觉资产规则.md", PANORAMA_SOURCE];
+  if (facets.has("image_asset_extraction") || facets.has("character_prompt") || facets.has("scene_prompt")) {
     return [
       "神思-短剧与视觉资产规则.md",
-      ...(sourceExtraction ? [VISUAL_ASSET_SOURCE] : []),
-      ...lowerSources,
+      ...(facets.has("image_asset_extraction") ? [VISUAL_ASSET_SOURCE] : []),
+      ...(facets.has("character_prompt") ? [INDUSTRIAL_CHARACTER_PROMPT_SOURCE] : []),
+      ...(facets.has("scene_prompt") ? [GUOMAN_SCENE_PROMPT_SOURCE] : []),
     ];
   }
-  if (targetDocumentId.startsWith("prompt-video-") || VIDEO_PROMPT_TASK_PATTERN.test(text)) {
-    return [
-      "神思-短剧与视觉资产规则.md",
-      // AI 视频导演（二）是唯一的视频提示词 Skill。旧名称、Seedance
-      // 和导演别名只作为兼容触发词，统一读取（二）的规则。
-      VIDEO_PROMPT_SOURCE,
-      ...(/短视频剧本|剧情短视频|短视频脚本/.test(text) ? [SHORT_VIDEO_GENERAL_SOURCE] : []),
-    ];
-  }
-  if (targetDocumentId.startsWith("prompt-visual-") || VISUAL_ASSET_TASK_PATTERN.test(text)) {
-    return [
-      "神思-短剧与视觉资产规则.md",
-      VISUAL_ASSET_SOURCE,
-      ...(/公众号|文章|推文/.test(text) ? [PUBLIC_ACCOUNT_MODULE_SOURCE] : []),
-    ];
-  }
+  if (facets.has("video_prompt")) return ["神思-短剧与视觉资产规则.md", VIDEO_PROMPT_SOURCE];
+  if (facets.has("visual_asset")) return ["神思-短剧与视觉资产规则.md", VISUAL_ASSET_SOURCE];
   if (deliverableType === "visual_prompt") return ["神思-短剧与视觉资产规则.md"];
   if (deliverableType === "public_account") {
-    const refs = [PUBLIC_ACCOUNT_MODULE_SOURCE];
-    if (stage === "artifact-planning") {
-      refs.push(...PUBLIC_ACCOUNT_ILLUSTRATION_SOURCES);
-    }
-    if (/去\s*AI\s*味|去除\s*AI\s*味|去掉\s*AI\s*味|AIV|朱雀|人工写作感|增加.{0,4}人味|人味优化|自然表达/.test(text)) {
-      refs.push(PUBLIC_ACCOUNT_HUMANIZER_SOURCE, PUBLIC_ACCOUNT_DEAI_RULE_SOURCE);
-    }
-    return refs;
+    return [
+      PUBLIC_ACCOUNT_MODULE_SOURCE,
+      ...(stage === "artifact-planning" ? PUBLIC_ACCOUNT_ILLUSTRATION_SOURCES : []),
+      ...(facets.has("public_account_humanize") ? [PUBLIC_ACCOUNT_HUMANIZER_SOURCE, PUBLIC_ACCOUNT_DEAI_RULE_SOURCE] : []),
+    ];
   }
   if (deliverableType === "short_fiction") return ["神思-正文写作规则.md"];
-  if (deliverableType === "short_video_script") {
-    return ["神思-短剧与视觉资产规则.md", SHORT_VIDEO_GENERAL_SOURCE];
-  }
+  if (deliverableType === "short_video_script") return ["神思-短剧与视觉资产规则.md", SHORT_VIDEO_GENERAL_SOURCE];
   if (deliverableType === "short_drama_script" || isScriptContext(contextDomain)) {
-    if (isAdaptationTask({ text, sourceMode })) {
+    if (sourceMode === "adaptation") {
       return [
         "神思-短剧与视觉资产规则.md",
         ADAPTED_SHORT_DRAMA_SOURCE,
@@ -588,31 +450,24 @@ const specialtySourceRefs = ({ prompt = "", routingText = "", activeModule = "ma
       SHORT_DRAMA_CHECK_SOURCE,
     ];
     if (["planning", "drama-development", "drama-development-check", "drama-development-revision", "creative", "revision"].includes(stage)) {
-      refs.push(
-        ORIGINAL_SHORT_DRAMA_STORY_SOURCE,
-        ORIGINAL_SHORT_DRAMA_SETTING_SOURCE,
-        ORIGINAL_SHORT_DRAMA_WORKFLOW_SOURCE,
-        ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE,
-        ADAPTED_SHORT_DRAMA_THEORY_SOURCE,
-      );
+      refs.push(ORIGINAL_SHORT_DRAMA_STORY_SOURCE, ORIGINAL_SHORT_DRAMA_SETTING_SOURCE, ORIGINAL_SHORT_DRAMA_WORKFLOW_SOURCE, ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE, ADAPTED_SHORT_DRAMA_THEORY_SOURCE);
     } else if (["evaluation", "combined-check", "audit", "audit-final", "theory-support"].includes(stage)) {
       refs.push(ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE, ADAPTED_SHORT_DRAMA_THEORY_SOURCE);
     } else if (stage === "memory-check") {
       refs.push(ORIGINAL_SHORT_DRAMA_SETTING_SOURCE, ORIGINAL_SHORT_DRAMA_AUDIT_SOURCE);
     }
-    if (TOP_TIER_DRAMA_PATTERN.test(text)) refs.push(ORIGINAL_SHORT_DRAMA_BENCHMARK_SOURCE, ORIGINAL_SHORT_DRAMA_REWRITE_SOURCE);
+    if (reviewTier === "full" || facets.has("strong_story")) refs.push(ORIGINAL_SHORT_DRAMA_BENCHMARK_SOURCE, ORIGINAL_SHORT_DRAMA_REWRITE_SOURCE);
     return refs;
   }
-  if (workspaceKind !== "notebook") return moduleRuleSources({ activeModule, prompt: text });
-  return ["神思-正文写作规则.md"];
+  return workspaceKind !== "notebook" ? moduleRuleSources({ activeModule, prompt: "" }) : ["神思-正文写作规则.md"];
 };
 
 const guidanceSourceRefs = ({ prompt = "", routingText = "", targetDocumentId = "", requestMode = "creative", guidanceSelectionMode = "", deliverableType: semanticDeliverableType = "", semanticAuthority = false }) => {
   if (requestMode !== "creative_guidance") return [];
   if (guidanceSelectionMode === "manual") return ["神思-创作引导双启动规则.md"];
   const text = `${prompt} ${routingText} ${targetDocumentId}`;
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text, targetDocumentId });
-  if (deliverableType === "visual_prompt" || targetDocumentId.startsWith("prompt-") || !semanticAuthority && PROMPT_TASK_PATTERN.test(text)) return [PROMPT_GUIDE_SOURCE];
+  const deliverableType = semanticDeliverableType;
+  if (deliverableType === "visual_prompt" || targetDocumentId.startsWith("prompt-")) return [PROMPT_GUIDE_SOURCE];
   if (deliverableType === "public_account") return [PUBLIC_ACCOUNT_GUIDE_SOURCE];
   if (deliverableType === "short_video_script") return [SHORT_VIDEO_GUIDE_SOURCE];
   if (deliverableType === "short_fiction") return [SHORT_FICTION_GUIDE_SOURCE];
@@ -623,26 +478,26 @@ const guidanceSourceRefs = ({ prompt = "", routingText = "", targetDocumentId = 
 const selfCheckSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", stage = "response", fullAudit = false, workspaceKind = "project", deliverableType: semanticDeliverableType = "", semanticAuthority = false, taskFacets = [] }) => {
   if (!["evaluation", "combined-check", "audit", "audit-final", "theory-support"].includes(stage)) return [];
   const text = `${prompt} ${routingText}`;
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text });
+  const deliverableType = semanticDeliverableType;
   const facets = taskFacetSet(taskFacets);
   const scriptTask = deliverableType === "short_drama_script" || isScriptContext(contextDomain);
   const refs = [];
   if (deliverableType === "short_video_script") refs.push(SHORT_VIDEO_GENERAL_SOURCE);
   if (!scriptTask && activeModule === "manuscript" && !["short_video_script", "public_account"].includes(deliverableType)) {
     if (fullAudit) refs.push(STRONG_STORY_CHECK_SOURCE, REGULAR_STORY_CHECK_SOURCE);
-    else refs.push(semanticAuthority ? facets.has("strong_story") ? STRONG_STORY_CHECK_SOURCE : REGULAR_STORY_CHECK_SOURCE : STRONG_STORY_PATTERN.test(text) ? STRONG_STORY_CHECK_SOURCE : REGULAR_STORY_CHECK_SOURCE);
+    else refs.push(facets.has("strong_story") ? STRONG_STORY_CHECK_SOURCE : REGULAR_STORY_CHECK_SOURCE);
   }
-  if (workspaceKind !== "notebook" && (semanticAuthority ? facets.has("long_structure") : needsLongStructure({ text, activeModule }) || activeModule === "outline" && /全集|全书|卷纲|整卷|整本/.test(text))) {
+  if (workspaceKind !== "notebook" && facets.has("long_structure")) {
     refs.push("神思-长篇结构自检规则.md");
   }
-  if (scriptTask && (semanticAuthority ? !["visual_prompt", "visual_asset", "video_prompt", "panorama"].some((facet) => facets.has(facet)) : !/提示词|视觉资产|图片资产|全景调度|站位/.test(text))) {
+  if (scriptTask && !["visual_prompt", "visual_asset", "video_prompt", "panorama"].some((facet) => facets.has(facet))) {
     refs.push(SHORT_DRAMA_FORMAT_SOURCE, SHORT_DRAMA_CHECK_SOURCE);
   }
   return refs;
 };
 
 const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", requestMode = "creative", sourceMode = "", guidanceSelectionMode = "", creativeContextMode = "framework_guided", deliverableType: semanticDeliverableType = "", semanticAuthority = false, taskFacets = [], reviewTier = "" }) => {
-  const deliverableType = semanticAuthority ? semanticDeliverableType : semanticDeliverableType || creativeDeliverableType({ text: `${prompt} ${routingText}`, targetDocumentId });
+  const deliverableType = semanticDeliverableType;
   const facets = taskFacetSet(taskFacets);
   const scriptTask = deliverableType === "short_drama_script" || isScriptContext(contextDomain);
   const specialty = specialtySourceRefs({ prompt, routingText, activeModule, contextDomain, targetDocumentId, workspaceKind, stage, sourceMode, deliverableType, semanticAuthority, taskFacets, reviewTier });
@@ -673,11 +528,11 @@ const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manusc
     if (workspaceKind !== "notebook") refs.push("神思-记忆核运行卡.md");
     refs.push(...guidance, ...specialty);
     if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
-    if (workspaceKind !== "notebook" && (semanticAuthority ? facets.has("long_structure") : needsLongStructure({ text: `${prompt} ${routingText}`, activeModule }))) refs.push("神思-长篇结构自检规则.md");
+    if (workspaceKind !== "notebook" && facets.has("long_structure")) refs.push("神思-长篇结构自检规则.md");
   } else if (["creative", "revision"].includes(stage)) {
     refs.push("神思-创作核运行卡.md", ...specialty);
     if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
-    if (scriptTask && (semanticAuthority ? !["visual_prompt", "visual_asset", "video_prompt", "panorama"].some((facet) => facets.has(facet)) : !/提示词|视觉资产|图片资产|全景调度|站位/.test(`${prompt} ${routingText} ${targetDocumentId}`))) refs.push(SHORT_DRAMA_FORMAT_SOURCE);
+    if (scriptTask && !["visual_prompt", "visual_asset", "video_prompt", "panorama"].some((facet) => facets.has(facet))) refs.push(SHORT_DRAMA_FORMAT_SOURCE);
   } else if (["evaluation", "combined-check", "audit", "audit-final", "theory-support", "drama-development-check"].includes(stage)) {
     refs.push("神思-创作效果验收规则.md", ...specialty, "神思-正文自检共用规则.md", ...selfCheckSourceRefs({ prompt, routingText, activeModule, contextDomain, stage, fullAudit, workspaceKind, deliverableType, semanticAuthority, taskFacets }));
     if (stage === "combined-check" && workspaceKind !== "notebook") {
@@ -736,7 +591,7 @@ export const loadShensiContext = async ({ shensiRoot, prompt, routingText = "", 
     creativeContextMode,
     closureLevel: classifyClosure({ prompt, routingText, activeModule, contextDomain, targetDocumentId, stage, fullAudit, semanticAuthority, reviewTier }),
     ruleBundle: ruleBundleId({ prompt, routingText, activeModule, contextDomain, targetDocumentId, stage, fullAudit, workspaceKind, sourceMode, deliverableType, semanticAuthority, reviewTier }),
-    moduleId: workspaceKind === "notebook" ? "notebook" : semanticAuthority ? activeModule : resolveProjectModule({ activeModule, prompt: `${prompt} ${routingText}` }),
+    moduleId: workspaceKind === "notebook" ? "notebook" : activeModule,
     truncated: false,
     ruleCount: loaded.length,
     fingerprints: buildFingerprints(loaded.map(({ content }) => content)),

@@ -64,6 +64,9 @@ try {
   assert.equal(focused.state.conversations,undefined);
   const retired = await fetch(origin + "/api/chat", { method: "POST", headers, body: JSON.stringify({ messages: request.messages }) });
   assert.equal(retired.status, 404);
+  const crossSurface = await fetch(origin + "/api/agent/execute", { method: "POST", headers, body: JSON.stringify({ outputSurface: "conversation", messages: request.messages }) });
+  assert.equal(crossSurface.status, 422, "文档任务不能进入白板执行入口");
+  assert.equal(modelCalls, 2, "跨域错误必须在调用模型前返回");
   console.log("HTTP end-to-end: Agent task -> bundled Codex -> mock upstream -> protected document transaction -> durable status; duplicate start and retired legacy endpoint passed");
 } finally {
   if (child && child.exitCode === null) { child.kill(); await Promise.race([once(child, "exit"), new Promise((done) => setTimeout(done, 2000))]); }

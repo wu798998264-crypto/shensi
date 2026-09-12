@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +26,7 @@ assert.equal(creativeDeliverableType({ text: "把当前内容改为神思格式�
 assert.equal(creativeDeliverableType({ text: "请写成一个完整脚本并直接落盘" }), "short_drama_script");
 
 const managedRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ operation: "create" }),
   text: "写一篇完整故事，命名为《雨夜灯塔》，新建文档并直接写入",
   authorizationInstruction: "写一篇完整故事，命名为《雨夜灯塔》，新建文档并直接写入",
   sourceMessageId: "user-managed-story",
@@ -47,6 +49,7 @@ assert.match(managedContract.prompt, /deliverable itself/u);
 assert.match(managedContract.prompt, /Never use Untitled, 未命名/u);
 const creativeVerifier = Object.create(CodexAgentProvider.prototype);
 const continuationRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ operation: "append" }),
   text: "续写第三章",
   authorizationInstruction: "续写第三章",
   sourceMessageId: "user-continue-chapter-3",

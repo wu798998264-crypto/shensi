@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 
 import { latestRecoverableCandidate } from "../src/candidate-chapters.js";
 import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
@@ -48,6 +49,7 @@ const legacyCandidate = {
 assert.equal(latestRecoverableCandidate({ messages: [user, legacyCandidate], fallbackTarget: target }), null);
 
 const route = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ intent: "candidate" }),
   text: user.content,
   sourceMessageId: user.id,
   target,

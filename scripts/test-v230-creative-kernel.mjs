@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +58,7 @@ assert.equal(
   "同一指令稍后的明确新建要求仍应正常生效",
 );
 const guidanceOnlyRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ mode: "creative_guidance", intent: "none" }),
   text: "我们要在当前新作品中创作一部长篇中文小说。现在开启创作引导：先不要写正文、不要创建空占位文档，只向我提出四个具体问题。",
   targetDocumentId: "chapter-1",
   targetModuleId: "manuscript",
@@ -67,6 +69,7 @@ assert.equal(guidanceOnlyRoute.commitDisposition, "no_artifact", "纯创作引�
 const recoveredGuidancePrompt = "请继续刚才的创作引导，只问一个问题，不生成正文；不要创建或修改任何文档。";
 assert.equal(buildAdaptiveTaskRoute({
   text: recoveredGuidancePrompt,
+  agentDecision: agentDecision({ mode: "creative_guidance", intent: "none" }),
   targetDocumentId: "chapter-1",
   targetModuleId: "manuscript",
   workspaceKind: "project",
@@ -76,16 +79,19 @@ assert.equal(hasExplicitFormalAssetWriteIntent({ text: recoveredGuidancePrompt }
 assert.equal(buildUnifiedCreativeTask({ instruction: "只追问，不写正文", operation: "assist" }).commitPolicy.defaultDisposition, "no_artifact");
 assert.equal(detectShensiRunProfile({
   prompt: "请继续追问人物关系和秘密揭示次序，不写正文。",
+  semanticLane: "guided_dialogue",
   routingText: "创作长篇小说",
   requestMode: "creative_guidance",
 }).explicitGuidanceOnly, true);
 assert.equal(detectShensiRunProfile({
   prompt: "先不要写正文、不要创建空占位文档；请像责任编辑一样，围绕主角欲望和核心冲突向我提出四个具体问题。",
+  semanticLane: "guided_dialogue",
   routingText: "创作长篇小说",
   requestMode: "creative_guidance",
 }).explicitGuidanceOnly, true, "禁止正文与提问要求分处两个分句时仍必须停留在创作引导");
 assert.equal(detectShensiRunProfile({
   prompt: "把确认内容写入资料、设定和全书大纲，不写正文。",
+  semanticLane: "task_execution", semanticWriteIntent: "commit",
   routingText: "创作长篇小说",
   requestMode: "creative_guidance",
 }).explicitGuidanceOnly, false, "明确写入非正文正式资产时不能被“不写正文”误判成纯讨论");
@@ -113,6 +119,7 @@ assert.equal(explicitlyDefersCandidateLanding(guardedSingleChapterPrompt), false
 assert.equal(
   compileAgentTaskPolicy({
     text: guardedSingleChapterPrompt,
+    writeAuthorization: { state: "commit", action: "create" },
     route: { mode: "creative" },
     target: { documentId: "chapter-1" },
     candidateCount: 1,
@@ -123,6 +130,7 @@ assert.equal(
 const isolatedFormalBodyPrompt = `${guardedSingleChapterPrompt}\n只把最终正式正文写入文档，不把说明、检查过程、协议字段、Markdown符号或自检报告写进正文。`;
 assert.equal(explicitlyDefersCandidateLanding(isolatedFormalBodyPrompt), false, "成品隔离要求不能被误判为延期落盘");
 const isolatedFormalBodyRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ operation: "create" }),
   text: isolatedFormalBodyPrompt,
   sourceMessageId: "v230-isolated-formal-body",
   targetDocumentId: "chapter-1",
@@ -163,6 +171,7 @@ assert.ok(parallelCandidateVariants.every((variant) => variant.selectionRequired
 const finalizedGuidanceAssetWrite = "最终决定：阿满在第九章背叛是假，第十八章才揭示。现在把确认内容正式写入资料、设定、全书大纲、伏笔与信息台阶，不写正文。";
 assert.equal(hasExplicitFormalAssetWriteIntent({ text: finalizedGuidanceAssetWrite }), true);
 const finalizedGuidanceAssetRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ operation: "create" }),
   text: finalizedGuidanceAssetWrite,
   sourceMessageId: "v230-finalized-guidance-asset",
   targetDocumentId: "memory-foreshadowing",
@@ -268,13 +277,13 @@ assert.equal(analyzeSmartLandingPath({
   documents: { "chapter-2": { title: "第二章", markdown: "这是已经存在的第二章正文。" } },
 }).target, "bound");
 
-assert.equal(compileAgentTaskPolicy({ text: "这里的节奏太慢了", route: { mode: "creative" }, target: { documentId: "chapter-2" } }).action, "modify");
-assert.equal(compileAgentTaskPolicy({ text: "帮我看看这个设定", route: { mode: "creative" }, target: { documentId: "canon-world" } }).action, "analyze");
-assert.equal(compileAgentTaskPolicy({ text: "本次续写实际读取了哪些内容？", route: { mode: "creative" }, target: { documentId: "chapter-3" } }).action, "analyze");
+assert.equal(compileAgentTaskPolicy({ text: "这里的节奏太慢了", route: { mode: "creative", revisionIntent: true }, target: { documentId: "chapter-2" } }).action, "modify");
+assert.equal(compileAgentTaskPolicy({ text: "帮我看看这个设定", route: { mode: "general", diagnosisIntent: true }, target: { documentId: "canon-world" } }).action, "analyze");
+assert.equal(compileAgentTaskPolicy({ text: "本次续写实际读取了哪些内容？", route: { mode: "general", diagnosisIntent: true }, target: { documentId: "chapter-3" } }).action, "analyze");
 assert.equal(compileAgentTaskPolicy({ text: "通用问答会不会自动覆盖当前文档？", route: { mode: "creative" }, target: { documentId: "chapter-3" } }).commitDisposition, "no_artifact");
-assert.equal(compileAgentTaskPolicy({ text: "生成第三章正文", route: { mode: "creative" }, target: { documentId: "chapter-3" } }).commitDisposition, "auto_commit");
-assert.equal(compileAgentTaskPolicy({ text: "生成三个候选版本", route: { mode: "creative" }, target: { documentId: "chapter-3" }, candidateCount: 3 }).commitDisposition, "defer_multiple");
-assert.equal(compileAgentTaskPolicy({ text: "生成第三章正文，但先不要落盘", route: { mode: "creative" }, target: { documentId: "chapter-3" } }).commitDisposition, "defer_explicit");
+assert.equal(compileAgentTaskPolicy({ text: "生成第三章正文", route: { mode: "creative" }, writeAuthorization: { state: "commit", action: "create" }, target: { documentId: "chapter-3" } }).commitDisposition, "auto_commit");
+assert.equal(compileAgentTaskPolicy({ text: "生成三个候选版本", route: { mode: "creative" }, writeAuthorization: { state: "candidate_only", action: "create" }, target: { documentId: "chapter-3" }, candidateCount: 3 }).commitDisposition, "candidate_only");
+assert.equal(compileAgentTaskPolicy({ text: "生成第三章正文，但先不要落盘", route: { mode: "creative" }, writeAuthorization: { state: "candidate_only", action: "create" }, target: { documentId: "chapter-3" } }).commitDisposition, "candidate_only");
 
 assert.equal(creativeCommitAuthorization({ candidate: "正式正文", selfCheckStatus: "blocked" }).allowed, true);
 assert.equal(creativeCommitAuthorization({ candidate: "正式正文", selfCheckStatus: "warning" }).code, "AUTHORIZED_WITH_REVIEW_WARNING");
@@ -431,9 +440,9 @@ assert.match(capsule.text, /正式文稿默认自动落盘/u);
 
 const candidateHistory = [
   { id: "formal-request", role: "user", content: "直接生成新版正文" },
-  { id: "formal", role: "assistant", candidate: "第一章\n雨落在长街上，这是本轮最新正式正文。", target: { documentId: "chapter-1" }, execution: { sourceMessageId: "formal-request", endedAt: 100, taskRoute: { writeAuthorization: bindFormalWriteCandidate(createFormalWriteAuthorization({ instruction: "直接生成新版正文", sourceMessageId: "formal-request", targetDocumentIds: ["chapter-1"], targetExists: true }), { candidate: "第一章\n雨落在长街上，这是本轮最新正式正文。" }) } } },
+  { id: "formal", role: "assistant", candidate: "第一章\n雨落在长街上，这是本轮最新正式正文。", target: { documentId: "chapter-1" }, execution: { sourceMessageId: "formal-request", endedAt: 100, taskRoute: { writeAuthorization: bindFormalWriteCandidate(createFormalWriteAuthorization({ semanticWritePlan: { intent: "commit", operation: "replace" }, instruction: "直接生成新版正文", sourceMessageId: "formal-request", targetDocumentIds: ["chapter-1"], targetExists: true }), { candidate: "第一章\n雨落在长街上，这是本轮最新正式正文。" }) } } },
   { id: "review-request", role: "user", content: "直接生成这篇正文的自检报告" },
-  { id: "review", role: "assistant", candidate: "自检报告：节奏可以加强。", target: { documentId: "chapter-1" }, execution: { sourceMessageId: "review-request", endedAt: 200, taskRoute: { writeAuthorization: bindFormalWriteCandidate(createFormalWriteAuthorization({ instruction: "直接生成这篇正文的自检报告", sourceMessageId: "review-request", targetDocumentIds: ["chapter-1"], targetExists: true }), { candidate: "自检报告：节奏可以加强。" }) } } },
+  { id: "review", role: "assistant", candidate: "自检报告：节奏可以加强。", target: { documentId: "chapter-1" }, execution: { sourceMessageId: "review-request", endedAt: 200, taskRoute: { writeAuthorization: bindFormalWriteCandidate(createFormalWriteAuthorization({ semanticWritePlan: { intent: "commit", operation: "replace" }, instruction: "直接生成这篇正文的自检报告", sourceMessageId: "review-request", targetDocumentIds: ["chapter-1"], targetExists: true }), { candidate: "自检报告：节奏可以加强。" }) } } },
 ];
 assert.match(latestRecoverableCandidate({ messages: candidateHistory, instruction: "写入文档" }).candidate, /最新正式正文/u);
 assert.equal(latestRecoverableCandidate({ messages: candidateHistory, instruction: "把自检报告写入编译报告" }).deliverableType, "review_report");
@@ -503,6 +512,7 @@ try {
   const firstTransactionAuthorization = {
     ...bindFormalWriteCandidate(createFormalWriteAuthorization({
     instruction: "直接替换当前文档正文",
+    semanticWritePlan: { intent: "commit", operation: "replace" },
     sourceMessageId: "v230-first-write",
     targetDocumentIds: ["chapter-1"],
     targetExists: true,
@@ -523,6 +533,7 @@ try {
   const patchTransactionAuthorization = {
     ...bindFormalWriteCandidate(createFormalWriteAuthorization({
     instruction: "直接改写当前章节",
+    semanticWritePlan: { intent: "commit", operation: "patch" },
     sourceMessageId: "v230-patch",
     targetDocumentIds: ["chapter-1"],
     targetExists: true,

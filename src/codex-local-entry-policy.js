@@ -17,13 +17,11 @@ export const codexSettingsActionState = ({
   profile = {},
   saved = false,
   hasSavedCodexProfile = false,
-  executionMode = "",
   agentEngine = "",
   codexCapability = {},
 } = {}) => {
   const awaitingRunner = profile?.draft === true
     && saved !== true
-    && ["agent", "both"].includes(String(executionMode || ""))
     && !String(agentEngine || "").trim();
   const savedCodexNeedsDetection = saved === true
     && codexCliProfile(profile)

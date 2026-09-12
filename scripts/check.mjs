@@ -26,7 +26,7 @@ for (const file of files) {
 }
 const packageBoundary = spawnSync(process.execPath, ["scripts/test-package-content-policy.mjs"], { stdio: "inherit" });
 if (packageBoundary.status !== 0) process.exit(packageBoundary.status || 1);
-for (const test of ["scripts/test-v101-core.mjs", "scripts/test-v103-regressions.mjs", "scripts/test-v106-full-optimization.mjs", "scripts/test-v109-execution-authority.mjs", "scripts/test-v111-creative-contract.mjs", "scripts/test-agent-decision-ui-integration.mjs", "scripts/test-codex-api-agent-runtime.mjs", "scripts/test-no-legacy-chat-runtime.mjs", "scripts/test-video-card-focus-pause.mjs"]) {
+for (const test of ["scripts/test-v101-core.mjs", "scripts/test-v103-regressions.mjs", "scripts/test-v106-full-optimization.mjs", "scripts/test-v109-execution-authority.mjs", "scripts/test-v111-creative-contract.mjs", "scripts/test-agent-decision-ui-integration.mjs", "scripts/test-codex-api-agent-runtime.mjs", "scripts/test-no-legacy-chat-runtime.mjs", "scripts/test-semantic-routing-retirement.mjs", "scripts/test-video-card-focus-pause.mjs"]) {
   const tested = spawnSync(process.execPath, [test], { stdio: "inherit" });
   if (tested.status !== 0) process.exit(tested.status || 1);
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { agentDecision } from "./fixtures/agent-decision.mjs";
 import { requestsMultipleCandidates } from "../src/agent-task-policy.js";
 import { multiCandidateGenerationInstruction } from "../src/multi-candidate-plan.js";
 import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
@@ -20,6 +21,7 @@ const configuredInstruction = multiCandidateGenerationInstruction({
   direction: "pacing",
 });
 const configuredRoute = buildAdaptiveTaskRoute({
+  agentDecision: agentDecision({ intent: "candidate" }),
   text: configuredInstruction,
   sourceMessageId: "user-candidate-configured",
   target: { documentId: "chapter-1", revision: "revision-1" },

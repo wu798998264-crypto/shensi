@@ -6,7 +6,6 @@ import {
 } from "./agent-engine-registry.js";
 
 const text = (value = "") => String(value ?? "").trim();
-const uniqueModes = () => ["agent"];
 const EXTERNAL_CLI_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
 
 const failed = ({ code, message, profileId = "", surface = "", ...rest }) => ({
@@ -18,7 +17,7 @@ const failed = ({ code, message, profileId = "", surface = "", ...rest }) => ({
   ...rest,
 });
 
-const credentialSourceForProfile = (profile = {}, engine = "", surface = "") => {
+const credentialSourceForProfile = (profile = {}, engine = "") => {
   const explicit = text(profile.credentialSource);
   if (explicit) return explicit;
   if (profile.adapter === "api") return "shensi";
@@ -29,35 +28,16 @@ const credentialSourceForProfile = (profile = {}, engine = "", surface = "") => 
   return "shensi";
 };
 
-const modelForSurface = (profile = {}, surface = "agent", engine = "") => {
-  return text(profile.agentModelId || profile.model);
-};
-
-const runnerForSurface = (profile = {}, surface = "agent", engine = "") => {
-  if (engine === "codex_api" && profile.adapter === "api") return "codex_api_agent";
-  return engine || "";
-};
-
-export const runtimeContractForProfile = ({ profile = null, surface = "agent" } = {}) => {
+export const runtimeContractForProfile = ({ profile = null } = {}) => {
   const requestedSurface = "agent";
   const profileId = text(profile?.id || profile?.connectionId);
   if (!profile || !profileId) return failed({ code: "RUNTIME_PROFILE_REQUIRED", message: "没有选择有效的文字模型配置", surface: requestedSurface });
-  const supportedSurfaces = uniqueModes(profile);
-  if (!supportedSurfaces.includes(requestedSurface)) {
-    return failed({
-      code: "RUNTIME_SURFACE_UNSUPPORTED",
-      message: `配置 ${profileId} 不支持 Agent 模式`,
-      profileId,
-      surface: requestedSurface,
-      supportedSurfaces,
-    });
-  }
-
-  const engine = requestedSurface === "agent" || profile.adapter === "cli" ? agentEngineForProfile(profile) : "";
-  const runner = runnerForSurface(profile, requestedSurface, engine);
+  const supportedSurfaces = ["agent"];
+  const engine = agentEngineForProfile(profile);
+  const runner = engine === "codex_api" && profile.adapter === "api" ? "codex_api_agent" : engine;
   const provider = text(profile.provider);
-  const model = modelForSurface(profile, requestedSurface, engine);
-  const credentialSource = credentialSourceForProfile(profile, engine, requestedSurface);
+  const model = text(profile.agentModelId || profile.model);
+  const credentialSource = credentialSourceForProfile(profile, engine);
   const base = {
     profileId,
     surface: requestedSurface,
@@ -78,7 +58,7 @@ export const runtimeContractForProfile = ({ profile = null, surface = "agent" } 
   if (!provider && !externalCli) return failed({ ...base, code: "RUNTIME_PROVIDER_REQUIRED", message: "没有选择模型服务商" });
   if (!runner) return failed({ ...base, code: "RUNTIME_RUNNER_REQUIRED", message: "没有选择可用的运行器" });
   if (!model && !externalCli) return failed({ ...base, code: "RUNTIME_MODEL_REQUIRED", message: "没有选择模型" });
-  if (externalCli && adapter !== "cli") {
+  if (externalCli && profile.adapter !== "cli") {
     return failed({ ...base, code: "EXTERNAL_CLI_ADAPTER_REQUIRED", message: "外置 Agent 运行器必须使用 CLI 调用方式" });
   }
   if (engine === "custom" && !text(profile.cliPath)) {

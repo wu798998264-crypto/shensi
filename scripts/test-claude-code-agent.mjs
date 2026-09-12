@@ -5,7 +5,6 @@ import { join } from "node:path";
 
 import { claudeCodeCommandArgs, parseClaudeCodeJsonResult, resolveLocalClaudeCodeLaunch } from "../src/cli/claude-code-launch.mjs";
 import { runClaudeCodeAgentTurn } from "../src/server/claude-code-agent-runner.mjs";
-import { executionModeCapabilities } from "../src/model-execution-capabilities.js";
 import { generationProfileLabel, normalizeGenerationProfiles } from "../src/generation-profiles.js";
 
 assert.deepEqual(
@@ -105,14 +104,6 @@ assert.deepEqual(await resolveLocalClaudeCodeLaunch({
   },
 }), { executable: npmNative, prefixArgs: [] }, "Windows 必须识别 npm 安装的 Claude Code 原生可执行文件");
 
-assert.deepEqual(executionModeCapabilities({
-  adapter: "cli",
-  provider: "DeepSeek",
-  agentEngine: "claude_code",
-  credentialSource: "shensi",
-  protocol: "anthropic_messages",
-  baseUrl: "https://api.deepseek.com/anthropic",
-}).modes, ["agent"], "Claude Code+DeepSeek 安全凭据配置统一使用 Agent 处理器");
 assert.equal(generationProfileLabel({ agentEngine: "claude_code", provider: "DeepSeek", adapter: "cli" }, "text"), "Claude Code+DeepSeek");
 
 const normalizedComposite = normalizeGenerationProfiles({

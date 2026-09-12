@@ -8,7 +8,6 @@ import { createAgentWorkspaceToolRuntime } from "../src/server/agent-workspace-t
 import { createHistoryReadAuthorization } from "../src/history-read-policy.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentModelBelongsToEngine, agentProfileBelongsToEngine } from "../src/agent-engine-registry.js";
 import { generationProfileLabel } from "../src/generation-profiles.js";
-import { executionModeCapabilities } from "../src/model-execution-capabilities.js";
 import { runtimeContractForProfile } from "../src/effective-runtime-contract.js";
 import { agentCapabilitySummary, agentRuntimeProfile } from "../src/agent-runtime-profile.js";
 
@@ -31,7 +30,7 @@ const profileBeforeLabel = JSON.stringify(profile);
 assert.equal(generationProfileLabel(profile, "text"), "OpenAI · gpt-5-codex", "文字配置名称应显示真实服务商与模型，不再生成独立运行器配置");
 assert.equal(JSON.stringify(profile), profileBeforeLabel, "显示名称计算不得修改或复制现有配置");
 assert.equal(agentProfileBelongsToEngine(profile, "codex_api"), true);
-assert.deepEqual(executionModeCapabilities(profile).modes, ["agent"]);
+assert.deepEqual(runtimeContractForProfile({ profile }).supportedSurfaces, ["agent"]);
 assert.equal(runtimeContractForProfile({ profile, surface: "agent" }).runner, "codex_api_agent");
 const shensiRuntimeProfile = agentRuntimeProfile({
   engine: "codex_api",
@@ -55,7 +54,7 @@ const compatibleProfile = {
   baseUrl: "http://127.0.0.1:5317/v1",
 };
 assert.equal(agentProfileBelongsToEngine(compatibleProfile, "codex_api"), true);
-assert.deepEqual(executionModeCapabilities(compatibleProfile).modes, ["agent"]);
+assert.deepEqual(runtimeContractForProfile({ profile: compatibleProfile }).supportedSurfaces, ["agent"]);
 assert.equal(runtimeContractForProfile({ profile: compatibleProfile, surface: "agent" }).runner, "codex_api_agent");
 assert.equal(runtimeContractForProfile({ profile: { ...compatibleProfile, provider: "DeepSeek", protocol: "chat_completions" }, surface: "agent" }).ok, true);
 assert.equal(agentModelBelongsToEngine("deepseek/deepseek-chat", "codex_api"), true, "内置 Agent 不得按模型名称或 provider/model 格式过滤模型");
@@ -479,7 +478,7 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 assert.match(appSource, /<option value="codex_api">内置 Agent<\/option>/u, "模型设置必须保留内置 Agent 选项");
 assert.match(appSource, /<label>文字配置<select id="quickAgentEngine">/u, "对话区必须显示统一文字配置入口");
 assert.doesNotMatch(appSource, /chatProviderSelect/u, "旧 Chat Provider 字段必须删除");
-assert.match(appSource, /<select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>/u, "文字配置设置必须默认 Agent-only");
+assert.equal(appSource.includes('name="textExecutionMode"'), false, "双模式兼容控件必须删除");
 assert.doesNotMatch(appSource, /<option value="codex_api">Codex API<\/option>/u, "UI 不得残留旧运行器名称");
 assert.doesNotMatch(appSource, /patch\.provider = isCodexApiCompatibleProvider\(patch\.provider\) \? patch\.provider : "OpenAI";/u);
 assert.match(appSource, /\["responses", "chat_completions", "anthropic_messages", "messages"\]\.includes\(patch\.protocol\)/u);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { reportContract } from "./fixtures/agent-decision.mjs";
 
 import { requestedArtifactTarget, requestedArtifactTargets } from "../src/artifact-target.js";
 import { compileAgentTaskPolicy } from "../src/agent-task-policy.js";
@@ -112,6 +113,7 @@ assert.equal(automaticLandingDecision({
 
 const batchReviewInstruction = "请自检第1章至第5章";
 const batchReviewRoute = buildAdaptiveTaskRoute({
+  taskContract: reportContract({ sourceMessageId: "user-batch-review-report" }),
   text: batchReviewInstruction,
   authorizationInstruction: batchReviewInstruction,
   sourceMessageId: "user-batch-review-report",
@@ -135,6 +137,7 @@ assert.equal(automaticLandingDecision({
 
 const authorizedReviewInstruction = "请自检第三章并将自检报告写入当前文档";
 const authorizedReviewRoute = buildAdaptiveTaskRoute({
+  taskContract: reportContract({ sourceMessageId: "user-review-report" }),
   text: authorizedReviewInstruction,
   authorizationInstruction: authorizedReviewInstruction,
   sourceMessageId: "user-review-report",

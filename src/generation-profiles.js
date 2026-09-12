@@ -412,6 +412,12 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
     runtimeProfileId: channel === "text" ? stringValue(value.runtimeProfileId).trim() : "",
     runtimeConfigPath: channel === "text" ? stringValue(value.runtimeConfigPath).trim() : "",
   };
+  if (channel === "text") {
+    delete normalized.chatModelId;
+    delete normalized.chatAdapter;
+    delete normalized.chatProtocol;
+    delete normalized.chatBaseUrl;
+  }
   // Dreamina identity is meaningful only for the Dreamina CLI account pool.
   // Clear legacy fields when a profile is changed to another provider or
   // adapter so they cannot leak into runtime binding comparisons.
@@ -618,39 +624,6 @@ const ensureBuiltInCodexAgentProfile = (profiles, secrets = {}, disabledProfileI
   return [
     ...profiles,
     normalizedProfile("text", { ...BUILT_IN_CODEX_AGENT_CLI, id }, profiles.length, secrets),
-  ];
-};
-
-const ensureBuiltInPublicTextProfile = (profiles) => {
-  const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_PUBLIC_TEXT_PROFILE.id);
-  if (existingIndex >= 0) {
-    const existing = profiles[existingIndex];
-    const managed = normalizedProfile("text", {
-      ...BUILT_IN_PUBLIC_TEXT_PROFILE,
-      ...existing,
-      id: BUILT_IN_PUBLIC_TEXT_PROFILE.id,
-      name: BUILT_IN_PUBLIC_TEXT_PROFILE.name,
-      remarkName: BUILT_IN_PUBLIC_TEXT_PROFILE.remarkName,
-      systemManaged: true,
-      adapter: BUILT_IN_PUBLIC_TEXT_PROFILE.adapter,
-      provider: BUILT_IN_PUBLIC_TEXT_PROFILE.provider,
-      protocol: BUILT_IN_PUBLIC_TEXT_PROFILE.protocol,
-      baseUrl: BUILT_IN_PUBLIC_TEXT_PROFILE.baseUrl,
-      model: existing.model || BUILT_IN_PUBLIC_TEXT_PROFILE.model,
-      apiKey: "",
-      cliPath: "",
-      cliArgs: "",
-      executionMode: "agent",
-      executionModes: ["agent"],
-      agentEngine: "codex_api",
-      agentModelId: existing.model || BUILT_IN_PUBLIC_TEXT_PROFILE.model,
-      credentialSource: "public",
-    }, existingIndex, {});
-    return profiles.map((profile, index) => index === existingIndex ? managed : profile);
-  }
-  return [
-    ...profiles,
-    normalizedProfile("text", BUILT_IN_PUBLIC_TEXT_PROFILE, profiles.length, {}),
   ];
 };
 
