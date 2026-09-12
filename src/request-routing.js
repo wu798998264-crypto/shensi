@@ -943,8 +943,8 @@ export const reviewDeliveryFromTaskContract = (contract = null, decision = valid
   };
 };
 
-export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" } = {}) => {
-  const surface = executionSurface === "agent" ? "agent" : "chat";
+export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "agent" } = {}) => {
+  const surface = "agent";
   const semanticDecision = ["guided_dialogue", "task_execution"].includes(input.agentDecision?.lane)
     ? input.agentDecision
     : null;
@@ -968,6 +968,9 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   // is the sole source of task routing.  Do not even evaluate the legacy
   // keyword classifier: besides avoiding false positives, this keeps
   // downstream review/landing policy from silently re-introducing it.
+  // Direct library callers without an Agent decision still need the existing
+  // deterministic route for recovery and migration tests. The server Agent
+  // entry always supplies semanticDecision before this fallback is reached.
   const classifiedRoute = semanticDecision ? null : classifyRequestMode(input);
   const semanticRoute = semanticMode ? {
     mode: semanticQualityReview && semanticMode === "general" ? "creative" : semanticMode,
@@ -990,12 +993,8 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   // exploratory creative request enter guidance instead of being flattened
   // into a long general reply merely because no target document exists yet.
   const route = semanticRoute || (contractRoute?.mode === "general" && classifiedRoute?.mode === "creative_guidance"
-    ? {
-        ...classifiedRoute,
-        reason: `${classifiedRoute.reason}；当前 TaskContract 尚未声明正式写入，不阻断创作引导`,
-      }
-    : contractRoute
-      || blockedRouteFromTaskContract(authoritativeTaskContract, taskContractDecision)
+    ? { ...classifiedRoute, reason: `${classifiedRoute.reason}；当前 TaskContract 尚未声明正式写入，不阻断创作引导` }
+    : contractRoute || blockedRouteFromTaskContract(authoritativeTaskContract, taskContractDecision)
       || classifiedRoute || { mode: "general", reason: "未提供统一 Agent 决策，按通用任务处理", shensiLed: false });
   const contractDeliverables = Array.isArray(authoritativeTaskContract?.deliverables)
     ? authoritativeTaskContract.deliverables.filter((item) => item?.required !== false && item?.targetDocumentId)
@@ -1264,7 +1263,7 @@ export const resolveRequestedMode = ({
       || blockedRouteFromTaskContract(taskContract, taskContractDecision);
     return contractRoute?.mode === "operation" ? "workspace_operation" : contractRoute?.mode || "general";
   }
-  const inferredRoute = classifyRequestMode({
+  const inferredRoute = buildAdaptiveTaskRoute({
     text,
     targetDocumentId,
     hasResources,
@@ -1275,7 +1274,7 @@ export const resolveRequestedMode = ({
     preparedCreativeContext,
     targetModuleId,
     workspaceKind,
-  });
+  }, { executionSurface: "agent" });
   if (workspaceOperation && requestedMode === "workspace_operation") return "workspace_operation";
   if (inlineEdit && requestedMode === "quick_revision") return "quick_revision";
   // The client may have resolved an elliptical follow-up against the complete
@@ -1285,7 +1284,10 @@ export const resolveRequestedMode = ({
   if (requestedMode === "visual_prompt"
     && (["creative", "creative_guidance", "visual_prompt"].includes(inferredRoute.mode)
       || (continuesCreativeThread && inferredRoute.mode === "general"))) return "visual_prompt";
-  return inferredRoute.mode;
+  const explicitMode = String(requestedMode || "general");
+  return ["general", "creative", "creative_guidance", "visual_prompt", "quick_revision", "workspace_operation"].includes(explicitMode)
+    ? explicitMode
+    : inferredRoute.mode;
 };
 
 export const generalDocumentContextIds = ({

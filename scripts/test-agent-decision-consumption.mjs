@@ -214,7 +214,7 @@ assert.match(serverSource, /resolveAgentWritePlanTarget\(\{/u);
 assert.match(serverSource, /prompt: semanticSkillRoutingPrompt/u);
 assert.doesNotMatch(serverSource, /Agent 指定的必读资料无法唯一解析/u, "普通用户不得看到内部读取术语");
 assert.ok(
-  serverSource.indexOf("resolveAgentReadPlan({") < serverSource.indexOf("compileServerVerifiedContext({", serverSource.indexOf('pathname === "/api/chat"')),
+  serverSource.indexOf("resolveAgentReadPlan({") < serverSource.indexOf("compileServerVerifiedContext({", serverSource.indexOf('pathname === "/api/agent/execute"')),
   "Agent readPlan 必须在服务端现场资料编译之前消费",
 );
 

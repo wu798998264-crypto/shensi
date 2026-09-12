@@ -26,6 +26,6 @@ export const resolveTaskContractRetryContext = ({ instruction = "", messages = [
     sourceMessage,
     taskContract: clone(messageTaskContract(sourceMessage)),
     prompt,
-    executionSurface: sourceMessage.requestMode === "codex_agent" || sourceMessage.taskRoute?.executionSurface === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
   };
 };

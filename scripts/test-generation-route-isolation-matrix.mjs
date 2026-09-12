@@ -15,13 +15,8 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 const whiteboardChatSnapshot = appSource.match(/const whiteboardTextGenerationSettings = [\s\S]*?\n\};/u)?.[0] || "";
 assert.match(
   whiteboardChatSnapshot,
-  /activeTextChatConnectionId:\s*selected\.id/u,
-  "whiteboard Chat request snapshots must pin the picker-selected profile id",
-);
-assert.match(
-  whiteboardChatSnapshot,
   /activeTextConnectionId:\s*selected\.id/u,
-  "whiteboard Chat request snapshots must keep the legacy active id aligned with the picker",
+  "whiteboard Agent request snapshots must keep the active id aligned with the picker",
 );
 
 const apiProfile = (id, provider, model, baseUrl) => ({
@@ -63,7 +58,7 @@ const conflictingSettings = {
 };
 
 const cases = [
-  { channel: "text", route: "chat", expected: profiles.chat },
+  { channel: "text", route: "agent", expected: profiles.agent },
   { channel: "text", route: "agent", expected: profiles.agent },
   { channel: "image", route: "", expected: profiles.image },
   { channel: "video", route: "", expected: profiles.video },
@@ -100,14 +95,14 @@ await assert.rejects(
 );
 
 for (const [channel, activeKey] of [
-  ["text", "activeTextChatConnectionId"],
+  ["text", "activeTextAgentConnectionId"],
   ["image", "activeImageConnectionId"],
   ["video", "activeVideoConnectionId"],
   ["audio", "activeAudioConnectionId"],
 ]) {
   const settings = { ...conflictingSettings, [activeKey]: "deleted-or-cross-channel-profile" };
   await assert.rejects(
-    resolveTrustedGenerationSettings({ channel, route: channel === "text" ? "chat" : "", settings }),
+    resolveTrustedGenerationSettings({ channel, route: channel === "text" ? "agent" : "", settings }),
     (error) => error?.code === "GENERATION_PROFILE_IDENTITY_MISMATCH",
     `${channel} must fail closed when its selected profile is missing`,
   );
@@ -124,7 +119,7 @@ assert.equal(compactJobSnapshot.connectionId, profiles.image.id, "persisted job 
 
 const managedPublicProfile = await resolveTrustedGenerationSettings({
   channel: "text",
-  route: "chat",
+  route: "agent",
   settings: {
     id: "text-public-kilo",
     connectionId: "text-public-kilo",
@@ -245,7 +240,7 @@ const openCodeProfile = {
   executionModes: ["chat", "agent"],
 };
 await assert.rejects(
-  resolveTrustedGenerationSettings({ channel: "text", route: "chat", settings: openCodeProfile }),
+  resolveTrustedGenerationSettings({ channel: "text", route: "agent", settings: openCodeProfile }),
   (error) => error?.code === "LOCAL_RUNTIME_BINDING_REQUIRED",
   "OpenCode Chat must not reuse a same-id binding for a different endpoint",
 );

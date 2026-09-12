@@ -82,7 +82,7 @@ if (targetStateBefore.state.documents[targetDocumentId]) {
   creativeTask.taskId = requestId;
   chat = { protocol: attempt.resultData?.payload?.protocol, execution: { creativeTaskState: "ready_to_commit", requiresLandingReceipt: true, modelRuntime: attempt.resultData?.payload?.execution?.modelRuntime } };
   candidate = String(attempt.candidate).trim();
-} else chat = await request("/api/chat", {
+} else chat = await request("/api/agent/execute", {
   settings,
   workspaceKind: "project",
   messages: [{ role: "user", content: instruction }],

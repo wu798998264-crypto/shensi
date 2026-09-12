@@ -76,7 +76,7 @@ assert.doesNotMatch(appSource, /requestMediaProviderTaskId/u, "找回不应要�
 assert.match(appSource, /autoReconcileProviderTask/u, "找回应使用保存的幂等键和任务元数据自动核对");
 assert.doesNotMatch(appSource, /window\.prompt\([^\n]*即梦后台/u, "Electron 找回流程不得调用不受支持的 window.prompt");
 assert.doesNotMatch(appSource, /textGenerationProfilesForMode\("chat"\)/u, "取消用户可见 Chat 后不得重新建立独立 Chat 配置线路");
-assert.match(appSource, /textGenerationProfilesForMode\("agent"\)/u, "统一 Agent 必须使用可扩展的文字配置选择线路");
+assert.match(appSource, /textGenerationProfilesForAgent\(\)/u, "统一 Agent 必须使用可扩展的文字配置选择线路");
 assert.match(appSource, /patch\.agentEngine === "opencode"/u, "通用 OpenCode 必须只按显式 agentEngine 路由");
 assert.match(appSource, /protectUnconfirmedOpenCodeActivation/u, "未确认的新 OpenCode 配置不得替换当前配置");
 assert.match(appSource, /WHITEBOARD_PROMPT_CLIPBOARD_TYPE/u, "四类生成栏必须共享富提示词剪贴板协议");

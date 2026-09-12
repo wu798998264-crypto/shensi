@@ -469,9 +469,7 @@ const publicMultiframeTransitions = (request = {}) => {
 const publicGenerationProfile = (value = {}) => {
   const source = value && typeof value === "object" ? value : {};
   if (!Object.keys(source).length) return {};
-  const executionSurface = ["chat", "agent"].includes(String(source.executionSurface || ""))
-    ? String(source.executionSurface)
-    : "";
+  const executionSurface = "agent";
   const safe = {
     executionSurface,
     connectionId: String(source.connectionId || source.id || "").trim().slice(0, 240),

@@ -87,7 +87,6 @@ import {
   activeGenerationProfile,
   applyGenerationRuntimeBindings,
   activateGenerationProfile,
-  activateTextExecutionModeProfile,
   createGenerationProfile,
   generationProfileLabel,
   generationProfileKeys,
@@ -225,9 +224,7 @@ import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js"
 import { executionModeOptionState } from "./model-execution-capabilities.js";
 import {
   CODEX_AGENT_MODE_LABEL,
-  CODEX_CHAT_MODE_LABEL,
   DETECTED_CODEX_CONNECTION_ID,
-  SETTINGS_BOTH_MODE_LABEL,
   codexCliProfile,
   codexSettingsProfile,
   codexSettingsActionState,
@@ -783,10 +780,10 @@ const whiteboardGenerationProfileForNode = (node, channel) => {
   return profile && typeof profile === "object" ? { ...profile } : {};
 };
 
-const whiteboardGenerationProfileFromSettings = (settings = null, executionSurface = "chat") => {
+const whiteboardGenerationProfileFromSettings = (settings = null, executionSurface = "agent") => {
   const source = settings && typeof settings === "object" ? settings : {};
   return {
-    executionSurface: executionSurface === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
     connectionId: String(source.connectionId || source.id || ""),
     model: String(source.model || ""),
     reasoningEffort: String(source.reasoningEffort || ""),
@@ -1624,7 +1621,6 @@ let ui = {
   temporaryCodexSelected: false,
   temporaryCodexLoginRequested: false,
   codexLoginMaterializationPromise: null,
-  pendingChatAgentGuidance: null,
   localOpenCode: null,
   genericOpenCode: null,
   managedOpenCode: null,
@@ -1744,7 +1740,7 @@ let ui = {
     selectedSkills: [],
     guidanceSelectionMode: "auto",
     modelAttachments: [],
-    executionSurface: "chat",
+    executionSurface: "agent",
     settingsOverride: null,
     messages: [],
     generating: false,
@@ -5703,14 +5699,12 @@ const textCapabilityProfileSignature = (profile = {}) => JSON.stringify([
     .map((mode) => String(mode || "").trim().toLowerCase())
     .filter(Boolean))].sort(),
   String(profile.agentModelId || "").trim(),
-  String(profile.chatModelId || "").trim(),
 ]);
 
 const textModelCatalogKey = (profile = {}) => `text-catalog:${textCapabilityProfileSignature({
   ...profile,
   model: "",
   agentModelId: "",
-  chatModelId: "",
 })}`;
 
 const cachedTextModelsForProfile = (profile = {}) => ui.remoteModels[textModelCatalogKey(profile)] ?? [];
@@ -6470,7 +6464,6 @@ const protectUnconfirmedOpenCodeActivation = (settings = {}) => {
   return {
     ...settings,
     activeTextConnectionId: ui.generationBaselineActiveIds?.text || state.settings.activeTextConnectionId,
-    activeTextChatConnectionId: state.settings.activeTextChatConnectionId,
     activeTextAgentConnectionId: state.settings.activeTextAgentConnectionId,
   };
 };
@@ -6662,7 +6655,6 @@ const captureGenerationFormProfile = (channel) => {
       patch.executionMode = "agent";
       patch.executionModes = ["agent"];
       patch.agentModelId = patch.model;
-      patch.chatModelId = "";
       patch.cliPath = "";
       patch.cliArgs = "";
     } else if (isGenericOpenCode) {
@@ -6676,12 +6668,10 @@ const captureGenerationFormProfile = (channel) => {
         patch.apiKey = "";
         patch.baseUrl = "";
         patch.protocol = "";
-        patch.chatModelId = "";
       } else {
         patch.protocol ||= "chat_completions";
         patch.model = qualifiedOpenCodeModel(patch.model, patch.provider);
         patch.agentModelId = patch.model;
-        patch.chatModelId = "";
         patch.executionMode = "agent";
         patch.executionModes = ["agent"];
       }
@@ -6694,7 +6684,6 @@ const captureGenerationFormProfile = (channel) => {
       patch.credentialSource = patch.credentialSource === "shensi" ? "shensi" : "claude";
       if (patch.credentialSource === "shensi") {
         patch.protocol = "anthropic_messages";
-        patch.chatModelId = "";
         patch.executionMode = "agent";
         patch.executionModes = ["agent"];
       } else {
@@ -6703,7 +6692,6 @@ const captureGenerationFormProfile = (channel) => {
         patch.apiKey = "";
         patch.baseUrl = "";
         patch.protocol = "";
-        patch.chatModelId = "";
       }
       Object.assign(patch, openCodeRunnerDefaults("claude_code"));
       delete patch.requiresQualifiedModel;
@@ -6718,7 +6706,6 @@ const captureGenerationFormProfile = (channel) => {
       patch.executionMode = "agent";
       patch.executionModes = ["agent"];
       patch.agentModelId = String(patch.model || "").trim();
-      patch.chatModelId = "";
       patch.cliPath = String(patch.cliPath || descriptor.cliPath || "").trim();
       patch.cliArgs = String(patch.cliArgs || descriptor.cliArgs || "").trim();
     } else if (isDeepSeekOpenCode) {
@@ -6730,13 +6717,11 @@ const captureGenerationFormProfile = (channel) => {
       patch.baseUrl ||= "https://api.deepseek.com/v1";
       patch.model = qualifiedOpenCodeModel(patch.model, "DeepSeek");
       patch.agentModelId = patch.model;
-      patch.chatModelId = "";
       Object.assign(patch, openCodeRunnerDefaults("opencode"));
     } else {
-      patch.executionModes = patch.executionMode === "both" ? ["chat", "agent"] : [patch.executionMode === "agent" ? "agent" : "chat"];
-      patch.agentEngine = patch.executionModes.includes("agent")
-        ? patch.agentEngine || (patch.provider === "OpenAI" && patch.adapter === "cli" ? "codex" : "")
-        : "";
+      patch.executionMode = "agent";
+      patch.executionModes = ["agent"];
+      patch.agentEngine = patch.agentEngine || (patch.provider === "OpenAI" && patch.adapter === "cli" ? "codex" : "codex_api");
       if (patch.provider === "OpenAI" && patch.adapter === "cli" && patch.agentEngine === "codex") {
         patch.credentialSource = "codex_session";
         patch.apiKey = "";
@@ -6776,10 +6761,7 @@ const syncGenerationProfilePreview = (channel) => {
   if (channel === ui.modelSettingsChannel) renderCustomApiCapabilityStatus();
 };
 
-// Chat is no longer a separately selectable execution surface. Keep the
-// legacy mode argument so older callers can be migrated incrementally while
-// every picker resolves the same Agent-capable profile registry.
-const textGenerationProfilesForMode = (_mode, settings = state.settings) => visibleGenerationPickerProfiles(settings, "text");
+const textGenerationProfilesForAgent = (settings = state.settings) => visibleGenerationPickerProfiles(settings, "text");
 
 const agentEngineForTextProfile = (profile) => agentEngineForProfile(profile);
 const displayedAgentEngineForTextProfile = (profile) => agentEngineForTextProfile(profile) === "deepseek_opencode"
@@ -7476,7 +7458,6 @@ root.innerHTML = `
         </header>
         <section class="utility-panel quick-model-panel" id="quickModelPanel" hidden aria-label="切换文字模型与运行器">
           <header><strong>模型与运行器</strong><button class="icon-button bare small" id="closeQuickModel" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
-          <select id="chatProviderSelect" hidden aria-hidden="true"><option value="codex_agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
           <div class="quick-chat-model-fields" id="quickChatModelFields" hidden>
             <label>连接<select id="quickTextConnection"></select></label>
             <label>模型<select class="text-model-state-select" id="quickTextModel"></select></label>
@@ -8627,7 +8608,7 @@ root.innerHTML = `
 
   <dialog class="text-dialog agent-profile-choice-dialog" id="agentProfileChoiceDialog" aria-labelledby="agentProfileChoiceTitle">
     <form id="agentProfileChoiceForm">
-      <header><h2 id="agentProfileChoiceTitle">选择 Agent 配置</h2><p>这里只显示具备 Agent 执行模式的配置，不会列出 Chat 配置。</p></header>
+      <header><h2 id="agentProfileChoiceTitle">选择 Agent 配置</h2><p>这里只显示具备 Agent 执行能力的配置。</p></header>
       <label><span>可用 Agent</span><select id="agentProfileChoiceSelect" required></select></label>
       <p class="panel-empty" id="agentProfileChoiceEmpty" hidden>当前没有可用的 Agent 配置，请先到模型设置创建或核验 Agent 配置。</p>
       <footer><button class="secondary-button" id="agentProfileChoiceCancel" type="button">取消</button><button class="primary-button" id="agentProfileChoiceConfirm" type="submit">选择 Agent 配置</button></footer>
@@ -9069,7 +9050,6 @@ const elements = {
   chatFeed: document.querySelector("#chatFeed"),
   chatInput: document.querySelector("#chatInput"),
   codexAgentBar: document.querySelector("#codexAgentBar"),
-  chatProviderSelect: document.querySelector("#chatProviderSelect"),
   quickChatModelFields: document.querySelector("#quickChatModelFields"),
   quickTextModelVerification: document.querySelector("#quickTextModelVerification"),
   quickTextModelVerificationStatus: document.querySelector("#quickTextModelVerificationStatus"),
@@ -16213,7 +16193,7 @@ const backgroundFormalLandingOperation = ({
       instruction,
       targetDocumentId: documentId,
       currentContent: previous,
-      executionSurface: "chat",
+      executionSurface: "agent",
       requestId: operationId,
       baselineRevision: contentRevision(previous),
     });
@@ -16301,7 +16281,7 @@ const landFormalCandidateInPinnedWorkspace = async ({
       task: {
         ...creativeTask,
         taskId: requestId || creativeTask?.taskId,
-        executionSurface: creativeTask?.executionSurface === "agent" ? "agent" : "chat",
+        executionSurface: "agent",
         instruction,
         authorizedCandidate: candidate,
         writeAuthorization: boundAuthorization,
@@ -16338,7 +16318,7 @@ const landFormalCandidateInPinnedWorkspace = async ({
   });
   const materialUpdatePrompt = materialUpdatePromptFor({
     documentIds: targetIds,
-    executionSurface: creativeTask?.executionSurface === "agent" ? "agent" : "chat",
+      executionSurface: "agent",
     workspaceState: latest.state,
   });
   return {
@@ -19600,7 +19580,7 @@ const beginConversationPreparation = ({
   sourceMessageId = "",
   pendingMessageId = "",
   dispatchToken = "",
-  executionSurface = "chat",
+  executionSurface = "agent",
   startedAt = Date.now(),
 } = {}) => ui.conversationPreparations.begin({
   conversationId,
@@ -19753,15 +19733,6 @@ const dispatchAfterImmediateInstructionPaint = (callback) => {
   };
   fallbackTimer = setTimeout(dispatchOnce, 100);
   requestAnimationFrame(() => setTimeout(dispatchOnce, 0));
-};
-
-const renderChatAgentGuidanceCard = () => {
-  const guidance = ui.pendingChatAgentGuidance;
-  if (!guidance || guidance.conversationId !== state.activeConversationId) return "";
-  return `<section class="message assistant-message chat-agent-guidance" data-chat-agent-guidance="${escapeHtml(guidance.key)}">
-    <header><span class="avatar assistant-avatar"></span><strong>神思</strong><time>${escapeHtml(guidance.time)}</time></header>
-    <div class="assistant-copy"><p>${escapeHtml(guidance.message)}</p></div>
-  </section>`;
 };
 
 const renderMessages = ({ forceScrollToBottom = false } = {}) => {
@@ -23662,7 +23633,6 @@ const cancelQuickTextModelCheck = () => {
 const quickTextVerificationProfile = () => activeGenerationProfile(
   state.settings,
   "text",
-  state.settings.activeTextChatConnectionId,
 );
 
 const quickTextVerificationTimeLabel = (value) => {
@@ -23964,8 +23934,8 @@ const checkQuickTextModelConnection = async ({
     return null;
   }
   const profile = withReusableTextProviderCredential(selected);
-  if (getProviderPreset(profile.provider).public === true && profile.executionModes?.includes("agent") !== true) {
-    const run = autoVerifyPublicTextConnection(profile, { force: true });
+  if (getProviderPreset(profile.provider).public === true) {
+    const run = autoVerifyPublicAgentConnection(profile);
     renderStatus(profile);
     return run;
   }
@@ -24028,11 +23998,6 @@ const checkQuickTextModelConnection = async ({
     if (testPayload.testLevel !== "real_inference") {
       const error = new Error("连接已识别，但尚未完成当前模型的真实推理核验");
       error.code = "REAL_INFERENCE_UNCONFIRMED";
-      throw error;
-    }
-    if (profile.agentEngine === "opencode" && profile.executionModes?.includes("chat") && testPayload.chatVerified !== true) {
-      const error = new Error("OpenCode 当前模型的 Chat 通道尚未通过真实推理核验");
-      error.code = "CHAT_MODE_UNCONFIRMED";
       throw error;
     }
     const verifiedProbe = storeTextModelCapabilityProbe(profile, {
@@ -24105,7 +24070,7 @@ const autoVerifyPublicAgentConnection = (sourceProfile) => {
   return run;
 };
 
-const autoPreparePublicTextConnection = (sourceProfile, { executionSurface = "chat" } = {}) => {
+const autoPreparePublicTextConnection = (sourceProfile, { executionSurface = "agent" } = {}) => {
   const profile = sourceProfile ? withReusableTextProviderCredential(sourceProfile) : null;
   if (!profile?.id || !profile.model || !publicTextModelProbeIsolated(profile)) return Promise.resolve(null);
   // Automatic verification is advisory, never a generation gate. A temporary
@@ -24113,16 +24078,14 @@ const autoPreparePublicTextConnection = (sourceProfile, { executionSurface = "ch
   // remains the final capability evidence for the selected profile. Start it
   // in the background so the click-to-request path is not held behind the
   // catalog and real-inference probe.
-  const operation = executionSurface === "agent"
-    ? autoVerifyPublicAgentConnection(profile)
-    : autoVerifyPublicTextConnection(profile);
+  const operation = autoVerifyPublicAgentConnection(profile);
   Promise.resolve(operation).catch(() => {});
   return Promise.resolve(null);
 };
 
 const schedulePublicTextConnectionVerification = (sourceProfile, {
   scope = "chat",
-  executionSurface = "chat",
+  executionSurface = "agent",
   currentProfile = () => sourceProfile,
   delayMs = 350,
 } = {}) => {
@@ -24231,7 +24194,7 @@ const renderWhiteboardGenerateControls = ({
   // A picker must keep saved connections visible after an application restart.
   // Capability probes are session evidence, not a reason to hide a configured
   // provider or make its persisted model impossible to select.
-  const profiles = textGenerationProfilesForMode("agent");
+  const profiles = textGenerationProfilesForAgent();
   const profileLabels = generationConnectionOptionLabels("text", profiles);
   connectionSelect.innerHTML = profiles.length
     ? profiles.map((profile, index) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profileLabels[index])}</option>`).join("")
@@ -24273,7 +24236,7 @@ const renderWhiteboardGenerateControls = ({
   elements.whiteboardTextSpeed.innerHTML = `<option value="default">标准</option>${speeds.map((speed) => `<option value="${escapeHtml(speed)}">${speed === "fast" ? "快速" : "灵活"}</option>`).join("")}`;
   elements.whiteboardTextSpeed.value = speeds.includes(requestedSpeed) ? requestedSpeed : "default";
 
-  const agentPickerProfiles = textGenerationProfilesForMode("agent");
+  const agentPickerProfiles = textGenerationProfilesForAgent();
   const requestedAgentConnection = agentConnectionId !== undefined
     ? String(agentConnectionId)
     : previousAgentEngine || previousAgentConnectionId || String(state.settings.activeTextAgentConnectionId || "");
@@ -24362,10 +24325,7 @@ const whiteboardTextGenerationSettings = (connectionId, model, { reasoningEffort
   requestSettings = upsertGenerationProfile(requestSettings, "text", selected, { activate: true });
   return {
     ...requestSettings,
-    // requestModelReply resolves Chat profiles through the mode-specific ID.
-    // Pin it to the picker selection so a previously active Chat connection
-    // cannot silently replace the whiteboard's selected provider or model.
-    activeTextChatConnectionId: selected.id,
+    // Pin the request to the picker-selected Agent profile.
     activeTextConnectionId: selected.id,
   };
 };
@@ -24374,7 +24334,7 @@ const activeAgentEngine = () => AGENT_ENGINE_IDS.includes(ui.codexAgent.status?.
 const activeAgentLabel = () => agentEngineDisplayLabel(activeAgentEngine());
 
 const activeAgentTextProfile = (settings = state.settings) => {
-  const profiles = textGenerationProfilesForMode("agent", settings);
+  const profiles = textGenerationProfilesForAgent(settings);
   const selectedId = String(settings?.activeTextAgentConnectionId || "");
   const exact = profiles.find((profile) => profile.id === selectedId);
   if (exact) return exact;
@@ -24383,7 +24343,7 @@ const activeAgentTextProfile = (settings = state.settings) => {
     ?? null;
 };
 
-const exactAgentTextProfile = (profileId = "", settings = state.settings) => textGenerationProfilesForMode("agent", settings)
+const exactAgentTextProfile = (profileId = "", settings = state.settings) => textGenerationProfilesForAgent(settings)
   .find((profile) => profile.id === String(profileId || "")) ?? null;
 
 const VERIFIED_PUBLIC_AGENT_FALLBACK_MODELS = new Set([
@@ -24458,7 +24418,7 @@ const hydrateAgentProfileModelCatalog = async (profile, { force = false } = {}) 
 const deepSeekAgentProfile = (settings = state.settings) => {
   const selected = activeAgentTextProfile(settings);
   if (selected?.provider === "DeepSeek" && selected?.adapter === "cli") return selected;
-  const profiles = textGenerationProfilesForMode("agent", settings);
+  const profiles = textGenerationProfilesForAgent(settings);
   return profiles.find((profile) => profile.provider === "DeepSeek" && profile.adapter === "cli" && profile.apiKey)
     ?? profiles.find((profile) => profile.provider === "DeepSeek" && profile.apiKey)
     ?? null;
@@ -24471,10 +24431,10 @@ const detectedCodexEntryAvailable = () => shouldOfferDetectedCodexEntry({
   profiles: state.settings.textConnections || [],
 });
 
-const activeQuickChatProfile = () => {
+const activeQuickAgentProfile = () => {
   if (ui.temporaryCodexSelected && detectedCodexEntryAvailable()) return detectedCodexTemporaryOption(ui.localCodex || {});
-  const profiles = textGenerationProfilesForMode("agent");
-  const configuredActive = activeGenerationProfile(state.settings, "text", state.settings.activeTextChatConnectionId);
+  const profiles = textGenerationProfilesForAgent();
+  const configuredActive = activeGenerationProfile(state.settings, "text", state.settings.activeTextAgentConnectionId);
   return profiles.find((profile) => profile.id === configuredActive?.id) ?? profiles[0] ?? configuredActive ?? null;
 };
 
@@ -24484,36 +24444,8 @@ const currentCodexConnectionSelected = () => {
     const profile = activeAgentTextProfile(state.settings);
     return activeAgentEngine() === "codex" && shouldShowCodexAccountControls(profile || {});
   }
-  const profile = activeQuickChatProfile();
+  const profile = activeQuickAgentProfile();
   return shouldShowCodexAccountControls(profile || {}) && codexCliProfile(profile || {});
-};
-
-const currentChatAgentModeAvailability = () => {
-  return {
-    chat: false,
-    agent: textGenerationProfilesForMode("agent").length > 0,
-    sameConnection: false,
-  };
-};
-
-const syncChatModeOptions = () => {
-  const select = elements.chatProviderSelect;
-  if (!select) return;
-  const availability = currentChatAgentModeAvailability();
-  const chatOption = select.querySelector('option[value="gpt_cli"]');
-  const agentOption = select.querySelector('option[value="codex_agent"]');
-  if (chatOption) {
-    chatOption.textContent = CODEX_CHAT_MODE_LABEL;
-    chatOption.disabled = availability.chat !== true;
-    chatOption.title = availability.chat ? "" : "当前连接没有 Chat 处理器";
-  }
-  if (agentOption) {
-    agentOption.textContent = CODEX_AGENT_MODE_LABEL;
-    agentOption.disabled = false;
-    agentOption.dataset.supported = availability.agent === true ? "true" : "false";
-    agentOption.title = availability.agent ? "" : "当前连接没有 Agent 处理器";
-  }
-  select.value = "codex_agent";
 };
 
 const renderCodexConnectionControls = () => {
@@ -24560,7 +24492,7 @@ const renderCodexConnectionControls = () => {
 
 const generationSettingsForAgentEngine = (settings = state.settings, overrides = {}) => {
   const selectedId = String(overrides.agentConnectionId ?? settings?.activeTextAgentConnectionId ?? "");
-  const profiles = textGenerationProfilesForMode("agent", settings);
+  const profiles = textGenerationProfilesForAgent(settings);
   const profile = profiles.find((item) => item.id === selectedId) ?? profiles[0] ?? null;
   const engine = profile ? agentEngineForTextProfile(profile) : AGENT_ENGINE_IDS.includes(overrides.agentEngine) ? overrides.agentEngine : activeAgentEngine();
   const { agentConnectionId: _agentConnectionId, ...requestOverrides } = overrides;
@@ -24604,11 +24536,11 @@ const renderQuickAgentPermissionMode = () => {
 };
 
 const renderQuickModelSelector = () => {
-  const chatProfiles = textGenerationProfilesForMode("agent");
+  const agentProfiles = textGenerationProfilesForAgent();
   const configuredActive = activeGenerationProfile(state.settings, "text", state.settings.activeTextAgentConnectionId);
   ui.temporaryCodexSelected = false;
   const temporaryProfile = null;
-  const active = chatProfiles.find((profile) => profile.id === configuredActive?.id) ?? chatProfiles[0] ?? configuredActive;
+  const active = agentProfiles.find((profile) => profile.id === configuredActive?.id) ?? agentProfiles[0] ?? configuredActive;
   const button = document.querySelector("#quickModelButton");
   const label = document.querySelector("#quickModelLabel");
   const connectionSelect = document.querySelector("#quickTextConnection");
@@ -24620,7 +24552,7 @@ const renderQuickModelSelector = () => {
   const agentEngine = activeAgentEngine();
   const agentEngineLabel = agentEngineDisplayLabel(agentEngine);
   const selectedAgentProfileForLabel = activeAgentTextProfile(state.settings);
-  const configuredProfiles = chatProfiles;
+  const configuredProfiles = agentProfiles;
   const configuredProfileLabels = generationConnectionOptionLabels("text", configuredProfiles);
   const activeAvailable = generationConnectionIsAvailable("text", active);
   const models = ui.temporaryCodexSelected ? (ui.localCodex?.models || []) : modelOptionsForProvider(active.provider, active.adapter);
@@ -24631,7 +24563,7 @@ const renderQuickModelSelector = () => {
   if (elements.quickChatModelFields) elements.quickChatModelFields.hidden = isAgent;
   if (elements.quickAgentFields) elements.quickAgentFields.hidden = !isAgent;
   if (elements.quickAgentEngine) {
-    const agentProfiles = textGenerationProfilesForMode("agent");
+    const agentProfiles = textGenerationProfilesForAgent();
     const labels = generationConnectionOptionLabels("text", agentProfiles);
     const activeAgentProfile = activeAgentTextProfile(state.settings);
     elements.quickAgentEngine.innerHTML = agentProfiles.map((profile, index) => (
@@ -24702,7 +24634,6 @@ const renderQuickModelSelector = () => {
       elements.quickAgentSpeed.value = agentSpeeds.includes(savedSpeed) ? savedSpeed : "default";
     }
   }
-  syncChatModeOptions();
   renderQuickAgentPermissionMode();
   renderCodexConnectionControls();
   renderQuickAgentVerification();
@@ -28149,7 +28080,7 @@ const requestVerifiedMemoryProjection = async ({ documents = [], suppliedUpdates
     /^(?:chapter-\d+|script-episode-\d+)$/.test(String(documentId || "")) && String(content || "").trim()
   ));
   if (!narrativeDocuments.length) return { memoryUpdates: {}, statuses: [] };
-  const response = await fetch("/api/chat/memory-projection", {
+  const response = await fetch("/api/agent/memory-projection", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -31491,7 +31422,7 @@ const workspaceOperationDocumentContext = (prompt = "", { taskContextSnapshot = 
     .slice(0, 55_000);
 };
 
-const hasModelConfiguration = () => generationConnectionIsConfigured("text", activeQuickChatProfile());
+const hasModelConfiguration = () => generationConnectionIsConfigured("text", activeQuickAgentProfile());
 
 const isDirectGenerationRequest = (value = "") => (
   isExplicitDirectCreationRequest({ text: value }) || isExplicitFreshCreativeStart({ text: value })
@@ -31962,7 +31893,7 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
     requestId,
     conversationId: requestConversation?.id || "",
     branchId: requestMessages.at(-1)?.id || "",
-    executionOwner: executionSurface === "agent" ? "workspace_agent_or_shensi_orchestrator" : "chat_model_or_shensi_orchestrator",
+    executionOwner: "workspace_agent_or_shensi_orchestrator",
     executionSurface: "agent",
     referenceContext: requestConversation?.referenceContext || {},
     messageCount: (modelMessages ?? activeModelMessages(requestMessages)).length,
@@ -31974,20 +31905,16 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
   });
   let requestTextProfile = null;
   try {
-    const requestGenerationSettings = executionSurface === "agent"
-      ? generationSettingsForAgentEngine(settingsOverride ?? requestWorkspaceState.settings, {
-          agentConnectionId: String(settingsOverride?.activeTextAgentConnectionId || requestWorkspaceState.settings?.activeTextAgentConnectionId || ""),
-        })
-      : settingsOverride ?? activateTextExecutionModeProfile(requestWorkspaceState.settings, "chat");
+    const requestGenerationSettings = generationSettingsForAgentEngine(settingsOverride ?? requestWorkspaceState.settings, {
+      agentConnectionId: String(settingsOverride?.activeTextAgentConnectionId || requestWorkspaceState.settings?.activeTextAgentConnectionId || ""),
+    });
     requestTextProfile = activeGenerationProfile(
       requestGenerationSettings,
       "text",
-      executionSurface === "agent"
-        ? requestGenerationSettings.activeTextAgentConnectionId
-        : requestGenerationSettings.activeTextChatConnectionId,
+      requestGenerationSettings.activeTextAgentConnectionId,
     );
     await autoPreparePublicTextConnection(requestTextProfile, { executionSurface }).catch(() => null);
-    const response = await fetch("/api/chat", {
+    const response = await fetch("/api/agent/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -32036,7 +31963,7 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
       guidanceState,
       guidanceSelectionMode: guidanceSelectionMode === "manual" ? "manual" : guidanceSelectionMode === "auto" ? "auto" : "",
       continuesCreativeThread: continuesCreativeThread === true,
-      executionSurface: executionSurface || requestMessages.at(-1)?.executionSurface || "chat",
+      executionSurface: "agent",
       candidateBasisSeed,
       preparedCreativeContext: inRequestWorkspace(() => preparedNovelProductionContext(target)),
       webSearch: webSearchEnabled === true,
@@ -32539,7 +32466,7 @@ const materialUpdatePromptFor = ({ documentIds = [], executionSurface = "agent",
   return {
     kind: "material_update_prompt",
     sourceDocumentIds,
-    executionSurface: executionSurface === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
     workspaceKind: workspaceState?.workspaceKind === "notebook" ? "notebook" : "project",
     workspacePath: String(workspaceState?.settings?.workspacePath || ""),
     workspaceName: String(workspaceState?.projectName || workspaceState?.settings?.projectName || ""),
@@ -32792,7 +32719,7 @@ const requestWorkspaceOperationPlan = async ({ prompt, requestId, taskContextSna
   const workspaceMeta = withSynchronousWorkspaceState(requestState, () => workspaceOperationMeta({ trashAccess }));
   let documentContext = withSynchronousWorkspaceState(requestState, () => workspaceOperationDocumentContext(prompt, { taskContextSnapshot }));
   if (trashAccess.contextText) documentContext = [documentContext, trashAccess.contextText].filter(Boolean).join("\n\n");
-  const response = await fetch("/api/chat", {
+  const response = await fetch("/api/agent/execute", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -33822,7 +33749,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
           currentContent: previousDocumentText,
           candidateContent: document.content,
           selectedText: document.documentId === taskSelectedTextDocumentId ? taskSelectedText : "",
-          executionSurface: requestTarget?.mode === "agent" ? "agent" : "chat",
+          executionSurface: "agent",
           requestId: candidateTarget?.generationAttemptRequestId || uid("contextual-insert"),
           baselineRevision: contentRevision(previousDocumentText),
         })
@@ -33836,7 +33763,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
           instruction: candidateInstruction,
           targetDocumentId: document.documentId,
           currentContent: previousDocumentText,
-          executionSurface: requestTarget?.mode === "agent" ? "agent" : "chat",
+          executionSurface: "agent",
           requestId: candidateTarget?.generationAttemptRequestId || uid("local-patch"),
           baselineRevision: contentRevision(previousDocumentText),
         })
@@ -33847,7 +33774,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
           targetDocumentId: document.documentId,
           currentContent: previousDocumentText,
           candidateContent: document.content,
-          executionSurface: requestTarget?.mode === "agent" ? "agent" : "chat",
+          executionSurface: "agent",
           requestId: candidateTarget?.generationAttemptRequestId || uid("contextual-replace"),
           baselineRevision: contentRevision(previousDocumentText),
         })
@@ -34234,7 +34161,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
     });
     const materialUpdatePrompt = materialUpdatePromptFor({
       documentIds: memoryPendingDocumentIds,
-      executionSurface: requestTarget?.mode === "agent" ? "agent" : "chat",
+      executionSurface: "agent",
       workspaceState: state,
     });
     const immediateProjection = refreshImmediateCommitProjections({
@@ -34692,7 +34619,7 @@ const supplementQueuedMessage = async (queueId) => {
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Agent 补充指令未能提交");
       deferred = payload.accepted !== true;
     } else if (pending.execution?.requestId) {
-      const response = await fetch("/api/chat/supplement", {
+      const response = await fetch("/api/agent/supplement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -35942,7 +35869,7 @@ const isRecoverableOrdinaryScaffoldRetry = ({
   previousUserMessage = null,
   previousAssistantMessage = null,
   target = null,
-  executionSurface = "chat",
+  executionSurface = "agent",
 } = {}) => {
   const retryText = String(text).trim();
   if (!/^(?:继续(?:执行)?|仍然执行|直接执行|坚持执行|从零开始(?:继续执行上一条任务)?|只依据现有资料继续|按现有资料继续|选择当前打开文档作为资料|不用(?:这些|该)?资料(?:也)?继续|不用 Skill 继续|用你(?:自己|本身|原生|Codex)?的能力继续|重试|再试(?:一次|一下)?|重新执行|按上条执行|就按上条|可以|就这样|按这个来|1)[。！!，,\s]*$/.test(retryText)) return false;
@@ -36594,7 +36521,7 @@ const requestSemanticLandingPackageForContent = async ({ sourcePrompt = "", sour
   const expectedTargets = Array.isArray(requiredTargets)
     ? requiredTargets.filter((target) => target?.documentId)
     : [];
-  const response = await fetch("/api/chat/landing-plan", {
+    const response = await fetch("/api/agent/landing-plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -36735,7 +36662,7 @@ const cancelConversationRun = async (requestId) => {
       renderMessages();
       return;
     }
-    const response = await fetch("/api/chat/cancel", {
+    const response = await fetch("/api/agent/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ requestId }),
@@ -37119,14 +37046,7 @@ const renderConversationChoicePanel = () => {
     elements.conversationChoicePanel.hidden = false;
     return;
   }
-  if (pending.kind === "agent_guidance") {
-    elements.conversationChoiceQuestion.textContent = "";
-    elements.conversationChoiceOptions.innerHTML = [
-      conversationChoiceButton({ label: "选择 Agent 配置", type: "chat_agent_guidance", value: "choose_agent" }),
-      conversationChoiceButton({ label: "取消", type: "chat_agent_guidance", value: "cancel" }),
-    ].join("");
-    elements.conversationChoiceHint.textContent = "只列出可执行的 Agent 配置；系统不会自动换配置或重新提交任务。";
-  } else if (pending.kind === "creative") {
+  if (pending.kind === "creative") {
     const question = pending.question || "这些方向里，哪个更接近你的真实判断？";
     elements.conversationChoiceQuestion.textContent = question;
     appendConversationChoiceQuestion(pending, question);
@@ -37589,13 +37509,6 @@ const renderConversationChoicePanel = () => {
   elements.conversationChoicePanel.hidden = false;
 };
 
-const openChatAgentGuidanceChoice = (guidance) => {
-  if (!guidance || guidance.conversationId !== state.activeConversationId) return false;
-  pendingConversationChoice = { kind: "agent_guidance", guidance };
-  renderConversationChoicePanel();
-  return true;
-};
-
 const openCreativeChoiceDialog = ({ question = "", options = [], conversationId = "", messageId = "", guidanceSessionId = "" } = {}) => {
   const choices = (Array.isArray(options) ? options : []).map((option) => (
     typeof option === "string"
@@ -37673,7 +37586,7 @@ function openMaterialUpdateChoice(prompt = null) {
     conversationId,
     messageId: currentRecord.message.id,
     documentIds,
-    executionSurface: records.some(({ prompt: item }) => item.executionSurface === "agent") ? "agent" : "chat",
+    executionSurface: "agent",
     promptMessageIds: records.map(({ message }) => message.id),
   };
   renderConversationChoicePanel();
@@ -37686,7 +37599,7 @@ function openPendingMaterialUpdateChoiceForConversation(conversationId = state.a
   return pending.length ? openMaterialUpdateChoice(pending.at(-1).prompt) : false;
 }
 
-const openFreshStartChoice = ({ question = "", conversationId = "", executionSurface = "chat", taskContextSnapshot = null } = {}) => {
+const openFreshStartChoice = ({ question = "", conversationId = "", executionSurface = "agent", taskContextSnapshot = null } = {}) => {
   pendingConversationChoice = {
     kind: "fresh_start",
     question,
@@ -38274,7 +38187,7 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
         targetDocumentIds: targetDocuments.map((item) => item.documentId),
       },
       displayContent: `检查${sourceDocuments.length === 1 ? `《${sourceDocuments[0].title}》` : `${sourceDocuments.length} 个刚写入文档`}产生的作品资料差异。`,
-      executionSurface: pending.executionSurface === "agent" ? "agent" : "chat",
+      executionSurface: "agent",
       conversationId,
       workspaceState,
       taskContextSnapshot,
@@ -38328,7 +38241,7 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
     const executionMessage = await sendMessage(materialUpdateExecutionInstruction(executionPlan), {
       materialUpdateExecutionPlan: executionPlan,
       displayContent: `按已确认差异增量更新：${formalChanges.map((item) => item.targetTitle).join("、")}。`,
-      executionSurface: pending.executionSurface === "agent" ? "agent" : "chat",
+      executionSurface: "agent",
       conversationId,
       workspaceState,
       taskContextSnapshot,
@@ -38362,7 +38275,7 @@ const latestMaterialUpdateSourceDocumentIds = () => {
     : [];
 };
 
-const runExplicitPostLandingMaterialsUpdate = async ({ executionSurface = "chat" } = {}) => {
+const runExplicitPostLandingMaterialsUpdate = async ({ executionSurface = "agent" } = {}) => {
   const materialWorkspaceState = state;
   const materialConversation = activeConversation();
   const materialTaskContextSnapshot = captureTaskContextSnapshot(materialConversation?.id || state.activeConversationId);
@@ -41763,7 +41676,7 @@ const validateWorkspaceOperationPlan = (plan) => {
     absoluteTerms: projectAbsoluteBannedTerms(),
   });
   // Deterministic prose findings are advisory diagnostics. They must never
-  // turn Chat/Agent document permissions into a hidden write barrier.
+  // Turn Agent document permissions into a hidden write barrier.
   if (proseViolations.length) plan.advisoryProseFindings = proseViolations.slice(0, 20);
 };
 
@@ -44064,10 +43977,6 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
   }
   const type = choice.dataset.choiceType || "";
   const value = choice.dataset.choiceValue || "";
-  if (pendingConversationChoice.kind === "agent_guidance" && type === "chat_agent_guidance") {
-    void handleChatAgentGuidanceAction(value);
-    return;
-  }
   if (pendingConversationChoice.kind === "creative" && type === "creative") {
     const pending = pendingConversationChoice;
     const option = pending.options.find((item) => String(item.id || item.label) === value);
@@ -45616,7 +45525,7 @@ elements.selectionEditForm.addEventListener("submit", (event) => {
   window.getSelection()?.removeAllRanges();
   sendMessage(prompt, {
     inlineEdit,
-    executionSurface: ui.codexAgent.status?.provider === "codex_agent" ? "agent" : "chat",
+    executionSurface: "agent",
   });
 });
 
@@ -52207,7 +52116,7 @@ const openWhiteboardGenerateDialog = (nodeId, { centered = false } = {}) => {
     const rememberedValues = whiteboardRememberedGenerationProfile("text");
     const cardValues = whiteboardGenerationProfileForNode(node, "text");
     Object.assign(rememberedValues, cardValues);
-    const firstTextProfileId = textGenerationProfilesForMode("agent")[0]?.id || "";
+    const firstTextProfileId = textGenerationProfilesForAgent()[0]?.id || "";
     renderWhiteboardGenerateControls({
       ...rememberedValues,
       ...(draftValues ?? {}),
@@ -54573,7 +54482,7 @@ const resetWhiteboardGuidance = () => {
     selectedSkills: [],
     guidanceSelectionMode: "auto",
     modelAttachments: [],
-    executionSurface: "chat",
+    executionSurface: "agent",
     settingsOverride: null,
     messages: [],
     generating: false,
@@ -54681,7 +54590,7 @@ const runWhiteboardGuidanceTurn = async (content, { finalize = false } = {}) => 
   }
 };
 
-const openWhiteboardGuidanceDialog = ({ nodeId, instruction, context, selectedSkills, modelAttachments, guidanceSelectionMode = "auto", executionSurface = "chat", settingsOverride = null }) => {
+const openWhiteboardGuidanceDialog = ({ nodeId, instruction, context, selectedSkills, modelAttachments, guidanceSelectionMode = "auto", executionSurface = "agent", settingsOverride = null }) => {
   ui.whiteboardGuidance = {
     active: true,
     workspaceKind: state.workspaceKind,
@@ -54694,7 +54603,7 @@ const openWhiteboardGuidanceDialog = ({ nodeId, instruction, context, selectedSk
     selectedSkills,
     guidanceSelectionMode: guidanceSelectionMode === "manual" ? "manual" : "auto",
     modelAttachments,
-    executionSurface: executionSurface === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
     settingsOverride: settingsOverride ? clone(settingsOverride) : null,
     messages: [],
     generating: false,
@@ -54942,11 +54851,6 @@ elements.whiteboardGenerateForm.addEventListener("submit", async (event) => {
     agentReasoningEffort: String(formData.get("agentReasoningEffort") || ""),
     agentSpeedMode: String(formData.get("agentSpeedMode") || "default"),
   };
-  if (executionSurface === "chat" && !generationConnectionIsConfigured("text", textRequestProfile)) {
-    cancelSubmissionFeedback();
-    showToast("当前运营商连接尚未完成配置，请到模型设置检查 API 密钥或 CLI 路径");
-    return;
-  }
   const selectedAgentStatus = (ui.codexAgent.status?.agentEngines || []).find((item) => item.id === selectedAgentEngine);
   const selectedAgentUnavailable = selectedAgentEngine !== "codex_api" && (selectedAgentStatus?.installed === false
     || (!selectedAgentStatus && selectedAgentEngine === activeAgentEngine() && ui.codexAgent.status?.installed !== true));
@@ -58358,7 +58262,6 @@ const renderCodexAgentPanel = () => {
   const agentEngine = AGENT_ENGINE_IDS.includes(status.agentEngine) ? status.agentEngine : "codex";
   const agentLabel = `${agentEngineDisplayLabel(agentEngine)} Agent`;
   syncCodexAgentExecutionFromStatus(status);
-  elements.chatProviderSelect.value = "codex_agent";
   elements.codexAgentBar.classList.toggle("agent-active", isAgent);
   const customProject = status.selectedProject?.selectionMode === "custom";
   const automaticCwd = String(ui.codexAgent.documentDirectory || status.defaultProjectRoot || "").trim();
@@ -58489,7 +58392,7 @@ const refreshCodexAgentStatus = async ({ refreshAccount = false } = {}) => {
       }
     } catch (error) {
       console.error("Agent 状态读取或任务生命周期对账失败", error);
-      ui.codexAgent.status = { provider: "gpt_cli", appServer: "failed", lastError: error.message };
+      ui.codexAgent.status = { provider: "codex_agent", appServer: "failed", lastError: error.message };
     }
     renderCodexAgentPanel();
     return ui.codexAgent.status;
@@ -60825,41 +60728,6 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
   }
 };
 
-const switchConversationMode = async (provider) => {
-  provider = "codex_agent";
-  if (provider === "codex_agent") {
-    const profile = activeAgentTextProfile(state.settings);
-    const engine = agentEngineForTextProfile(profile || {});
-    if (!profile || !engine) throw new Error("当前没有可用的 Agent 配置");
-    if (activeAgentEngine() !== engine) {
-      const engineResponse = await fetch("/api/codex-agent/engine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ engine }),
-      });
-      const enginePayload = await engineResponse.json();
-      if (!engineResponse.ok || !enginePayload.ok) throw new Error(enginePayload.message || "Agent 配置切换失败");
-      ui.codexAgent.status = enginePayload;
-    }
-  }
-  const response = await fetch("/api/codex-agent/provider", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider }),
-  });
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.message || "对话模式切换失败");
-  ui.codexAgent.status = payload;
-  state.settings = activateTextExecutionModeProfile(
-    state.settings,
-    payload.provider === "codex_agent" ? "agent" : "chat",
-  );
-  persist();
-  if (payload.provider === "codex_agent") await ensureCodexAgentProject();
-  renderCodexAgentPanel();
-  return payload;
-};
-
 const codexSubmissionRequiresLogin = () => currentCodexConnectionSelected()
   && (ui.temporaryCodexSelected || (
     ui.codexAgent.status?.codexAuthenticated !== true
@@ -61074,7 +60942,7 @@ const dispatchComposerContent = (content, {
 
 let agentProfileChoiceContext = null;
 
-const availableAgentProfiles = () => textGenerationProfilesForMode("agent")
+const availableAgentProfiles = () => textGenerationProfilesForAgent()
   .filter((profile) => generationConnectionIsConfigured("text", profile));
 
 const exactAgentProfile = (profileId = "") => {
@@ -61130,28 +60998,8 @@ const activateExplicitAgentProfile = async (profile) => {
   }
   state.settings = nextSettings;
   persist();
-  await switchConversationMode("codex_agent");
+  await refreshCodexAgentStatus({ refreshAccount: true });
   renderQuickModelSelector();
-  return true;
-};
-
-const handleChatAgentGuidanceAction = async (action = "") => {
-  const guidance = ui.pendingChatAgentGuidance;
-  if (!guidance || guidance.conversationId !== state.activeConversationId) return false;
-  if (action === "cancel") {
-    ui.pendingChatAgentGuidance = null;
-    if (pendingConversationChoice?.kind === "agent_guidance") closeConversationChoicePanel({ focus: false });
-    renderMessages({ forceScrollToBottom: true });
-    return true;
-  }
-  if (action !== "choose_agent") return false;
-  const opened = openAgentProfileChoiceDialog({
-    purpose: "guidance",
-    selectedProfileId: String(state.settings.activeTextAgentConnectionId || ""),
-  });
-  if (!opened) return false;
-  ui.pendingChatAgentGuidance = null;
-  if (pendingConversationChoice?.kind === "agent_guidance") closeConversationChoicePanel({ focus: false });
   return true;
 };
 
@@ -61175,7 +61023,6 @@ document.querySelector("#chatForm").addEventListener("submit", async (event) => 
     return;
   }
   if (pendingConversationChoice) closeConversationChoicePanel({ focus: false });
-  ui.pendingChatAgentGuidance = null;
   dispatchComposerContent(content);
 });
 
@@ -62286,7 +62133,6 @@ document.querySelector("#quickTextConnection").addEventListener("change", (event
   ui.temporaryCodexLoginRequested = false;
   state.settings = {
     ...activateGenerationProfile(state.settings, "text", event.target.value),
-    activeTextChatConnectionId: event.target.value,
   };
   persist();
   renderQuickModelSelector();
@@ -63126,7 +62972,7 @@ const supplementDirectInstruction = async () => {
   if (supplementButton) supplementButton.disabled = true;
   try {
     const queuedItem = enqueueMessage(content, {
-      executionSurface: pending?.execution?.strength === "agent" || ui.codexAgent.status?.provider === "codex_agent" ? "agent" : "chat",
+      executionSurface: "agent",
       conversationId: conversation?.id || "",
       runtimeSupplement: true,
       supplementTargetSourceMessageId: pending?.execution?.sourceMessageId || "",
@@ -72051,10 +71897,7 @@ document.querySelector("#testAdapter").addEventListener("click", async () => {
     const payload = await response.json();
     if (!runStillCurrent()) return;
     if (!response.ok || !payload.ok) throw new Error(payload.message || "文字模型连接失败");
-    if (genericOpenCode && settings.executionModes?.includes("chat") && payload.chatVerified !== true) {
-      throw new Error("OpenCode 双模式连接的 Chat 通道尚未通过真实推理验证");
-    }
-    if (genericOpenCode && settings.executionModes?.includes("agent") && payload.agentVerified !== true) {
+    if (genericOpenCode && payload.agentVerified !== true) {
       throw new Error("OpenCode Agent 通道尚未通过真实推理验证");
     }
     let modelCatalogChecked = settings.adapter !== "api";
@@ -72123,7 +71966,7 @@ document.querySelector("#testAdapter").addEventListener("click", async () => {
     }
     if (!runStillCurrent()) return;
     result.textContent = genericOpenCode
-      ? `${payload.message}；实际链路：${settings.executionModes?.includes("chat") ? `${settings.provider} API → Chat；` : ""}${payload.actualProvider || settings.provider || "OpenCode"} → OpenCode → ${payload.actualModel || settings.agentModelId || settings.model} → Agent；尚未自动切换当前配置`
+      ? `${payload.message}；实际链路：${payload.actualProvider || settings.provider || "OpenCode"} → OpenCode → ${payload.actualModel || settings.agentModelId || settings.model} → Agent；尚未自动切换当前配置`
       : settings.adapter === "api"
       ? `${payload.message}${!modelCatalogChecked ? "；实时模型目录未确认，当前配置暂不能用于正式生成" : !selectedModelVisible ? `；所选模型 ${settings.model} 未在实时目录中确认，当前配置暂不能用于正式生成` : ""}；API Key 与连接配置已由系统安全保存`
       : `${payload.message}；连接配置已自动保存`;

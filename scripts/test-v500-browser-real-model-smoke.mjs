@@ -40,7 +40,7 @@ const workspacePath = workspacePaths.project;
 const settings = { ...settingsTemplate, workspacePath };
 const prompt = "只生成一段临时玄幻小说测试文字，不要写入、保存或落盘。内容约 180 至 260 个汉字，必须有场景、人物对白和一个明确转折。";
 const requestId = `v500-browser-smoke-${Date.now()}`;
-const response = await request("/api/chat", {
+const response = await request("/api/conversation-agent/start", {
   settings,
   workspaceKind: "project",
   messages: [{ id: requestId, role: "user", content: prompt }],

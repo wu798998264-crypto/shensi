@@ -17,7 +17,7 @@ export const createTaskPacket = ({
   branchId = "",
   threadScopeId = "",
   executionOwner = "",
-  executionSurface = "",
+  executionSurface = "agent",
   referenceContext = {},
   messageCount = 0,
 } = {}) => ({

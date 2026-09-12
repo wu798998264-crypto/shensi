@@ -1808,18 +1808,6 @@ export const testModelAdapter = async ({ settings, cwd }) => {
         reasoningEffort: settings.reasoningEffort,
         timeoutMs: settings.timeoutMs,
       });
-      const executionModes = Array.isArray(settings.executionModes) ? settings.executionModes : [];
-      const requiresApiChatTest = settings.credentialSource === "shensi" && executionModes.includes("chat");
-      const chatTest = requiresApiChatTest ? await testModelAdapter({
-        settings: {
-          ...settings,
-          adapter: "api",
-          model: String(settings.chatModelId || settings.model || "").split("/").slice(1).join("/"),
-          cliPath: "",
-          cliArgs: "",
-        },
-        cwd,
-      }) : null;
       return {
         ok: true,
         connected: true,
@@ -1829,9 +1817,8 @@ export const testModelAdapter = async ({ settings, cwd }) => {
         actualProvider: inference.provider,
         actualModel: inference.model,
         providerModelReported: inference.providerModelReported === true,
-        chatVerified: chatTest?.testLevel === "real_inference",
         agentVerified: true,
-        message: `${requiresApiChatTest ? `${settings.provider} API Chat 与 ` : ""}OpenCode Agent 真实推理成功：${inference.model}`,
+        message: `OpenCode Agent 真实推理成功：${inference.model}`,
       };
     }
     if (settings.imageChannel === true && settings.cliPath === OPENAI_IMAGE_CLI_ALIAS) {

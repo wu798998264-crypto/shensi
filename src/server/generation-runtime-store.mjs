@@ -24,7 +24,7 @@ const EXTERNAL_CLI_AGENT_ENGINES = new Set(["trae_work", "workbuddy", "custom"])
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{1,119}$/i;
 const PROFILE_RUNTIME_IDENTITY_FIELDS = Object.freeze([
   "adapter", "provider", "protocol", "baseUrl", "model", "apiKey", "cliPath", "cliArgs",
-  "agentEngine", "agentModelId", "chatModelId", "credentialSource", "dreaminaCliProfile",
+  "agentEngine", "agentModelId", "credentialSource", "dreaminaCliProfile",
 ]);
 const STORE_SCHEMA_VERSION = 1;
 let writeQueue = Promise.resolve();
@@ -66,7 +66,7 @@ const comparableCliPath = (value) => {
   return /^[a-z]:\\/iu.test(normalized) ? normalized.toLocaleLowerCase() : normalized;
 };
 
-const assertCandidateMatchesStoredBinding = ({ candidate = {}, explicitFields = new Set(), binding, chatProjection = false }) => {
+const assertCandidateMatchesStoredBinding = ({ candidate = {}, explicitFields = new Set(), binding }) => {
   const mismatch = (label) => {
     throw runtimeError(`当前配置的${label}已变化，请在设置中重新确认后再生成`, "LOCAL_RUNTIME_BINDING_REQUIRED", 409);
   };
@@ -82,12 +82,6 @@ const assertCandidateMatchesStoredBinding = ({ candidate = {}, explicitFields = 
     && (!validDreaminaCliProfileId(candidate.dreaminaCliProfile)
       || !validDreaminaCliProfileId(binding.dreaminaCliProfile)
       || normalizeDreaminaCliProfileId(candidate.dreaminaCliProfile) !== normalizeDreaminaCliProfileId(binding.dreaminaCliProfile))) mismatch("即梦账号");
-  if (!chatProjection) return;
-  if (binding.chatAdapter !== "api") mismatch("Chat 运行方式");
-  if (explicitFields.has("protocol")
-    && text(candidate.protocol, 80) !== text(binding.chatProtocol, 80)) mismatch("Chat 协议");
-  if (explicitFields.has("baseUrl")
-    && comparableCredentialEndpoint(candidate.baseUrl) !== comparableCredentialEndpoint(binding.chatBaseUrl)) mismatch("Chat 服务地址");
 };
 
 const credentialRecordKey = (channel, profileId) => transientCredentialKey(channel, profileId);
@@ -240,9 +234,6 @@ const normalizeBinding = (value = {}) => {
   const baseUrl = validateBaseUrl(value.baseUrl);
   const cliPath = text(value.cliPath, 2_048);
   const cliArgs = text(value.cliArgs, 16_384);
-  const chatAdapter = value.chatAdapter === "api" ? "api" : "";
-  const chatProtocol = text(value.chatProtocol, 80);
-  const chatBaseUrl = validateBaseUrl(value.chatBaseUrl);
   const inferredDreaminaCliProfile = /(?:^|[-_.])xiaoyujie(?:$|[-_.])/i.test(profileId)
     ? "xiaoyujie"
     : /(?:^|[-_.])guobazai(?:$|[-_.])/i.test(profileId)
@@ -268,7 +259,6 @@ const normalizeBinding = (value = {}) => {
   if (adapter === "api" && !baseUrl && getProviderPreset(provider).custom) throw runtimeError("自定义 API 绑定缺少服务地址");
   if (adapter === "cli" && !cliPath) throw runtimeError("CLI 绑定缺少程序路径");
   if (externalCliAgent && agentEngine === "custom" && !cliArgs) throw runtimeError("自定义运行器绑定缺少参数模板");
-  if (chatAdapter && (!chatProtocol || !chatBaseUrl)) throw runtimeError("双处理器 Chat 绑定缺少协议或服务地址");
   return {
     channel,
     profileId,
@@ -280,9 +270,6 @@ const normalizeBinding = (value = {}) => {
     cliPath,
     cliArgs,
     ...(dreaminaCliProfile ? { dreaminaCliProfile } : {}),
-    chatAdapter,
-    chatProtocol,
-    chatBaseUrl,
   };
 };
 
@@ -403,11 +390,9 @@ const requestedProfile = (settings = {}, channel, route = "") => {
         ? { list: "videoConnections", active: "activeVideoConnectionId" }
         : { list: "audioConnections", active: "activeAudioConnectionId" };
   const profiles = Array.isArray(settings[names.list]) ? settings[names.list] : [];
-  const routedActive = channel === "text" && route === "chat"
-    ? settings.activeTextChatConnectionId
-    : channel === "text" && route === "agent"
-      ? settings.activeTextAgentConnectionId
-      : settings[names.active];
+  const routedActive = channel === "text"
+    ? settings.activeTextAgentConnectionId || settings.activeTextConnectionId
+    : settings[names.active];
   // A complete registry is authoritative: its active channel/surface selection
   // must outrank stale top-level fields projected by another picker. A compact
   // job/profile snapshot has no registry and therefore uses its explicit id.
@@ -515,13 +500,13 @@ const withDreaminaRuntimeIdentity = (settings = {}) => {
   };
 };
 
-const isBuiltInGptChatCli = ({ channel, settings }) => {
+const isBuiltInCodexAgentCli = ({ channel, settings }) => {
   if (channel !== "text" || settings.adapter !== "cli" || settings.provider !== "OpenAI") return false;
   const executable = basename(String(settings.cliPath || "codex")).toLowerCase();
   return !settings.cliPath || /^codex(?:\.(?:exe|cmd|ps1))?$/.test(executable);
 };
 
-const resolveBuiltInGptChatBinding = async ({
+const resolveBuiltInCodexAgentBinding = async ({
   profileId,
   settings,
   resolveLaunch = resolveLocalCodexLaunch,
@@ -529,7 +514,7 @@ const resolveBuiltInGptChatBinding = async ({
 } = {}) => {
   const launch = await resolveLaunch();
   const executable = text(launch?.executable, 2_048);
-  if (!executable) throw runtimeError("没有检测到可用于 GPT Chat 的本机 Codex CLI", "LOCAL_CODEX_CLI_REQUIRED", 409);
+  if (!executable) throw runtimeError("没有检测到可用于 Codex Agent 的本机 CLI", "LOCAL_CODEX_CLI_REQUIRED", 409);
   if (isAbsolute(executable)) await access(executable);
   const prefix = (Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [])
     .map(quoteCliTemplateArg)
@@ -571,9 +556,10 @@ export const resolveTrustedGenerationSettings = async ({
       apiKey: "",
       cliPath: "",
       cliArgs: "",
-      executionMode: "chat",
-      executionModes: ["chat"],
-      agentEngine: "",
+      executionMode: "agent",
+      executionModes: ["agent"],
+      agentEngine: "codex_api",
+      agentModelId: requested.settings.model || publicPreset.api.model,
     };
   }
   if (channel === "text" && requested.profileId === "text-public-agent") {
@@ -594,7 +580,6 @@ export const resolveTrustedGenerationSettings = async ({
       agentEngine: "codex_api",
       credentialSource: "public",
       agentModelId: requested.settings.model,
-      chatModelId: "",
     };
   }
   const candidateApiKey = text(requested.settings.apiKey, 16_384)
@@ -631,8 +616,8 @@ export const resolveTrustedGenerationSettings = async ({
     };
   }
 
-  if (isBuiltInGptChatCli({ channel, settings: candidate })) {
-    const binding = await resolveBuiltInGptChatBinding({
+  if (isBuiltInCodexAgentCli({ channel, settings: candidate })) {
+    const binding = await resolveBuiltInCodexAgentBinding({
       profileId: requested.profileId,
       settings: candidate,
       resolveLaunch: resolveCodexLaunch,
@@ -682,16 +667,11 @@ export const resolveTrustedGenerationSettings = async ({
     profileId: requested.profileId,
     persistBindings,
   });
-  const chatProjection = route === "chat"
-    && candidate.agentEngine === "opencode"
-    && candidate.credentialSource === "shensi"
-    && (Array.isArray(candidate.executionModes) ? candidate.executionModes : []).includes("chat");
   if (storedBinding) {
     assertCandidateMatchesStoredBinding({
       candidate,
       explicitFields: requested.explicitRuntimeFields,
       binding: storedBinding,
-      chatProjection,
     });
   }
   const recovery = storedBinding ? await recoverStaleCodexBinding({ binding: storedBinding }) : null;
@@ -705,29 +685,18 @@ export const resolveTrustedGenerationSettings = async ({
       ? transientGenerationCredential(channel, requested.profileId)
         || transientGenerationCredentialForSettings(channel, requested.profileId, { ...candidate, ...binding })
       : "";
-    if (chatProjection && binding.chatAdapter !== "api") {
-      throw runtimeError("此 OpenCode 连接尚未完成 API Chat 双处理器授权，请重新运行真实连接测试", "LOCAL_RUNTIME_BINDING_REQUIRED", 409);
-    }
     return withoutDreaminaIdentity({
       ...candidate,
       ...(bindingCredential ? { apiKey: bindingCredential } : {}),
       id: requested.profileId,
       connectionId: requested.profileId,
-      adapter: chatProjection ? binding.chatAdapter : binding.adapter,
-      ...(chatProjection ? {
-        executionMode: "chat",
-        executionModes: ["chat"],
-        agentEngine: "",
-        agentModelId: "",
-      } : {}),
+      adapter: binding.adapter,
       provider: binding.provider,
-      protocol: chatProjection ? binding.chatProtocol : binding.protocol,
-      baseUrl: chatProjection ? binding.chatBaseUrl : binding.baseUrl,
-      model: chatProjection
-        ? text(candidate.chatModelId || String(candidate.model || "").split("/").slice(1).join("/"), 240)
-        : candidate.model,
-      cliPath: chatProjection ? "" : binding.cliPath,
-      cliArgs: chatProjection ? "" : binding.cliArgs,
+      protocol: binding.protocol,
+      baseUrl: binding.baseUrl,
+      model: candidate.model,
+      cliPath: binding.cliPath,
+      cliArgs: binding.cliArgs,
       dreaminaCliProfile: binding.dreaminaCliProfile,
     });
   }

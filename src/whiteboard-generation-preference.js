@@ -18,7 +18,7 @@ const CHANNEL_FIELDS = Object.freeze({
 
 const normalizedValue = (field, value) => {
   const current = String(value ?? "").trim().slice(0, 300);
-  if (field === "executionSurface") return ["chat", "agent"].includes(current) ? current : "";
+  if (field === "executionSurface") return "agent";
   if (["speedMode", "agentSpeedMode"].includes(field)) return ["default", "fast", "flex"].includes(current) ? current : "default";
   return current;
 };

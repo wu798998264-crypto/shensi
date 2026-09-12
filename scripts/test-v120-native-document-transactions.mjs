@@ -14,7 +14,7 @@ import { bindFormalWriteCandidate, createFormalWriteAuthorization } from "../src
 import { isNonDeliverableCandidate } from "../src/server/shensi-orchestrator.mjs";
 import { loadWorkspaceState, saveWorkspaceState } from "../src/server/workspace.mjs";
 
-const authorizedTransactionTask = ({ operations, label, executionSurface = "chat", operation = "batch", action = "create" }) => {
+const authorizedTransactionTask = ({ operations, label, executionSurface = "agent", operation = "batch", action = "create" }) => {
   const instruction = `执行${label}正式文档事务`;
   const targetDocumentIds = operations.map((item) => item.targetDocumentId);
   const expectedRevisions = Object.fromEntries(targetDocumentIds.map((id) => [id, ""]));
@@ -36,13 +36,13 @@ const authorizedTransactionTask = ({ operations, label, executionSurface = "chat
 const task = buildUnifiedCreativeTask({
   taskId: "task-huanjin-1",
   instruction: "将《幻烬》第一章小说改编为剧本并落盘到新文档《第一集》",
-  executionSurface: "chat",
+  executionSurface: "agent",
   source: { workId: "幻烬", documentIds: ["novel-1"], contentType: "novel", chapter: 1 },
   context: { associatedDocumentId: "novel-1", activeDocumentId: "scratch", referenceDocumentIds: ["canon-1"] },
   target: { workId: "幻烬", documentId: "script-1", contentType: "script", requestedTitle: "第一集", forceCreateNew: true },
   operation: "transform",
 });
-assert.equal(task.executionSurface, "chat");
+assert.equal(task.executionSurface, "agent");
 assert.deepEqual(task.source.documentIds, ["novel-1"]);
 assert.equal(task.target.documentId, "script-1");
 assert.notEqual(task.source.documentIds[0], task.target.documentId);

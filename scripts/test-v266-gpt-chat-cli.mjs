@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import { applyGenerationRuntimeBindings, normalizeGenerationProfiles } from "../src/generation-profiles.js";
-import { CODEX_AGENT_MODE_LABEL, CODEX_CHAT_MODE_LABEL, SETTINGS_BOTH_MODE_LABEL } from "../src/codex-local-entry-policy.js";
+import { CODEX_AGENT_MODE_LABEL } from "../src/codex-local-entry-policy.js";
 import { resolveTrustedGenerationSettings } from "../src/server/generation-runtime-store.mjs";
 
-assert.equal(CODEX_CHAT_MODE_LABEL, "Chat（快速问答、讨论与单次写作）");
 assert.equal(CODEX_AGENT_MODE_LABEL, "Agent（复杂任务、工具调用与多步执行）");
-assert.equal(SETTINGS_BOTH_MODE_LABEL, "Chat 与 Agent（同一配置兼备两种运行模式）");
 
 const migrated = normalizeGenerationProfiles({
   activeTextConnectionId: "text-default",
@@ -52,7 +50,6 @@ assert.deepEqual(preservedApi.unknownExtension, { preserved: true });
 assert.equal(separateCodex.adapter, "cli");
 assert.equal(separateCodex.agentEngine, "codex");
 assert.equal(apiDefaultCollision.activeTextConnectionId, "text-default");
-assert.equal(apiDefaultCollision.activeTextChatConnectionId, "text-default");
 
 const collapsedCodex = normalizeGenerationProfiles({
   activeTextConnectionId: "text-openai-codex-cli",
@@ -87,7 +84,6 @@ const collapsedCodex = normalizeGenerationProfiles({
 });
 assert.equal(collapsedCodex.textConnections.filter((profile) => profile.adapter === "cli" && profile.agentEngine === "codex").length, 1);
 assert.equal(collapsedCodex.activeTextConnectionId, "text-default");
-assert.equal(collapsedCodex.activeTextChatConnectionId, "text-default");
 assert.equal(collapsedCodex.activeTextAgentConnectionId, "text-default");
 
 const reboundCodex = applyGenerationRuntimeBindings(collapsedCodex, {

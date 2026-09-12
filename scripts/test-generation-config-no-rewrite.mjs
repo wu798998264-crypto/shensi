@@ -41,7 +41,6 @@ const activationBaseline = normalizeGenerationProfiles({
 });
 const activated = activateGenerationProfile(activationBaseline, "text", aggregateProfile.id);
 assert.equal(activated.activeTextConnectionId, aggregateProfile.id);
-assert.equal(activated.activeTextChatConnectionId, aggregateProfile.id);
 assert.equal(activated.activeTextAgentConnectionId, aggregateProfile.id);
 assert.equal(activated.provider, aggregateProfile.provider);
 assert.equal(activated.model, aggregateProfile.model);
@@ -53,6 +52,5 @@ const createdAndActivated = upsertGenerationProfile(activationBaseline, "text", 
   id: "new-aggregate-api",
 }, { activate: true });
 assert.equal(createdAndActivated.activeTextConnectionId, "new-aggregate-api");
-assert.equal(createdAndActivated.activeTextChatConnectionId, "new-aggregate-api");
 assert.equal(createdAndActivated.activeTextAgentConnectionId, "new-aggregate-api");
 console.log("Generation config no-rewrite preservation tests passed");

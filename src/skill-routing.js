@@ -428,7 +428,7 @@ export const resolveSkillRuntime = ({
   });
 };
 
-export const withChatModelCapabilityFallback = (runtime = {}, { executionSurface = "chat" } = {}) => {
+export const withModelCapabilityFallback = (runtime = {}, { executionSurface = "agent" } = {}) => {
   const blocking = unique(runtime.blockingTemplateCapabilities ?? []);
   const unresolved = unique((runtime.compiledCapabilityPlan?.capabilityStatus ?? [])
     .filter((item) => !["template_declared_active", "slot_implementation_invalid_official_fallback", "model_runtime_fallback"].includes(item.status))
@@ -439,8 +439,8 @@ export const withChatModelCapabilityFallback = (runtime = {}, { executionSurface
     ...(runtime.invalidTemplateCapabilities ?? []),
     ...unresolved,
   ]);
-  const surface = executionSurface === "agent" ? "agent" : "chat";
-  const surfaceLabel = surface === "agent" ? "Agent" : "Chat";
+  const surface = "agent";
+  const surfaceLabel = "Agent";
   if (!fallbackCapabilities.length) return { ...runtime, modelNativeAssistance: true, modelAssistanceSurface: surface };
   const fallbackSet = new Set(fallbackCapabilities);
   const compiledCapabilityPlan = runtime.compiledCapabilityPlan ? {
@@ -472,6 +472,7 @@ export const withChatModelCapabilityFallback = (runtime = {}, { executionSurface
     compiledCapabilityPlan,
   };
 };
+
 
 const publicSkill = (skill) => skill ? {
   id: skill.id,
@@ -524,7 +525,7 @@ export const skillRuntimePublicSummary = (runtime = {}) => ({
   blockingTemplateCapabilities: runtime.blockingTemplateCapabilities ?? [],
   modelFallbackCapabilities: runtime.modelFallbackCapabilities ?? [],
   modelNativeAssistance: runtime.modelNativeAssistance === true,
-  modelAssistanceSurface: runtime.modelAssistanceSurface === "agent" ? "agent" : "chat",
+  modelAssistanceSurface: "agent",
   blockedCapabilities: runtime.blockedCapabilities ?? [],
   routeTopology: runtime.routeTopology ? {
     schemaVersion: runtime.routeTopology.schemaVersion,
@@ -748,7 +749,7 @@ export const skillPromptForStage = (runtime = {}, stage = "creative") => {
     }
   }
   const activeSections = sections.filter(Boolean);
-  const modelSurfaceLabel = current.modelAssistanceSurface === "agent" ? "Agent" : "Chat";
+  const modelSurfaceLabel = "Agent";
   if (current.modelNativeAssistance && stage !== "creative") activeSections.push([
     `## ${modelSurfaceLabel} 大模型临时协同`,
     "允许当前所选大模型在本轮使用自身的推理、知识组织、创意和表达能力，补充神思职责与模板 Skill 的执行效果。",

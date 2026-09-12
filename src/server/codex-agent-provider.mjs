@@ -473,7 +473,6 @@ const classifyApproval = (method, params = {}) => {
 
 const defaultState = () => ({
   schemaVersion: STATE_SCHEMA_VERSION,
-  activeProvider: "gpt_cli",
   agentEngine: "codex",
   agentPermissionMode: "shensi_only",
   agentModel: "",
@@ -865,7 +864,7 @@ export class CodexAgentProvider {
     const lastRun = terminalRuns[0] || null;
     return {
       ok: true,
-      provider: this.state.activeProvider,
+      provider: "codex_agent",
       agentEngine,
       agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : agentEngine === "trae_work" ? "Trae Work Agent" : agentEngine === "workbuddy" ? "WorkBuddy Agent" : agentEngine === "custom" ? "自定义运行器 Agent" : codexApiEngine ? "内置 Agent" : "Codex Agent",
       permissionMode,
@@ -1010,13 +1009,6 @@ export class CodexAgentProvider {
       sources: Array.isArray(run.sources) ? run.sources : [],
       workspaceToolCalls: Array.isArray(run.workspaceToolCalls) ? run.workspaceToolCalls : [],
     };
-  }
-
-  async setProvider(provider) {
-    if (!["gpt_cli", "codex_agent"].includes(provider)) throw new Error("不支持的对话 Provider");
-    this.state.activeProvider = provider;
-    await this.persistState();
-    return this.status();
   }
 
   async setAgentEngine(engine) {

@@ -29,25 +29,24 @@ const credentialSourceForProfile = (profile = {}, engine = "", surface = "") => 
   return "shensi";
 };
 
-const modelForSurface = (profile = {}, surface = "chat", engine = "") => {
+const modelForSurface = (profile = {}, surface = "agent", engine = "") => {
   return text(profile.agentModelId || profile.model);
 };
 
-const runnerForSurface = (profile = {}, surface = "chat", engine = "") => {
+const runnerForSurface = (profile = {}, surface = "agent", engine = "") => {
   if (engine === "codex_api" && profile.adapter === "api") return "codex_api_agent";
   return engine || "";
 };
 
-export const runtimeContractForProfile = ({ profile = null, surface = "chat" } = {}) => {
+export const runtimeContractForProfile = ({ profile = null, surface = "agent" } = {}) => {
   const requestedSurface = "agent";
-  const legacyRequestedSurface = text(surface) === "chat" ? "chat" : "agent";
   const profileId = text(profile?.id || profile?.connectionId);
   if (!profile || !profileId) return failed({ code: "RUNTIME_PROFILE_REQUIRED", message: "没有选择有效的文字模型配置", surface: requestedSurface });
   const supportedSurfaces = uniqueModes(profile);
   if (!supportedSurfaces.includes(requestedSurface)) {
     return failed({
       code: "RUNTIME_SURFACE_UNSUPPORTED",
-      message: `配置 ${profileId} 不支持 ${requestedSurface === "agent" ? "Agent" : "Chat"} 模式`,
+      message: `配置 ${profileId} 不支持 Agent 模式`,
       profileId,
       surface: requestedSurface,
       supportedSurfaces,
@@ -62,7 +61,6 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
   const base = {
     profileId,
     surface: requestedSurface,
-    legacyRequestedSurface,
     supportedSurfaces,
     provider,
     adapter: text(profile.adapter),
@@ -112,7 +110,7 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
   return { ok: true, code: "", message: "", ...base };
 };
 
-export const effectiveRuntimeContract = ({ settings = {}, surface = "chat", profileId = "" } = {}) => {
+export const effectiveRuntimeContract = ({ settings = {}, surface = "agent", profileId = "" } = {}) => {
   const requestedSurface = "agent";
   const profiles = Array.isArray(settings.textConnections) ? settings.textConnections : [];
   const requestedId = text(profileId)

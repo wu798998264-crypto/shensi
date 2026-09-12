@@ -1,8 +1,6 @@
 export const DETECTED_CODEX_CONNECTION_ID = "__detected_codex_cli__";
-export const DETECTED_CODEX_CONNECTION_LABEL = "GPT Chat · Codex CLI（本机已检测）";
-export const CODEX_CHAT_MODE_LABEL = "Chat（快速问答、讨论与单次写作）";
+export const DETECTED_CODEX_CONNECTION_LABEL = "Codex CLI Agent（本机已检测）";
 export const CODEX_AGENT_MODE_LABEL = "Agent（复杂任务、工具调用与多步执行）";
-export const SETTINGS_BOTH_MODE_LABEL = "Chat 与 Agent（同一配置兼备两种运行模式）";
 
 const codexExecutableName = (value = "") => String(value || "").split(/[\\/]/u).at(-1) || "";
 
@@ -50,8 +48,8 @@ export const detectedCodexTemporaryOption = (capability = {}) => ({
   adapter: "cli",
   agentEngine: "codex",
   credentialSource: "codex_session",
-  executionMode: "both",
-  executionModes: ["chat", "agent"],
+  executionMode: "agent",
+  executionModes: ["agent"],
   model: String(capability.defaultModel || capability.models?.[0]?.slug || ""),
   cliPath: String(capability.cliPath || ""),
   cliArgs: String(capability.cliArgs || ""),
@@ -76,7 +74,6 @@ export const materializeDetectedCodexProfile = (settings = {}, capability = {}, 
       settings: activate ? {
         ...settings,
         activeTextConnectionId: existing.id,
-        activeTextChatConnectionId: existing.id,
         activeTextAgentConnectionId: existing.id,
       } : settings,
     };
@@ -90,7 +87,7 @@ export const materializeDetectedCodexProfile = (settings = {}, capability = {}, 
   const id = availableCodexProfileId(profiles);
   const profile = {
     id,
-    name: "GPT Chat · Codex CLI",
+    name: "Codex CLI Agent",
     remarkName: "",
     provider: "OpenAI",
     adapter: "cli",
@@ -105,8 +102,8 @@ export const materializeDetectedCodexProfile = (settings = {}, capability = {}, 
     cliPath: String(capability.cliPath || ""),
     cliArgs: String(capability.cliArgs || ""),
     apiKey: "",
-    executionMode: "both",
-    executionModes: ["chat", "agent"],
+    executionMode: "agent",
+    executionModes: ["agent"],
     agentEngine: "codex",
     credentialSource: "codex_session",
     agentModelId: String(modelOption?.slug || capability.defaultModel || ""),
@@ -123,7 +120,6 @@ export const materializeDetectedCodexProfile = (settings = {}, capability = {}, 
       disabledBuiltInTextProfileIds,
       ...(activate ? {
         activeTextConnectionId: profile.id,
-        activeTextChatConnectionId: profile.id,
         activeTextAgentConnectionId: profile.id,
       } : {}),
     },

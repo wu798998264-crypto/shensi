@@ -59,7 +59,7 @@ for (const surface of ["chat", "agent"]) {
     operation: "batch",
     qualityPolicy: { selfCheckRequested: false, fullRewriteRequested: false },
   };
-  const invokeModel = (messages, activeRequestId) => request("/api/chat", {
+  const invokeModel = (messages, activeRequestId) => request("/api/agent/execute", {
     settings,
     workspaceKind: "project",
     messages,

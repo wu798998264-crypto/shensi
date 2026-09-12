@@ -31,7 +31,7 @@ const historicalPrompt = historicalConversationReferencePrompt({
   assistantMessages: [{ id: "wugang-old-result", role: "assistant", candidate: priorText, content: priorText }],
 }, currentRequest);
 const requestId = `v260-cross-ui-${Date.now()}`;
-const response = await request("/api/chat", {
+const response = await request("/api/conversation-agent/start", {
   settings,
   workspaceKind: "project",
   messages: [{ role: "user", content: historicalPrompt }],

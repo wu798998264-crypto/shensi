@@ -83,7 +83,7 @@ const invoke = async ({ surface, prompt, requestId, messages = null, projectCont
     operation: "batch",
     qualityPolicy: { selfCheckRequested: false, fullRewriteRequested: false },
   };
-  return request("/api/chat", {
+  return request("/api/conversation-agent/start", {
     settings,
     workspaceKind: "project",
     messages: messages || [{ role: "user", content: prompt }],

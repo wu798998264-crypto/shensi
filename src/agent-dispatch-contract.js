@@ -7,9 +7,9 @@ const SHENSI_ORCHESTRATED_MODES = new Set([
   "quick_revision",
 ]);
 
-export const compileAgentDispatchContract = (route = {}, { executionSurface = "chat" } = {}) => {
+export const compileAgentDispatchContract = (route = {}, { executionSurface = "agent" } = {}) => {
   const mode = String(route.mode || route.recommendedMode || "general");
-  const surface = executionSurface === "agent" ? "agent" : "chat";
+  const surface = "agent";
   const shensiOrchestrated = route.shensiLed === true && SHENSI_ORCHESTRATED_MODES.has(mode);
   const executionOwner = shensiOrchestrated
     ? "shensi_orchestrator"
@@ -17,7 +17,7 @@ export const compileAgentDispatchContract = (route = {}, { executionSurface = "c
       ? "shensi_workspace_controller"
       : surface === "agent"
         ? "workspace_agent"
-        : "chat_model";
+        : "workspace_agent";
   const commitDisposition = String(route.commitDisposition || route.taskPolicy?.commitDisposition || "no_artifact");
   const commitOwner = String(route.commitOwner || route.taskPolicy?.commitOwner || "none");
   const landingPolicy = commitOwner === "shensi_transaction"
@@ -41,7 +41,7 @@ export const compileAgentDispatchContract = (route = {}, { executionSurface = "c
       ? "transaction_result"
       : executionOwner === "shensi_orchestrator"
         ? "orchestrator_terminal_state"
-        : "model_response";
+      : "runtime_terminal_state";
 
   return {
     dispatchProtocol: SHENSI_AGENT_DISPATCH_PROTOCOL,

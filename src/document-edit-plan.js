@@ -107,7 +107,7 @@ export const inferContextualInsertionEditPlan = ({
   currentContent = "",
   candidateContent = "",
   selectedText = "",
-  executionSurface = "chat",
+  executionSurface = "agent",
   requestId = "",
   baselineRevision = "",
 } = {}) => {
@@ -146,7 +146,7 @@ export const inferContextualReplacementEditPlan = ({
   currentContent = "",
   candidateContent = "",
   selectedText = "",
-  executionSurface = "chat",
+  executionSurface = "agent",
   requestId = "",
   baselineRevision = "",
 } = {}) => {
@@ -233,7 +233,7 @@ export const normalizeDocumentEditPlan = (plan = {}, defaults = {}) => {
     schemaVersion: 1,
     requestId: clean(plan.requestId || defaults.requestId),
     taskId: clean(plan.taskId || defaults.taskId || plan.requestId || defaults.requestId),
-    executionSurface: (plan.executionSurface || defaults.executionSurface) === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
     targetDocumentId: clean(plan.targetDocumentId || defaults.targetDocumentId),
     baselineRevision: clean(plan.baselineRevision || defaults.baselineRevision),
     mode,
@@ -288,7 +288,7 @@ export const inferExactReplacementEditPlan = ({
   instruction = "",
   targetDocumentId = "",
   currentContent = "",
-  executionSurface = "chat",
+  executionSurface = "agent",
   requestId = "",
   baselineRevision = "",
 } = {}) => {

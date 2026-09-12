@@ -1,4 +1,3 @@
-import { classifyRequestMode, creativeDeliverableType } from "./request-routing.js";
 import { CREATIVE_GUIDANCE_CAPABILITIES } from "./skill-reference.js";
 import {
   normalizeSemanticSkillCapabilities,
@@ -69,15 +68,14 @@ export const planWhiteboardSkillRoute = ({
         shensiLed: semanticMetadata.requestMode !== "general",
         ...(semanticMetadata.deliverableType ? { deliverableType: semanticMetadata.deliverableType } : {}),
       }
-    : classifyRequestMode({
-        text,
-        workspaceKind: workspaceKind === "notebook" ? "notebook" : "project",
-        targetModuleId: "library",
-        hasResources: hasResources === true,
-      });
+    : {
+        mode: forceGuidance ? "creative_guidance" : "general",
+        reason: "未提供结构化 Agent 路由，等待 Agent 依据当前任务和 Skill 面板决定",
+        shensiLed: forceGuidance,
+      };
   const deliverableType = structuredDecision?.deliverableType
     || semanticMetadata?.deliverableType
-    || (structuredDecision || semanticMetadata ? "" : route.deliverableType || creativeDeliverableType({ text }));
+    || route.deliverableType || "";
   const workspaceMode = NOTEBOOK_DELIVERABLES.has(deliverableType)
     ? "notebook"
     : PROJECT_DELIVERABLES.has(deliverableType)

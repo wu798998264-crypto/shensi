@@ -478,7 +478,7 @@ runtime.close();
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(appSource, /<option value="codex_api">内置 Agent<\/option>/u, "模型设置必须保留内置 Agent 选项");
 assert.match(appSource, /<label>文字配置<select id="quickAgentEngine">/u, "对话区必须显示统一文字配置入口");
-assert.match(appSource, /<select id="chatProviderSelect" hidden aria-hidden="true"><option value="codex_agent" selected>/u, "对话执行入口必须固定为统一 Agent");
+assert.doesNotMatch(appSource, /chatProviderSelect/u, "旧 Chat Provider 字段必须删除");
 assert.match(appSource, /<select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>/u, "文字配置设置必须默认 Agent-only");
 assert.doesNotMatch(appSource, /<option value="codex_api">Codex API<\/option>/u, "UI 不得残留旧运行器名称");
 assert.doesNotMatch(appSource, /patch\.provider = isCodexApiCompatibleProvider\(patch\.provider\) \? patch\.provider : "OpenAI";/u);

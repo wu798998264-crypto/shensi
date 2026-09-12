@@ -19,7 +19,7 @@ const plan = inferExactReplacementEditPlan({
   instruction: "把林夏改成林雪。",
   targetDocumentId: "chapter-1",
   currentContent: original,
-  executionSurface: "chat",
+  executionSurface: "agent",
   requestId: "request-local-rename",
 });
 assert.equal(plan.mode, "patch");
@@ -108,7 +108,7 @@ assert.match(styles, /\.history-diff-added[\s\S]*?background: rgba\(34, 197, 94,
 const tempRoot = await mkdtemp(join(tmpdir(), "shensi-v231-patch-"));
 try {
   const appRoot = join(tempRoot, "app");
-  for (const surface of ["chat", "agent"]) {
+  for (const surface of ["agent"]) {
     const workspacePath = join(appRoot, "runtime", surface);
     const state = createBlankProjectState(surface);
     state.documents["chapter-1"] = { title: "第一章", markdown: original, html: `<p>${original}</p>`, moduleId: "manuscript" };

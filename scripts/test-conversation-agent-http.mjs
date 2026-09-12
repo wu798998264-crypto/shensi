@@ -63,8 +63,8 @@ try {
   assert.equal(focused.state.settings,undefined);
   assert.equal(focused.state.conversations,undefined);
   const retired = await fetch(origin + "/api/chat", { method: "POST", headers, body: JSON.stringify({ messages: request.messages }) });
-  assert.equal(retired.status, 410);
-  console.log("HTTP end-to-end: original task -> bundled Codex -> mock upstream -> protected document transaction -> durable status; duplicate start and retired Chat endpoint passed");
+  assert.equal(retired.status, 404);
+  console.log("HTTP end-to-end: Agent task -> bundled Codex -> mock upstream -> protected document transaction -> durable status; duplicate start and retired legacy endpoint passed");
 } finally {
   if (child && child.exitCode === null) { child.kill(); await Promise.race([once(child, "exit"), new Promise((done) => setTimeout(done, 2000))]); }
   upstream.closeAllConnections(); await new Promise((done) => upstream.close(done));

@@ -136,7 +136,7 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
       resourceId: documentId,
       resourceType: existing.kind === "canvas" ? "whiteboard" : "document",
       parentVersionId,
-      source: task?.executionSurface === "agent" ? "agent" : "chat",
+      source: "agent",
       operation: type,
       content: previousContent,
       title: existing.title || "",
@@ -280,7 +280,7 @@ export const executeDocumentTransaction = async ({
 } = {}) => {
   const requested = Array.isArray(operations) ? operations : [];
   if (!requested.length) throw new Error("DocumentTransaction 缺少操作");
-  if (["chat", "agent"].includes(task?.executionSurface) && commitMode !== "atomic") {
+  if (task?.executionSurface === "agent" && commitMode !== "atomic") {
     throw Object.assign(new Error("AI 正文批量写入只允许原子提交"), { code: "DOCUMENT_TRANSACTION_ATOMIC_REQUIRED" });
   }
   const requestedDocumentIds = requested.map((operation) => clean(operation.targetDocumentId));

@@ -61,7 +61,7 @@ export const buildUnifiedCreativeTask = ({
   acceptanceCriteria = [],
   taskContract = null,
   sourceMessageId = "",
-  executionSurface = "chat",
+  executionSurface = "agent",
   source = {},
   context = {},
   target = {},
@@ -129,7 +129,7 @@ export const buildUnifiedCreativeTask = ({
     schemaVersion: 1,
     taskId: text(taskId) || `creative-${Date.now().toString(36)}`,
     instruction: prompt,
-    executionSurface: executionSurface === "agent" ? "agent" : "chat",
+    executionSurface: "agent",
     source: {
       workId: text(source.workId),
       documentIds: list(source.documentIds ?? source.documentId),

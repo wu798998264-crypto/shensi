@@ -62,9 +62,6 @@ assert.deepEqual(
     baseUrl: endpoint,
     cliPath: "",
     cliArgs: "",
-    chatAdapter: "",
-    chatProtocol: "",
-    chatBaseUrl: "",
   },
   "迁移后的绑定必须是纯 API 绑定，不得保留即梦 CLI 身份",
 );

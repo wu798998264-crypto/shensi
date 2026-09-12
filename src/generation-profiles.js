@@ -58,7 +58,6 @@ const DEFAULTS = {
     executionModes: ["agent"],
     agentEngine: "codex_api",
     agentModelId: "gpt-5.6-sol",
-    chatModelId: "",
     credentialSource: "shensi",
     runtimeProfileId: "",
     runtimeConfigPath: "",
@@ -106,7 +105,7 @@ const DEFAULTS = {
   },
 };
 
-const BUILT_IN_GPT_CHAT_CLI = {
+const BUILT_IN_CODEX_AGENT_CLI = {
   id: "text-default",
   name: "GPT Agent · Codex CLI",
   adapter: "cli",
@@ -150,7 +149,6 @@ const BUILT_IN_PUBLIC_TEXT_PROFILE = {
   executionModes: ["agent"],
   agentEngine: "codex_api",
   agentModelId: PUBLIC_TEXT_PROVIDER_PRESET.api.model,
-  chatModelId: "",
   credentialSource: "public",
 };
 
@@ -165,7 +163,6 @@ const BUILT_IN_PUBLIC_AGENT_PROFILE = {
   baseUrl: PUBLIC_TEXT_PROVIDER_PRESET.api.baseUrl,
   model: "poolside/laguna-s-2.1:free",
   agentModelId: "poolside/laguna-s-2.1:free",
-  chatModelId: "",
   reasoningEffort: "",
   speedMode: "default",
   temperature: "0.7",
@@ -408,7 +405,6 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
     executionModes,
     agentEngine: channel === "text" ? defaultAgentEngine : "",
     agentModelId: channel === "text" ? stringValue(value.agentModelId, model).trim() : "",
-    chatModelId: channel === "text" ? stringValue(value.chatModelId).trim() : "",
     credentialSource: channel === "text"
       ? stringValue(value.credentialSource).trim()
         || (providerPreset.public === true || value.systemManaged === true && provider === "免费模型" ? "public" : defaultAgentEngine === "codex_api" ? "shensi" : "")
@@ -556,13 +552,11 @@ const isCodexTextCliBinding = (binding = {}) => binding.channel === "text"
   && binding.provider === "OpenAI"
   && /^codex(?:\.(?:exe|cmd|ps1))?$/i.test(String(binding.cliPath || "").split(/[\\/]/u).at(-1) || "codex");
 
-// A Codex CLI profile supports both Chat and Agent. Older migrations could
-// materialize the same connection twice when text-default was already in use.
-// Collapse those aliases while retaining the profile selected by either mode.
+// Collapse duplicate Codex Agent profiles while retaining the selected one.
 const collapseDuplicateCodexCliProfiles = (profiles = [], settings = {}) => {
   const codexProfiles = profiles.filter(isCodexTextCliProfile);
   if (codexProfiles.length < 2) return { profiles, aliases: new Map() };
-  const requestedIds = [settings.activeTextChatConnectionId, settings.activeTextAgentConnectionId]
+  const requestedIds = [settings.activeTextAgentConnectionId, settings.activeTextConnectionId]
     .map((id) => String(id || "").trim())
     .filter(Boolean);
   const canonical = codexProfiles.find((profile) => profile.id === "text-default")
@@ -593,19 +587,19 @@ const collapseDuplicateCodexCliProfiles = (profiles = [], settings = {}) => {
   };
 };
 
-const ensureBuiltInGptChatCliProfile = (profiles, secrets = {}, disabledProfileIds = []) => {
+const ensureBuiltInCodexAgentProfile = (profiles, secrets = {}, disabledProfileIds = []) => {
   const preset = getProviderPreset("OpenAI").cli;
   const existingIndex = profiles.findIndex((profile) => profile.adapter === "cli"
     && (profile.agentEngine === "codex"
       || (profile.provider === "OpenAI"
-        && (profile.id === BUILT_IN_GPT_CHAT_CLI.id
+        && (profile.id === BUILT_IN_CODEX_AGENT_CLI.id
           || /^codex(?:\.(?:exe|cmd|ps1))?$/i.test(String(profile.cliPath).split(/[\\/]/).at(-1) || "")))));
   if (existingIndex >= 0) {
     return profiles.map((profile, index) => index === existingIndex ? {
       ...profile,
-      name: !profile.name || /^OpenAI\s/.test(profile.name) ? BUILT_IN_GPT_CHAT_CLI.name : profile.name,
-      protocol: profile.protocol || BUILT_IN_GPT_CHAT_CLI.protocol,
-      model: profile.model || BUILT_IN_GPT_CHAT_CLI.model,
+      name: !profile.name || /^OpenAI\s/.test(profile.name) ? BUILT_IN_CODEX_AGENT_CLI.name : profile.name,
+      protocol: profile.protocol || BUILT_IN_CODEX_AGENT_CLI.protocol,
+      model: profile.model || BUILT_IN_CODEX_AGENT_CLI.model,
       cliPath: profile.cliPath || preset.path,
       cliArgs: profile.cliArgs || preset.args,
       executionMode: "agent",
@@ -613,9 +607,9 @@ const ensureBuiltInGptChatCliProfile = (profiles, secrets = {}, disabledProfileI
       agentEngine: "codex",
     } : profile);
   }
-  if (disabledProfileIds.includes(BUILT_IN_GPT_CHAT_CLI.id)) return profiles;
+  if (disabledProfileIds.includes(BUILT_IN_CODEX_AGENT_CLI.id)) return profiles;
   const ids = new Set(profiles.map((profile) => profile.id));
-  let id = BUILT_IN_GPT_CHAT_CLI.id;
+  let id = BUILT_IN_CODEX_AGENT_CLI.id;
   if (ids.has(id)) {
     id = "text-openai-codex-cli";
     let suffix = 2;
@@ -623,7 +617,7 @@ const ensureBuiltInGptChatCliProfile = (profiles, secrets = {}, disabledProfileI
   }
   return [
     ...profiles,
-    normalizedProfile("text", { ...BUILT_IN_GPT_CHAT_CLI, id }, profiles.length, secrets),
+    normalizedProfile("text", { ...BUILT_IN_CODEX_AGENT_CLI, id }, profiles.length, secrets),
   ];
 };
 
@@ -650,7 +644,6 @@ const ensureBuiltInPublicTextProfile = (profiles) => {
       executionModes: ["agent"],
       agentEngine: "codex_api",
       agentModelId: existing.model || BUILT_IN_PUBLIC_TEXT_PROFILE.model,
-      chatModelId: "",
       credentialSource: "public",
     }, existingIndex, {});
     return profiles.map((profile, index) => index === existingIndex ? managed : profile);
@@ -678,7 +671,6 @@ const ensureBuiltInPublicAgentProfile = (profiles) => {
       baseUrl: existing.baseUrl || BUILT_IN_PUBLIC_AGENT_PROFILE.baseUrl,
       model: existing.model || BUILT_IN_PUBLIC_AGENT_PROFILE.model,
       agentModelId: existing.model || BUILT_IN_PUBLIC_AGENT_PROFILE.model,
-      chatModelId: "",
       executionMode: "agent",
       executionModes: ["agent"],
       agentEngine: "codex_api",
@@ -708,7 +700,6 @@ const normalizeDeepSeekTextModes = (profiles) => profiles.map((profile) => {
       executionModes: ["agent"],
       agentEngine: "codex_api",
       agentModelId: profile.agentModelId || profile.model,
-      chatModelId: "",
       credentialSource: profile.credentialSource || "shensi",
     };
   }
@@ -750,13 +741,11 @@ const collapseLegacyDeepSeekOpenCodeProfiles = (profiles = []) => {
 
 const normalizeTextRuntimeModelFields = (profile = {}) => {
   const model = String(profile.model || "").trim();
-  const modes = Array.isArray(profile.executionModes) ? profile.executionModes : [];
   const engine = String(profile.agentEngine || "").trim();
   if (engine === "codex_api") {
     return {
       ...profile,
-      agentModelId: modes.includes("agent") ? model : "",
-      chatModelId: modes.includes("chat") ? model : "",
+      agentModelId: model,
     };
   }
   if (engine === "opencode") {
@@ -765,31 +754,27 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
     return {
       ...profile,
       model: qualified,
-      agentModelId: modes.includes("agent") ? qualified : "",
-      chatModelId: modes.includes("chat") && source === "shensi" ? qualified.split("/").slice(1).join("/") : "",
+      agentModelId: qualified,
       credentialSource: source,
     };
   }
   if (engine === "codex" || engine === "claude_code") {
     return {
       ...profile,
-      agentModelId: modes.includes("agent") ? model : "",
-      chatModelId: modes.includes("chat") ? model : "",
+      agentModelId: model,
     };
   }
   if (["trae_work", "workbuddy", "custom"].includes(engine)) {
     const selected = String(profile.agentModelId || model || "").trim();
     return {
       ...profile,
-      agentModelId: modes.includes("agent") ? selected : "",
-      chatModelId: modes.includes("chat") ? String(profile.chatModelId || "").trim() : "",
+      agentModelId: selected,
     };
   }
   return {
     ...profile,
     agentEngine: "",
     agentModelId: "",
-    chatModelId: modes.includes("chat") ? model : "",
   };
 };
 
@@ -836,7 +821,6 @@ export const cleanupLegacyTextProfiles = (profiles = [], settings = {}) => {
   const aliases = new Map();
   const activeIds = new Set([
     settings.activeTextConnectionId,
-    settings.activeTextChatConnectionId,
     settings.activeTextAgentConnectionId,
   ].map((value) => String(value || "").trim()).filter(Boolean));
   const retained = profiles.filter((profile) => !legacyRemovedTextProfile(profile));
@@ -851,7 +835,6 @@ export const cleanupLegacyTextProfiles = (profiles = [], settings = {}) => {
       remarkName: "DeepSeek Agent",
       executionMode: "agent",
       executionModes: ["agent"],
-      chatModelId: "",
     } : profile);
   for (const profile of profiles) {
     if (profile.id === canonicalDeepSeek?.id) continue;
@@ -1114,7 +1097,6 @@ const exactProfileSignature = (profile = {}) => JSON.stringify([
   ...(profile.executionModes || []),
   profile.agentEngine || "",
   profile.agentModelId || "",
-  profile.chatModelId || "",
   profile.runtimeProfileId || "",
   profile.runtimeConfigPath || "",
   profile.dreaminaCliProfile || "",
@@ -1171,7 +1153,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
         ? settings.disabledBuiltInTextProfileIds
         : [];
       next.disabledBuiltInTextProfileIds = [...new Set(disabledBuiltInTextProfileIds)];
-      profiles = ensureBuiltInGptChatCliProfile(
+      profiles = ensureBuiltInCodexAgentProfile(
         profiles,
         secrets.text ?? {},
         disabledBuiltInTextProfileIds,
@@ -1180,19 +1162,17 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       profiles = openCodeCollapse.profiles;
       const remapOpenCodeId = (value) => openCodeCollapse.aliases.get(String(value || "").trim()) || value;
       next.activeTextConnectionId = remapOpenCodeId(next.activeTextConnectionId);
-      next.activeTextChatConnectionId = remapOpenCodeId(next.activeTextChatConnectionId);
       next.activeTextAgentConnectionId = remapOpenCodeId(next.activeTextAgentConnectionId);
       const codexCollapse = collapseDuplicateCodexCliProfiles(profiles, settings);
       profiles = codexCollapse.profiles;
       const remapCodexId = (value) => codexCollapse.aliases.get(String(value || "").trim()) || value;
-      // Accept an old Chat pointer only as an upgrade input when the unified
-      // or Agent pointer did not yet exist. All three fields are collapsed to
-      // one Agent configuration below; this preserves the user's selection
-      // without reviving an independently selectable Chat mode.
+      // One-time data migration only: old persisted pointers are read once
+      // and immediately collapsed into the Agent pointer; they never drive
+      // runtime routing or remain in normalized settings.
       const requestedTextId = settings.activeTextAgentConnectionId || settings.activeTextConnectionId || settings.activeTextChatConnectionId;
       const remappedRequestedTextId = remapCodexId(remapOpenCodeId(requestedTextId));
+      delete next.activeTextChatConnectionId;
       next.activeTextConnectionId = remappedRequestedTextId;
-      next.activeTextChatConnectionId = remappedRequestedTextId;
       next.activeTextAgentConnectionId = remappedRequestedTextId;
       profiles = normalizeDeepSeekTextModes(profiles);
       profiles = profiles.map(normalizeTextRuntimeModelFields).map(normalizeOpenCodeProfileLabel);
@@ -1214,7 +1194,6 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       next.textProfileAliases = { ...settings.textProfileAliases, ...Object.fromEntries(openCodeCollapse.aliases), ...Object.fromEntries(codexCollapse.aliases), ...Object.fromEntries(textCleanup.aliases) };
       const remapCleanedTextId = (value) => textCleanup.aliases.get(String(value || "").trim()) || value;
       next.activeTextConnectionId = remapCleanedTextId(next.activeTextConnectionId);
-      next.activeTextChatConnectionId = remapCleanedTextId(next.activeTextChatConnectionId);
       next.activeTextAgentConnectionId = remapCleanedTextId(next.activeTextAgentConnectionId);
       const legacyConnectionSelected = !Array.isArray(settings.textConnections) && Boolean(settings.provider || settings.model || settings.adapter);
       if (!legacyConnectionSelected && !(settings.activeTextAgentConnectionId || settings.activeTextConnectionId || settings.activeTextChatConnectionId)
@@ -1257,14 +1236,13 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
     }
     const cleanup = cleanupInvalidGenerationProfiles(profiles, {
       activeIds: channel === "text"
-        ? [next.activeTextConnectionId, next.activeTextChatConnectionId, next.activeTextAgentConnectionId]
+        ? [next.activeTextConnectionId, next.activeTextAgentConnectionId]
         : [settings[keys.active]],
     });
     profiles = cleanup.profiles;
     const remapCleanedId = (value) => cleanup.aliases.get(String(value || "")) || value;
     if (channel === "text") {
       next.activeTextConnectionId = remapCleanedId(next.activeTextConnectionId);
-      next.activeTextChatConnectionId = remapCleanedId(next.activeTextChatConnectionId);
       next.activeTextAgentConnectionId = remapCleanedId(next.activeTextAgentConnectionId);
     }
     if ((Number(settings.cliRemarkMigrationVersion) || 0) < CLI_REMARK_MIGRATION_VERSION) {
@@ -1285,9 +1263,6 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       activeId = unifiedId;
       next.activeTextConnectionId = unifiedId;
       next.activeTextAgentConnectionId = unifiedId;
-      // Retain the legacy field only as an upgrade alias. It no longer
-      // represents an independently selectable Chat execution surface.
-      next.activeTextChatConnectionId = unifiedId;
     }
     if (["image", "video", "audio"].includes(channel) && !baseProfileIsConfigured(profiles.find((profile) => profile.id === activeId))) {
       activeId = profiles.find((profile) => baseProfileIsConfigured(profile))?.id || activeId;
@@ -1523,7 +1498,6 @@ export const genericOpenCodeManualProfile = ({
   executionModes: ["agent"],
   agentEngine: "opencode",
   credentialSource: source,
-  chatModelId: "",
   });
   return {
     ...profile,
@@ -1531,7 +1505,6 @@ export const genericOpenCodeManualProfile = ({
     agentModelId: modelId,
     provider: selectedProvider,
     credentialSource: source,
-    chatModelId: "",
   };
 };
 
@@ -1565,7 +1538,6 @@ export const unifiedOpenCodeProfile = (profile = {}) => {
     executionModes: ["agent"],
     agentEngine: "opencode",
     credentialSource: "shensi",
-    chatModelId: "",
   };
 };
 
@@ -1653,7 +1625,6 @@ export const upsertGenerationProfile = (settings = {}, channel, profile, { activ
     next[keys.active] = normalized.id;
     if (channel === "text") {
       next.activeTextConnectionId = normalized.id;
-      next.activeTextChatConnectionId = normalized.id;
       next.activeTextAgentConnectionId = normalized.id;
     }
   }
@@ -1706,7 +1677,7 @@ export const removeGenerationProfile = (settings = {}, channel, profileId) => {
   if (channel === "text" && removedProfile?.adapter === "cli" && removedProfile?.agentEngine === "codex") {
     next.disabledBuiltInTextProfileIds = [...new Set([
       ...(Array.isArray(next.disabledBuiltInTextProfileIds) ? next.disabledBuiltInTextProfileIds : []),
-      BUILT_IN_GPT_CHAT_CLI.id,
+      BUILT_IN_CODEX_AGENT_CLI.id,
       removedProfile.id,
     ])];
   }
@@ -1722,15 +1693,14 @@ export const activateGenerationProfile = (settings = {}, channel, profileId) => 
     next[keys.active] = profileId;
     if (channel === "text") {
       next.activeTextConnectionId = profileId;
-      next.activeTextChatConnectionId = profileId;
       next.activeTextAgentConnectionId = profileId;
     }
   }
   return syncLegacyGenerationSettings(next, channel);
 };
 
-export const activateTextExecutionModeProfile = (settings = {}, mode = "chat") => {
-  const profileId = String(settings.activeTextAgentConnectionId || settings.activeTextConnectionId || settings.activeTextChatConnectionId || "");
+export const activateTextAgentProfile = (settings = {}) => {
+  const profileId = String(settings.activeTextAgentConnectionId || settings.activeTextConnectionId || "");
   if (!profileId || !Array.isArray(settings.textConnections)
     || !settings.textConnections.some((profile) => String(profile?.id || "") === profileId)) return settings;
   return activateGenerationProfile(settings, "text", profileId);
@@ -1878,13 +1848,6 @@ export const generationRuntimeBindings = (settings = {}) => ({
       cliPath: String(profile.cliPath || ""),
       cliArgs: String(profile.cliArgs || ""),
       dreaminaCliProfile: String(profile.dreaminaCliProfile || ""),
-      chatAdapter: ["opencode", "claude_code"].includes(profile.agentEngine)
-        && profile.credentialSource === "shensi"
-        && (profile.executionModes || []).includes("chat") ? "api" : "",
-      chatProtocol: ["opencode", "claude_code"].includes(profile.agentEngine) && profile.credentialSource === "shensi"
-        ? String(profile.protocol || "chat_completions") : "",
-      chatBaseUrl: ["opencode", "claude_code"].includes(profile.agentEngine) && profile.credentialSource === "shensi"
-        ? String(profile.baseUrl || "") : "",
     })).filter((binding) => binding.profileId);
   }),
 });

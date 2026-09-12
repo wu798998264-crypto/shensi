@@ -29,7 +29,6 @@ assert.equal(profile.executionMode, "agent");
 assert.deepEqual(profile.executionModes, ["agent"]);
 assert.equal(profile.agentEngine, "codex_api", "API 文字配置必须默认使用内置 Agent");
 assert.equal(profile.agentModelId, "model-x");
-assert.equal(profile.chatModelId, "");
 assert.equal(normalized.activeTextAgentConnectionId, profile.id);
 assert.equal(normalized.activeTextConnectionId, profile.id);
 assert.equal(isShensiAgentCompatibleProfile(profile), true);
@@ -38,7 +37,6 @@ assert.equal(looksLikeWorkspaceOperation("我想写个爽文"), false, "稀疏�
 const legacyChatContract = effectiveRuntimeContract({ settings: normalized, surface: "chat" });
 assert.equal(legacyChatContract.ok, true);
 assert.equal(legacyChatContract.surface, "agent", "旧 Chat surface 只能兼容映射到统一 Agent");
-assert.equal(legacyChatContract.legacyRequestedSurface, "chat");
 assert.equal(legacyChatContract.runner, "codex_api_agent");
 
 for (const protocol of ["responses", "chat_completions"]) {
@@ -48,7 +46,7 @@ for (const protocol of ["responses", "chat_completions"]) {
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
-assert.match(appSource, /id="chatProviderSelect" hidden aria-hidden="true"[^>]*><option value="codex_agent" selected>/u);
+assert.doesNotMatch(appSource, /chatProviderSelect/u, "旧 Chat Provider 字段必须删除");
 assert.match(appSource, /id="whiteboardTextExecutionSurface"[^>]*hidden[^>]*><option value="agent" selected>/u);
 assert.doesNotMatch(appSource, /chatAgentGuidance\(content\)/u, "普通发送不得再经过关键词式 Chat→Agent 提示门禁");
 assert.match(appSource, /dispatchComposerContent\(content\);/u);
@@ -65,11 +63,11 @@ assert.match(serverSource, /lane: "direct_reply"/u);
 assert.match(serverSource, /agentDecision\.lane === "guided_dialogue"/u);
 assert.match(serverSource, /agentDecision\.lane === "task_execution"/u);
 assert.ok(
-  serverSource.indexOf("runUnifiedAgentEntryDecision({") < serverSource.indexOf("readChatWebReferences({", serverSource.indexOf('pathname === "/api/chat"')),
+  serverSource.indexOf("runUnifiedAgentEntryDecision({") < serverSource.indexOf("readChatWebReferences({", serverSource.indexOf('pathname === "/api/agent/execute"')),
   "统一入口必须在联网资料读取前运行",
 );
 assert.ok(
-  serverSource.indexOf("runUnifiedAgentEntryDecision({") < serverSource.indexOf("loadWorkspaceCurrentContent({", serverSource.indexOf('pathname === "/api/chat"')),
+  serverSource.indexOf("runUnifiedAgentEntryDecision({") < serverSource.indexOf("loadWorkspaceCurrentContent({", serverSource.indexOf('pathname === "/api/agent/execute"')),
   "统一入口必须在完整工作区读取前运行",
 );
 
