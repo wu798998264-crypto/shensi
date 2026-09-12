@@ -13,6 +13,9 @@ const runIdFor = (request) => {
 };
 const terminal = (status) => ["completed", "failed", "cancelled", "interrupted"].includes(status);
 const safeRequest = (value) => JSON.parse(JSON.stringify(value, (key, entry) => /api.?key|password|secret|access.?token|refresh.?token/iu.test(key) ? undefined : entry));
+const latestUserInstruction = (request = {}) => String(request.instruction
+  || [...(Array.isArray(request.messages) ? request.messages : [])].reverse().find((message) => message?.role === "user")?.content
+  || "").trim();
 const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
 const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
@@ -191,7 +194,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           continueOriginalTask: true,
         };
       };
-      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
+      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, instruction: latestUserInstruction(request), signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
         ask: requestUserInput,
         candidates: async (variants) => { record.candidates = variants; await event(entry, "candidates", { variants }); return { delivered: variants.length, savedToDocument: false }; },
         media: (args) => media(args, { request, runId: record.id, signal: controller.signal, emit: (type, payload) => event(entry, type, payload) }),
