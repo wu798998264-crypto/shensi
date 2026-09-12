@@ -32,6 +32,7 @@
     "test:v103": "node scripts/test-v103-regressions.mjs",
     "test:v113-completion": "node scripts/test-v113-completion-evidence.mjs",
     "test:task-contract": "node scripts/test-task-contract.mjs && node scripts/test-task-contract-formal-delivery.mjs",
+    "test:legacy-runtime-retirement": "node scripts/test-legacy-runtime-retirement.mjs",
     "test:semantic-orchestration": "node scripts/test-semantic-orchestration-simplification.mjs",
     "test:material-update-flow": "node scripts/test-material-update-prompt-flow.mjs && node scripts/test-material-update-workspace-isolation.mjs",
     "test:agent-decision-ui": "node scripts/test-agent-decision-consumption.mjs && node scripts/test-agent-decision-ui-integration.mjs",

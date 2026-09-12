@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "bundleId": "shensi-capability-bundle",
-  "bundleVersion": "sha256:5fca6ec32c759751",
-  "bundleSha256": "5fca6ec32c7597517655919fe782c73ce8d8292e09825dc8493defa48b5caa3d",
+  "bundleVersion": "sha256:46bc089096a70b18",
+  "bundleSha256": "46bc089096a70b181af8d262593d1057ad944fab73969b60099bbd2c1f2c3670",
   "entry": "神思.md",
-  "fileCount": 597,
-  "totalBytes": 19130249,
+  "fileCount": 593,
+  "totalBytes": 19078495,
   "contentSummary": {
-    "runtime-content": 175,
+    "runtime-content": 171,
     "runtime-data": 25,
     "reference-only": 397
   },
@@ -147,8 +147,8 @@
     },
     {
       "path": "original-short-drama/SKILL.md",
-      "sizeBytes": 8615,
-      "sha256": "c9ed7708c77cdd9e825a58a7e1f19d37c9b5ea5ba7fef9d5223e505139962108",
+      "sizeBytes": 8769,
+      "sha256": "3c9f0c225aa1a231c4e7f62f26ff0ec90321cc6d13fbc47f1d8356ce7fc287fe",
       "role": "runtime-content"
     },
     {
@@ -165,8 +165,8 @@
     },
     {
       "path": "original-short-drama/references/outline-script-workflow.md",
-      "sizeBytes": 5669,
-      "sha256": "2c6dc59c4a4a0b1f037eb1685bb5fa8ac3f888424a17a723b96267448cd79c2d",
+      "sizeBytes": 5694,
+      "sha256": "faedec64302fefecfa29a9a17f973655a1b88739c106364fbe08dd5c239b4de6",
       "role": "runtime-content"
     },
     {
@@ -177,8 +177,8 @@
     },
     {
       "path": "original-short-drama/references/setting-memory-information.md",
-      "sizeBytes": 5065,
-      "sha256": "5ede1cad9ffd11d38fdfb605048b2669944345181209af9ea20d470e1d13b7b4",
+      "sizeBytes": 5062,
+      "sha256": "a34416e38ee2495e6c803ecd7afd08e613b3625eb617e2d3da891347eba135d8",
       "role": "runtime-content"
     },
     {
@@ -1755,8 +1755,8 @@
     },
     {
       "path": "小说写作技能skill/02-chinese-novelist-skill/SKILL.md",
-      "sizeBytes": 3365,
-      "sha256": "0d48011260b06dcdf69af94a46eb7790fd2576dde5d0012600635ce71b526740",
+      "sizeBytes": 3312,
+      "sha256": "8f986e84b70148f758982d660315b2692edf179000e92de35c7ecd999170d5ba",
       "role": "runtime-content"
     },
     {
@@ -2817,8 +2817,8 @@
     },
     {
       "path": "小说写作技能skill/创作引导.md",
-      "sizeBytes": 19268,
-      "sha256": "742c4f5e9f37222ed4b124088e0465a98ad8b8959c0a654ee3a4338aa75a241c",
+      "sizeBytes": 19166,
+      "sha256": "c6b0c067a3bf5efb4670f1a08c4952866d1a9814bde20c80bfcad31ecbf5338b",
       "role": "runtime-content"
     },
     {
@@ -2871,14 +2871,14 @@
     },
     {
       "path": "小说写作技能skill/强剧情自检.md",
-      "sizeBytes": 13086,
-      "sha256": "21b57dd12ce1830d989d739d6288db752ad2d40203d67a49938bada708a0839b",
+      "sizeBytes": 12906,
+      "sha256": "abac5168fe0b6a5c3b10e861db64897a4db63b83b332f287935ab59d0246a2dd",
       "role": "runtime-content"
     },
     {
       "path": "小说改编短剧剧本skill/SKILL.md",
-      "sizeBytes": 2545,
-      "sha256": "ecb85d79a5dd5998d569a4991f62115c56b88a1fccbc11b053737e3c8a1dd25c",
+      "sizeBytes": 2860,
+      "sha256": "b6fd231539c63cbea6121223c74123a342a18dc369f73274a09a7927532e0a76",
       "role": "runtime-content"
     },
     {
@@ -2985,8 +2985,8 @@
     },
     {
       "path": "小说类型理论研究/图录式爽剧结构理论.md",
-      "sizeBytes": 8823,
-      "sha256": "d972e8764811b1ec44d12fb4e5c45f89900ce90efae9298332531549b6f745d5",
+      "sizeBytes": 8825,
+      "sha256": "f45ec38f52b6713e1cb15394674bb2e6bcd6221d1e65f88031f6c4dc85a2b3ad",
       "role": "runtime-content"
     },
     {
@@ -3009,14 +3009,14 @@
     },
     {
       "path": "小说类型理论研究/小说类型理论研究.md",
-      "sizeBytes": 13105,
-      "sha256": "864d467e92b1925f740fff100f7d6081f2ef3922d9ab284d632f926945dfe9f2",
+      "sizeBytes": 13144,
+      "sha256": "c883dd290ff52f3cc3e95d25f8240f89fc960e7d7c935d60e01f8459b1c1f8ef",
       "role": "runtime-content"
     },
     {
       "path": "小说类型理论研究/男频网文创作逻辑研究.md",
-      "sizeBytes": 24934,
-      "sha256": "3b0ef5d7a77195befc345886e4e767a87b3bb14e0010bb4f98e4fe8cb81660ca",
+      "sizeBytes": 25029,
+      "sha256": "45f5c6184294b77f42f7227ed00b3a991142147400863570ce28c8b4b8cd0783",
       "role": "runtime-content"
     },
     {
@@ -3033,8 +3033,8 @@
     },
     {
       "path": "小说结构化管理skill/小说结构化文档管理.md",
-      "sizeBytes": 5587,
-      "sha256": "002cf0b3e0e0f93fa82bf4d1b30845c84540f0ce9cc1fde5cbec093c20fc61bd",
+      "sizeBytes": 5668,
+      "sha256": "9f49eef8bfbd98e4a27d7a1416673820e940701af7b2eae37bd7dd525f0f4312",
       "role": "runtime-content"
     },
     {
@@ -3231,8 +3231,8 @@
     },
     {
       "path": "小说结构化管理skill/模板与流程/设定拆分与入库流程.md",
-      "sizeBytes": 3086,
-      "sha256": "274fa69db6f3ea46448cfe32a3f715eca5f8173ee9b6589d7b08c96cf286309d",
+      "sizeBytes": 3210,
+      "sha256": "c4e9d94812b2361103c316822a99c2a20f5e0579a4194db532fa3da2af3e39d5",
       "role": "runtime-content"
     },
     {
@@ -3243,8 +3243,8 @@
     },
     {
       "path": "小说结构化管理skill/给AI的使用提示.md",
-      "sizeBytes": 8426,
-      "sha256": "7ebda478c169e5b4d22aac54b503bbdcefacb08f1f64aaf42102d2b190cd1e7c",
+      "sizeBytes": 8401,
+      "sha256": "b01e904aea7fb5a62652cd85d6a0d6664f907898eaa2c58dd5400b4ed0d21832",
       "role": "runtime-content"
     },
     {
@@ -3291,38 +3291,38 @@
     },
     {
       "path": "神思.md",
-      "sizeBytes": 12228,
-      "sha256": "424c24c6aae6498c8ea9e787d50376b8db4e1f63f9e0632d3c1ead9ab50ea526",
+      "sizeBytes": 3876,
+      "sha256": "043308810322b91f9fe8cda883c7b6e396928d111e1954044b510bad183b6c99",
       "role": "runtime-content"
     },
     {
       "path": "神思使用者说明书.md",
-      "sizeBytes": 7784,
-      "sha256": "829d12a417bbd0ddc61dcfcc737dd1ea8ef07668f6f07f69b7d9a06d18a40ce4",
+      "sizeBytes": 3735,
+      "sha256": "fec2fa56893e9ea77eaf24cb3307f476e396ac6b8c8883a62ee31830442d0aef",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/公众号模块.md",
-      "sizeBytes": 4481,
-      "sha256": "b2369fd093bfb8bf99bb9154cd17d4565c25b8af54f5ce5242538298b7976b50",
+      "sizeBytes": 4487,
+      "sha256": "507cbe7233dd7ea97d39dc7938611a4255b4b38aefb500a4d37b3ded734fbcfa",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/创作引导模块.md",
-      "sizeBytes": 3739,
-      "sha256": "7a81fabab90394855ebbe0e3a804f74133b3de9fe96dbe94229c0205497b3ef9",
+      "sizeBytes": 1639,
+      "sha256": "a47126990bc376be9b2f51909ecc435dcff378463210788253ccd8caf522a081",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/剧情控制模块.md",
-      "sizeBytes": 1638,
-      "sha256": "e1a87da529d7d6da40b2f8c39461bae15d51e6f4b16b5682557a439b16bbf9f7",
+      "sizeBytes": 1594,
+      "sha256": "2437eaf0827b05ae746c2ac9c172569346738dfbcca7450ebb45c79c175e07cc",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/正文写作模块.md",
-      "sizeBytes": 2931,
-      "sha256": "ad500fef7329b03fd009fa23092bcf4e818f445ae7ec181230985a6a70009c53",
+      "sizeBytes": 1785,
+      "sha256": "1c90eacbfc700584f2b10c50c8a6a97a02281f52f05ab9f4ef564d56eb1a37aa",
       "role": "runtime-content"
     },
     {
@@ -3345,14 +3345,14 @@
     },
     {
       "path": "神思模块/结构管理模块.md",
-      "sizeBytes": 2762,
-      "sha256": "b0dc617e16ca9edd77e3805d8bd7a5f8b5a57634bc90b1ef30de04b04e0497f3",
+      "sizeBytes": 2765,
+      "sha256": "ef112e323de60ec3b1623eb89db1018d8a51e30d62d7cf234fb72b5ac6ee7043",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/自检模块.md",
-      "sizeBytes": 4896,
-      "sha256": "982a01e0522c068750974bc9721973fa18d6ef017d5a1f2c4c568f66164e7dfc",
+      "sizeBytes": 4746,
+      "sha256": "c3c2e332e41c9d692c6c9fecb32ed97dfe104840a0b14ff85e458485a1005e74",
       "role": "runtime-content"
     },
     {
@@ -3375,8 +3375,8 @@
     },
     {
       "path": "神思模块/规则模块/短篇小说创作引导.md",
-      "sizeBytes": 7042,
-      "sha256": "c75a08464bf64193ace14a7c2a42d4c58fb99cb0a31c586b409f2d0cfbb8c2d6",
+      "sizeBytes": 7090,
+      "sha256": "2ac5021c8b8fb7aed145ac8dde8173ffd643acad10500a419eafd9854f242fce",
       "role": "runtime-content"
     },
     {
@@ -3387,8 +3387,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-Skill开放平台规则.md",
-      "sizeBytes": 8731,
-      "sha256": "9f11a314bfc308a6ffee2fdc9d011469ed6f8c27a4dbf6478a6b1c6e58504be3",
+      "sizeBytes": 4069,
+      "sha256": "d402abf2976c4d14afe2e4fc53df73116d855f20313b88e4cc1062f9f6da62b4",
       "role": "runtime-content"
     },
     {
@@ -3399,14 +3399,14 @@
     },
     {
       "path": "神思模块/规则模块/神思-webnovel-writer运行边界规则.md",
-      "sizeBytes": 2745,
-      "sha256": "130795cd15920d2bea008188bdce0d6a6002fefc5220bc6f27b4d70f0a6922b7",
+      "sizeBytes": 2850,
+      "sha256": "40aab39acc7242161c10c189a4cd3e3fe352eeb1ddf81cb9fea07fab3b348f98",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-webnovel同步适配规则.md",
-      "sizeBytes": 1859,
-      "sha256": "8ffb28297e9b48351cd7da2f1da2d758160fc4ebc8af779902b02c8016e553ee",
+      "sizeBytes": 1885,
+      "sha256": "3d724ac3f89c32a79d5c288cb0d9473cb7c84a1b3a1687fa55461164f4bd4e85",
       "role": "runtime-content"
     },
     {
@@ -3428,39 +3428,21 @@
       "role": "runtime-content"
     },
     {
-      "path": "神思模块/规则模块/神思-分级闭环与规则包规则.md",
-      "sizeBytes": 7731,
-      "sha256": "b2af45d22ce8dd5e3e9112d0b541194f7224ee8357bca8862e5bf0c4306c4bfa",
-      "role": "runtime-content"
-    },
-    {
       "path": "神思模块/规则模块/神思-创作引导双启动规则.md",
-      "sizeBytes": 5080,
-      "sha256": "4a51405653401e793e4d6aeaf01a340aa8f45eeca6fad55741b055572e16f9eb",
+      "sizeBytes": 5201,
+      "sha256": "8c9bb17dc39baf14f9cf99bafd0eb7eb94431658a2b973e3a16349230447a7bf",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-创作效果验收规则.md",
-      "sizeBytes": 3921,
-      "sha256": "446affed5b9eb0f9dbbe4793e29aa0ecffbe66179b49ca8cf70e206e30945080",
-      "role": "runtime-content"
-    },
-    {
-      "path": "神思模块/规则模块/神思-创作核运行卡.md",
-      "sizeBytes": 7370,
-      "sha256": "79cc19c7cf3f4d8872d2737754f8f95242915356ddeabf31d872bbc50aed4abc",
+      "sizeBytes": 3785,
+      "sha256": "5f9ef4a30e4cf18de161fa96ee9c0e8d43a8e5916ed99399ede1bf8b8ee2425f",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-原创化重构规则.md",
-      "sizeBytes": 6479,
-      "sha256": "e59c3d532a7746a599ec3a775ca4b46048a1e5659421265c989cf736dace32d6",
-      "role": "runtime-content"
-    },
-    {
-      "path": "神思模块/规则模块/神思-双核运行规则.md",
-      "sizeBytes": 8639,
-      "sha256": "084f6f5abf8585f2db89c0992621219b1b710a9122b41ba1f36a7d39fa7a7f0b",
+      "sizeBytes": 6369,
+      "sha256": "50a6cef5c3d8c5720e569c0ce16ac5f30292be27143c6da92d8bd64098bedd08",
       "role": "runtime-content"
     },
     {
@@ -3471,14 +3453,14 @@
     },
     {
       "path": "神思模块/规则模块/神思-商业判断与自动审稿增强规则.md",
-      "sizeBytes": 15965,
-      "sha256": "a5b7c0781a86e708aee0f928d9e3e06b1fece4b5627b06f192aa97c6c13e8b2c",
+      "sizeBytes": 15959,
+      "sha256": "0a20cb2e8af6cc250becc14d98afd0cc2ba92679ec7500a535cf37e52b93486a",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-大纲与章纲规则.md",
-      "sizeBytes": 11526,
-      "sha256": "9116cfe62b8de1c40c1b4f84c63af991a91953ac8cbdc851ed65794873f5d8bb",
+      "sizeBytes": 11648,
+      "sha256": "fa9899816114c259ef1602c8fff87a3c0c2de7ffb51265c8052898fca75b2fcb",
       "role": "runtime-content"
     },
     {
@@ -3489,14 +3471,14 @@
     },
     {
       "path": "神思模块/规则模块/神思-本章创作合同模板.md",
-      "sizeBytes": 2065,
-      "sha256": "70a706c41ef52cae0f0c2d5023182ce3611366d2f95b188f7fcf3319d6cd0a85",
+      "sizeBytes": 2101,
+      "sha256": "13a5b2314270203992c317c72e0bffbe5608f97544a022046da8bd312a32431e",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-框架健康检查规则.md",
-      "sizeBytes": 8102,
-      "sha256": "4f2c40e2cc524472556d72125f1b7425412e29deb63b8cc84327ef28dc4a4322",
+      "sizeBytes": 5850,
+      "sha256": "8138da8e414ea11c8a46d422792dd1de9a3a3c3a6f46e951cb8b7e1833e7467e",
       "role": "runtime-content"
     },
     {
@@ -3513,14 +3495,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-正文写作规则.md",
-      "sizeBytes": 11836,
-      "sha256": "5831288487a7d8e1bc771c4d1512ac02a6ce4d0a99ea917c367d59129aeafd30",
-      "role": "runtime-content"
-    },
-    {
-      "path": "神思模块/规则模块/神思-正文创作核心卡.md",
-      "sizeBytes": 1983,
-      "sha256": "a2f18f2067fe156f930eea03428cebfaba9edd86d3b9c15af7f6bda1e6e95de0",
+      "sizeBytes": 12021,
+      "sha256": "60b9aab290c8a88ec4617fcd1b3d9826c8ab6c59b2399ff6eab7ea0bb116d831",
       "role": "runtime-content"
     },
     {
@@ -3531,8 +3507,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-正文生产流程.md",
-      "sizeBytes": 5988,
-      "sha256": "c8566ba3f32049153baac065a9a5a6dbef61b42f488ec44812adafc6f0a1b6aa",
+      "sizeBytes": 6213,
+      "sha256": "6ead5a622ff6a2f13eeb84d8296c5feecacd681d4b90699d39d88e3d91f8df80",
       "role": "runtime-content"
     },
     {
@@ -3555,8 +3531,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-正文质量规则.md",
-      "sizeBytes": 13068,
-      "sha256": "2fde245a4b9be178d1fe990bbe3613aa6288beb5de707191ada626c21f8cc1fe",
+      "sizeBytes": 13053,
+      "sha256": "cc419387e9f087b881733cadf0fbaf466f017c774a534b3aaad4fdc6342a08cb",
       "role": "runtime-content"
     },
     {
@@ -3567,14 +3543,14 @@
     },
     {
       "path": "神思模块/规则模块/神思-短剧与视觉资产规则.md",
-      "sizeBytes": 28157,
-      "sha256": "a323b9c1ba348f3f77bb864698475538d2e2291df06f0533e516fd6fcecf4d00",
+      "sizeBytes": 28207,
+      "sha256": "7461e57f84326ed6b8435d679e077776e83b8e75c746a93478624ac652b67c35",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-结构化入库与回写规则.md",
-      "sizeBytes": 7303,
-      "sha256": "2c26f7b1979f2ed9bdcce74744f0f08aa6f0f10542268b5e365645e9cdf7643c",
+      "sizeBytes": 8070,
+      "sha256": "1ba26e7bcc4138c11b7fd20ad2114826448cf0960ca29bb2b7d98d16bfce50f7",
       "role": "runtime-content"
     },
     {
@@ -3585,8 +3561,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-结构化管理规则.md",
-      "sizeBytes": 26796,
-      "sha256": "33f6e809fe3afcddd8b58a63da2407ba864ba1c9d6b78eaae456b8566bb055a4",
+      "sizeBytes": 27538,
+      "sha256": "54eb1427fe8b3f462ad484a5848798bd1ba40e0c7f7c80673912359908819c7d",
       "role": "runtime-content"
     },
     {
@@ -3596,39 +3572,39 @@
       "role": "runtime-content"
     },
     {
-      "path": "神思模块/规则模块/神思-记忆核运行卡.md",
-      "sizeBytes": 8881,
-      "sha256": "204580bb7affed7f11c4bf7bb44350bee3ae5f04cf586fe8234d0f302d936edb",
+      "path": "神思模块/规则模块/神思-记忆检查规则.md",
+      "sizeBytes": 2981,
+      "sha256": "2731c536cbfc2fbc81e0b7d73506a3a94f9d88cdf5f835a0579befbffcc5f574",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-设定生成规则.md",
-      "sizeBytes": 11225,
-      "sha256": "c27c8abb4b8a301cc7cdc9909503e345e0771b655ae9bcfedcbe1dbbba9a942d",
+      "sizeBytes": 11060,
+      "sha256": "4da48e96aa05d2f8e573c9d18894c51f3408803a2f2a5a3fb1af3368272e6796",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-长篇结构自检规则.md",
-      "sizeBytes": 13362,
-      "sha256": "3a17e3a0f2d1b822909f44acfa8607df2d1a018b787f34a078b9ceab5818f13a",
+      "sizeBytes": 13385,
+      "sha256": "af6abce2f2c7705992a0c68becbcf2da0ad93efe6d74ed1ec8f926b5352adb5a",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-非常规大纲执行卡.md",
-      "sizeBytes": 6517,
-      "sha256": "35505be6c5b9ec6410eadd04a2df655cb3e1d117bc6c93c9d34ea013a134fd17",
+      "sizeBytes": 6521,
+      "sha256": "ee749f1771106854f4198962817fd4d1bb9b8968c570bcdf0ac07c1b59c52881",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-非常规概念引导规则.md",
-      "sizeBytes": 4904,
-      "sha256": "19255e208f8251020b8d6c1d3b84c4f00f3488ee5dd4c14c701f050cf113c8d5",
+      "sizeBytes": 4908,
+      "sha256": "1f4562250a3f104797073763e878b54b415cd45d4615ff7be204a9752e763f49",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/设定模块.md",
-      "sizeBytes": 1558,
-      "sha256": "52f662df8eaf5f912017bf7759c5b0393747ec751718e56878df294ebcf24dec",
+      "sizeBytes": 1675,
+      "sha256": "44065f88efc88a2c4e9d1ed2b35306232abf514bbf043ca2abaf284dd5c9c810",
       "role": "runtime-content"
     }
   ]
