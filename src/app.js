@@ -21267,8 +21267,14 @@ const renderCapabilityHistory = () => {
     const auditLabel = audit ? (audit.valid ? "审计通过" : "审计未通过") : "旧版本未记录审计";
     const summaries = (entry.routeDiff?.summary ?? []).slice(0, 3);
     const capabilities = (entry.routeDiff?.affectedCapabilities ?? []).slice(0, 8);
+    const dynamicRoute = entry.dynamicRoute;
+    const dynamicRouteLabel = dynamicRoute?.status === "accepted"
+      ? `智能路由已通过${dynamicRoute.model?.model ? ` · ${dynamicRoute.model.model}` : ""}`
+      : dynamicRoute?.status === "rejected"
+        ? `智能路由未激活 · ${dynamicRoute.message || dynamicRoute.errors?.[0] || "校验失败"}`
+        : dynamicRoute?.status === "static" ? dynamicRoute.message : "使用静态基础路由";
     const routeMeta = isRoute
-      ? `<p>面板 v${entry.version} · 路由 r${entry.routeRevision || "未记录"} · ${escapeHtml(auditLabel)}</p><small>拓扑 ${escapeHtml(entry.topologyHash ? `${entry.topologyHash.slice(0, 12)}…` : "旧版本未记录")}${capabilities.length ? ` · 影响能力：${escapeHtml(capabilities.join("、"))}` : ""}</small>${summaries.length ? `<small>${escapeHtml(summaries.join("；"))}</small>` : ""}`
+      ? `<p>面板 v${entry.version} · 路由 r${entry.routeRevision || "未记录"} · ${escapeHtml(auditLabel)}</p><small>拓扑 ${escapeHtml(entry.topologyHash ? `${entry.topologyHash.slice(0, 12)}…` : "旧版本未记录")}${capabilities.length ? ` · 影响能力：${escapeHtml(capabilities.join("、"))}` : ""}</small><small>${escapeHtml(dynamicRouteLabel)}</small>${summaries.length ? `<small>${escapeHtml(summaries.join("；"))}</small>` : ""}`
       : `<p>局部 v${entry.version} · 不作为完整任务路由版本</p><small>恢复后会重新生成完整面板—路由联合版本</small>`;
     return `<article class="skill-history-row" data-history-kind="${kind}">
     <div><strong>${escapeHtml(reasonLabels[entry.reason] || "路由变更")} · ${escapeHtml(new Date(entry.createdAtIso || entry.createdAt).toLocaleString())}</strong>${routeMeta}${current ? "<small>当前正在使用</small>" : ""}</div>
@@ -21302,7 +21308,14 @@ const saveCapabilityTemplateScope = async () => {
   const response = await fetch("/api/skills/capability-template/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ bundle: validation.bundle, scopeType: scope.scopeType, scopeId: scope.scopeId }),
+    body: JSON.stringify({
+      bundle: validation.bundle,
+      scopeType: scope.scopeType,
+      scopeId: scope.scopeId,
+      routeModelSettings: withReusableTextProviderCredential(generationSettingsForAgentEngine(state.settings, {
+        agentConnectionId: state.settings.activeTextAgentConnectionId,
+      })),
+    }),
   });
   const payload = await response.json();
   if (!response.ok || !payload.ok) throw new Error(payload.message || "面板版本保存失败");
@@ -21312,7 +21325,10 @@ const saveCapabilityTemplateScope = async () => {
   const repairCopy = Number(payload.adaptiveRouteUpdate?.repairedBindingCount) > 0
     ? `；自动修复 ${payload.adaptiveRouteUpdate.repairedBindingCount} 个失联插槽`
     : "";
-  showToast(`${scope.scopeType === "template" ? "面板" : scope.scopeType === "group" ? "模组" : "模块"} v${payload.savedVersion.version} 已保存；已检查 ${audit.templateCapabilityCount ?? 0} 项面板能力、${(audit.groupCount ?? 0) + (audit.moduleCount ?? 0)} 个模组/模块关系并自适应重编译路由${repairCopy}${lintCount ? `；保留 ${lintCount} 项可达性提醒` : ""}`);
+  const routeCopy = payload.routeDocumentUpdate?.status === "accepted"
+    ? `；当前文字模型生成的智能路由已校验并激活`
+    : `；面板已保存，智能路由未激活：${payload.routeDocumentUpdate?.message || "未知原因"}`;
+  showToast(`${scope.scopeType === "template" ? "面板" : scope.scopeType === "group" ? "模组" : "模块"} v${payload.savedVersion.version} 已保存；已检查 ${audit.templateCapabilityCount ?? 0} 项面板能力、${(audit.groupCount ?? 0) + (audit.moduleCount ?? 0)} 个模组/模块关系并自适应重编译路由${repairCopy}${lintCount ? `；保留 ${lintCount} 项可达性提醒` : ""}${routeCopy}`);
 };
 
 const restoreCapabilityTemplateVersion = async (versionId, scopeType, scopeId) => {

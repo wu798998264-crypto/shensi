@@ -3,7 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createConversationAgentService } from "./conversation-agent-service.mjs";
 import { startConversationAgentMcp } from "./conversation-agent-mcp.mjs";
-import { listManagedSkills } from "./skill-store.mjs";
+import { listManagedSkills, readManagedTaskRouteDocument } from "./skill-store.mjs";
 import { inspectSelectedSkillSource } from "./skill-library.mjs";
 import { loadWorkspaceState, saveWorkspaceState } from "./workspace.mjs";
 import { applyConversationMediaResultToWorkspace } from "../media-generation-coordination.js";
@@ -31,24 +31,19 @@ const hash = (value) => createHash("sha256").update(String(value)).digest("hex")
 
 export const conversationAgentProcessEnvironment = (environment = process.env) => agentChildEnvironment(environment);
 
-const routeDocumentCandidates = [
-  { label: "任务路由模块.md", parts: ["任务路由模块.md"], required: false },
-  { label: "神思-任务路由规则.md", parts: ["规则模块", "神思-任务路由规则.md"], required: false },
-  { label: "神思-执行入口映射表.md", parts: ["规则模块", "神思-执行入口映射表.md"], required: false },
+const internalAgentContracts = [
+  { key: "taskRoute", label: "神思任务路由", parts: ["神思任务路由.md"] },
+  { key: "operatingRules", label: "神思运行规范", parts: ["神思运行规范.md"] },
 ];
 
-const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
-  const requestedLabels = new Set((Array.isArray(requested) ? requested : []).map((item) => String(item || "").trim()).filter(Boolean));
-  const candidates = requestedLabels.size
-    ? routeDocumentCandidates.filter((candidate) => requestedLabels.has(candidate.label))
-    : routeDocumentCandidates;
-  const blocks = [];
+const readInternalAgentContracts = async ({ shensiRoot } = {}) => {
+  const contracts = {};
   const sources = [];
-  for (const candidate of candidates) {
+  for (const candidate of internalAgentContracts) {
     try {
       const text = await readFile(join(shensiRoot, "神思模块", ...candidate.parts), "utf8");
       if (String(text).trim()) {
-        blocks.push(`# ${candidate.label}\n${text}`);
+        contracts[candidate.key] = text;
         // Host routing contracts guide the Agent but are not user material.
         // Keep them out of the task card's real-read evidence list.
         sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length, userVisible: false });
@@ -57,7 +52,17 @@ const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
       if (error?.code !== "ENOENT") throw error;
     }
   }
-  return { text: blocks.join("\n\n") || "当前没有可用的任务路由附录；请根据用户原始指令和可用 Skill 自主判断，空白路由资料不是阻断条件。", sources };
+  const dynamicRoute = await readManagedTaskRouteDocument().catch(() => null);
+  const taskRoute = [
+    contracts.taskRoute || "根据用户完整意图、当前阶段和实时 Skill 面板自主选择能力；空白路由资料不是阻断条件。",
+    dynamicRoute?.active && dynamicRoute.content ? `# 当前 Skill 面板动态路由附录\n\n${dynamicRoute.content}` : "",
+  ].filter(Boolean).join("\n\n");
+  return {
+    taskRoute,
+    operatingRules: contracts.operatingRules || "使用神思工具执行并以真实回执交付；正式内容默认落盘，探讨内容默认留在对话。",
+    sources,
+    dynamicRoute: dynamicRoute?.current || null,
+  };
 };
 
 export const createConversationAgentGateway = ({
@@ -78,7 +83,7 @@ export const createConversationAgentGateway = ({
     const catalog = await listManagedSkills({ shensiRoot });
     return [...catalog.builtins, ...catalog.user].filter((skill) => skill.disabled !== true && skill.testStatus !== "failed").map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
   },
-  readRoute: async (request = {}) => readAvailableRoute({ shensiRoot, requested: request.routeDocuments }),
+  readRoute: async () => readInternalAgentContracts({ shensiRoot }),
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
     const settings = await resolveRuntimeSettings(options.settings);

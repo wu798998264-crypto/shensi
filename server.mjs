@@ -222,8 +222,11 @@ import {
   activateManagedCapabilityTemplateAsset,
   resetManagedCapabilityTemplate,
   saveManagedCapabilityTemplate,
+  commitManagedTaskRouteDocumentCandidate,
+  recordManagedTaskRouteDocumentFailure,
   seedBundledCustomSkills,
 } from "./src/server/skill-store.mjs";
+import { parseTaskRouteDocumentCandidate, taskRouteDocumentGenerationPrompt, taskRouteDocumentModelSnapshot } from "./src/server/task-route-document.mjs";
 import { resolveSkillRuntime, skillIdsForStage, skillPromptForStage, skillRuntimePublicSummary, withModelCapabilityFallback } from "./src/skill-routing.js";
 import { planWhiteboardSkillRoute, whiteboardAutoSkillSelections } from "./src/whiteboard-skill-route.js";
 import { allowedSkillCapabilities, extractSkillDraft, resolveRequiredCapabilities } from "./src/skill-contract.js";
@@ -8356,7 +8359,66 @@ const handleApiRequest = async (request, response, pathname) => {
 
   if (pathname === "/api/skills/capability-template/save" && request.method === "POST") {
     const body = await readJsonBody(request, 2 * 1024 * 1024);
-    return sendJson(response, 200, { ok: true, ...(await saveManagedCapabilityTemplate({ ...body, shensiRoot: defaultShensiRoot })) });
+    const saved = await saveManagedCapabilityTemplate({ ...body, shensiRoot: defaultShensiRoot });
+    const routeRevision = saved.routeRevision;
+    const topologyHash = saved.routeTopology?.hash || "";
+    const routeModelSettings = { ...(body.routeModelSettings ?? {}), agentPermissionMode: "shensi_only", webSearchEnabled: false };
+    delete routeModelSettings.shensiRoot;
+    delete routeModelSettings.workspacePath;
+    const model = taskRouteDocumentModelSnapshot(routeModelSettings);
+    let routeDocumentUpdate;
+    try {
+      if (!model.profileId && !model.model && !model.agentEngine) throw new Error("没有收到当前文字模型配置，面板已保存但动态路由未生成");
+      const prompt = taskRouteDocumentGenerationPrompt({
+        bundle: saved.capabilityTemplate.current,
+        routeRevision,
+        topologyHash,
+      });
+      const result = await runModelAdapter({
+        settings: routeModelSettings,
+        ...prompt,
+        cwd: resolve(process.env.TEMP || process.env.TMP || root),
+        signal: AbortSignal.timeout(180_000),
+        permissionContract: permissionContractFor("shensi_only", { runner: model.agentEngine || "task_route_generator" }),
+        shensiRuntime: {
+          agentPreferred: true,
+          stage: "task_route_generation",
+          taskId: `task-route-${routeRevision}-${randomUUID()}`,
+          agentPermissionMode: "shensi_only",
+        },
+      });
+      const candidate = parseTaskRouteDocumentCandidate(result.text);
+      const committed = await commitManagedTaskRouteDocumentCandidate({ candidate, routeRevision, topologyHash, model });
+      routeDocumentUpdate = {
+        status: "accepted",
+        message: committed.routeDocumentVersion.message,
+        version: committed.routeDocumentVersion,
+      };
+    } catch (error) {
+      const message = publicErrorMessage(error) || "动态任务路由生成失败";
+      const failure = await recordManagedTaskRouteDocumentFailure({
+        routeRevision,
+        topologyHash,
+        model,
+        message,
+        errors: error?.validation?.errors || [message],
+      }).catch((recordError) => ({ recorded: false, message: publicErrorMessage(recordError) }));
+      routeDocumentUpdate = {
+        status: "rejected",
+        message: failure.recorded === false && failure.message ? `${message}；${failure.message}` : message,
+        version: failure.routeDocumentVersion || null,
+      };
+    }
+    const catalog = await listManagedSkills({ shensiRoot: defaultShensiRoot });
+    return sendJson(response, 200, {
+      ok: true,
+      ...saved,
+      capabilityTemplate: catalog.capabilityTemplate,
+      routeRevision: catalog.routeRevision,
+      routeTopology: catalog.routeTopology,
+      routeDocument: catalog.routeDocument,
+      routeDocumentUpdate,
+    });
   }
 
   if (pathname === "/api/skills/capability-template/restore" && request.method === "POST") {

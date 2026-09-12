@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, readFile, readdir } from "node:fs/promises";
+import { lstat, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 export const BUNDLED_SHENSI_ID = "shensi-capability-bundle";
@@ -133,6 +133,12 @@ const buildShensiManifestAt = async (bundleRoot) => {
 };
 
 export const buildBundledShensiManifest = async ({ appRoot } = {}) => buildShensiManifestAt(resolveBundledShensiRoot({ appRoot }));
+
+export const writeBundledShensiManifest = async ({ appRoot } = {}) => {
+  const manifest = await buildBundledShensiManifest({ appRoot });
+  await writeFile(resolveBundledShensiManifestPath({ appRoot }), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
+};
 
 const parseManifest = async (manifestPath) => {
   try {

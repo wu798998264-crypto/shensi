@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "bundleId": "shensi-capability-bundle",
-  "bundleVersion": "sha256:4d143a8194be4bb1",
-  "bundleSha256": "4d143a8194be4bb1a44575aefcb83e40a547ca80bc5586c324b84a770c94c10d",
+  "bundleVersion": "sha256:5fca6ec32c759751",
+  "bundleSha256": "5fca6ec32c7597517655919fe782c73ce8d8292e09825dc8493defa48b5caa3d",
   "entry": "神思.md",
-  "fileCount": 598,
-  "totalBytes": 19168326,
+  "fileCount": 597,
+  "totalBytes": 19130249,
   "contentSummary": {
-    "runtime-content": 176,
+    "runtime-content": 175,
     "runtime-data": 25,
     "reference-only": 397
   },
@@ -2817,8 +2817,8 @@
     },
     {
       "path": "小说写作技能skill/创作引导.md",
-      "sizeBytes": 19308,
-      "sha256": "f3d808435ec01e43a02533a4f78d733b834a5cab2126510d8bfcfa7ffe721021",
+      "sizeBytes": 19268,
+      "sha256": "742c4f5e9f37222ed4b124088e0465a98ad8b8959c0a654ee3a4338aa75a241c",
       "role": "runtime-content"
     },
     {
@@ -3291,20 +3291,14 @@
     },
     {
       "path": "神思.md",
-      "sizeBytes": 12266,
-      "sha256": "e8a44eff0ae590f55a4a9866a6936170a4472c903f24b621534e580c6a49620a",
+      "sizeBytes": 12228,
+      "sha256": "424c24c6aae6498c8ea9e787d50376b8db4e1f63f9e0632d3c1ead9ab50ea526",
       "role": "runtime-content"
     },
     {
       "path": "神思使用者说明书.md",
-      "sizeBytes": 7863,
-      "sha256": "3966b45e921c740b2f530e4400bdd03cf4a11bb4607fcc8f62e50b433ebab47c",
-      "role": "runtime-content"
-    },
-    {
-      "path": "神思模块/任务路由模块.md",
-      "sizeBytes": 898,
-      "sha256": "c0e0f25e036d1164997620bb5dcd466ae2fea0e38953a5a2c63466cbc3ecb981",
+      "sizeBytes": 7784,
+      "sha256": "829d12a417bbd0ddc61dcfcc737dd1ea8ef07668f6f07f69b7d9a06d18a40ce4",
       "role": "runtime-content"
     },
     {
@@ -3315,8 +3309,8 @@
     },
     {
       "path": "神思模块/创作引导模块.md",
-      "sizeBytes": 3737,
-      "sha256": "30b165ae3a96aee677c1a48876d5af466197a007f051825670a788c9044c43ba",
+      "sizeBytes": 3739,
+      "sha256": "7a81fabab90394855ebbe0e3a804f74133b3de9fe96dbe94229c0205497b3ef9",
       "role": "runtime-content"
     },
     {
@@ -3335,6 +3329,18 @@
       "path": "神思模块/漫剧模块.md",
       "sizeBytes": 2849,
       "sha256": "763336607ad491b4a0d2ea35b741e969a71522f5772ea0bcbebe0aa6a3467335",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/神思任务路由.md",
+      "sizeBytes": 2302,
+      "sha256": "167c8d02fcdf7bff4f57cef83f01ccc1fe22ee06f3af06989bce76857532e548",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/神思运行规范.md",
+      "sizeBytes": 2523,
+      "sha256": "5f9673bd2378813cc25cd1af41abb9437871eedfa3c66ac67316e436c5e7d096",
       "role": "runtime-content"
     },
     {
@@ -3410,12 +3416,6 @@
       "role": "runtime-content"
     },
     {
-      "path": "神思模块/规则模块/神思-任务路由规则.md",
-      "sizeBytes": 31291,
-      "sha256": "a3da14d793723aeb2dfd12a8d17d5885801900a9c046c4872abcdd3f6f279daf",
-      "role": "runtime-content"
-    },
-    {
       "path": "神思模块/规则模块/神思-作者化与AI检测风险控制规则.md",
       "sizeBytes": 18175,
       "sha256": "8c3a29a05c02826f1852d7046122b46c4b10b2d05d0e8e01f5771b69fdd80058",
@@ -3471,26 +3471,20 @@
     },
     {
       "path": "神思模块/规则模块/神思-商业判断与自动审稿增强规则.md",
-      "sizeBytes": 15968,
-      "sha256": "f88b274d08ed8f8ac6defd3689812a487ae6e2e52cc8736b13279bb5b36df5f1",
+      "sizeBytes": 15965,
+      "sha256": "a5b7c0781a86e708aee0f928d9e3e06b1fece4b5627b06f192aa97c6c13e8b2c",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-大纲与章纲规则.md",
-      "sizeBytes": 11516,
-      "sha256": "7ff7d6a1efb56c8532162aafd245051462416e43f03075f8081eb57fe87249f6",
+      "sizeBytes": 11526,
+      "sha256": "9116cfe62b8de1c40c1b4f84c63af991a91953ac8cbdc851ed65794873f5d8bb",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/规则模块/神思-开场钩子与时间叙述控制规则.md",
       "sizeBytes": 13437,
       "sha256": "4d50750abb913a45e754a3665ab56219da186399bda652cbf60d8f7ea5e67bf5",
-      "role": "runtime-content"
-    },
-    {
-      "path": "神思模块/规则模块/神思-执行入口映射表.md",
-      "sizeBytes": 10237,
-      "sha256": "a9a5b83ad4614e962d6d3dd9f1fcfe5ea5a76c007a1077c5acf8e9f10faccbce",
       "role": "runtime-content"
     },
     {
@@ -3501,8 +3495,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-框架健康检查规则.md",
-      "sizeBytes": 8091,
-      "sha256": "a6b08bcaa6ae5ec971bc1847060cb96ff882f6a299cb01cca0f8f95fd626942d",
+      "sizeBytes": 8102,
+      "sha256": "4f2c40e2cc524472556d72125f1b7425412e29deb63b8cc84327ef28dc4a4322",
       "role": "runtime-content"
     },
     {
@@ -3573,8 +3567,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-短剧与视觉资产规则.md",
-      "sizeBytes": 28466,
-      "sha256": "14bef9cb6a1bab94cb63b3669d12e859a30e5d8986a96c3a4d09c130b38f6cc1",
+      "sizeBytes": 28157,
+      "sha256": "a323b9c1ba348f3f77bb864698475538d2e2291df06f0533e516fd6fcecf4d00",
       "role": "runtime-content"
     },
     {
@@ -3609,8 +3603,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-设定生成规则.md",
-      "sizeBytes": 11253,
-      "sha256": "bea0a270b27e4a6c1b80af82f6637103392f94d34937fcf521bfe64a2c52039a",
+      "sizeBytes": 11225,
+      "sha256": "c27c8abb4b8a301cc7cdc9909503e345e0771b655ae9bcfedcbe1dbbba9a942d",
       "role": "runtime-content"
     },
     {
@@ -3627,14 +3621,14 @@
     },
     {
       "path": "神思模块/规则模块/神思-非常规概念引导规则.md",
-      "sizeBytes": 4923,
-      "sha256": "065d3602f201c6fe3ce37b138c081a2c61f6237ddd56f07ac4dfeb3f7aa7c079",
+      "sizeBytes": 4904,
+      "sha256": "19255e208f8251020b8d6c1d3b84c4f00f3488ee5dd4c14c701f050cf113c8d5",
       "role": "runtime-content"
     },
     {
       "path": "神思模块/设定模块.md",
-      "sizeBytes": 1541,
-      "sha256": "e9a0819eafb0c3605e48d93f147b0125df418bf5e64252f96bdf0f8d592b654c",
+      "sizeBytes": 1558,
+      "sha256": "52f662df8eaf5f912017bf7759c5b0393747ec751718e56878df294ebcf24dec",
       "role": "runtime-content"
     }
   ]

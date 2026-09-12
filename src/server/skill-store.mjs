@@ -49,8 +49,9 @@ import {
   compositeRelationAnalysisSummary,
   compositeTopologyHash,
 } from "./composite-relation-inference.mjs";
+import { validateTaskRouteDocumentCandidate } from "./task-route-document.mjs";
 
-const REGISTRY_SCHEMA_VERSION = 18;
+const REGISTRY_SCHEMA_VERSION = 19;
 const MAX_SKILL_SOURCE_BYTES = 256 * 1024;
 const MAX_SKILL_PACKAGE_BYTES = 4 * 1024 * 1024;
 const MAX_CAPABILITY_ASSET_BYTES = 2 * 1024 * 1024;
@@ -332,6 +333,56 @@ const defaultCustomSlots = () => DEFAULT_CUSTOM_SKILL_SLOTS.map((slot) => ({
 }));
 
 const TEMPLATE_HISTORY_LIMIT = 50;
+const ROUTE_DOCUMENT_HISTORY_LIMIT = 50;
+
+const normalizeRouteDocumentModel = (value = {}) => ({
+  profileId: String(value?.profileId || "").trim().slice(0, 180),
+  provider: String(value?.provider || "").trim().slice(0, 120),
+  model: String(value?.model || "").trim().slice(0, 180),
+  agentEngine: String(value?.agentEngine || "").trim().slice(0, 80),
+  adapter: String(value?.adapter || "").trim().slice(0, 40),
+});
+
+const normalizeRouteDocumentRecord = (value = {}) => {
+  const createdAt = Number(value.createdAt) || Date.parse(value.createdAtIso || "") || Date.now();
+  const status = value.status === "accepted" ? "accepted" : "rejected";
+  const content = status === "accepted" ? String(value.content || "").trim().slice(0, 20_000) : "";
+  return {
+    id: String(value.id || `route-document:${randomUUID()}`).slice(0, 220),
+    status,
+    routeRevision: Math.max(0, Number(value.routeRevision) || 0),
+    topologyHash: /^[a-f0-9]{64}$/iu.test(String(value.topologyHash || "")) ? String(value.topologyHash).toLowerCase() : "",
+    content,
+    contentHash: content ? hashText(content) : String(value.contentHash || "").slice(0, 128),
+    model: normalizeRouteDocumentModel(value.model),
+    message: String(value.message || "").trim().slice(0, 1_000),
+    errors: (Array.isArray(value.errors) ? value.errors : []).map((item) => String(item || "").trim().slice(0, 500)).filter(Boolean).slice(0, 20),
+    sourceRecordId: String(value.sourceRecordId || "").trim().slice(0, 220),
+    createdAt,
+    createdAtIso: new Date(createdAt).toISOString(),
+  };
+};
+
+const normalizeRouteDocumentState = (value = {}) => {
+  const history = (Array.isArray(value?.history) ? value.history : [])
+    .map(normalizeRouteDocumentRecord)
+    .slice(-ROUTE_DOCUMENT_HISTORY_LIMIT);
+  const requestedCurrentId = String(value?.currentId || value?.current?.id || "").trim();
+  const current = history.find((entry) => entry.id === requestedCurrentId && entry.status === "accepted")
+    || [...history].reverse().find((entry) => entry.status === "accepted")
+    || null;
+  return { schemaVersion: 1, currentId: current?.id || "", history };
+};
+
+const publicRouteDocumentRecord = ({ content: _content, ...record } = {}) => record;
+const publicRouteDocumentState = (value = {}) => {
+  const state = normalizeRouteDocumentState(value);
+  return {
+    schemaVersion: state.schemaVersion,
+    current: state.history.find((entry) => entry.id === state.currentId) ? publicRouteDocumentRecord(state.history.find((entry) => entry.id === state.currentId)) : null,
+    history: [...state.history].reverse().map(publicRouteDocumentRecord),
+  };
+};
 
 const capabilityTemplateHistoryRecord = ({
   scopeType,
@@ -348,6 +399,7 @@ const capabilityTemplateHistoryRecord = ({
   sourceScopeType = scopeType,
   sourceScopeId = scopeId,
   restoredFromRouteRevision = 0,
+  dynamicRoute = null,
 }) => ({
   id: `template-version:${scopeType}:${String(scopeId).replace(/[^a-z0-9._:-]/gi, "-")}:${version}:${randomUUID()}`,
   scopeType,
@@ -365,6 +417,7 @@ const capabilityTemplateHistoryRecord = ({
   sourceScopeType: ["template", "group", "module", "slot", "slot-group", "skill", "route"].includes(sourceScopeType) ? sourceScopeType : scopeType,
   sourceScopeId: String(sourceScopeId || scopeId || "").slice(0, 180),
   restoredFromRouteRevision: Math.max(0, Number(restoredFromRouteRevision) || 0),
+  dynamicRoute: dynamicRoute && typeof dynamicRoute === "object" ? structuredClone(dynamicRoute) : null,
 });
 
 const createInitialCapabilityTemplateState = ({ customSlots = [], customSlotGroups = [] } = {}) => {
@@ -403,6 +456,7 @@ const normalizedTemplateHistoryEntries = (entries, { scopeType, scopeId, fallbac
         sourceScopeType: ["template", "group", "module", "slot", "slot-group", "skill", "route"].includes(entry.sourceScopeType) ? entry.sourceScopeType : scopeType,
         sourceScopeId: String(entry.sourceScopeId || scopeId || "").slice(0, 180),
         restoredFromRouteRevision: Math.max(0, Number(entry.restoredFromRouteRevision) || 0),
+        dynamicRoute: entry.dynamicRoute && typeof entry.dynamicRoute === "object" ? structuredClone(entry.dynamicRoute) : null,
       };
     })
     .sort((left, right) => left.version - right.version)
@@ -733,6 +787,7 @@ const emptyRegistry = () => ({
   activeCapabilityTemplateAssetId: "",
   skillTrash: [],
   routeRevision: 0,
+  routeDocument: normalizeRouteDocumentState(),
 });
 
 const normalizeStoredRegistry = (parsed = {}) => {
@@ -939,6 +994,7 @@ const normalizeStoredRegistry = (parsed = {}) => {
       ? String(parsed.activeCapabilityTemplateAssetId) : "",
     skillTrash,
     routeRevision: Math.max(0, Number(parsed.routeRevision) || 0) + (splitLegacySlot ? 1 : 0) + (capabilityTemplateMigrated ? 1 : 0) + (deprecatedSkillIds.size ? 1 : 0),
+    routeDocument: normalizeRouteDocumentState(parsed.routeDocument),
   };
 };
 
@@ -1020,6 +1076,7 @@ const registryPayload = (registry, storageRevision) => ({
   activeCapabilityTemplateAssetId: registry.activeCapabilityTemplateAssetId ?? "",
   skillTrash: registry.skillTrash ?? [],
   routeRevision: Math.max(0, Number(registry.routeRevision) || 0),
+  routeDocument: normalizeRouteDocumentState(registry.routeDocument),
 });
 
 const writeRegistry = async (root, registry, { allowCorruptCurrent = false, preservePrevious = true } = {}) => {
@@ -1625,6 +1682,7 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
     officialCapabilityTemplate: createInitialCapabilityTemplate(),
     routeRevision: registry.routeRevision,
     routeTopology: compileRouteTopology(registry, { fixedSlots, customSlots }),
+    routeDocument: publicRouteDocumentState(registry.routeDocument),
     marketplace: {
       connected: remoteMarketplace.connected === true,
       mode: remoteMarketplace.mode,
@@ -4637,6 +4695,12 @@ const appendUnifiedRouteHistory = (registry, {
     customSlots: structuredClone(registry.customSlots ?? []),
     customSlotGroups: structuredClone(registry.customSlotGroups ?? []),
   };
+  const version = bucket.reduce((maximum, entry) => Math.max(maximum, Number(entry.version) || 0), 0) + 1;
+  // The template version is part of the topology payload. Update it before
+  // hashing so the history record, runtime catalog and generated route all
+  // bind to the same immutable topology hash.
+  state.current.template.version = version;
+  state.current.template.updatedAt = Date.now();
   const routeTopology = compileRouteTopology(registry);
   const lint = applyAdaptiveNativeFallbackToLint(lintCapabilityTemplateReachability(state.current, {
     fixedSlots: listFixedSkillSlots(),
@@ -4650,9 +4714,6 @@ const appendUnifiedRouteHistory = (registry, {
     userSkills: registry.skills,
     adaptationActions,
   });
-  const version = bucket.reduce((maximum, entry) => Math.max(maximum, Number(entry.version) || 0), 0) + 1;
-  state.current.template.version = version;
-  state.current.template.updatedAt = Date.now();
   const routeDiff = capabilityRouteDiff({
     previousRecord,
     currentBundle: state.current,
@@ -4915,6 +4976,137 @@ export const saveManagedCapabilityTemplate = async ({ bundle, scopeType = "templ
   };
 };
 
+const matchingUnifiedRouteHistoryRecord = (registry, routeRevision, topologyHash) => {
+  const bucket = registry.capabilityTemplate?.history?.template ?? [];
+  return [...bucket].reverse().find((entry) => (
+    Number(entry.routeRevision) === Number(routeRevision)
+    && String(entry.topologyHash || "").toLowerCase() === String(topologyHash || "").toLowerCase()
+  )) || null;
+};
+
+const appendRouteDocumentRecord = (registry, value = {}, { makeCurrent = false } = {}) => {
+  registry.routeDocument = normalizeRouteDocumentState(registry.routeDocument);
+  const record = normalizeRouteDocumentRecord(value);
+  registry.routeDocument.history.push(record);
+  if (registry.routeDocument.history.length > ROUTE_DOCUMENT_HISTORY_LIMIT) {
+    registry.routeDocument.history.splice(0, registry.routeDocument.history.length - ROUTE_DOCUMENT_HISTORY_LIMIT);
+  }
+  if (makeCurrent && record.status === "accepted") registry.routeDocument.currentId = record.id;
+  return record;
+};
+
+export const commitManagedTaskRouteDocumentCandidate = async ({ candidate = {}, routeRevision = 0, topologyHash = "", model = {} } = {}) => {
+  const root = await ensureSkillStore();
+  const registry = await readRegistry(root);
+  const topology = compileRouteTopology(registry);
+  const expectedRevision = Math.max(0, Number(routeRevision) || 0);
+  const expectedHash = String(topologyHash || "").trim().toLowerCase();
+  const validation = validateTaskRouteDocumentCandidate(candidate, {
+    routeRevision: expectedRevision,
+    topologyHash: expectedHash,
+    bundle: registry.capabilityTemplate.current,
+  });
+  if (Number(topology.revision) !== expectedRevision || String(topology.hash || "").toLowerCase() !== expectedHash) {
+    validation.errors.unshift("Skill 面板已在另一个窗口中变化，候选没有激活");
+    validation.valid = false;
+  }
+  if (!validation.valid) {
+    const rejected = new Error(`动态任务路由校验失败：${validation.errors.join("；")}`);
+    rejected.code = "TASK_ROUTE_DOCUMENT_REJECTED";
+    rejected.statusCode = 422;
+    rejected.validation = validation;
+    throw rejected;
+  }
+  const record = appendRouteDocumentRecord(registry, {
+    id: `route-document:${expectedRevision}:${randomUUID()}`,
+    status: "accepted",
+    routeRevision: expectedRevision,
+    topologyHash: expectedHash,
+    content: validation.document,
+    contentHash: validation.contentHash,
+    model,
+    message: "当前文字模型生成的路由候选已通过拓扑与防退化校验",
+  }, { makeCurrent: true });
+  const routeRecord = matchingUnifiedRouteHistoryRecord(registry, expectedRevision, expectedHash);
+  if (!routeRecord) throw new Error("当前面板版本缺少可绑定的任务路由历史记录");
+  routeRecord.dynamicRoute = publicRouteDocumentRecord(record);
+  await writeRegistry(root, registry);
+  return {
+    applied: true,
+    routeDocument: publicRouteDocumentState(registry.routeDocument),
+    routeDocumentVersion: publicRouteDocumentRecord(record),
+    capabilityTemplate: publicCapabilityTemplateState(registry.capabilityTemplate),
+  };
+};
+
+export const recordManagedTaskRouteDocumentFailure = async ({ routeRevision = 0, topologyHash = "", model = {}, message = "", errors = [] } = {}) => {
+  const root = await ensureSkillStore();
+  const registry = await readRegistry(root);
+  const topology = compileRouteTopology(registry);
+  const expectedRevision = Math.max(0, Number(routeRevision) || 0);
+  const expectedHash = String(topologyHash || "").trim().toLowerCase();
+  if (Number(topology.revision) !== expectedRevision || String(topology.hash || "").toLowerCase() !== expectedHash) {
+    return { recorded: false, message: "Skill 面板已继续变化，过时的路由失败记录没有写入当前版本" };
+  }
+  const normalizedErrors = (Array.isArray(errors) ? errors : []).map((item) => String(item || "").trim()).filter(Boolean);
+  const record = appendRouteDocumentRecord(registry, {
+    id: `route-document-rejected:${expectedRevision}:${randomUUID()}`,
+    status: "rejected",
+    routeRevision: expectedRevision,
+    topologyHash: expectedHash,
+    model,
+    message: String(message || normalizedErrors[0] || "动态任务路由生成失败").trim(),
+    errors: normalizedErrors,
+  });
+  const routeRecord = matchingUnifiedRouteHistoryRecord(registry, expectedRevision, expectedHash);
+  if (routeRecord?.dynamicRoute?.status !== "accepted") routeRecord.dynamicRoute = publicRouteDocumentRecord(record);
+  await writeRegistry(root, registry);
+  return {
+    recorded: true,
+    routeDocument: publicRouteDocumentState(registry.routeDocument),
+    routeDocumentVersion: publicRouteDocumentRecord(record),
+    capabilityTemplate: publicCapabilityTemplateState(registry.capabilityTemplate),
+  };
+};
+
+export const readManagedTaskRouteDocument = async () => {
+  const root = await ensureSkillStore();
+  const registry = await readRegistry(root);
+  const topology = compileRouteTopology(registry);
+  const state = normalizeRouteDocumentState(registry.routeDocument);
+  const current = state.history.find((entry) => entry.id === state.currentId && entry.status === "accepted") || null;
+  if (!current
+    || Number(current.routeRevision) !== Number(topology.revision)
+    || String(current.topologyHash || "").toLowerCase() !== String(topology.hash || "").toLowerCase()) {
+    return { active: false, routeRevision: topology.revision, topologyHash: topology.hash, content: "", current: current ? publicRouteDocumentRecord(current) : null };
+  }
+  return { active: true, routeRevision: topology.revision, topologyHash: topology.hash, content: current.content, current: publicRouteDocumentRecord(current) };
+};
+
+const restoreDynamicRouteForSelectedHistory = (registry, selected, routeRecord) => {
+  registry.routeDocument = normalizeRouteDocumentState(registry.routeDocument);
+  const selectedRouteId = String(selected?.dynamicRoute?.id || "").trim();
+  const source = registry.routeDocument.history.find((entry) => entry.id === selectedRouteId && entry.status === "accepted")
+    || [...registry.routeDocument.history].reverse().find((entry) => entry.status === "accepted"
+      && Number(entry.routeRevision) === Number(selected?.routeRevision)
+      && String(entry.topologyHash || "").toLowerCase() === String(selected?.topologyHash || "").toLowerCase());
+  if (!source) {
+    if (routeRecord) routeRecord.dynamicRoute = { status: "static", message: "该历史面板没有已通过的动态路由正文，已回退《神思任务路由》" };
+    return null;
+  }
+  const record = appendRouteDocumentRecord(registry, {
+    ...source,
+    id: `route-document:${registry.routeRevision}:${randomUUID()}`,
+    routeRevision: registry.routeRevision,
+    topologyHash: routeRecord?.topologyHash || "",
+    sourceRecordId: source.id,
+    createdAt: Date.now(),
+    message: "已随历史面板恢复对应的动态任务路由",
+  }, { makeCurrent: true });
+  if (routeRecord) routeRecord.dynamicRoute = publicRouteDocumentRecord(record);
+  return record;
+};
+
 export const restoreManagedCapabilityTemplateVersion = async ({ scopeType = "template", scopeId = "", versionId = "" } = {}) => {
   const root = await ensureSkillStore();
   const registry = await readRegistry(root);
@@ -4977,6 +5169,7 @@ export const restoreManagedCapabilityTemplateVersion = async ({ scopeType = "tem
     adaptationActions: restoreAdaptationActions,
   });
   const routeRecord = registry.capabilityTemplate.history.template.at(-1);
+  if (scopeType === "template") restoreDynamicRouteForSelectedHistory(registry, selected, routeRecord);
   const record = localRecord || routeRecord;
   await writeRegistry(root, registry);
   return {

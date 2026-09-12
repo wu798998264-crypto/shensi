@@ -63,7 +63,8 @@ try {
   assert.equal(semanticStatus.status, "completed");
   assert.equal(workspaceReads, 0, "不调用文档工具时不得读取记忆、大纲、设定或其他空文档");
   assert.match(capturedRun.prompt, /不要生成视频/u, "原始语义必须完整交给 Agent，不得先按媒体关键词改写任务");
-  assert.ok(capturedRun.contextBlocks.some((block) => block.name === "任务路由文档"));
+  assert.ok(capturedRun.contextBlocks.some((block) => block.name === "神思任务路由"));
+  assert.ok(capturedRun.contextBlocks.some((block) => block.name === "神思运行规范"));
 
   const handoffs = [];
   const mcpToolsByUrl = new Map();
@@ -130,7 +131,8 @@ try {
     assert.ok(handoff.options.nativeHost?.url, "外置 Agent 必须获得完整神思 MCP 工具入口");
     assert.equal(handoff.options.allowEdits, false, "不得绕开神思文档事务直接写作品文件");
     assert.equal(handoff.options.timeoutMs, 600_000, "旧配置的 120 秒必须提升为至少 10 分钟无进展超时");
-    assert.ok(handoff.options.contextBlocks.some((block) => block.name === "任务路由文档"));
+    assert.ok(handoff.options.contextBlocks.some((block) => block.name === "神思任务路由"));
+    assert.ok(handoff.options.contextBlocks.some((block) => block.name === "神思运行规范"));
   }
   assert.equal(openedHosts, 4);
   assert.equal(closedHosts, 4, "外置 Agent 每次处理和复核后都必须关闭隔离 MCP 服务");

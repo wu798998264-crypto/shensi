@@ -7,7 +7,7 @@ import { validateBundledShensi } from '../src/server/bundled-shensi.mjs';
 import { createInitialState, createBlankProjectState, createBlankNotebookState } from '../src/data.js';
 const packagePolicy = createRequire(import.meta.url)('./package-content-policy.cjs');
 const { allowedPackagePath } = packagePolicy;
-for (const file of ['server.mjs', 'src/server/media-generation-worker.mjs', 'scripts/windows/dreamina-profile-runner.ps1', 'scripts/update-installer-helper.mjs', 'packaging/bundled/skill/神思/神思模块/任务路由模块.md', 'public/assets/shensi-logo.png']) assert.equal(allowedPackagePath(file), true, file);
+for (const file of ['server.mjs', 'src/server/media-generation-worker.mjs', 'scripts/windows/dreamina-profile-runner.ps1', 'scripts/update-installer-helper.mjs', 'packaging/bundled/skill/神思/神思模块/神思任务路由.md', 'packaging/bundled/skill/神思/神思模块/神思运行规范.md', 'public/assets/shensi-logo.png']) assert.equal(allowedPackagePath(file), true, file);
 for (const file of ['scripts/test-example.mjs', 'scripts/audit-private.mjs', 'runtime/works.json', 'src/作品/第一章.md', 'packaging/bundled/skill/神思/原始资料/正文.md', 'packaging/bundled/向天垂钓.md', 'public/assets/private-photo.png', 'src/test-results/screenshot.png', 'shensi-codesign.pfx']) assert.equal(allowedPackagePath(file), false, file);
 for (const file of ['src/private.spec.js', 'src/secrets/provider.json', 'src/credentials.json', 'src/tokens/session.json', 'src/.env.production', 'src/api-keys.json']) assert.equal(allowedPackagePath(file), false, file);
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url)));
