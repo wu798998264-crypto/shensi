@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
 
-const [app, server, mediaWorker, mediaErrorPresentation] = await Promise.all([
+const [app, server, mediaWorker, mediaErrorPresentation, mediaGenerationApi] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   readFile(new URL("../server.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/domains/media/media-error-presentation.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/domains/media/media-generation-api.mjs", import.meta.url), "utf8"),
 ]);
 
 assert.match(app, /whiteboardMediaSubmissionLocks/u, "前端必须有白板媒体单飞锁");
@@ -79,8 +80,8 @@ assert.match(app, /targetWasDeleted = canvasGenerationRecoveryTargetDeleted/u, "
 assert.match(app, /if \(userStopped \|\| targetWasDeleted\)/u, "已停止或已删除的任务不得重建卡片");
 assert.match(app, /preserveAssetOnly: true,[\s\S]{0,500}保留已停止任务的图片资产/u, "厂商迟到结果必须只进入全部资产而不重建已删除卡片");
 assert.match(server, /WHITEBOARD_HISTORY_CONTEXT_FORBIDDEN/u, "白板卡片请求必须拒绝历史对话上下文");
-assert.match(server, /dismissMediaGenerationJob/u, "服务端必须提供持久化的旧任务释放动作");
-assert.match(server, /const abandonedJobIds = Array\.isArray\(job\.abandonedJobIds\)[\s\S]{0,420}terminateMediaGenerationWorker/u, "新任务创建后服务端必须停止旧任务的本机 worker");
+assert.match(mediaGenerationApi, /dismissMediaGenerationJob/u, "服务端媒体域必须提供持久化的旧任务释放动作");
+assert.match(mediaGenerationApi, /const abandonedJobIds = Array\.isArray\(job\.abandonedJobIds\)[\s\S]{0,420}terminateMediaGenerationWorker/u, "新任务创建后服务端媒体域必须停止旧任务的本机 worker");
 const storeSource = await readFile(new URL("../src/server/generation-job-store.mjs", import.meta.url), "utf8");
 assert.match(storeSource, /const targetKey = mediaTargetKey\(channel, normalized\);[\s\S]{0,260}enqueueMediaCreation\(`target:\$\{targetKey\}`[\s\S]{0,260}acquireCapabilitySmokeLock\(`media-target:\$\{targetKey\}`\)/u, "服务端必须先以进程内队列串行化同卡片创建，再使用跨进程目标锁");
 assert.match(storeSource, /MEDIA_ACTIVE_STATUSES = new Set\([^\n]+"cancel_requested"/u, "普通传输重试仍必须识别取消待确认的活动任务");
