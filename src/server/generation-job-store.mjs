@@ -348,11 +348,8 @@ export const publicGenerationJob = (job) => {
   delete safe.replacementReservationOwnerPid;
   delete safe.replacementSourceReservationId;
   const serverMedia = safe.mode === "server" && ["image", "video", "audio"].includes(safe.channel);
-  const terminalFailure = safe.status === "failed"
-    && !safe.billingRisk
-    && safe.resubmitConfirmationRequired !== true;
   const terminal = ["complete", "cancelled", "superseded"].includes(safe.status)
-    || terminalFailure
+    || safe.status === "failed"
     || Boolean(safe.supersededBy);
   const replacementPending = Boolean(job?.replacementReservationId);
   const dreaminaCliMedia = ["image", "video"].includes(safe.channel)
@@ -383,10 +380,10 @@ export const publicGenerationJob = (job) => {
     resumeOriginal: !terminal && !replacementPending && safe.desiredAction !== "cancel" && Boolean(safe.providerTaskId) && (MEDIA_RESUMABLE_STATUSES.has(safe.status) || safe.status === "cancel_requested"),
     continueCancel: false,
     safeResubmit: safeNoTaskResubmit,
-    confirmedResubmit: !safe.userStopped && !safeNoTaskResubmit && !automaticRecoveryInProgress && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && MEDIA_RESUMABLE_STATUSES.has(safe.status),
-    replaceLegacy: !safe.userStopped && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && !safe.idempotencyKey && MEDIA_RESUMABLE_STATUSES.has(safe.status),
-    autoReconcileProviderTask: !safe.userStopped && dreaminaCliMedia && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && safe.billingRisk === "submission_outcome_unknown" && MEDIA_RESUMABLE_STATUSES.has(safe.status),
-    dismissUncertain: !terminal && !replacementPending && mediaGenerationJobCanBeDismissed(safe),
+    confirmedResubmit: !safe.userStopped && !safeNoTaskResubmit && !automaticRecoveryInProgress && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && MEDIA_RESUMABLE_STATUSES.has(safe.status),
+    replaceLegacy: !safe.userStopped && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && !safe.idempotencyKey && MEDIA_RESUMABLE_STATUSES.has(safe.status),
+    autoReconcileProviderTask: !safe.userStopped && dreaminaCliMedia && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && safe.billingRisk === "submission_outcome_unknown" && MEDIA_RESUMABLE_STATUSES.has(safe.status),
+    dismissUncertain: !replacementPending && mediaGenerationJobCanBeDismissed(safe),
     dismissCompleted: mediaGenerationJobCanBeAbandoned(safe),
   } : {};
   return safe;
@@ -919,7 +916,9 @@ const findPendingMediaJobsByTarget = async ({ channel, target } = {}) => {
     if (dismissedUnidentifiedSubmission) continue;
     const stopped = Boolean(job.userStoppedAt || job.resultSuppressed);
     const cardApplyPending = job.status === "complete" && !job.appliedAt && !stopped;
-    if (MEDIA_ACTIVE_STATUSES.has(job.status) || cardApplyPending || (job.billingRisk && !job.appliedAt)) jobs.push(job);
+    if (MEDIA_ACTIVE_STATUSES.has(job.status)
+      || cardApplyPending
+      || (job.status !== "failed" && job.billingRisk && !job.appliedAt)) jobs.push(job);
   }
   return jobs.sort((left, right) => Date.parse(right.updatedAt || right.createdAt || 0) - Date.parse(left.updatedAt || left.createdAt || 0));
 };
@@ -985,8 +984,7 @@ export const listDreaminaProfileBlockingJobs = async () => {
   const jobs = [];
   for (let job of await readGenerationJobs(entries)) {
     job = await recoverLegacyDreaminaGenerationAuthFailure(job);
-    const forceReleasePending = Boolean(job?.forceReleasePendingAt && !job?.forceReleaseCompletedAt);
-    if (job && (dreaminaJobRequiresCredentialProfile(job) || forceReleasePending)) jobs.push(publicGenerationJob(job));
+    if (job && dreaminaJobRequiresCredentialProfile(job)) jobs.push(publicGenerationJob(job));
   }
   return jobs.sort((left, right) => Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
 };
@@ -1005,7 +1003,7 @@ export const beginLocalMediaStop = ({ jobId } = {}) => transitionJob(safeJobId(j
   };
 });
 
-export const finishLocalMediaStop = ({ jobId } = {}) => transitionJob(safeJobId(jobId), (job) => {
+export const finishLocalMediaStop = ({ jobId, diagnostics = null } = {}) => transitionJob(safeJobId(jobId), (job) => {
   if (job.forceReleaseCompletedAt || job.supersededBy) return null;
   if (!job.forceReleasePendingAt || job.desiredAction !== "cancel") {
     throw jobTransitionError("任务尚未登记本地终止意图", "MEDIA_LOCAL_STOP_NOT_REQUESTED");
@@ -1013,14 +1011,20 @@ export const finishLocalMediaStop = ({ jobId } = {}) => transitionJob(safeJobId(
   const remoteUnknown = Boolean(job.providerTaskId || job.billingRisk || ["submitting", "submitted", "uncertain", "unknown"].includes(job.submissionState));
   const remoteTerminal = ["failed", "completed", "cancelled"].includes(job.providerStatus);
   const now = new Date().toISOString();
+  const warning = String(diagnostics?.warning || "").trim();
+  const physicalCredentialSlotReleased = diagnostics?.physicalCredentialSlotReleased;
   return {
     status: "cancelled", desiredAction: "cancel", resultSuppressed: true,
     providerStatus: remoteTerminal ? job.providerStatus : remoteUnknown ? "cancel_unconfirmed" : "not_submitted",
     forceReleaseCompletedAt: now, profileSwitchReleasedAt: now, cancelledAt: now,
     retryAllowed: false, nextPollAt: "", automaticRecoveryStoppedAt: now,
-    error: remoteUnknown
-      ? "已终止本地执行并释放占用，不会自动重启或重新提交。原任务和错误记录已保留；厂商远端结果及费用以实际回执为准。"
-      : "已终止本地执行并释放占用；任务没有提交，原参数和错误记录已保留。",
+    ...(physicalCredentialSlotReleased === true || physicalCredentialSlotReleased === false
+      ? { physicalCredentialSlotReleased }
+      : {}),
+    ...(warning ? { localStopWarning: warning } : {}),
+    error: `${remoteUnknown
+      ? "已终止本地执行并释放本地占用，不会自动重启或重新提交。原任务和错误记录已保留；厂商远端结果及费用以实际回执为准。"
+      : "已终止本地执行并释放本地占用；任务没有提交，原参数和错误记录已保留。"}${warning ? ` 终止诊断：${warning}` : ""}`,
   };
 });
 

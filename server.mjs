@@ -95,7 +95,6 @@ import { appDataRoot, initializeConfiguredDataRoot, machineLocalDataRoot } from 
 import {
   completeDreaminaProfileOAuth,
   listDreaminaProfileAccountStatuses,
-  probeDreaminaCredentialLock,
   reopenDreaminaProfileOAuth,
   startDreaminaProfileOAuth,
 } from "./src/server/dreamina-profile-oauth.mjs";
@@ -146,7 +145,6 @@ import {
   finalizeLegacyMediaGenerationReplacement,
   getGenerationJob,
   heartbeatGenerationJob,
-  forceReleaseDreaminaJob,
   listDreaminaProfileBlockingJobs,
   listGenerationJobs,
   markGenerationJobApplied,
@@ -3138,87 +3136,25 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, jobs });
   }
 
-  const verifyDreaminaCredentialSlot = async (profileId) => {
-    let lastProbe = { released: false, error: "即梦本机凭证锁尚未确认释放" };
-    // taskkill and the Windows broker can release their handles a fraction of
-    // a second apart. A short bounded retry avoids reporting a false failure
-    // while keeping the force-release action responsive and deterministic.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        lastProbe = await probeDreaminaCredentialLock(profileId);
-      } catch (error) {
-        lastProbe = { released: false, error: String(error?.message || error) };
-      }
-      if (lastProbe.released) return lastProbe;
-      if (attempt < 2) await new Promise((resolveWait) => setTimeout(resolveWait, 150));
-    }
-    return lastProbe;
-  };
-
   const dreaminaLockReleaseMatch = pathname.match(/^\/api\/dreamina-profiles\/lock-occupants\/(generation-[a-z0-9-]+)\/force-release$/i);
   if (dreaminaLockReleaseMatch && request.method === "POST") {
     const [, jobId] = dreaminaLockReleaseMatch;
-    let current = await getGenerationJob({ jobId });
-    const forceReleasePending = Boolean(current.forceReleasePendingAt && !current.forceReleaseCompletedAt);
-    if (!forceReleasePending && !dreaminaJobRequiresCredentialProfile(current)) {
+    const current = await getGenerationJob({ jobId });
+    if (!dreaminaJobRequiresCredentialProfile(current)) {
       const error = new Error("当前任务已不再占用即梦凭证锁，请重新读取占用任务");
       error.code = "DREAMINA_PROFILE_NOT_HELD";
       error.statusCode = 409;
       throw error;
     }
-    if (!forceReleasePending) {
-      const requestedAt = new Date().toISOString();
-      current = await updateMediaGenerationJob({
-        jobId,
-        patch: {
-          forceReleasePendingAt: requestedAt,
-          forceReleaseCompletedAt: "",
-          desiredAction: "cancel",
-          userStoppedAt: current.userStoppedAt || requestedAt,
-          resultSuppressed: true,
-          cancelRequestedAt: current.cancelRequestedAt || requestedAt,
-        },
-      });
-    }
-    const worker = await terminateMediaGenerationWorker({ jobId, pid: current.workerPid });
-    if (!worker.verified) {
-      const error = new Error("未找到仍由神思持有的对应任务进程，未执行强制解除；请先重新读取占用任务");
-      error.code = "DREAMINA_LOCK_OWNER_NOT_VERIFIED";
-      error.statusCode = 409;
-      const settings = current.request?.settings || {};
-      const probe = await verifyDreaminaCredentialSlot(settings.dreaminaCliProfile);
-      // A detached worker may have already exited while the server was
-      // restarting. If the broker is demonstrably free, this is an idempotent
-      // cleanup of the task record, not permission to terminate an unknown
-      // process. Otherwise keep the task visible for a later retry.
-      if (!probe.released) {
-        error.details = { worker, probe };
-        throw error;
-      }
-      const released = await forceReleaseDreaminaJob({ jobId });
-      return sendJson(response, 200, {
-        ok: true,
-        released: true,
-        lockReleased: true,
-        worker: { ...worker, alreadyExited: true },
-        probe,
-        job: generationJobWithLifecycle(released),
-      });
-    }
-    const settings = current.request?.settings || {};
-    const probe = await verifyDreaminaCredentialSlot(settings.dreaminaCliProfile);
-    if (!probe.released) {
-      const error = new Error("任务进程已终止，但即梦本机凭证锁尚未确认释放；任务记录已保留，请重新检查");
-      error.code = "DREAMINA_LOCK_RELEASE_UNCONFIRMED";
-      error.statusCode = 409;
-      error.details = { worker, probe };
-      throw error;
-    }
-    // Do not hide or terminalize the task until the broker probe has proved
-    // that the local credential mutex can be acquired again. A failed probe
-    // must leave the occupant visible so the user can retry safely.
-    const released = await forceReleaseDreaminaJob({ jobId });
-    return sendJson(response, 200, { ok: true, released: true, worker, probe, job: generationJobWithLifecycle(released) });
+    const released = await stopLocalMediaJob({ jobId });
+    return sendJson(response, 200, {
+      ok: true,
+      released: true,
+      lockReleased: true,
+      physicalCredentialSlotReleased: released.physicalCredentialSlotReleased !== false,
+      warning: released.localStopWarning || "",
+      job: generationJobWithLifecycle(released),
+    });
   }
 
   if (pathname === "/api/dreamina-profiles/oauth/start" && request.method === "POST") {

@@ -22,7 +22,8 @@ assert.equal(dreaminaJobRequiresCredentialProfile({ ...dreamina, status: "downlo
 const applying = { ...dreamina, status: "complete", providerStatus: "completed", completedAt: new Date(nowMs).toISOString(), result: { attachment: { relativePath: "result.png" } } };
 assert.equal(dreaminaJobRequiresCredentialProfile(applying, { nowMs }), true);
 assert.equal(dreaminaJobRequiresCredentialProfile({ ...applying, appliedAt: new Date(nowMs).toISOString() }), false);
-assert.equal(dreaminaJobRequiresCredentialProfile(applying, { nowMs: nowMs + 121_000 }), false, "卡片回读停滞不能无限占锁");
+assert.equal(dreaminaJobRequiresCredentialProfile(applying, { nowMs: nowMs + 121_000 }), true, "结果未成功回写卡片前不能按时间静默释放锁");
+assert.equal(dreaminaJobRequiresCredentialProfile({ ...applying, cardApplyFailed: true }, { nowMs: nowMs + 121_000 }), false, "回写明确失败后必须释放锁并保留错误");
 let retryJob = { ...dreamina };
 for (let i = 1; i <= 4; i++) {
   Object.assign(retryJob, mediaConnectionRetry(retryJob, { nowMs: nowMs + i * 1000 }));

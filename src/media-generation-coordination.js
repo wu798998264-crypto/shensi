@@ -72,7 +72,6 @@ const MEDIA_RECOVERY_BLOCKING_STATUSES = new Set([
   "waiting_storage",
   "retry_required",
   "reconciliation_required",
-  "failed",
 ]);
 
 export const mediaGenerationResultSuppressed = (job = {}) => {
@@ -87,7 +86,6 @@ export const mediaGenerationResultSuppressed = (job = {}) => {
 export const mediaGenerationFailureNeedsCard = (job = {}) => (
   String(job?.status || "") === "failed"
   && !mediaGenerationResultSuppressed(job)
-  && !job?.billingRisk
   && !job?.supersededBy
 );
 
@@ -119,18 +117,7 @@ export const whiteboardMediaJobHoldsCard = (job = {}) => {
   if (mediaGenerationResultSuppressed(job)) return false;
   const status = String(job?.status || "");
   if (WHITEBOARD_MEDIA_ACTIVE_STATUSES.has(status)) return true;
-  if (["cancelled", "complete", "superseded"].includes(status)) return false;
-  if (status === "failed") {
-    const actions = job?.availableActions ?? {};
-    return Boolean(
-      job?.billingRisk
-      || job?.resubmitConfirmationRequired
-      || actions.autoReconcileProviderTask
-      || actions.resumeOriginal
-      || actions.confirmedResubmit
-      || actions.replaceLegacy,
-    );
-  }
+  if (["failed", "cancelled", "complete", "superseded"].includes(status)) return false;
   if (status === "waiting_storage" || status === "reconciliation_required") return true;
   if (["waiting_credentials", "retry_required"].includes(status)) {
     return Boolean(job?.providerTaskId || job?.billingRisk || job?.resubmitConfirmationRequired);
@@ -139,9 +126,8 @@ export const whiteboardMediaJobHoldsCard = (job = {}) => {
 };
 
 export const mediaRecoveryJobBlocksOperation = (job = {}) => {
-  if (job?.mode === "server" && ["image", "video", "audio"].includes(job.channel)
-    && job.forceReleasePendingAt && !job.forceReleaseCompletedAt) return true;
   if (!job || job.appliedAt || job.supersededBy || mediaGenerationResultSuppressed(job)) return false;
+  if (String(job.status || "") === "failed") return false;
   if (job.mode !== "server" || !["image", "video"].includes(String(job.channel || ""))) return false;
   if (job.target?.targetType === "capability-smoke") return false;
   const status = String(job.status || "");

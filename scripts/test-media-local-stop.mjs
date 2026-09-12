@@ -33,16 +33,22 @@ try {
     await stopLocalMediaJob({ jobId: job.id }, { terminate: async () => { throw new Error("不得重复杀进程"); } });
   }
   const blocked = await create("即梦");
-  await assert.rejects(stopLocalMediaJob({ jobId: blocked.id }, {
+  const scanWarning = await stopLocalMediaJob({ jobId: blocked.id }, {
     terminate: async () => ({ verified: false, scanError: "进程查询失败" }),
     probe: async () => { throw new Error("不应伪造进程已经退出"); },
-  }), /进程查询失败/);
-  await assert.rejects(stopLocalMediaJob({ jobId: blocked.id }, {
+  });
+  assert.equal(scanWarning.status, "cancelled");
+  assert.equal(scanWarning.resultSuppressed, true);
+  assert.match(scanWarning.localStopWarning, /进程查询失败/);
+  assert.equal(mediaRecoveryJobBlocksOperation(scanWarning), false, "终止诊断失败不得重新占用待处理列表");
+  const blockedPhysicalSlot = await create("即梦");
+  const slotWarning = await stopLocalMediaJob({ jobId: blockedPhysicalSlot.id }, {
     terminate: async () => ({ verified: false }), probe: async () => ({ released: false, error: "真实凭证槽仍忙" }),
-  }), /仍忙/);
-  const kept = await store.getGenerationJob({ jobId: blocked.id });
-  assert.equal(mediaRecoveryJobBlocksOperation(kept), true, "未确认释放必须继续可见，不能假报清空");
-  await stopLocalMediaJob({ jobId: blocked.id }, { terminate: async () => ({ verified: false }), probe: async () => ({ released: true }) });
+  });
+  assert.equal(slotWarning.status, "cancelled");
+  assert.equal(slotWarning.physicalCredentialSlotReleased, false);
+  assert.match(slotWarning.localStopWarning, /真实凭证槽仍忙/);
+  assert.equal(mediaRecoveryJobBlocksOperation(slotWarning), false, "彻底终止后本地锁必须立即释放；物理槽异常由下一条命令有限重试");
   const document = await store.createClientGenerationJob({ channel: "text", target: { workspacePath: root, documentId: "doc", nodeId: "text" } });
   await assert.rejects(stopLocalMediaJob({ jobId: document.id }), /只能终止媒体任务/);
   assert.equal((await store.getGenerationJob({ jobId: document.id })).status, "running", "文档任务必须保持隔离");

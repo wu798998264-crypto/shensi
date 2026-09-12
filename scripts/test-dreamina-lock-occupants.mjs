@@ -70,7 +70,7 @@ try {
   });
 
   const initial = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id, second.id]), "列表只应显示仍占用即梦锁的任务");
+  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id]), "用户已登记彻底终止的任务必须立即退出即梦锁列表");
   assert.equal(initial.find((job) => job.id === first.id)?.providerTaskId, "dreamina-provider-task-1");
   const workerJobs = await listMediaGenerationJobsForWorker();
   assert.equal(workerJobs.some((job) => job.id === second.id), false, "强制解除处理中不得被 watchdog 再次调度");
@@ -82,7 +82,7 @@ try {
   assert.equal(released.request.prompt, "临时锁占用测试，不调用厂商生成", "强制解除不得删除提示词");
 
   const after = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(after.map((job) => job.id), [second.id], "单条强制解除后其他占用任务仍应保留");
+  assert.deepEqual(after.map((job) => job.id), [], "单条强制解除后不得遗留本地凭证锁占用");
   await assert.rejects(
     forceReleaseDreaminaJob({ jobId: first.id }),
     (error) => error?.code === "DREAMINA_PROFILE_NOT_HELD",
@@ -94,7 +94,7 @@ try {
     readFile(new URL("../src/server/media-worker-manager.mjs", import.meta.url), "utf8"),
     readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   ]);
-  assert.match(server, /verifyDreaminaCredentialSlot[\s\S]{0,2600}forceReleaseDreaminaJob/u, "锁探针必须先于任务终态写入");
+  assert.match(server, /dreaminaLockReleaseMatch[\s\S]{0,900}stopLocalMediaJob/u, "占用页强制解除必须复用本地彻底终止状态机");
   assert.match(manager, /const candidates = \[\];[\s\S]{0,1200}findWindowsWorkerPid\(normalizedJobId\)/u, "服务重启后必须重新扫描 worker");
   const lockDialog = app.slice(app.indexOf('id="dreaminaProfileLockDialog"'), app.indexOf('id="dreaminaLockOccupantsDialog"'));
   assert.match(lockDialog, /查看占用任务/u);

@@ -11,7 +11,6 @@ const DREAMINA_ACTIVE_STATUSES = new Set([
 ]);
 
 const DREAMINA_CANCEL_SWITCH_GRACE_MS = 30 * 60_000;
-const DREAMINA_CARD_APPLY_GRACE_MS = 2 * 60_000;
 
 const normalized = (value) => String(value || "").trim().toLowerCase();
 
@@ -58,10 +57,6 @@ export const dreaminaCredentialIdentity = (value = {}) => {
 export const isDreaminaCliSettings = (settings = {}) => ["即梦", "dreamina"].includes(normalized(settings.provider))
   && normalized(settings.adapter) === "cli";
 
-const withinGraceWindow = (activityAt, nowMs, graceMs) => {
-  return activityAt > 0 && Math.max(0, nowMs - activityAt) <= graceMs;
-};
-
 export const dreaminaCancellationReconciliationExpired = (job = {}, { nowMs = Date.now() } = {}) => {
   if (normalized(job.status) !== "cancel_requested") return false;
   const requestedAt = Date.parse(job.cancelRequestedAt || job.createdAt || "") || 0;
@@ -80,13 +75,12 @@ export const dreaminaJobRequiresCredentialProfile = (job = {}, { nowMs = Date.no
   const retryDeadline = Date.parse(job.connectionRetryDeadlineAt || "");
   if (job.connectionRetryExhausted || (Number.isFinite(retryDeadline) && nowMs >= retryDeadline)) return false;
   // Provider completion is not local completion. Retain the serial sequence
-  // through download/integrity checks and card readback, but bound a stalled
-  // local apply so it is visible as pending work instead of an eternal lock.
+  // through download/integrity checks and card readback. A failed local apply
+  // must be explicitly terminalized by the apply path; elapsed wall time alone
+  // must never silently release another profile into the shared credential slot.
   if (status === "complete") {
     if (job.appliedAt || job.cardApplyFailed || job.target?.targetType === "capability-smoke") return false;
-    const completedAt = Date.parse(job.completedAt || "") || 0;
-    return Boolean(job.result?.attachment || job.result?.attachments?.length)
-      && withinGraceWindow(completedAt, nowMs, DREAMINA_CARD_APPLY_GRACE_MS);
+    return Boolean(job.result?.attachment || job.result?.attachments?.length);
   }
   if (DREAMINA_ACTIVE_STATUSES.has(status)) return true;
   // The user's cancel action immediately releases the profile-switch gate.

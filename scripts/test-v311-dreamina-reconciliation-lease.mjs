@@ -35,7 +35,7 @@ const [worker, store] = await Promise.all([
   readFile(new URL("../src/server/generation-job-store.mjs", import.meta.url), "utf8"),
 ]);
 assert.match(worker, /DREAMINA_SUBMISSION_RECONCILIATION_LEASE_EXPIRED/u, "worker 必须持久化可识别的租约到期状态");
-assert.match(worker, /后台找回已停止并释放凭证槽/u, "到期提示必须说明凭证槽已释放");
+assert.match(worker, /本地任务已明确失败并释放凭证槽/u, "到期必须进入明确失败并说明凭证槽已释放");
 assert.match(worker, /没有重新提交或重复扣费/u, "到期提示必须保留账单安全说明");
 assert.match(worker, /automaticSubmissionRecoveryJob[\s\S]{0,500}dreaminaAutomaticSubmissionRecoveryAllowed/u, "watchdog 必须排除已停止或到期的即梦找回任务");
 assert.match(store, /automaticRecoveryStartedAt:[\s\S]{0,120}automaticRecoveryStoppedAt: ""/u, "手动自动找回必须开启新租约并清除旧停止标记");

@@ -1461,17 +1461,19 @@ const processJob = async (candidate) => {
       if (lease.expired) {
         const stoppedAt = new Date().toISOString();
         await update(job.id, {
-          status: "retry_required",
+          status: "failed",
           providerStatus: "unknown",
           providerErrorCode: "DREAMINA_SUBMISSION_RECONCILIATION_LEASE_EXPIRED",
           submissionState: "unknown",
           progressPercent: 100,
+          failedAt: stoppedAt,
+          localTerminalAt: stoppedAt,
           billingRisk: "submission_outcome_unknown",
           resubmitConfirmationRequired: true,
           automaticRecoveryStoppedAt: stoppedAt,
           nextPollAt: "",
           retryAllowed: true,
-          error: "即梦提交结果已自动核对 30 分钟，仍未找到可认领记录；后台找回已停止并释放凭证槽，没有重新提交或重复扣费。可点击“自动找回”再启动一轮核对。",
+          error: "即梦提交结果已在有限时限内完成核对，但仍未找到可认领记录；本地任务已明确失败并释放凭证槽，没有重新提交或重复扣费。原提示词、幂等键和厂商核对风险记录均已保留。",
           heartbeatAt: stoppedAt,
         });
         return false;

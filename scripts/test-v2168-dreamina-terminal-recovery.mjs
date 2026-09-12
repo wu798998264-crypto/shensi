@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   mediaGenerationActionPresentation,
+  mediaGenerationFailureNeedsCard,
   whiteboardMediaJobHoldsCard,
   whiteboardMediaJobIsSupersededByNodeGeneration,
 } from "../src/media-generation-coordination.js";
@@ -63,10 +64,12 @@ assert.deepEqual(
   { action: "reconcile", label: "自动找回", confirmNewSubmission: false, recovery: true },
   "找回应使用保存的任务元数据，不向用户索要厂商 ID",
 );
-assert.equal(whiteboardMediaJobHoldsCard({
+const failedBeforeSubmission = {
   status: "failed",
   availableActions: { confirmedResubmit: true },
-}), true, "明确未提交的旧任务应保留重新生成入口");
+};
+assert.equal(whiteboardMediaJobHoldsCard(failedBeforeSubmission), false, "明确失败不得继续占用白板卡片执行锁");
+assert.equal(mediaGenerationFailureNeedsCard(failedBeforeSubmission), true, "明确失败仍应保留原卡片错误与重新生成入口");
 assert.equal(whiteboardMediaJobHoldsCard(null), false, "视频任务创建前失败时不得因空任务读取 userStoppedAt 而遮蔽真实错误");
 
 const oldFailedJob = {
