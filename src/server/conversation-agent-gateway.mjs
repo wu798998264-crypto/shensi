@@ -49,7 +49,9 @@ const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
       const text = await readFile(join(shensiRoot, "神思模块", ...candidate.parts), "utf8");
       if (String(text).trim()) {
         blocks.push(`# ${candidate.label}\n${text}`);
-        sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length });
+        // Host routing contracts guide the Agent but are not user material.
+        // Keep them out of the task card's real-read evidence list.
+        sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length, userVisible: false });
       }
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;

@@ -39,6 +39,7 @@ assert.equal(normalizeAgentDecisionResolution({ decisionId: decision.id, taskId:
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const conversationToolsSource = await readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8");
+const conversationGatewaySource = await readFile(new URL("../src/server/conversation-agent-gateway.mjs", import.meta.url), "utf8");
 const dispatch = appSource.slice(appSource.indexOf("const dispatchComposerContent ="), appSource.indexOf("let agentProfileChoiceContext"));
 const submit = appSource.slice(appSource.indexOf('document.querySelector("#chatForm").addEventListener("submit"'), appSource.indexOf("const finalizeTemporaryCodexLogin"));
 assert.doesNotMatch(dispatch + submit, /rankingScanIntent|continuationDestinationIntent|requestsMultipleCandidates|lockedComposerMediaDispatch|isLandingRequest|resolveTaskContractRetryContext/u, "发送路径不再按关键词裁决任务");
@@ -60,6 +61,7 @@ assert.ok(nativeTaskCard.indexOf("renderNativeAgentEvidence(message)") > nativeT
 const nativeEvidence = appSource.slice(appSource.indexOf("const renderNativeAgentEvidence"), appSource.indexOf("const renderVerifiedLandedContent"));
 assert.match(nativeEvidence, /hasReadableDocumentContent[\s\S]{0,260}hasSkillIdentity/u, "空文档不得仅凭标题出现在已读取中，Skill 可按真实加载身份显示");
 assert.match(nativeEvidence, /item\?\.userVisible === false/u, "任务路由与运行规范等内部资料不得显示在任务卡读取清单");
+assert.match(conversationGatewaySource, /sources\.push\([\s\S]{0,260}userVisible:\s*false/u, "任务路由与运行规范必须在产生读取事件前标记为内部资料");
 assert.match(conversationToolsSource, /emit\("resource_read", \{ kind: "document"[\s\S]{0,260}characters: excerpt\.length/u, "Agent 真实读取正文时必须把非空读取量交给任务卡，空文档不产生读取证据");
 const nativeDispatch = appSource.slice(appSource.indexOf("const executeConversationAgentMessage"), appSource.indexOf("const sendMessage"));
 assert.match(nativeDispatch, /taskMessages\.push\(pending\)[\s\S]{0,500}renderNativeConversation\(runtime, true\)[\s\S]{0,300}conversationAgentRequest/u, "任意对话指令必须先出现任务卡和运行态，再请求 Agent");
