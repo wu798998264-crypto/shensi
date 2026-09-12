@@ -74,21 +74,21 @@ try {
   const a = await service.start(request);
   const b = await service.start({ ...request, conversationId: 'conv-b' });
   await assert.rejects(service.start(request), { code: 'AGENT_CONVERSATION_BUSY' });
-  const question = async (run) => {
+  const question = async (owner, run) => {
     for (let i = 0; i < 100; i++) {
-      const status = await service.status(run.id);
+      const status = await owner.status(run.id);
       const event = status.events.find((event) => event.type === 'question');
       if (event) return event.payload;
       await new Promise((done) => setTimeout(done, 10));
     }
     throw new Error('Question timeout');
   };
-  const [qa, qb] = await Promise.all([question(a), question(b)]);
+  const [qa, qb] = await Promise.all([question(service, a), question(service, b)]);
   assert.match(choiceProtocol, /必须调用 interaction\.ask/u, '有限选择必须使用结构化选择工具');
   assert.match(choiceProtocol, /1\/2\/3\/4[\s\S]*不是选择题[\s\S]*不得调用 interaction\.ask/u, '普通编号说明不得误转为选择框');
   assert.match(choiceProtocol, /不要用正文关键词、编号或固定模板推断选择框/u, '不得退回正文关键词解析');
   assert.equal(waiting.size, 2, 'two conversations must execute concurrently');
-  await assert.rejects(service.answer(a.id, qb.id, '串线'), /过期/u);
+  await assert.rejects(service.answer(a.id, qb.id, '串线'), { code: 'AGENT_CHOICE_DECISION_MISMATCH' });
   const [firstAnswer, duplicateAnswer] = await Promise.all([
     service.answer(a.id, qa.id, '我的其他想法'),
     service.answer(a.id, qa.id, '第二次点击不应重复接受'),
@@ -120,7 +120,30 @@ try {
   assert.equal((await recovered.status(orphan.id)).status, 'interrupted');
   const recoveredAgain = createConversationAgentService({ appRoot: root, storageRoot: interruptedStorage });
   assert.equal((await recoveredAgain.status(orphan.id)).status, 'interrupted', '服务重启恢复状态必须真正持久化');
-  console.log('Conversation Agent tools, exact full-history writes, two concurrent conversations, free answers, cancellation and durable restart status passed');
+  const choiceStorage = join(root, 'interrupted-choice-sessions');
+  const waitingChoice = createConversationAgentService({
+    appRoot: root,
+    storageRoot: choiceStorage,
+    skillCatalog: async () => [],
+    readRoute: async () => 'route',
+    run: async ({ workspaceToolRuntime }) => {
+      await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: { mode: 'conversation', documentIds: [] } });
+      const result = await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'ask', arguments: { question: '重启后选哪个方向？', options: ['方向甲', '方向乙'] } });
+      return { text: JSON.parse(result.contentItems[0].text).answer };
+    },
+  });
+  const waitingRun = await waitingChoice.start({ ...request, conversationId: 'conv-restart-choice', sourceMessageId: 'restart-choice-message' });
+  const waitingDecision = await question(waitingChoice, waitingRun);
+  const resumedChoice = createConversationAgentService({ appRoot: root, storageRoot: choiceStorage });
+  assert.equal((await resumedChoice.status(waitingRun.id)).status, 'interrupted');
+  await assert.rejects(
+    resumedChoice.answer(waitingRun.id, waitingDecision.id, '方向乙'),
+    { code: 'AGENT_CHOICE_REQUIRES_RESUME' },
+  );
+  await waitingChoice.cancel(waitingRun.id);
+  await new Promise((done) => setTimeout(done, 30));
+  await waitingChoice.status(waitingRun.id);
+  console.log('Conversation Agent tools, exact full-history writes, two concurrent conversations, free answers, cancellation and durable restart checkpoints passed');
 } finally {
   const rel = relative(resolve(tmpdir()), resolve(root));
   assert.ok(rel && !rel.startsWith('..') && !isAbsolute(rel));

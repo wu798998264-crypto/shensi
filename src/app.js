@@ -8428,7 +8428,7 @@ root.innerHTML = `
 
   <dialog class="text-dialog skill-marketplace-share-dialog" id="skillMarketplaceShareDialog">
     <form method="dialog" id="skillMarketplaceShareForm">
-      <header><h2>发布到本机广场</h2><p>只发布用户创建或导入并已测试通过的 Skill。官方能力与面板结构直接内置，不进入广场。</p></header>
+      <header><h2>发布 Skill 到广场</h2><p>只发布用户创建或导入并已测试通过的 Skill。官方能力与面板结构直接内置，不进入广场。</p></header>
       <div class="skill-marketplace-share-body"><label>选择要分享的项目<select id="skillMarketplaceShareSelect" required></select></label><p id="skillMarketplaceShareSummary"></p></div>
       <footer><button class="secondary-button" id="cancelSkillMarketplaceShare" type="button">取消</button><button class="primary-button" id="submitSkillMarketplaceShare" type="submit">检查并分享</button></footer>
     </form>
@@ -18766,6 +18766,7 @@ const renderExecutionProcess = (message) => {
   const execution = message.execution;
   if (!execution) return "";
   const pending = conversationTaskMessageIsRunning(message);
+  const nativeAgentExecution = execution.strength === "native_agent";
   const agentExecution = execution.strength === "agent";
   const agentRuntime = agentExecution ? agentRuntimeProfileFromExecution(execution) : null;
   const intentEnvelope = execution.taskRoute?.intentEnvelope && typeof execution.taskRoute.intentEnvelope === "object"
@@ -19008,7 +19009,12 @@ const renderExecutionProcess = (message) => {
   const contextReadState = executionContextReadStateFor(execution);
   const actualReadDocumentCount = contextReadState.actual?.documents?.length || 0;
   const actualReadSkillCount = contextReadState.actual?.skills?.length || 0;
-  return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}" ${expanded ? "open" : ""}>
+  const nativeDeliveryTargets = nativeAgentExecution ? (execution.deliveryTargets || []) : [];
+  const nativeTargetText = nativeDeliveryTargets
+    .map((item) => item.title || item.documentId)
+    .filter(Boolean)
+    .join("、");
+  return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}"${nativeAgentExecution ? ` data-native-task-card="${escapeHtml(message.id)}"` : ""} ${expanded ? "open" : ""}>
     <summary><span class="execution-progress-ring" style="--execution-progress:${progress * 3.6}deg" role="progressbar" aria-label="任务处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span>${escapeHtml(progressLabel)}</span></span><span>${escapeHtml(uiText(processTitle))}${!agentExecution && stepProgress ? ` · ${escapeHtml(stepProgress)}` : ""}</span><span class="execution-time"${timerData}>${timeText}</span></summary>
     ${pending && execution.requestId ? `<button class="execution-stop" type="button" data-cancel-run="${escapeHtml(execution.requestId)}" title="${cancelling ? "正在终止任务" : "终止任务"}" ${cancelling ? "disabled" : ""}>${icon("\uE71A", cancelling ? "正在终止任务" : "终止任务")}</button>` : ""}
     ${pending && agentExecution && execution.agentTurnId ? `<button class="execution-stop" type="button" data-stop-codex-turn="${escapeHtml(execution.agentTurnId)}" title="${escapeHtml(uiText("停止 Agent 任务"))}">${icon("\uE71A", uiText("停止 Agent 任务"))}</button>` : ""}
@@ -19022,8 +19028,8 @@ const renderExecutionProcess = (message) => {
       ${agentExecution ? `<div><dt>${escapeHtml(uiText("模型"))}</dt><dd>${escapeHtml(agentRuntime.model || "本次运行未记录模型")}</dd></div><div><dt>${escapeHtml(uiText("Agent 能力"))}</dt><dd>${escapeHtml(agentCapabilityText)}</dd></div><div><dt>${escapeHtml(uiText("Agent 阶段"))}</dt><dd>${escapeHtml(agentPhase)}</dd></div><div><dt>${escapeHtml(uiText("Agent 耗时"))}</dt><dd class="execution-agent-elapsed"${agentTimerData}>${escapeHtml(agentElapsedText)}</dd></div>` : ""}
       <div><dt>${escapeHtml(uiText("当前阶段"))}</dt><dd>${escapeHtml(taskLifecycleSummary)}</dd></div>
       ${intentSummary ? `<div><dt>本轮任务</dt><dd>${escapeHtml(intentSummary)}</dd></div>` : ""}
-      <div><dt>目标文档</dt><dd>${escapeHtml(execution.targetLabel || "当前绑定文档")}</dd></div>
-      <div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>
+      <div><dt>目标文档</dt><dd>${escapeHtml(nativeAgentExecution ? nativeTargetText || "尚未确定写入目标" : execution.targetLabel || "当前绑定文档")}</dd></div>
+      ${nativeAgentExecution ? "" : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
       ${contextCoverageText ? `<div><dt>创作依据</dt><dd>${escapeHtml(contextCoverageText)}</dd></div>` : ""}
       ${contextDependencySummary ? `<div><dt>资料缺口</dt><dd>${escapeHtml(contextDependencySummary)}</dd></div>` : ""}
       ${taskCanonModeLabel ? `<div><dt>${escapeHtml(uiText("正典模式"))}</dt><dd>${escapeHtml(taskCanonModeLabel)}</dd></div>` : ""}
@@ -19044,9 +19050,9 @@ const renderExecutionProcess = (message) => {
       ${routedSkillSummary || actualReadSkillCount ? `<div><dt>${escapeHtml(uiText("调用 Skill"))}</dt><dd>${escapeHtml(actualReadSkillCount ? `已实际加载 ${actualReadSkillCount} 个（完整清单见下方）` : routedSkillSummary)}</dd></div>` : ""}
       ${routedModuleNames.length ? `<div><dt>${escapeHtml(uiText("调用模组"))}</dt><dd>${escapeHtml(routedModuleNames.join("；"))}</dd></div>` : ""}
       ${experienceRecallSummary ? `<div><dt>${escapeHtml(uiText("本轮经验"))}</dt><dd>${escapeHtml(experienceRecallSummary)}</dd></div>` : ""}
-      <div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>
+      ${nativeAgentExecution ? "" : `<div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>`}
     </dl>
-    ${executionContextReadMarkup(execution)}
+    ${nativeAgentExecution ? renderNativeAgentEvidence(message) : executionContextReadMarkup(execution)}
     ${stageRows ? `<ol class="execution-stages">${stageRows}</ol>` : ""}
     ${adaptiveEvidenceRows ? `<details class="execution-capability-trace"><summary>查看本轮动态取证依据</summary><ol class="execution-stages">${adaptiveEvidenceRows}</ol></details>` : ""}
       ${experienceRecallRows ? `<details class="execution-experience-trace"><summary>${escapeHtml(uiText("查看本轮参考的经验"))}</summary><ul>${experienceRecallRows}</ul></details>` : ""}
@@ -19368,9 +19374,21 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
 };
 
 const renderNativeAgentEvidence = (message) => {
-  const reads = message.execution?.actualReads || [];
-  const targets = message.execution?.deliveryTargets || [];
-  return `${targets.length ? `<div class="native-agent-targets">目标文档：${targets.map(item => escapeHtml(item.title || item.documentId)).join("、")}</div>` : ""}${reads.length ? `<details class="native-agent-reads"><summary>实际读取 ${reads.length} 项</summary>${reads.map(item => `<div>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")} · ${escapeHtml(item.title || item.id)}${item.fullText ? "（全文）" : item.readKind === "search_excerpt" ? "（检索片段）" : "（部分内容）"}</div>`).join("")}</details>` : ""}`;
+  const merged = new Map();
+  for (const item of message.execution?.actualReads || []) {
+    if (item?.userVisible === false || !(Number(item?.characters) > 0 || String(item?.title || item?.id || "").trim())) continue;
+    const key = `${item.kind === "skill" ? "skill" : "document"}:${item.id || item.title}`;
+    const previous = merged.get(key);
+    merged.set(key, previous ? { ...previous, ...item, fullText: previous.fullText || item.fullText } : item);
+  }
+  const reads = [...merged.values()];
+  if (!reads.length) return "";
+  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
+  const preview = reads.slice(0, 3).map(row).join("");
+  const remaining = reads.length > 3
+    ? `<details><summary>展开全部 ${reads.length} 项</summary><div class="native-agent-read-all">${reads.map(row).join("")}</div></details>`
+    : "";
+  return `<section class="native-agent-reads" aria-label="已读取"><header><strong>已读取</strong><span>${reads.length} 项</span></header><div class="native-agent-read-preview">${preview}</div>${remaining}</section>`;
 };
 
 const renderVerifiedLandedContent = (message = {}) => {
@@ -19842,7 +19860,6 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
       ${renderNativeAgentDocumentLinks(message)}
-      ${message.execution?.nativeAgentRunId ? `<section class="native-agent-task-card" data-native-task-card="${escapeHtml(message.id)}"><div role="status" class="${message.pending ? "native-agent-live-status" : "native-agent-final-status"}">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>${renderNativeAgentEvidence(message)}</section>` : ""}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
     </section>`;
@@ -21662,10 +21679,10 @@ const renderSkillSettings = () => {
     }).join("") || `<p class="settings-empty">当前来源没有可展示的项目。</p>`;
     const submissionCount = (marketplace?.submissions ?? []).length;
     const submissionNote = submissionCount ? `<small class="marketplace-submission-note">已在本机广场发布 ${submissionCount} 个版本，尚未上传云端</small>` : "";
-    const title = marketplace?.connected ? "开放 Skill 广场" : "本地 Skill 广场";
+    const title = marketplace?.connected ? "开放 Skill 广场" : "Skill 广场";
     const marketplaceMessage = String(marketplace?.message || "Skill 广场正在读取开放来源。")
       .replace("云端上传下载服务", "云端分享与下载服务");
-  elements.skillSettingsContent.innerHTML = `<div class="marketplace-header"><div class="marketplace-boundary">${icon("\uE946")}<strong>${title}</strong><p>${escapeHtml(marketplaceMessage)}</p><small>Skill、模块、模组和面板均以不可变版本快照发布到本机目录。信任等级由软件自动评定；结构资产还会检查依赖闭包与循环。可登记来源：${escapeHtml(sourceLabels)}。</small><b class="marketplace-local-notice">发布只保存在本机，尚未上传云端。</b></div><div class="marketplace-share-actions"><button class="secondary-button" id="shareSkillToMarketplace" type="button">${icon("\uE72D")}<span>发布到本机广场</span></button>${submissionNote}</div></div><div class="marketplace-search-row"><div class="marketplace-search-primary"><label class="marketplace-search" for="skillMarketplaceSearch">${icon("\uE721")}<input id="skillMarketplaceSearch" type="search" value="${escapeHtml(ui.skillMarketplaceQuery)}" placeholder="搜索名称、作者、能力、类型或来源" autocomplete="off" /></label><div class="marketplace-view-filters" role="group" aria-label="广场筛选">${viewOptionsHtml}</div></div><div class="marketplace-search-secondary"><label class="marketplace-select-filter marketplace-type-filter" for="skillMarketplaceAssetTypeFilter"><span>类型</span><select id="skillMarketplaceAssetTypeFilter">${assetTypeOptionsHtml}</select></label><small id="skillMarketplaceSearchCount">找到 ${visibleCount} 个项目</small><label class="marketplace-select-filter marketplace-capability-filter" for="skillMarketplaceCapabilityFilter"><span>能力分类</span><select id="skillMarketplaceCapabilityFilter"><option value="">全部分类</option>${capabilityOptionsHtml}</select></label><label class="marketplace-select-filter marketplace-mode-filter" for="skillMarketplaceModeFilter"><span>使用模式</span><select id="skillMarketplaceModeFilter">${modeOptionsHtml}</select></label></div></div><p class="settings-empty marketplace-search-empty" id="skillMarketplaceSearchEmpty" ${visibleCount ? "hidden" : ""}>没有匹配的项目。</p><div class="marketplace-skill-list">${items}</div>`;
+  elements.skillSettingsContent.innerHTML = `<div class="marketplace-header"><div class="marketplace-boundary">${icon("\uE946")}<strong>${title}</strong><p>${escapeHtml(marketplaceMessage)}</p><small>Skill、模块、模组和面板均以不可变版本快照发布到本机目录。信任等级由软件自动评定；结构资产还会检查依赖闭包与循环。可登记来源：${escapeHtml(sourceLabels)}。</small><b class="marketplace-local-notice">发布只保存在本机，尚未上传云端。</b></div><div class="marketplace-share-actions"><button class="secondary-button" id="shareSkillToMarketplace" type="button">${icon("\uE72D")}<span>发布 Skill 到广场</span></button>${submissionNote}</div></div><div class="marketplace-search-row"><div class="marketplace-search-primary"><label class="marketplace-search" for="skillMarketplaceSearch">${icon("\uE721")}<input id="skillMarketplaceSearch" type="search" value="${escapeHtml(ui.skillMarketplaceQuery)}" placeholder="搜索名称、作者、能力、类型或来源" autocomplete="off" /></label><div class="marketplace-view-filters" role="group" aria-label="广场筛选">${viewOptionsHtml}</div></div><div class="marketplace-search-secondary"><label class="marketplace-select-filter marketplace-type-filter" for="skillMarketplaceAssetTypeFilter"><span>类型</span><select id="skillMarketplaceAssetTypeFilter">${assetTypeOptionsHtml}</select></label><small id="skillMarketplaceSearchCount">找到 ${visibleCount} 个项目</small><label class="marketplace-select-filter marketplace-capability-filter" for="skillMarketplaceCapabilityFilter"><span>能力分类</span><select id="skillMarketplaceCapabilityFilter"><option value="">全部分类</option>${capabilityOptionsHtml}</select></label><label class="marketplace-select-filter marketplace-mode-filter" for="skillMarketplaceModeFilter"><span>使用模式</span><select id="skillMarketplaceModeFilter">${modeOptionsHtml}</select></label></div></div><p class="settings-empty marketplace-search-empty" id="skillMarketplaceSearchEmpty" ${visibleCount ? "hidden" : ""}>没有匹配的项目。</p><div class="marketplace-skill-list">${items}</div>`;
     const marketplaceBoundary = elements.skillSettingsContent.querySelector(".marketplace-boundary small");
     if (marketplaceBoundary) marketplaceBoundary.textContent = `这里只展示用户上传的 Skill。官方 Skill、模块、模组和面板随软件内置，可在“我的 Skill”底部按官方面板结构查看。可登记来源：${sourceLabels}。`;
     const marketplaceNotice = elements.skillSettingsContent.querySelector(".marketplace-local-notice");
@@ -35809,7 +35826,9 @@ const monitorNativeConversation = (runtime, pending) => {
       pending.pending = false;
       Object.assign(pending.execution, { status: result.status === "completed" ? "complete" : result.status,
         nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: result.status === "completed" ? "Agent 执行完成" : result.error || result.status });
-      conversation.agentQuestion = null;
+      const preserveInterruptedQuestion = result.status === "interrupted"
+        && conversation.agentQuestion?.runId === runId;
+      if (!preserveInterruptedQuestion) conversation.agentQuestion = null;
       conversation.nativeAgentRun = null;
       if (pending.nativeInlineEdit && result.status === "completed") {
         const edit = pending.nativeInlineEdit;
@@ -35848,7 +35867,7 @@ const answerNativeConversationQuestion = async (question, answer) => {
   if (!String(answer || "").trim()) return;
   if (question.submitting) return;
   const runtime = agentTaskRuntimeFor({ conversationId: question.conversationId });
-  if (!runtime || runtime.conversation.agentQuestion?.id !== question.id) { showToast("选项已过期，请刷新当前任务"); return; }
+  if (!runtime || runtime.conversation.agentQuestion?.id !== question.id) { showToast("未找到该选择对应的对话检查点，请回到原对话重试"); return; }
   const id = `answer-${question.id}`;
   question.submitting = true;
   const pending = runtime.messages.find((message) => message.execution?.nativeAgentRunId === question.runId && !message.execution.nativeAgentTerminal);
@@ -35858,12 +35877,35 @@ const answerNativeConversationQuestion = async (question, answer) => {
   clearActiveComposerDraft();
   await persistNativeConversation(runtime);
   renderNativeConversation(runtime, true);
+  const resumeFromCheckpoint = () => {
+    const instruction = `用户已回答上一轮选择问题“${String(question.question || "").trim()}”：${String(answer).trim()}。把这条回答作为最新用户指令，结合此前对话和已保存任务检查点继续完成原始任务；不要重复询问同一个问题，继续生成并完成交付。`;
+    if (runtime.conversation.agentQuestion?.id === question.id) runtime.conversation.agentQuestion = null;
+    if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
+    void persistNativeConversation(runtime);
+    void sendMessage(instruction, {
+      sourceMessageId: id,
+      displayContent: String(answer),
+      conversationId: runtime.conversation.id,
+      taskContextSnapshot: runtime.taskContextSnapshot || runtime.workspaceScope,
+      workspaceState: runtime.workspaceState,
+    });
+  };
+  if (!pending) {
+    resumeFromCheckpoint();
+    renderNativeConversation(runtime, true);
+    return;
+  }
   try {
     await conversationAgentRequest(`/api/conversation-agent/${question.runId}/answer`, { decisionId: question.id, answer: String(answer) });
     if (runtime.conversation.agentQuestion?.id === question.id) runtime.conversation.agentQuestion = null;
     if (pending && !pending.execution.nativeAgentTerminal) pending.execution.result = "Agent 正在继续处理";
     if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
   } catch (error) {
+    if (["AGENT_CHOICE_REQUIRES_RESUME", "AGENT_CHOICE_RUN_TERMINAL"].includes(error.code)) {
+      resumeFromCheckpoint();
+      renderNativeConversation(runtime, true);
+      return;
+    }
     question.submitting = false;
     if (runtime.conversation.agentQuestion?.id === question.id) {
       if (pending) Object.assign(pending.execution, { status: "waiting_input", result: "答案提交失败，请重试" });
@@ -35888,7 +35930,7 @@ const recoverNativeConversationRuns = () => {
 
 const executeConversationAgentMessage = async (content, options) => {
   const { conversation, taskMessages, workspaceState, taskContextSnapshot, onPersist, queuedItem } = options;
-  const sourceMessageId = queuedItem?.sourceMessageIdForRun || uid("message");
+  const sourceMessageId = String(options.sourceMessageId || queuedItem?.sourceMessageIdForRun || uid("message"));
   if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
   const refs = queuedItem || resolveConversationReferenceContext(conversation);
   const targetDocumentId = options.inlineEdit?.documentId || "";
@@ -36444,7 +36486,10 @@ const cancelConversationRun = async (requestId) => {
 };
 
 const beginMessageEdit = (messageId) => {
-  if (ui.generating) return;
+  if (conversationIsBusy(activeConversation())) {
+    showToast("当前对话仍有任务运行；可切换到其他对话编辑，或先终止本对话任务");
+    return;
+  }
   const message = state.messages.find((item) => item.id === messageId && item.role === "user");
   if (!message) return;
   ui.editingMessageId = messageId;
@@ -36476,7 +36521,11 @@ const upsertBranchVersion = (group, version) => {
 const branchFromEditedMessage = async (messageId, content) => {
   const trimmed = String(content ?? "").trim();
   const split = splitConversationAtMessage(state.messages, messageId);
-  if (!trimmed || !split || ui.generating) return;
+  if (!trimmed || !split) return false;
+  if (conversationIsBusy(activeConversation())) {
+    showToast("当前对话仍有任务运行，编辑内容尚未发布");
+    return false;
+  }
   const originalMessage = state.messages[split.index];
   const originalConversation = activeConversation();
   originalConversation.branchGroups ??= [];
@@ -36543,6 +36592,7 @@ const branchFromEditedMessage = async (messageId, content) => {
     messageId,
   });
   await sendMessage(trimmed, { branchContext: { groupId, versionId: newVersionId } });
+  return true;
 };
 
 const switchAnswerBranch = (groupId, direction) => {
@@ -50145,6 +50195,37 @@ const scheduleUiInitializationAfterPaint = (callback, { timeout = 160 } = {}) =>
   fallbackTimer = setTimeout(dispatch, Math.max(0, Number(timeout) || 160));
 };
 
+const releaseWhiteboardGenerationDialogInteractivity = (dialog, nodeId) => {
+  if (!dialog?.open || dialog.dataset.anchorNodeId !== String(nodeId || "")) return false;
+  dialog.removeAttribute("aria-busy");
+  dialog.inert = false;
+  return true;
+};
+
+const scheduleWhiteboardGenerationInitialization = (dialog, nodeId, callback) => {
+  const documentId = String(dialog?.dataset?.anchorDocumentId || state.activeDocument || "");
+  scheduleUiInitializationAfterPaint(() => {
+    const current = dialog?.open
+      && dialog.dataset.anchorNodeId === String(nodeId || "")
+      && dialog.dataset.anchorDocumentId === documentId
+      && state.activeDocument === documentId;
+    if (!current) {
+      if (dialog?.open && dialog.dataset.anchorNodeId === String(nodeId || "")) {
+        releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+        dialog.close();
+      }
+      return;
+    }
+    try {
+      callback();
+    } catch (error) {
+      console.error("Whiteboard generation toolbar initialization failed:", error);
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+      showToast(`生成操作栏初始化失败：${error.message || "未知错误"}。提示词仍可编辑，请关闭后重试。`);
+    }
+  });
+};
+
 const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
   // A card click schedules a delayed open so a drag can still start. When an
   // explicit open has already reached this point, cancel that pending callback;
@@ -50175,28 +50256,32 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
   syncWhiteboardCardGenerationTypeIndicator(nodeId, whiteboardGenerationConfigFor(dialog)?.channel);
   renderWhiteboardGenerationCollapsedSessions();
   renderWhiteboardGenerationTypeMenu(dialog);
-  requestAnimationFrame(() => {
+  let finalized = false;
+  const finalizeOpen = () => {
+    if (finalized) return;
     if (!dialog.open || dialog.dataset.anchorNodeId !== nodeId) return;
-    positionWhiteboardGenerationDialog(dialog, nodeId);
-    const richFocusTarget = focusTarget?.closest?.(".whiteboard-generation-prompt-editor")?.querySelector?.(".whiteboard-generation-inline-mentions");
-    if (richFocusTarget) {
-      richFocusTarget.scrollIntoView({ block: "center", inline: "nearest" });
-      const selection = document.getSelection();
-      const hasLiveSelection = document.activeElement === richFocusTarget
-        && selection?.rangeCount
-        && richFocusTarget.contains(selection.anchorNode);
-      if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(richFocusTarget.closest("form"), { focus: true });
-    } else {
-      focusTarget?.focus({ preventScroll: true });
+    finalized = true;
+    try {
+      positionWhiteboardGenerationDialog(dialog, nodeId);
+      const richFocusTarget = focusTarget?.closest?.(".whiteboard-generation-prompt-editor")?.querySelector?.(".whiteboard-generation-inline-mentions");
+      if (richFocusTarget) {
+        richFocusTarget.scrollIntoView({ block: "center", inline: "nearest" });
+        const selection = document.getSelection();
+        const hasLiveSelection = document.activeElement === richFocusTarget
+          && selection?.rangeCount
+          && richFocusTarget.contains(selection.anchorNode);
+        if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(richFocusTarget.closest("form"), { focus: true });
+      } else {
+        focusTarget?.focus({ preventScroll: true });
+      }
+      dialog.scrollTop = 0;
+      saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
+    } finally {
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
     }
-    dialog.scrollTop = 0;
-    saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
-    // Ready means all synchronous positioning/focus/draft work has finished.
-    // Previously the flag was cleared one frame early, so an immediate Close
-    // or type switch could land inside this final block and feel ignored.
-    dialog.removeAttribute("aria-busy");
-    dialog.inert = false;
-  });
+  };
+  requestAnimationFrame(finalizeOpen);
+  setTimeout(finalizeOpen, 180);
 };
 
 const whiteboardGenerationExplicitReferenceIds = (form) => new Set(String(form?.elements?.explicitReferences?.value || "")
@@ -51856,10 +51941,7 @@ const openWhiteboardGenerateDialog = (nodeId, { centered = false } = {}) => {
   // Close choice but keeps the saved prompt, so generated cards remain
   // click-to-open after a successful run.
   primeWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardGenerateDialog.open
-      || elements.whiteboardGenerateDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardGenerateDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardGenerateDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("text", nodeId);
     elements.whiteboardGenerateForm.dataset.nodeId = nodeId;
@@ -52332,10 +52414,7 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardImageDialog.open
-      || elements.whiteboardImageDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardImageDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardImageDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("image", nodeId);
     elements.whiteboardImageForm.dataset.nodeId = nodeId;
@@ -52696,10 +52775,7 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardVideoDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardVideoDialog.open
-      || elements.whiteboardVideoDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardVideoDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardVideoDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("video", nodeId);
     elements.whiteboardVideoForm.dataset.nodeId = nodeId;
@@ -52782,10 +52858,7 @@ const openWhiteboardAudioDialog = (nodeId, { allowUnavailable = false, centered 
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardAudioDialog.open
-      || elements.whiteboardAudioDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardAudioDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardAudioDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("audio", nodeId);
     const form = elements.whiteboardAudioForm;
@@ -61075,6 +61148,14 @@ const stopConversationTaskForSourceMessage = async (sourceMessageId) => {
   if (ui.conversationPreparations.get(id)) return cancelConversationPreparation(id, { notify: false });
   const pending = state.messages.find((message) => message.pending && message.execution?.sourceMessageId === id);
   if (!pending) return false;
+  if (pending.execution?.nativeAgentRunId) {
+    const response = await conversationAgentRequest(`/api/conversation-agent/${pending.execution.nativeAgentRunId}/cancel`, {});
+    if (!response.accepted && !pending.execution.nativeAgentTerminal) showToast("Agent 任务已经结束，无需重复终止");
+    const conversation = conversationById(pending.execution?.conversationId || state.activeConversationId);
+    if (conversation?.agentQuestion?.runId === pending.execution.nativeAgentRunId) conversation.agentQuestion = null;
+    if (pendingConversationChoice?.runId === pending.execution.nativeAgentRunId) closeConversationChoicePanel({ focus: false });
+    return true;
+  }
   if (pending.execution?.strength === "agent") {
     await stopCodexAgentTurn(pending.execution?.agentTurnId || "", id);
     return true;
@@ -61682,11 +61763,15 @@ elements.chatFeed.addEventListener("input", (event) => {
   ui.editingMessageDraft = event.target.value;
 });
 
-elements.chatFeed.addEventListener("submit", (event) => {
+elements.chatFeed.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-message-edit-form]");
   if (!form) return;
   event.preventDefault();
-  branchFromEditedMessage(form.dataset.messageEditForm, form.querySelector("textarea")?.value ?? "");
+  try {
+    await branchFromEditedMessage(form.dataset.messageEditForm, form.querySelector("textarea")?.value ?? "");
+  } catch (error) {
+    showToast(`发布编辑后的指令失败：${error.message || "未知错误"}`);
+  }
 });
 
 document.querySelector("#referenceButton").addEventListener("click", async () => {

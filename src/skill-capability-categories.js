@@ -6,6 +6,7 @@ export const SKILL_CAPABILITY_CATEGORIES = Object.freeze([
   { id: "theory", label: "理论顾问", defaultCapability: "theory_advisor" },
   { id: "memory", label: "记忆", defaultCapability: "memory_advisor" },
   { id: "auxiliary", label: "辅助", defaultCapability: "auxiliary_advisor" },
+  { id: "other", label: "其他", defaultCapability: "other_capability" },
 ]);
 
 const CATEGORY_IDS = new Set(SKILL_CAPABILITY_CATEGORIES.map((category) => category.id));
@@ -17,6 +18,7 @@ const CAPABILITY_CATEGORY = new Map([
   ["theory_advisor", "theory"],
   ["memory_advisor", "memory"],
   ...["auxiliary_advisor", "style_reference", "knowledge_reference", "novel_cover_designer"].map((capability) => [capability, "auxiliary"]),
+  ["other_capability", "other"],
 ]);
 
 const normalizedText = (value = "") => String(value ?? "").trim().toLocaleLowerCase("zh-CN");
@@ -71,6 +73,7 @@ export const inferSkillCapabilityForCategory = (categoryId = "", text = "") => {
     if (/知识|资料|拆书|参考|knowledge/.test(source)) return "knowledge_reference";
     return "auxiliary_advisor";
   }
+  if (categoryId === "other") return "other_capability";
   return "auxiliary_advisor";
 };
 

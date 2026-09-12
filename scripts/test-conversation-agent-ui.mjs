@@ -115,8 +115,12 @@ try {
           window.nativeAgentAnswers.push(JSON.parse(init.body));
           const answer = JSON.parse(init.body).answer;
           run.events.push({sequence:3,type:'answer',payload:{decisionId:JSON.parse(init.body).decisionId,answer}});
-          run.events.push({sequence:4,type:'candidates',payload:{variants:[{title:'节奏方案',content:'第一份完整候选稿。'},{title:'视角方案',content:'第二份完整候选稿。'},{title:'融合方案',content:'第三份完整候选稿。'}]}});
-          let sequence = 5;
+          run.events.push({sequence:4,type:'resource_read',payload:{kind:'document',id:'story-outline',title:'故事大纲',characters:1200,fullText:true}});
+          run.events.push({sequence:5,type:'resource_read',payload:{kind:'document',id:'story-outline',title:'故事大纲',characters:400,readKind:'search_excerpt'}});
+          run.events.push({sequence:6,type:'resource_read',payload:{kind:'skill',id:'official:story-skill',title:'故事创作',characters:800,fullText:true}});
+          run.events.push({sequence:7,type:'resource_read',payload:{kind:'document',id:'empty-note',title:'空文档',characters:0,userVisible:false}});
+          run.events.push({sequence:8,type:'candidates',payload:{variants:[{title:'节奏方案',content:'第一份完整候选稿。'},{title:'视角方案',content:'第二份完整候选稿。'},{title:'融合方案',content:'第三份完整候选稿。'}]}});
+          let sequence = 9;
           if (run.linkTarget) {
             const hash = 'a'.repeat(64);
             const result = {targetDocumentId:run.linkTarget.id,requestedTitle:run.linkTarget.title,targetDirectoryId:'manuscript',verified:true,writtenHash:hash,verifiedHash:hash};
@@ -235,6 +239,14 @@ try {
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='保留悬念，重点比较视角';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentAnswers.length === 1", "自由回答");
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "候选分支保留");
+  const integratedTaskCard = await evaluate(`(() => {
+    const card = document.querySelector('[data-native-task-card]');
+    return { text: card?.textContent || '', legacyCardCount: document.querySelectorAll('.native-agent-task-card').length, readoutCount: card?.querySelectorAll('.native-agent-reads').length || 0 };
+  })()`);
+  assert.equal(integratedTaskCard.legacyCardCount, 0, "不得在生成卡下方重复渲染第二张原生任务卡");
+  assert.equal(integratedTaskCard.readoutCount, 1, "真实读取必须合并到同一张生成任务卡底部");
+  assert.match(integratedTaskCard.text, /已读取[\s\S]*故事大纲[\s\S]*故事创作/u);
+  assert.doesNotMatch(integratedTaskCard.text, /空文档|当前状态/u, "空文档和重复当前状态不得显示在生成任务卡中");
   assert.equal(await evaluate("window.nativeAgentStarts.length"), 2, "回答不能新建额外任务");
   await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
   await waitFor("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]')", "原对话入口");

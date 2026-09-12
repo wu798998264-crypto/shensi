@@ -13,7 +13,7 @@ const runIdFor = (request) => {
 };
 const terminal = (status) => ["completed", "failed", "cancelled", "interrupted"].includes(status);
 const safeRequest = (value) => JSON.parse(JSON.stringify(value, (key, entry) => /api.?key|password|secret|access.?token|refresh.?token/iu.test(key) ? undefined : entry));
-const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
+const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
 const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
   const prompt = String(question || "").trim();
@@ -161,7 +161,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const routeSource = await readRoute(request);
       const route = typeof routeSource === "string" ? routeSource : routeSource?.text || "";
       for (const source of routeSource?.sources || []) {
-        if (source.characters > 0) await event(entry, "resource_read", source);
+        if (source.characters > 0 && source.userVisible !== false) await event(entry, "resource_read", source);
       }
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
       const requestUserInput = async ({ question, options = [], multiple = false, presentation = "", metadata = null, kind = "question", detail = null }) => {
@@ -184,7 +184,12 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         const value = await answer;
         record.status = "running";
         await event(entry, "answer", { decisionId: decision.id, answer: value });
-        return { answer: value };
+        return {
+          answer: value,
+          instruction: value,
+          userInstruction: value,
+          continueOriginalTask: true,
+        };
       };
       const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
         ask: requestUserInput,
@@ -271,14 +276,20 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     },
     async answer(id, decisionId, answer) {
       const entry = await get(id);
-      if (!entry) throw new Error("选项已过期，请直接发送新的要求");
+      if (!entry) throw Object.assign(new Error("原任务记录不存在，无法续接这个选择"), { code: "AGENT_CHOICE_RUN_MISSING" });
       entry.answerFlights ??= new Map();
       const existingFlight = entry.answerFlights.get(decisionId);
       if (existingFlight) return existingFlight;
       const operation = (async () => {
         const pending = entry.pending.get(decisionId);
         if (!pending && entry.record.events.some(item => item.type === "answer_accepted" && item.payload.decisionId === decisionId)) return { accepted: true };
-        if (!pending || terminal(entry.record.status)) throw new Error("选项已过期，请直接发送新的要求");
+        const unansweredCheckpoint = entry.record.events.some((item) => item.type === "question" && item.payload?.id === decisionId)
+          && !entry.record.events.some((item) => ["answer", "answer_accepted"].includes(item.type) && item.payload?.decisionId === decisionId);
+        if (!pending && entry.record.status === "interrupted" && unansweredCheckpoint) {
+          throw Object.assign(new Error("服务已重启；该选择仍然有效，将从同一对话检查点继续"), { code: "AGENT_CHOICE_REQUIRES_RESUME" });
+        }
+        if (!pending && !terminal(entry.record.status)) throw Object.assign(new Error("该选项不属于当前任务正在等待的问题"), { code: "AGENT_CHOICE_DECISION_MISMATCH" });
+        if (!pending || terminal(entry.record.status)) throw Object.assign(new Error("原任务已经结束，无法向它重复提交选择"), { code: "AGENT_CHOICE_RUN_TERMINAL" });
         if (!String(answer || "").trim()) throw new Error("回答不能为空");
         const value = String(answer);
         entry.record.status = "running";
