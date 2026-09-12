@@ -55,6 +55,7 @@ assert.match(continuationHandler, /displayContent:\s*clarified/u,
 assert.match(continuationHandler, /taskContextSnapshot:\s*pending\.taskContextSnapshot/u,
   "续写目标选择必须沿用首次发送时锁定的任务和文档位置");
 assert.match(app, /event\.type === "question"[\s\S]{0,1100}await persistNativeConversation\(runtime\)[\s\S]{0,200}await yieldAfterImmediateInstructionRender/u, "动态问题先保存显示，之后呈现选项");
+assert.doesNotMatch(app, /选项(?:已经)?过时|刷新任务/u, "对话选择不得因等待时间失效或要求刷新任务");
 assert.match(app, /kind:\s*"media_connection"/u, "图片和视频配置选择必须接入统一对话选择卡");
 assert.match(app, /data-choice-type="media_connection_profile"|type:\s*"media_connection_profile"/u, "媒体选择卡必须先选择具体配置");
 assert.match(app, /type:\s*"media_connection_model"/u, "媒体选择卡必须支持按配置继续选择模型");

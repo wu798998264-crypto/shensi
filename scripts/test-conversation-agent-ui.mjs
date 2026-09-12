@@ -102,11 +102,14 @@ try {
         window.nativeAgentStarts.push(request);
         const id = 'agent-00000000-0000-0000-0000-' + String(window.nativeAgentStarts.length).padStart(12, '0');
         const questionId = 'question-' + window.nativeAgentStarts.length;
+        const forceFailure = (request.messages || []).some((message) => String(message.content || '').includes('模拟失败必须显示原因'));
         const events = [
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
-          { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: window.nativeAgentStarts.length === 1, allowFreeText: true } },
+          forceFailure
+            ? { sequence: 2, type: 'failed', payload: { message: '模拟上游明确失败：连接被测试服务拒绝' } }
+            : { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: window.nativeAgentStarts.length === 1, allowFreeText: true } },
         ];
-        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentLinkTarget : null, workspacePath: request.workspacePath });
+        window.nativeAgentMocks.set(id, { id, status: forceFailure ? 'failed' : 'waiting_input', events, lastSequence: 2, text: '', error: forceFailure ? '模拟上游明确失败：连接被测试服务拒绝' : '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentLinkTarget : null, workspacePath: request.workspacePath });
         return Response.json({ok:true,id,status:'running'});
       }
       if (path.startsWith('/api/conversation-agent/')) {
@@ -277,6 +280,24 @@ try {
   await waitFor("window.nativeAgentAnswers.length === 3", "最后一问确认提交");
   assert.equal(await evaluate("window.nativeAgentAnswers[2].answer"), '节奏');
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "最后一问后完成成果交付");
+  await evaluate("document.querySelector('[data-edit-message]').click(); true");
+  await waitFor("document.querySelector('[data-message-edit-form]')", "编辑历史指令");
+  await evaluate(`(() => { const form=document.querySelector('[data-message-edit-form]'); const input=form.querySelector('textarea'); input.value='编辑后的指令应创建新问答分支'; input.dispatchEvent(new Event('input',{bubbles:true})); form.requestSubmit(); return true; })()`);
+  await waitFor("window.nativeAgentStarts.length === 4 && document.querySelector('#conversationChoicePanel')?.hidden === false", "编辑指令发布并进入新分支");
+  assert.match(await evaluate("document.querySelector('#chatFeed').innerText"), /编辑后的指令应创建新问答分支/u);
+  assert.equal(await evaluate("document.querySelectorAll('[data-switch-answer-branch]').length >= 2"), true, "编辑后的指令必须建立可切换问答分支");
+  await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').click(); document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
+  await waitFor("window.nativeAgentAnswers.length === 4 && document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "编辑分支继续完成");
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='等待选择后撤回这条指令';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
+  await waitFor("window.nativeAgentStarts.length === 5 && document.querySelector('#conversationChoicePanel')?.hidden === false", "撤回前动态选择框");
+  await evaluate("[...document.querySelectorAll('[data-rollback]')].at(-1).click(); true");
+  await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === true && document.querySelector('#chatInput').value === '等待选择后撤回这条指令'", "撤回指令同步撤回选择框");
+  assert.doesNotMatch(await evaluate("document.querySelector('#chatFeed').innerText"), /你更希望比较哪些差异/u, "撤回后不得残留该轮选择问题");
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='模拟失败必须显示原因';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
+  await waitFor("window.nativeAgentStarts.length === 6 && document.querySelector('#chatFeed').innerText.includes('模拟上游明确失败：连接被测试服务拒绝')", "失败原因显示到对话区");
+  assert.match(await evaluate("document.querySelector('[data-native-task-card]')?.textContent || ''"), /失败|未完成|连接被测试服务拒绝/u, "失败任务卡不得静默结束");
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   const emptyId = await evaluate(`(() => { const key=Object.keys(localStorage).find(key=>key.startsWith('shensi-manual-conversations-v1:')); return JSON.parse(localStorage.getItem(key)).activeId; })()`);
   assert.ok(emptyId);
@@ -286,7 +307,7 @@ try {
   await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
   assert.equal(await evaluate(`document.querySelector('[data-conversation="${emptyId}"]').closest('.conversation-task-row').classList.contains('active')`), true, '恢复原活动对话');
   assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
-  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click","edited instruction creates answer branch","rollback removes matching choice","failed task shows exact error"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
   throw error;

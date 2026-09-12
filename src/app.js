@@ -18811,8 +18811,12 @@ const renderExecutionProcess = (message) => {
       sessionRecovery: execution.nativeSession?.recovery || "",
       specialist: execution.specialist || null,
     });
+  const terminalLifecycleStatus = ["failed", "retry_required", "blocked", "hard_blocked", "cancelled", "canceled", "interrupted"]
+    .includes(String(taskLifecycle.status || ""))
+    ? codexAgentPhaseLabel(taskLifecycle.status)
+    : "";
   const taskLifecycleSummary = [
-    taskLifecycleStageLabel(taskLifecycle.stage),
+    terminalLifecycleStatus || taskLifecycleStageLabel(taskLifecycle.stage),
     taskLifecycle.provider,
     taskLifecycle.agent,
     taskLifecycle.model,

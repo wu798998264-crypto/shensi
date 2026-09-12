@@ -100,6 +100,7 @@ const insertionAuthorization = createFormalWriteAuthorization({
   sourceMessageId: "user-insert-1",
   targetDocumentIds: ["chapter-1"],
   expectedRevisions: { "chapter-1": "revision-1" },
+  semanticWritePlan: { intent: "commit", operation: "patch" },
 });
 assert.equal(insertionAuthorization.state, "commit");
 assert.equal(insertionAuthorization.action, "patch", "中间补写必须获得局部修改授权，不能获得追加或全文覆盖授权");
@@ -117,6 +118,7 @@ const continuationAuthorization = createFormalWriteAuthorization({
   sourceMessageId: "user-continue-1",
   targetDocumentIds: ["chapter-1"],
   expectedRevisions: { "chapter-1": "revision-1" },
+  semanticWritePlan: { intent: "commit", operation: "append" },
 });
 assert.equal(continuationAuthorization.state, "commit");
 assert.equal(continuationAuthorization.action, "append");
