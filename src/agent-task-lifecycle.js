@@ -31,7 +31,7 @@ const lifecycleStage = ({ status = "", phase = "", currentStage = "", landingSta
 };
 
 export const agentTaskLifecycle = ({
-  kind = "chat",
+  kind = "agent",
   status = "",
   phase = "",
   currentStage = "",
@@ -46,7 +46,7 @@ export const agentTaskLifecycle = ({
   const stage = lifecycleStage({ status, phase, currentStage, landingStatus, validationStatus });
   return {
     schemaVersion: 1,
-    kind: clean(kind) || "chat",
+    kind: clean(kind) || "agent",
     stage,
     status: clean(status),
     phase: clean(phase),

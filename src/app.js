@@ -5539,7 +5539,7 @@ const hydrateRecoveryResumePointer = async () => {
     try {
       // The same browser origin may previously have served an installed build
       // or another preview data root. Let the current server validate the
-      // pointer before applying it to state; otherwise Chat is left unable to
+      // pointer before applying it to state; otherwise the composer cannot
       // checkpoint and Agent receives an unusable external working directory.
       const response = await fetch("/api/recovery/session", {
         method: "POST",
@@ -36370,7 +36370,7 @@ const sendMessage = async (content, options = {}) => {
   }
 };
 
-const selectedChatMessageText = (messageId = "") => {
+const selectedConversationMessageText = (messageId = "") => {
   const selection = window.getSelection?.();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return "";
   const elementFor = (node) => node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
@@ -36383,7 +36383,7 @@ const selectedChatMessageText = (messageId = "") => {
 
 const copyMessage = async (messageId) => {
   const message = state.messages.find((item) => item.id === messageId);
-  const selectedText = selectedChatMessageText(messageId)
+  const selectedText = selectedConversationMessageText(messageId)
     || (ui.chatMessageCopySelection?.messageId === messageId ? ui.chatMessageCopySelection.text : "");
   ui.chatMessageCopySelection = null;
   if (selectedText) {
@@ -61594,7 +61594,7 @@ elements.chatFeed.addEventListener("pointerdown", noteChatFeedInteraction, { pas
 elements.chatFeed.addEventListener("pointerdown", (event) => {
   const copyButton = event.target.closest("[data-copy-message]");
   if (!copyButton) return;
-  const text = selectedChatMessageText(copyButton.dataset.copyMessage);
+  const text = selectedConversationMessageText(copyButton.dataset.copyMessage);
   ui.chatMessageCopySelection = text ? { messageId: copyButton.dataset.copyMessage, text } : null;
 });
 elements.chatFeed.addEventListener("keydown", (event) => {
@@ -61608,7 +61608,7 @@ elements.chatFeed.addEventListener("contextmenu", (event) => {
   const revealRelativePath = media?.dataset.mediaBatchDirectory || "";
   const revealKind = media?.dataset.mediaDirectoryKind || "";
   if (openMediaAssetContextMenu(event, relativePath, { downloadName, revealRelativePath, revealKind })) return;
-  const selectedText = selectedChatMessageText(event.target.closest("[data-message]")?.dataset.message || "");
+  const selectedText = selectedConversationMessageText(event.target.closest("[data-message]")?.dataset.message || "");
   if (selectedText) showReadOnlySelectionContextMenu(event, selectedText);
 });
 

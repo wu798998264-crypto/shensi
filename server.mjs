@@ -7360,7 +7360,7 @@ const handleApiRequest = async (request, response, pathname) => {
         creativeContractText: serverDocumentText(currentWorkspaceSnapshot?.documents?.["index-language-blacklist"] ?? {}).slice(0, 120_000),
       };
       const requestSnapshot = {
-        operation: "chat",
+        operation: "agent",
         workspacePath: String(body.settings?.workspacePath || ""),
         workspaceKind: workspaceMode,
         targetDocumentId,
@@ -7949,7 +7949,7 @@ const handleApiRequest = async (request, response, pathname) => {
         creativeTask: { ...creativeTask, taskContract, writeAuthorization },
         structuredOutput: {
           schemaVersion: 1,
-          ChatMessage: requiresCommit
+          AgentMessage: requiresCommit
             ? "正式内容已生成，正在等待神思完成目标文档写入与回读验证。"
             : candidateOnly ? "候选内容已生成，尚未取得正式落盘授权。" : String(result.text || ""),
           FormalContent: requiresCommit ? formalCandidate : null,
