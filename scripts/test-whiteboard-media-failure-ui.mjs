@@ -269,18 +269,27 @@ try {
     error: "upload resource: ApplyImageUpload http://imagex.bytedanceapi.com/?Action=ApplyImageUpload: context deadline exceeded",
   } });
   await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')`, "失败卡片显示", 45_000);
-  const failureView = await evaluate(`(() => {
+  const failureView = await evaluate(`(async () => {
     const card = document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}]');
     const detail = card.querySelector('.whiteboard-generation-failure-detail');
     const retry = card.querySelector('[data-media-job-action="retry_setup"]');
     const cardRect = card.getBoundingClientRect();
     const detailRect = detail.getBoundingClientRect();
     const retryRect = retry?.getBoundingClientRect();
+    const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
+    const payload = await fetch('/api/generation/jobs/${job.id}', { headers: { 'x-shensi-session': token } }).then((response) => response.json());
     return {
       text: detail.textContent,
       status: card.dataset.generationStatus,
       retryVisible: Boolean(retryRect && retryRect.width > 0 && retryRect.height > 0),
       actions: card.querySelector('.media-generation-actions')?.textContent || '',
+      actionKinds: [...card.querySelectorAll('[data-media-job-action]')].map((item) => item.dataset.mediaJobAction),
+      cardRect: {left:cardRect.left,top:cardRect.top,right:cardRect.right,bottom:cardRect.bottom,width:cardRect.width,height:cardRect.height},
+      retryRect: retryRect ? {left:retryRect.left,top:retryRect.top,right:retryRect.right,bottom:retryRect.bottom,width:retryRect.width,height:retryRect.height} : null,
+      retryDisplay: retry ? getComputedStyle(retry).display : '',
+      retryVisibility: retry ? getComputedStyle(retry).visibility : '',
+      serverStatus: payload.job?.status || '',
+      serverActions: payload.job?.availableActions || null,
       detailInsideCard: detailRect.left >= cardRect.left && detailRect.right <= cardRect.right && detailRect.top >= cardRect.top && detailRect.bottom <= cardRect.bottom,
       retryInsideCard: Boolean(retryRect && retryRect.left >= cardRect.left && retryRect.right <= cardRect.right && retryRect.top >= cardRect.top && retryRect.bottom <= cardRect.bottom),
     };

@@ -13671,7 +13671,9 @@ const mediaGenerationActionMarkup = ({
   if (String(status || "") === "waiting_credentials" && accountVerificationRequired) {
     buttons.push(`<button class="media-job-reverify" type="button" data-whiteboard-candidate-action data-media-job-action="reverify" data-media-job-id="${escapeHtml(jobId)}" title="${escapeHtml(uiText("重新核验当前生成配置"))}">${icon("\uE77B", uiText("核验账号"))}<span>${escapeHtml(uiText("核验账号"))}</span></button>`);
   }
-  const primaryAction = mediaGenerationActionPresentation({ status, availableActions });
+  const primaryAction = status === "failed" && allowFailureRetrySetup
+    ? null
+    : mediaGenerationActionPresentation({ status, availableActions });
   if (primaryAction) {
     const label = uiText(primaryAction.label);
     const title = availableActions.autoReconcileProviderTask
