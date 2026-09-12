@@ -264,8 +264,9 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     if (name === "read") {
       if (!document) return { documentId: id, status: "missing" };
       const content = body(document), start = Math.max(0, Number(args.start) || 0), length = Math.max(1, Math.min(24000, Number(args.length) || 12000));
-      if (content.slice(start, start + length).trim()) await emit("resource_read", { kind: "document", id, title: document.title || id, start, end: Math.min(start + length, content.length), totalCharacters: content.length, fullText: start === 0 && length >= content.length });
-      return { documentId: id, title: document.title, moduleId: document.moduleId, managedFormat: document.managedFormat || null, revision: formalDocumentWriteRevisionFromState(state, id), status: content.trim() ? "content" : "empty", content: content.slice(start, start + length), totalCharacters: content.length, nextStart: start + length < content.length ? start + length : null };
+      const excerpt = content.slice(start, start + length);
+      if (excerpt.trim()) await emit("resource_read", { kind: "document", id, title: document.title || id, start, end: Math.min(start + length, content.length), characters: excerpt.length, totalCharacters: content.length, fullText: start === 0 && length >= content.length });
+      return { documentId: id, title: document.title, moduleId: document.moduleId, managedFormat: document.managedFormat || null, revision: formalDocumentWriteRevisionFromState(state, id), status: content.trim() ? "content" : "empty", content: excerpt, totalCharacters: content.length, nextStart: start + length < content.length ? start + length : null };
     }
     if (name === "write") {
       if (!["create", "replace", "append", "patch", "rename"].includes(args.operation)) throw new Error("不支持的写入操作");

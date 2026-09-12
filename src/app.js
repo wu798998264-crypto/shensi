@@ -13381,18 +13381,37 @@ const mediaGenerationProfileLabel = (job = {}) => {
 
 const mediaGenerationErrorText = (job = {}) => {
   const current = job && typeof job === "object" ? job : {};
-  const raw = String(current.error || "").trim();
-  const code = String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase();
+  const storedReason = String(current.failureReason || "").trim();
+  const storedResolution = String(current.failureResolution || "").trim();
+  const lastProviderError = current.lastProviderError && typeof current.lastProviderError === "object"
+    ? current.lastProviderError
+    : {};
+  const raw = String(current.error || lastProviderError.message || storedReason || "").trim();
+  const code = String(current.providerErrorCode || current.errorCode || lastProviderError.code || "").trim().toUpperCase();
   const terminalFailure = mediaGenerationIssueNeedsCard(current);
   const settings = current.request?.settings ?? {};
-  const dreamina = ["即梦", "dreamina"].includes(String(settings.provider || "").trim().toLowerCase())
+  const provider = String(settings.provider || "").trim().toLowerCase();
+  const providerTask = String(current.providerTaskId || "").trim();
+  const diagnosticParts = [
+    code ? `错误代码：${code}` : "",
+    storedReason ? `原因：${storedReason}` : "",
+    storedResolution ? `处理方法：${storedResolution}` : "",
+    raw && raw !== storedReason ? `原始报错：${raw}` : "",
+    providerTask ? `厂商任务：${providerTask}` : "",
+  ].filter(Boolean);
+  if (/^(?:即梦|LibTV)\s*配置“/u.test(raw) && /错误代码：/u.test(raw)) return raw;
+  const dreamina = ["即梦", "dreamina"].includes(provider)
     || code.startsWith("DREAMINA_") || /authsdk:\s*not logged in/i.test(raw);
+  if (dreamina && (storedReason || storedResolution)) {
+    return `即梦配置“${mediaGenerationProfileLabel(current)}”：${diagnosticParts.join("。")}。`;
+  }
   if (dreamina && (code || raw || terminalFailure)) return `即梦配置“${mediaGenerationProfileLabel(current)}”：${dreaminaFailureDisplayText({
     code: code || "DREAMINA_UNCLASSIFIED_FAILURE",
     message: raw,
-    providerTaskId: current.providerTaskId,
+    providerTaskId: providerTask,
     submissionState: current.submissionState,
-  })}`;
+  })}${providerTask ? ` 厂商任务：${providerTask}。` : ""}`;
+  if (provider === "libtv" && diagnosticParts.length) return `LibTV 配置“${mediaGenerationProfileLabel(current)}”：${diagnosticParts.join("。")}。`;
   if (raw && code && !raw.toUpperCase().includes(code)) return `错误代码：${code}。原始报错：${raw}`;
   if (raw) return raw;
   if (terminalFailure) return `错误代码：${code || "MEDIA_FAILURE_WITHOUT_DETAILS"}。运行器报告任务失败，但没有返回错误详情；神思已保留任务记录和原生成参数。`;
@@ -15365,11 +15384,6 @@ const mediaRecoveryJobIsActionable = (job = {}) => {
   return dreaminaFailureNeedsVerification({ job });
 };
 
-const mediaRecoveryJobNeedsAccountVerification = (job = {}) => (
-  String(job.status || "") === "waiting_credentials"
-  && dreaminaFailureNeedsVerification({ job })
-);
-
 const mediaRecoveryJobTargetLabel = (job) => {
   const target = job?.target ?? {};
   const documentTitle = state.documents?.[target.documentId]?.title;
@@ -15400,18 +15414,18 @@ const renderMediaRecoveryJobs = (jobs = []) => {
       error: job.error || "",
       providerTaskId: job.providerTaskId || "",
       submissionState: job.submissionState || "",
+      providerStatus: job.providerStatus || "",
+      billingRisk: job.billingRisk || "",
+      resultSuppressed: job.resultSuppressed === true,
     });
     const reapply = status === "complete" && !job.appliedAt
       ? `<button class="media-job-resume" type="button" data-media-recovery-action="reapply" data-media-job-id="${escapeHtml(job.id)}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button>`
       : "";
-    const verify = mediaRecoveryJobNeedsAccountVerification(job)
-      ? `<button class="media-job-resume" type="button" data-media-recovery-action="verify" data-media-job-id="${escapeHtml(job.id)}" title="核验该任务原来使用的即梦配置">${icon("\uE77B", "核验账号")}<span>核验账号</span></button>`
-      : "";
     const stop = `<button type="button" class="secondary-button warning" data-stop-local-media="${escapeHtml(job.id)}">彻底终止本地任务</button>`;
     const detail = mediaGenerationErrorText(job);
     const errorMarkup = detail ? `<p class="media-recovery-error" role="alert">${escapeHtml(detail)}</p>` : "";
-    const actionsMarkup = actions || reapply || verify || stop
-      ? `<div class="media-generation-actions recovery-dialog-actions">${actions}${reapply}${verify}${stop}</div>`
+    const actionsMarkup = actions || reapply || stop
+      ? `<div class="media-generation-actions recovery-dialog-actions">${actions}${reapply}${stop}</div>`
       : '<small class="media-recovery-no-action">请先重新读取任务状态。</small>';
     return `<article class="media-recovery-item" data-media-recovery-job="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : job.channel === "image" ? "图片任务" : "媒体任务")}</strong><small>${escapeHtml(status || "未知状态")}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(mediaGenerationPhaseText(job))}</p>${errorMarkup}${actionsMarkup}</article>`;
   }).join("");
@@ -15696,22 +15710,6 @@ elements.mediaRecoveryDialog?.addEventListener("click", async (event) => {
     return;
   }
   const reapply = event.target.closest("[data-media-recovery-action='reapply'][data-media-job-id]");
-  const verify = event.target.closest("[data-media-recovery-action='verify'][data-media-job-id]");
-  if (verify) {
-    event.preventDefault();
-    verify.disabled = true;
-    try {
-      const job = await fetchWhiteboardGenerationJob(verify.dataset.mediaJobId);
-      const settings = mediaGenerationSettingsForJob(job);
-      if (!settings) throw new Error("该任务原配置已不存在，无法自动核验");
-      openDreaminaReverifyDialog({ settings, account: dreaminaAccountForSettings(settings), jobId: job.id });
-    } catch (error) {
-      showToast(error.message || "账号核验未能开始");
-    } finally {
-      if (verify.isConnected) verify.disabled = false;
-    }
-    return;
-  }
   if (!reapply) return;
   event.preventDefault();
   reapply.disabled = true;
@@ -19052,11 +19050,12 @@ const renderExecutionProcess = (message) => {
       ${experienceRecallSummary ? `<div><dt>${escapeHtml(uiText("本轮经验"))}</dt><dd>${escapeHtml(experienceRecallSummary)}</dd></div>` : ""}
       ${nativeAgentExecution ? "" : `<div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>`}
     </dl>
-    ${nativeAgentExecution ? renderNativeAgentEvidence(message) : executionContextReadMarkup(execution)}
+    ${nativeAgentExecution ? "" : executionContextReadMarkup(execution)}
     ${stageRows ? `<ol class="execution-stages">${stageRows}</ol>` : ""}
     ${adaptiveEvidenceRows ? `<details class="execution-capability-trace"><summary>查看本轮动态取证依据</summary><ol class="execution-stages">${adaptiveEvidenceRows}</ol></details>` : ""}
       ${experienceRecallRows ? `<details class="execution-experience-trace"><summary>${escapeHtml(uiText("查看本轮参考的经验"))}</summary><ul>${experienceRecallRows}</ul></details>` : ""}
     ${renderCodexAgentExecutionDetails(message, { pending })}
+    ${nativeAgentExecution ? renderNativeAgentEvidence(message) : ""}
   </details>`;
 };
 
@@ -19376,14 +19375,19 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
 const renderNativeAgentEvidence = (message) => {
   const merged = new Map();
   for (const item of message.execution?.actualReads || []) {
-    if (item?.userVisible === false || !(Number(item?.characters) > 0 || String(item?.title || item?.id || "").trim())) continue;
-    const key = `${item.kind === "skill" ? "skill" : "document"}:${item.id || item.title}`;
+    const kind = item?.kind === "skill" ? "skill" : "document";
+    const hasReadableDocumentContent = Number(item?.characters) > 0
+      || Number(item?.sourceCharacters) > 0
+      || Number(item?.chunksRead) > 0;
+    const hasSkillIdentity = kind === "skill" && Boolean(String(item?.title || item?.name || item?.id || "").trim());
+    if (item?.userVisible === false || (!hasReadableDocumentContent && !hasSkillIdentity)) continue;
+    const key = `${kind}:${item.id || item.title || item.name}`;
     const previous = merged.get(key);
     merged.set(key, previous ? { ...previous, ...item, fullText: previous.fullText || item.fullText } : item);
   }
   const reads = [...merged.values()];
   if (!reads.length) return "";
-  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
+  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.name || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
   const preview = reads.slice(0, 3).map(row).join("");
   const remaining = reads.length > 3
     ? `<details><summary>展开全部 ${reads.length} 项</summary><div class="native-agent-read-all">${reads.map(row).join("")}</div></details>`
@@ -70571,7 +70575,8 @@ const renderDreaminaLockOccupants = (jobs = []) => {
     });
     const force = `<button class="media-job-dismiss warning dreamina-force-release" type="button" data-dreamina-force-release-job="${escapeHtml(job.id)}" title="终止对应本机任务进程并释放即梦凭证锁；远端状态仍保留待核对">${icon("\uE71A", "强制解除占用")}<span>强制解除占用</span></button>`;
     const providerTask = job.providerTaskId ? `<p>即梦任务：${escapeHtml(job.providerTaskId)}</p>` : "";
-    const error = job.error ? `<p class="media-recovery-error">${escapeHtml(job.error)}</p>` : "";
+    const errorText = mediaGenerationErrorText(job);
+    const error = errorText ? `<p class="media-recovery-error" role="alert">${escapeHtml(errorText)}</p>` : "";
     return `<article class="media-recovery-item dreamina-lock-occupant" data-dreamina-lock-occupant="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : "图片任务")}</strong><small>${escapeHtml(status)}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(mediaGenerationPhaseText(job))}</p>${providerTask}${error}<div class="media-generation-actions recovery-dialog-actions">${actions}${force}</div></article>`;
   }).join("");
 };
@@ -70636,8 +70641,10 @@ elements.dreaminaLockOccupantsDialog?.addEventListener("click", async (event) =>
       headers: { "Content-Type": "application/json" },
     });
     const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.message || "即梦本机锁尚未确认释放");
-    showToast("已确认释放本机即梦锁；远端任务状态仍保留待核对");
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "即梦本机锁释放失败");
+    showToast(payload.warning
+      ? `已释放本地即梦锁；${payload.warning}`
+      : "已释放本地即梦锁；远端任务状态仍保留待核对");
     await readDreaminaLockOccupants();
   } catch (error) {
     showToast(error.message || "强制解除即梦锁失败");

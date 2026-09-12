@@ -57,6 +57,16 @@ assert.match(app, /!whiteboardMediaJobHoldsCard\(job\) && !mediaGenerationFailur
 assert.match(app, /class="whiteboard-generation-failure-detail" role="alert"/u, "失败卡片必须直接显示真实错误和任务编号");
 assert.match(app, /if \(!measurementActive\) \{\s*renderWhiteboardCandidateLocation\(initial\);/u, "运行中任务转为失败后必须立即重绘原卡片");
 assert.match(app, /MEDIA_FAILURE_WITHOUT_DETAILS/u, "运行器未返回详情时也必须显示稳定的兜底错误码");
+const mediaErrorFormatter = app.slice(
+  app.indexOf("const mediaGenerationErrorText"),
+  app.indexOf("const dreaminaFailureInput"),
+);
+assert.match(mediaErrorFormatter, /failureReason/u, "媒体错误卡必须展示服务端保存的真实失败原因");
+assert.match(mediaErrorFormatter, /failureResolution/u, "媒体错误卡必须展示服务端保存的处理建议");
+assert.match(mediaErrorFormatter, /LibTV 配置/u, "LibTV 失败必须显示配置身份和真实错误码");
+const recoveryRenderer = app.slice(app.indexOf("const renderMediaRecoveryJobs"), app.indexOf("const readMediaRecoveryJobsForDialog"));
+assert.equal((recoveryRenderer.match(/核验账号/gu) || []).length, 0, "待处理卡不得在统一媒体操作栏之外重复生成第二个核验按钮");
+assert.match(app, /data-media-job-action="reverify"/u, "账号故障仍必须保留唯一核验入口");
 assert.match(mediaWorker, /providerCode \|\| \(dreaminaCliMediaJob\(current\)[\s\S]{0,120}DREAMINA_UNCLASSIFIED_FAILURE[\s\S]{0,120}MEDIA_PROVIDER_FAILURE/u, "服务端终态失败不得保存空错误码");
 assert.match(app, /data-media-job-action="retry_setup"/u, "明确失败卡片必须提供恢复原参数的重新生成入口");
 assert.match(app, /已恢复原提示词和生成参数；请核对后再次点击生成/u, "重新生成入口不得绕过用户确认直接提交收费任务");
@@ -88,7 +98,8 @@ const blockingJob = {
   billingRisk: "submission_outcome_unknown",
   availableActions: { autoReconcileProviderTask: true, dismissUncertain: true },
 };
-assert.equal(mediaRecoveryJobBlocksOperation(blockingJob), true, "仍锁定卡片且提交结果未知的任务必须显示");
+assert.equal(mediaRecoveryJobBlocksOperation(blockingJob), false, "有限核对已经明确失败的任务不得继续阻塞待处理列表");
+assert.equal(mediaGenerationFailureNeedsCard(blockingJob), true, "有限核对失败仍必须留在原卡片显示真实原因");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "running" }), false, "正常生成中的任务不属于待处理阻塞项目");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, billingRisk: "", availableActions: {} }), false, "没有卡片锁或收费不确定性的历史失败不得污染待处理页面");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, resultSuppressed: true }), false, "用户已处理并放弃的任务必须立即隐藏");
