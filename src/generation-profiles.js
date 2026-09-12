@@ -1,4 +1,4 @@
-import { DREAMINA_CLI_PROFILES, DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS, OPENAI_IMAGE_CLI_ALIAS, OPENAI_IMAGE_CLI_ARGS, validDreaminaCliProfileId } from "./media-cli-presets.js?v=2.19.7-media-account-pool";
+import { DREAMINA_CLI_PROFILES, DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS, validDreaminaCliProfileId } from "./media-cli-presets.js?v=2.19.7-media-account-pool";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderAudioModelOptions, getProviderImageModelOptions, getProviderModelOptions, getProviderPreset, getProviderVideoModelOptions } from "./model-presets.js";
 import { normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { SHENSI_AGENT_API_PROTOCOLS } from "./agent-engine-registry.js";
@@ -21,7 +21,7 @@ const LEGACY_GENERATION_RUNTIME_FIELDS = Object.freeze([
   "audioCliPath",
   "audioCliArgs",
 ]);
-export const IMAGE_MODEL_SELECTION_VERSION = 4;
+export const IMAGE_MODEL_SELECTION_VERSION = 5;
 export const VIDEO_CLI_DEFAULT_VERSION = 3;
 export const CLI_REMARK_MIGRATION_VERSION = 2;
 export const TEXT_CODEX_CLI_PROFILE_VERSION = 1;
@@ -69,11 +69,11 @@ const DEFAULTS = {
     provider: "OpenAI",
     protocol: "images",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-image-2",
+    model: "gpt-image-2.5",
     timeoutMs: "660000",
     apiKey: "",
-    cliPath: OPENAI_IMAGE_CLI_ALIAS,
-    cliArgs: OPENAI_IMAGE_CLI_ARGS,
+    cliPath: "",
+    cliArgs: "",
   },
   video: {
     id: "video-default",
@@ -276,7 +276,7 @@ const BUILT_IN_AGGREGATE_IMAGE_API = {
   provider: "自定义兼容接口",
   protocol: "images",
   baseUrl: "http://127.0.0.1:5317/v1",
-  model: "gpt-image-2",
+  model: "gpt-image-2.5",
   timeoutMs: "660000",
   apiKey: "",
   cliPath: "",
@@ -424,26 +424,26 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
   return withoutNonDreaminaIdentity(normalized);
 };
 
-const isLegacyOpenAiImageDefault = (profile = {}) => profile.id === "image-default"
-  && profile.adapter === "api"
-  && profile.provider === "OpenAI"
-  && profile.protocol === "images"
-  && /^https:\/\/api\.openai\.com\/v1\/?$/i.test(profile.baseUrl)
-  && /^gpt-image-(?:1(?:\.5)?|2)$/i.test(profile.model)
-  && !profile.cliPath;
-
-const migrateLegacyOpenAiImageDefault = (profile) => isLegacyOpenAiImageDefault(profile) ? {
-  ...profile,
-  name: "OpenAI GPT 图片 CLI",
-  adapter: "cli",
-  model: "gpt-image-2",
-  cliPath: OPENAI_IMAGE_CLI_ALIAS,
-  cliArgs: OPENAI_IMAGE_CLI_ARGS,
-} : profile;
+// GPT Image is supplied by the built-in aggregate API. Only the two historic
+// system aliases are retired; user-created OpenAI/API/CLI profiles stay intact.
+const retiredBuiltInOpenAiImageProfile = (profile = {}) => {
+  const id = String(profile.id || "");
+  if (!["image-default", "image-openai-cli"].includes(id)) return false;
+  return profile.provider === "OpenAI";
+};
 
 const migratePreferredOpenAiImageModel = (profile) => profile.provider === "OpenAI" && profile.model === "gpt-image-1.5"
   ? { ...profile, model: "gpt-image-2" }
   : profile;
+
+const migrateBuiltInAggregateImageModel = (profile) => {
+  if (profile.model !== "gpt-image-2") return profile;
+  const builtInAggregateApi = profile.id === BUILT_IN_AGGREGATE_IMAGE_API.id
+    && profile.provider === BUILT_IN_AGGREGATE_IMAGE_API.provider
+    && profile.adapter === BUILT_IN_AGGREGATE_IMAGE_API.adapter
+    && profile.protocol === BUILT_IN_AGGREGATE_IMAGE_API.protocol;
+  return builtInAggregateApi ? { ...profile, model: DEFAULTS.image.model } : profile;
+};
 
 const baseProfileIsConfigured = (profile = {}) => profile.adapter === "cli"
   ? Boolean(profile.cliPath)
@@ -451,19 +451,6 @@ const baseProfileIsConfigured = (profile = {}) => profile.adapter === "cli"
     && profile.baseUrl
     && profile.model
     && (profile.apiKey || getProviderPreset(profile.provider).public === true));
-
-const ensureBuiltInOpenAiImageProfile = (profiles, secrets = {}) => {
-  const migrated = profiles.map(migrateLegacyOpenAiImageDefault);
-  if (migrated.some((profile) => profile.cliPath === OPENAI_IMAGE_CLI_ALIAS)) return migrated;
-  const id = migrated.some((profile) => profile.id === DEFAULTS.image.id) ? "image-openai-cli" : DEFAULTS.image.id;
-  const reusableApiKey = migrated.find((profile) => profile.provider === "OpenAI"
-    && /^https:\/\/api\.openai\.com\/v1\/?$/i.test(profile.baseUrl)
-    && profile.apiKey)?.apiKey || "";
-  return [
-    ...migrated,
-    normalizedProfile("image", { ...DEFAULTS.image, id, apiKey: reusableApiKey }, migrated.length, secrets),
-  ];
-};
 
 const ensureBuiltInAggregateImageApiProfile = (profiles, secrets = {}) => {
   const comparableBaseUrl = (value) => String(value || "").trim().replace(/\/+$/, "").toLocaleLowerCase();
@@ -829,63 +816,6 @@ export const pruneRetiredTextProfileSecrets = (secrets = {}, settings = {}) => {
   return next;
 };
 
-const deduplicateBuiltInOpenAiImageProfiles = (profiles, preferredId = "") => {
-  const identity = (profile) => profile?.cliPath === OPENAI_IMAGE_CLI_ALIAS
-    ? JSON.stringify([
-        profile.adapter,
-        profile.provider,
-        profile.protocol,
-        profile.baseUrl,
-        profile.model,
-        profile.timeoutMs,
-        profile.cliPath,
-        profile.cliArgs,
-        profile.apiKey,
-      ])
-    : "";
-  const groups = new Map();
-  for (const profile of profiles) {
-    const key = identity(profile);
-    if (!key) continue;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(profile);
-  }
-  const removedIds = new Set();
-  const replacements = new Map();
-  for (const matches of groups.values()) {
-    if (matches.length < 2) continue;
-    const byRemark = new Map();
-    for (const profile of matches) {
-      const remark = String(profile.remarkName || "").trim();
-      if (!byRemark.has(remark)) byRemark.set(remark, []);
-      byRemark.get(remark).push(profile);
-    }
-    // Two explicitly named entries may represent two intentional account
-    // slots, even when their executable templates are currently identical.
-    // Preserve different non-empty remarks; only remove exact aliases and the
-    // unnamed built-in alias that otherwise reappears beside a named slot.
-    for (const sameRemark of byRemark.values()) {
-      if (sameRemark.length < 2) continue;
-      const keep = sameRemark.find((profile) => profile.id === preferredId) || sameRemark[0];
-      for (const profile of sameRemark) if (profile.id !== keep.id) removedIds.add(profile.id);
-    }
-    const unnamed = byRemark.get("")?.filter((profile) => !removedIds.has(profile.id)) || [];
-    const named = matches.filter((profile) => String(profile.remarkName || "").trim() && !removedIds.has(profile.id));
-    if (!unnamed.length || !named.length) continue;
-    const preferredUnnamed = unnamed.find((profile) => profile.id === preferredId);
-    if (preferredUnnamed && named.length === 1) {
-      replacements.set(preferredUnnamed.id, { ...preferredUnnamed, remarkName: named[0].remarkName });
-      removedIds.add(named[0].id);
-      for (const profile of unnamed) if (profile.id !== preferredUnnamed.id) removedIds.add(profile.id);
-    } else {
-      for (const profile of unnamed) removedIds.add(profile.id);
-    }
-  }
-  return profiles
-    .filter((profile) => !removedIds.has(profile.id))
-    .map((profile) => replacements.get(profile.id) || profile);
-};
-
 const ensureBuiltInDreaminaImageProfile = (profiles, secrets = {}) => {
   const builtInIndex = profiles.findIndex((profile) => profile.cliPath === DREAMINA_IMAGE_CLI_ALIAS
     || (profile.id === BUILT_IN_DREAMINA_IMAGE.id
@@ -1117,6 +1047,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
   const next = { ...settings, agentPermissionMode: normalizeAgentPermissionMode(settings.agentPermissionMode) };
   for (const channel of CHANNELS) {
     const keys = PROFILE_KEYS[channel];
+    let requestedProfileId = settings[keys.active];
     const source = Array.isArray(settings[keys.list]) && settings[keys.list].length
       ? settings[keys.list]
       : [legacyProfile(settings, channel)];
@@ -1177,15 +1108,16 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       next.textProfileCleanupVersion = TEXT_PROFILE_CLEANUP_VERSION;
     }
     if (channel === "image") {
-      profiles = ensureBuiltInOpenAiImageProfile(profiles, secrets.image ?? {});
-      profiles = deduplicateBuiltInOpenAiImageProfiles(profiles, settings[keys.active]);
+      const retiredIds = new Set(profiles.filter(retiredBuiltInOpenAiImageProfile).map((profile) => profile.id));
+      profiles = profiles.filter((profile) => !retiredIds.has(profile.id));
+      if (retiredIds.has(String(requestedProfileId || ""))) requestedProfileId = BUILT_IN_AGGREGATE_IMAGE_API.id;
+      const imageModelSelectionVersion = Number(settings.imageModelSelectionVersion) || 0;
+      if (imageModelSelectionVersion < 4) profiles = profiles.map(migratePreferredOpenAiImageModel);
+      if (imageModelSelectionVersion < IMAGE_MODEL_SELECTION_VERSION) profiles = profiles.map(migrateBuiltInAggregateImageModel);
       profiles = ensureBuiltInDreaminaImageProfile(profiles, secrets.image ?? {});
       profiles = ensureNamedDreaminaCliProfiles(profiles, "image", secrets.image ?? {});
-      if ((Number(settings.aggregateImageApiProfileVersion) || 0) < AGGREGATE_IMAGE_API_PROFILE_VERSION) {
+      if (retiredIds.size || (Number(settings.aggregateImageApiProfileVersion) || 0) < AGGREGATE_IMAGE_API_PROFILE_VERSION) {
         profiles = ensureBuiltInAggregateImageApiProfile(profiles, secrets.image ?? {});
-      }
-      if ((Number(settings.imageModelSelectionVersion) || 0) < IMAGE_MODEL_SELECTION_VERSION) {
-        profiles = profiles.map(migratePreferredOpenAiImageModel);
       }
       next.imageModelSelectionVersion = IMAGE_MODEL_SELECTION_VERSION;
       next.aggregateImageApiProfileVersion = AGGREGATE_IMAGE_API_PROFILE_VERSION;
@@ -1210,7 +1142,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
     const cleanup = cleanupInvalidGenerationProfiles(profiles, {
       activeIds: channel === "text"
         ? [next.activeTextConnectionId, next.activeTextAgentConnectionId]
-        : [settings[keys.active]],
+        : [requestedProfileId],
     });
     profiles = cleanup.profiles;
     const remapCleanedId = (value) => cleanup.aliases.get(String(value || "")) || value;
@@ -1223,7 +1155,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
     }
     const requestedActiveId = channel === "text"
       ? next.activeTextConnectionId
-      : settings[keys.active];
+      : requestedProfileId;
     let activeId = profiles.some((profile) => profile.id === requestedActiveId)
       ? requestedActiveId
       : profiles[0]?.id || "";

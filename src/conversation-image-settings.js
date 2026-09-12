@@ -1,4 +1,4 @@
-export const DEFAULT_IMAGE_GENERATION_MODEL = "gpt-image-2";
+export const DEFAULT_IMAGE_GENERATION_MODEL = "gpt-image-2.5";
 export const DEFAULT_IMAGE_GENERATION_QUALITY = "high";
 export const DEFAULT_IMAGE_GENERATION_ASPECT_RATIO = "auto";
 

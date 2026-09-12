@@ -157,15 +157,15 @@ await assert.rejects(
   (error) => error.code === "OPENAI_IMAGE_TOOL_NOT_INVOKED" && /未提交生图任务/u.test(error.message),
 );
 
-const deduplicated = normalizeGenerationProfiles({
+const retiredBuiltIns = normalizeGenerationProfiles({
   activeImageConnectionId: "image-openai-cli",
   imageConnections: [
     { id: "image-default", adapter: "cli", provider: "OpenAI", protocol: "images", baseUrl: "https://api.openai.com/v1", model: "gpt-image-2", timeoutMs: "660000", cliPath: "shensi-openai-image", cliArgs: "--same", remarkName: "" },
     { id: "image-openai-cli", adapter: "cli", provider: "OpenAI", protocol: "images", baseUrl: "https://api.openai.com/v1", model: "gpt-image-2", timeoutMs: "660000", cliPath: "shensi-openai-image", cliArgs: "--same", remarkName: "" },
   ],
-});
-assert.equal(deduplicated.imageConnections.filter((profile) => profile.cliPath === "shensi-openai-image").length, 1);
-assert.equal(deduplicated.activeImageConnectionId, "image-openai-cli");
+}, { image: { "image-cockpit-aggregate-api": "aggregate-test-key" } });
+assert.equal(retiredBuiltIns.imageConnections.some((profile) => ["image-default", "image-openai-cli"].includes(profile.id)), false);
+assert.equal(retiredBuiltIns.activeImageConnectionId, "image-cockpit-aggregate-api");
 
 const distinctRemarks = normalizeGenerationProfiles({
   imageConnections: [
@@ -174,15 +174,5 @@ const distinctRemarks = normalizeGenerationProfiles({
   ],
 });
 assert.equal(distinctRemarks.imageConnections.filter((profile) => profile.cliPath === "shensi-openai-image").length, 2);
-
-const namedWithBuiltInAlias = normalizeGenerationProfiles({
-  activeImageConnectionId: "image-default",
-  imageConnections: [
-    { id: "image-default", adapter: "cli", provider: "OpenAI", protocol: "images", baseUrl: "https://api.openai.com/v1", model: "gpt-image-2", timeoutMs: "660000", cliPath: "shensi-openai-image", cliArgs: "--same", remarkName: "麻雀" },
-    { id: "image-openai-cli", adapter: "cli", provider: "OpenAI", protocol: "images", baseUrl: "https://api.openai.com/v1", model: "gpt-image-2", timeoutMs: "660000", cliPath: "shensi-openai-image", cliArgs: "--same", remarkName: "" },
-  ],
-});
-assert.equal(namedWithBuiltInAlias.imageConnections.filter((profile) => profile.cliPath === "shensi-openai-image").length, 1);
-assert.equal(namedWithBuiltInAlias.imageConnections.find((profile) => profile.cliPath === "shensi-openai-image").remarkName, "麻雀");
 
 console.log("Shensi v2.5.1 GPT Image app-server tests passed");

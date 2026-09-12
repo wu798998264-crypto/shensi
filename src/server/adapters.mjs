@@ -1824,7 +1824,7 @@ export const testModelAdapter = async ({ settings, cwd }) => {
     if (settings.imageChannel === true && settings.cliPath === OPENAI_IMAGE_CLI_ALIAS) {
       const result = await spawnCaptured({
         executable: process.execPath,
-        args: [OPENAI_IMAGE_CLI_PATH, "--check", "--model", settings.model || "gpt-image-2"],
+        args: [OPENAI_IMAGE_CLI_PATH, "--check", "--model", settings.model || "gpt-image-2.5"],
         input: "",
         cwd,
         env: { ...(await cliProxyEnvironment()), ...buildCliEnvironment(settings) },

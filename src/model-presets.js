@@ -87,6 +87,7 @@ export const OPENAI_MODEL_OPTIONS = [
   model("gpt-4.1-nano", "GPT-4.1 Nano"),
   model("gpt-4o", "GPT-4o"),
   model("gpt-4o-mini", "GPT-4o Mini"),
+  model("gpt-image-2.5", "GPT Image 2.5", { capabilities: ["image_generation"] }),
   model("gpt-image-2", "GPT Image 2.0", { capabilities: ["image_generation"] }),
   model("gpt-image-1.5", "GPT Image 1.5", { capabilities: ["image_generation"] }),
   model("gpt-image-1", "GPT Image 1", { capabilities: ["image_generation"] }),
