@@ -80,6 +80,7 @@ const noWritePolicy = formalArtifactLandingPolicy({
   instruction: "请分析第三章并给出诊断",
   writeAuthorization: createFormalWriteAuthorization({
     instruction: "请分析第三章并给出诊断并写入报告",
+    semanticWritePlan: { intent: "none" },
     sourceMessageId: "message-1",
     targetDocumentIds: ["report-novel"],
     expectedRevisions: { "report-novel": "revision-1" },
@@ -92,13 +93,14 @@ assert.equal(noWritePolicy.shouldLand, false);
 
 const publicAccountAuthorization = createFormalWriteAuthorization({
   instruction: "请生成一篇公众号文章",
+  semanticWritePlan: { intent: "commit", operation: "replace" },
   sourceMessageId: "message-public-account",
   targetDocumentIds: ["public-account-article"],
   expectedRevisions: { "public-account-article": "revision-empty" },
   targetExists: true,
 });
 assert.equal(publicAccountAuthorization.state, "commit");
-assert.equal(publicAccountAuthorization.action, "generate", "已有空白公众号文档应直接写入，不能误判为新建");
+assert.equal(publicAccountAuthorization.action, "replace", "Agent 指定已有空白文档时应直接写入，不能误判为新建");
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.doesNotMatch(appSource, /formalWriteConfirmationDialog/u);
