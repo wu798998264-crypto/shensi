@@ -11,7 +11,9 @@ import { mediaResultLifecycleStage } from "./media-result-lifecycle.js?v=3.0.10"
 import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.6-generation-phases";
 import { whiteboardProviderIsDirectGeneration, whiteboardProviderQueueVisible } from "./whiteboard-progress.js?v=5.2.6-generation-phases";
 import { aggregateCustomApiCapabilityStatus, classifyCustomApiCapabilityFailure, customApiCapabilitySyncChannels, CUSTOM_API_CAPABILITY_CHANNELS } from "./custom-api-capabilities.js";
-import { dreaminaFailureDiagnosis, dreaminaFailureDisplayText, dreaminaFailureRequiresAccountVerification } from "./dreamina-failure.js?v=1.0.0-structured-failure";
+import { dreaminaFailureDiagnosis, dreaminaFailureRequiresAccountVerification } from "./dreamina-failure.js?v=1.0.0-structured-failure";
+import { mediaGenerationErrorText, mediaGenerationProfileLabel } from "./domains/media/media-error-presentation.js";
+import { taskCardActualReadEvidence } from "./domains/document/task-card-evidence.js";
 import { createTextConnectionTestGuard } from "./text-connection-test-guard.js?v=5.2.5-legacy-image-retry";
 import { standaloneAssetUploadWorkerCount } from "./asset-upload-policy.js?v=3.0.10";
 import { formatSyncBytes, nutstorePhaseLabel, nutstorePreviewSummary } from "./nutstore-sync-model.js";
@@ -13363,61 +13365,6 @@ const releaseWhiteboardMediaSubmissionLockForJob = (job) => {
   }
 };
 
-const mediaGenerationProfileLabel = (job = {}) => {
-  const current = job && typeof job === "object" ? job : {};
-  const settings = current.request?.settings ?? {};
-  const explicit = String(settings.remarkName || "").trim();
-  if (explicit) return explicit;
-  const connectionId = String(settings.connectionId || settings.id || "");
-  const known = {
-    "video-dreamina-cli": "柏物语",
-    "video-dreamina-cli-chenan": "陈安",
-    "video-dreamina-cli-guobazai": "锅巴仔",
-    "video-dreamina-cli-xiaoyujie": "小鱼姐",
-    "video-dreamina-cli-tashuo-juyougeng": "她说剧有梗",
-  };
-  return known[connectionId] || String(settings.name || settings.provider || "当前连接").trim();
-};
-
-const mediaGenerationErrorText = (job = {}) => {
-  const current = job && typeof job === "object" ? job : {};
-  const storedReason = String(current.failureReason || "").trim();
-  const storedResolution = String(current.failureResolution || "").trim();
-  const lastProviderError = current.lastProviderError && typeof current.lastProviderError === "object"
-    ? current.lastProviderError
-    : {};
-  const raw = String(current.error || lastProviderError.message || storedReason || "").trim();
-  const code = String(current.providerErrorCode || current.errorCode || lastProviderError.code || "").trim().toUpperCase();
-  const terminalFailure = mediaGenerationIssueNeedsCard(current);
-  const settings = current.request?.settings ?? {};
-  const provider = String(settings.provider || "").trim().toLowerCase();
-  const providerTask = String(current.providerTaskId || "").trim();
-  const diagnosticParts = [
-    code ? `错误代码：${code}` : "",
-    storedReason ? `原因：${storedReason}` : "",
-    storedResolution ? `处理方法：${storedResolution}` : "",
-    raw && raw !== storedReason ? `原始报错：${raw}` : "",
-    providerTask ? `厂商任务：${providerTask}` : "",
-  ].filter(Boolean);
-  if (/^(?:即梦|LibTV)\s*配置“/u.test(raw) && /错误代码：/u.test(raw)) return raw;
-  const dreamina = ["即梦", "dreamina"].includes(provider)
-    || code.startsWith("DREAMINA_") || /authsdk:\s*not logged in/i.test(raw);
-  if (dreamina && (storedReason || storedResolution)) {
-    return `即梦配置“${mediaGenerationProfileLabel(current)}”：${diagnosticParts.join("。")}。`;
-  }
-  if (dreamina && (code || raw || terminalFailure)) return `即梦配置“${mediaGenerationProfileLabel(current)}”：${dreaminaFailureDisplayText({
-    code: code || "DREAMINA_UNCLASSIFIED_FAILURE",
-    message: raw,
-    providerTaskId: providerTask,
-    submissionState: current.submissionState,
-  })}${providerTask ? ` 厂商任务：${providerTask}。` : ""}`;
-  if (provider === "libtv" && diagnosticParts.length) return `LibTV 配置“${mediaGenerationProfileLabel(current)}”：${diagnosticParts.join("。")}。`;
-  if (raw && code && !raw.toUpperCase().includes(code)) return `错误代码：${code}。原始报错：${raw}`;
-  if (raw) return raw;
-  if (terminalFailure) return `错误代码：${code || "MEDIA_FAILURE_WITHOUT_DETAILS"}。运行器报告任务失败，但没有返回错误详情；神思已保留任务记录和原生成参数。`;
-  return "";
-};
-
 const dreaminaFailureInput = ({ error = null, job = null } = {}) => ({
   code: job?.providerErrorCode || job?.errorCode || error?.code || error?.errorCode || "",
   message: job?.error || error?.message || "",
@@ -19373,21 +19320,9 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
 };
 
 const renderNativeAgentEvidence = (message) => {
-  const merged = new Map();
-  for (const item of message.execution?.actualReads || []) {
-    const kind = item?.kind === "skill" ? "skill" : "document";
-    const hasReadableDocumentContent = Number(item?.characters) > 0
-      || Number(item?.sourceCharacters) > 0
-      || Number(item?.chunksRead) > 0;
-    const hasSkillIdentity = kind === "skill" && Boolean(String(item?.title || item?.name || item?.id || "").trim());
-    if (item?.userVisible === false || (!hasReadableDocumentContent && !hasSkillIdentity)) continue;
-    const key = `${kind}:${item.id || item.title || item.name}`;
-    const previous = merged.get(key);
-    merged.set(key, previous ? { ...previous, ...item, fullText: previous.fullText || item.fullText } : item);
-  }
-  const reads = [...merged.values()];
+  const reads = taskCardActualReadEvidence(message.execution?.actualReads);
   if (!reads.length) return "";
-  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.name || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
+  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div>`;
   const preview = reads.slice(0, 3).map(row).join("");
   const remaining = reads.length > 3
     ? `<details><summary>展开全部 ${reads.length} 项</summary><div class="native-agent-read-all">${reads.map(row).join("")}</div></details>`

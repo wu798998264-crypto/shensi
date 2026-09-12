@@ -12,12 +12,13 @@ import {
 } from "../src/dreamina-auth-recovery.js";
 import { dreaminaProfileCommandFailure } from "../src/server/dreamina-profile-oauth.mjs";
 
-const [imageCli, videoCli, app, worker, adapters] = await Promise.all([
+const [imageCli, videoCli, app, worker, adapters, mediaErrorPresentation] = await Promise.all([
   readFile(new URL("../src/cli/dreamina-image-cli.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/cli/dreamina-video-cli.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/server/adapters.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/domains/media/media-error-presentation.js", import.meta.url), "utf8"),
 ]);
 
 const protocolServerRefreshFailure = "Dreamina CLI 退出码 1：authsdk: refresh failed: protocol server: code=10044";
@@ -103,10 +104,7 @@ assert.match(imageCli, /await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,560}ta
 assert.match(videoCli, /await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,560}taskResourceChecked: true[\s\S]{0,180}generationReady: true/u,
   "视频连接检查必须验证任务资源会话后才报告可生成");
 
-const errorTextStart = app.indexOf("const mediaGenerationErrorText");
-const errorTextEnd = app.indexOf("const mediaGenerationPhaseText", errorTextStart);
-const errorText = app.slice(errorTextStart, errorTextEnd);
-assert.match(errorText, /dreaminaFailureDisplayText/,
+assert.match(mediaErrorPresentation, /dreaminaFailureDisplayText/,
   "即梦失败必须统一显示错误代码、原因和处理方法");
 assert.match(app, /dreaminaFailureNeedsVerification\(\{ error, job: durableJob \}\)/,
   "白板图片和视频任务必须结合真实任务状态决定是否核验");

@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
 
-const [app, server, mediaWorker] = await Promise.all([
+const [app, server, mediaWorker, mediaErrorPresentation] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   readFile(new URL("../server.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/domains/media/media-error-presentation.js", import.meta.url), "utf8"),
 ]);
 
 assert.match(app, /whiteboardMediaSubmissionLocks/u, "前端必须有白板媒体单飞锁");
@@ -56,14 +57,10 @@ assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正�
 assert.match(app, /!whiteboardMediaJobHoldsCard\(job\) && !mediaGenerationFailureNeedsCard\(job\)/u, "明确失败必须保留在原卡片，但不得重新成为全局阻塞任务");
 assert.match(app, /class="whiteboard-generation-failure-detail" role="alert"/u, "失败卡片必须直接显示真实错误和任务编号");
 assert.match(app, /if \(!measurementActive\) \{\s*renderWhiteboardCandidateLocation\(initial\);/u, "运行中任务转为失败后必须立即重绘原卡片");
-assert.match(app, /MEDIA_FAILURE_WITHOUT_DETAILS/u, "运行器未返回详情时也必须显示稳定的兜底错误码");
-const mediaErrorFormatter = app.slice(
-  app.indexOf("const mediaGenerationErrorText"),
-  app.indexOf("const dreaminaFailureInput"),
-);
-assert.match(mediaErrorFormatter, /failureReason/u, "媒体错误卡必须展示服务端保存的真实失败原因");
-assert.match(mediaErrorFormatter, /failureResolution/u, "媒体错误卡必须展示服务端保存的处理建议");
-assert.match(mediaErrorFormatter, /LibTV 配置/u, "LibTV 失败必须显示配置身份和真实错误码");
+assert.match(mediaErrorPresentation, /MEDIA_FAILURE_WITHOUT_DETAILS/u, "运行器未返回详情时也必须显示稳定的兜底错误码");
+assert.match(mediaErrorPresentation, /failureReason/u, "媒体错误卡必须展示服务端保存的真实失败原因");
+assert.match(mediaErrorPresentation, /failureResolution/u, "媒体错误卡必须展示服务端保存的处理建议");
+assert.match(mediaErrorPresentation, /LibTV 配置/u, "LibTV 失败必须显示配置身份和真实错误码");
 const recoveryRenderer = app.slice(app.indexOf("const renderMediaRecoveryJobs"), app.indexOf("const readMediaRecoveryJobsForDialog"));
 assert.equal((recoveryRenderer.match(/核验账号/gu) || []).length, 0, "待处理卡不得在统一媒体操作栏之外重复生成第二个核验按钮");
 assert.match(app, /data-media-job-action="reverify"/u, "账号故障仍必须保留唯一核验入口");

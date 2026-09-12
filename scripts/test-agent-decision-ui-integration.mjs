@@ -38,6 +38,7 @@ assert.deepEqual(agentDecisionResolutionForAnswer({ decision, answer: "写入世
 assert.equal(normalizeAgentDecisionResolution({ decisionId: decision.id, taskId: decision.taskId }), null);
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+const taskCardEvidenceSource = await readFile(new URL("../src/domains/document/task-card-evidence.js", import.meta.url), "utf8");
 const conversationToolsSource = await readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8");
 const conversationGatewaySource = await readFile(new URL("../src/server/conversation-agent-gateway.mjs", import.meta.url), "utf8");
 const dispatch = appSource.slice(appSource.indexOf("const dispatchComposerContent ="), appSource.indexOf("let agentProfileChoiceContext"));
@@ -58,9 +59,8 @@ assert.match(appSource, /addEventListener\("submit", async[\s\S]{0,280}await bra
 const nativeTaskCard = appSource.slice(appSource.indexOf("const renderExecutionProcess"), appSource.indexOf("const renderAssistantWaiting"));
 assert.equal((nativeTaskCard.match(/renderNativeAgentEvidence\(message\)/gu) || []).length, 1, "已读取只能在原生 Agent 任务卡中渲染一次");
 assert.ok(nativeTaskCard.indexOf("renderNativeAgentEvidence(message)") > nativeTaskCard.indexOf("renderCodexAgentExecutionDetails"), "已读取必须位于任务卡全部项目的最底部");
-const nativeEvidence = appSource.slice(appSource.indexOf("const renderNativeAgentEvidence"), appSource.indexOf("const renderVerifiedLandedContent"));
-assert.match(nativeEvidence, /hasReadableDocumentContent[\s\S]{0,260}hasSkillIdentity/u, "空文档不得仅凭标题出现在已读取中，Skill 可按真实加载身份显示");
-assert.match(nativeEvidence, /item\?\.userVisible === false/u, "任务路由与运行规范等内部资料不得显示在任务卡读取清单");
+assert.match(taskCardEvidenceSource, /hasReadableContent[\s\S]{0,260}hasSkillIdentity/u, "空文档不得仅凭标题出现在已读取中，Skill 可按真实加载身份显示");
+assert.match(taskCardEvidenceSource, /item\.userVisible === false/u, "任务路由与运行规范等内部资料不得显示在任务卡读取清单");
 assert.match(conversationGatewaySource, /sources\.push\([\s\S]{0,260}userVisible:\s*false/u, "任务路由与运行规范必须在产生读取事件前标记为内部资料");
 assert.match(conversationToolsSource, /emit\("resource_read", \{ kind: "document"[\s\S]{0,260}characters: excerpt\.length/u, "Agent 真实读取正文时必须把非空读取量交给任务卡，空文档不产生读取证据");
 const nativeDispatch = appSource.slice(appSource.indexOf("const executeConversationAgentMessage"), appSource.indexOf("const sendMessage"));
