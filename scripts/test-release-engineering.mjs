@@ -22,6 +22,7 @@ assert.match(desktop, /requestSingleInstanceLock/u, "packaged app must enforce o
 assert.match(desktop, /await loadApplicationPage\(\);\s*showMainWindow\(\)/u, "normal startup must show the main window");
 assert.ok(packageJson.build?.files?.includes("update-config.json"), "packaged application must include its pinned update source");
 assert.equal(updateConfig.repository, "wu798998264-crypto/shensi");
+assert.deepEqual(updateConfig.installerArgs, ["/S"], "update installation must use the current NSIS silent argument, not retired Inno Setup arguments");
 assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater must pin the release manifest public key");
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
 assert.match(finalSigner, /Get-Content\s+-Raw\s+-Encoding\s+UTF8/u, "Windows PowerShell must read UTF-8 package metadata without corrupting the Chinese product name");

@@ -621,6 +621,7 @@ try {
   await waitFor("document.querySelector('#textDialog')?.open", "新建独立资产验收白板");
   await evaluate(`(() => { document.querySelector('[data-create-kind="whiteboard"]').click(); const input = document.querySelector('#textDialogInput'); input.value = '独立资产验收'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#textDialogForm').requestSubmit(); return true; })()`);
   await waitFor("document.querySelector('#whiteboardEditor') && !document.querySelector('#whiteboardEditor').hidden", "独立资产验收白板创建完成");
+  await waitFor("!document.querySelector('#textDialog')?.open && document.querySelector('.autosave-state')?.dataset.state === 'saved'", "白板新建事务持久化完成", 30_000);
   const standaloneWhiteboardDocumentId = await evaluate("document.querySelector('.document-row.active')?.dataset.document || ''");
   assert.ok(standaloneWhiteboardDocumentId, "独立资产验收白板必须有稳定文档标识");
   await evaluate(`document.querySelector('#whiteboardAssetHistory').click(); true`);
@@ -705,15 +706,13 @@ try {
   await evaluate(`(() => {
     document.querySelector('[data-add-generation-connection="text"]').click();
     const form = document.querySelector('#settingsForm');
-    form.elements.textExecutionMode.value = 'agent';
-    form.elements.textExecutionMode.dispatchEvent(new Event('change', { bubbles: true }));
-    form.elements.textAgentEngine.value = '';
+    form.elements.textRemarkName.value = 'OpenCode 界面验收';
+    form.elements.textRemarkName.dispatchEvent(new Event('input', { bubbles: true }));
+    form.elements.textAgentEngine.value = 'opencode';
     form.elements.textAgentEngine.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   })()`);
-  await waitFor("document.querySelector('#addOpenCodeConnection')?.hidden === false", "未选择运行器时显示 OpenCode 一键配置");
-  await evaluate(`document.querySelector('#addOpenCodeConnection').click(); true`);
-  await waitFor("document.querySelector('#adapterResult')?.textContent.includes('已检测') || document.querySelector('#adapterResult')?.textContent.includes('检测失败')", "OpenCode 动态模型目录", 60_000);
+  await waitFor("document.querySelector('#genericOpenCodeConfigHint')?.hidden === false", "通过运行器选择器配置 OpenCode", 60_000);
   await evaluate(`(() => {
     const form = document.querySelector('#settingsForm');
     form.elements.textCredentialSource.value = 'shensi';
@@ -739,8 +738,7 @@ try {
     const result = {
       configurationName: document.querySelector('[data-generation-profile-current="text"]')?.textContent.trim() || '',
       remarkName: form.elements.textRemarkName.value,
-      executionMode: form.elements.textExecutionMode.value,
-      executionOptions: [...form.elements.textExecutionMode.options].map((option) => ({ value: option.value, disabled: option.disabled })),
+      legacyModeAbsent: !form.elements.textExecutionMode,
       adapter: form.elements.adapter.value,
       agentEngine: form.elements.textAgentEngine.value,
       provider: form.elements.provider.value,
@@ -756,10 +754,7 @@ try {
   })()`);
   assert.match(openCodeConfigEvidence.configurationName, /opencode/iu);
   assert.match(openCodeConfigEvidence.status, /已检测|OpenCode 运行器已保留|已切换为 DeepSeek/u, `OpenCode 设置页必须保留真实检测结果或明确提示刷新当前服务商：${openCodeConfigEvidence.status}`);
-  assert.equal(openCodeConfigEvidence.executionMode, "agent");
-  assert.equal(openCodeConfigEvidence.executionOptions.find((option) => option.value === "agent")?.disabled, false);
-  assert.equal(openCodeConfigEvidence.executionOptions.length, 1, "文字配置只能保留统一 Agent 运行模式");
-  assert.equal(openCodeConfigEvidence.executionOptions[0]?.value, "agent");
+  assert.equal(openCodeConfigEvidence.legacyModeAbsent, true, "统一 Agent 配置不再保留旧模式字段");
   assert.equal(openCodeConfigEvidence.adapter, "cli");
   assert.equal(openCodeConfigEvidence.agentEngine, "opencode");
   assert.match(openCodeConfigEvidence.model, /^[^/]+\/.+/u, "OpenCode 模型必须保留完整 provider/model ID");
@@ -1230,9 +1225,7 @@ try {
   })()`);
   await delay(150);
   const codexCurrentConnectionEvidence = await evaluate(`(() => ({
-    legacyModeHidden: document.querySelector('#chatProviderSelect')?.hidden === true
-      && document.querySelector('#chatProviderSelect')?.getAttribute('aria-hidden') === 'true',
-    modeValues: [...document.querySelectorAll('#chatProviderSelect option')].map((option) => option.value),
+    legacyModeAbsent: !document.querySelector('#chatProviderSelect'),
     quickChatFieldsHidden: document.querySelector('#quickChatModelFields')?.hidden === true,
     quickAgentFieldsVisible: document.querySelector('#quickAgentFields')?.hidden === false,
     selectedAgent: document.querySelector('#quickAgentEngine')?.value || '',
@@ -1241,9 +1234,8 @@ try {
     codexAreaVisible: document.querySelector('#quickCodexConnection')?.hidden === false,
     accountStatus: document.querySelector('#codexConnectionStatus')?.textContent.trim() || '',
   }))()`);
-  assert.equal(codexCurrentConnectionEvidence.legacyModeHidden, true, "旧 Chat/Agent 字段只能作为隐藏兼容值");
-  assert.deepEqual(codexCurrentConnectionEvidence.modeValues, ["codex_agent"]);
-  assert.equal(codexCurrentConnectionEvidence.quickChatFieldsHidden, true, "旧 Chat 配置字段不得再显示");
+  assert.equal(codexCurrentConnectionEvidence.legacyModeAbsent, true, "旧模式字段应彻底移除");
+  assert.equal(codexCurrentConnectionEvidence.quickChatFieldsHidden, true, "旧 Chat 配置字段不得显示");
   assert.equal(codexCurrentConnectionEvidence.quickAgentFieldsVisible, true, "对话区必须显示统一 Agent 配置入口");
   assert.ok(codexCurrentConnectionEvidence.selectedAgent, "当前统一 Agent 配置必须可选择");
   assert.ok(codexCurrentConnectionEvidence.agentOptions.includes(codexCurrentConnectionEvidence.selectedAgent));
@@ -1254,20 +1246,14 @@ try {
   await evaluate(`document.querySelector('[data-settings-section="model"]').click(); true`);
   await waitFor(`!document.querySelector('[data-settings-page="model"]')?.hidden && !document.querySelector('[data-model-channel-panel="text"]')?.hidden`, "打开文字模型设置");
   const codexSettingsConnectionEvidence = await evaluate(`(() => ({
-    modeLabels: [...document.querySelectorAll('[name="textExecutionMode"] option')].map((option) => option.textContent.trim()),
-    modeValues: [...document.querySelectorAll('[name="textExecutionMode"] option')].map((option) => option.value),
-    modeHidden: document.querySelector('[name="textExecutionMode"]')?.hidden === true
-      && document.querySelector('[name="textExecutionMode"]')?.getAttribute('aria-hidden') === 'true',
-    selectedMode: document.querySelector('[name="textExecutionMode"]')?.selectedOptions[0]?.textContent.trim() || '',
+    legacyModeAbsent: !document.querySelector('[name="textExecutionMode"]'),
     statusVisible: document.querySelector('#codexSettingsConnection')?.hidden === false,
     cliStatus: document.querySelector('#codexSettingsCliStatus')?.textContent.trim() || '',
     accountStatus: document.querySelector('#codexSettingsAccountStatus')?.textContent.trim() || '',
     loginVisible: document.querySelector('#codexSettingsLogin')?.hidden === false,
     disconnectVisible: document.querySelector('#codexSettingsDisconnect')?.hidden === false,
   }))()`);
-  assert.deepEqual(codexSettingsConnectionEvidence.modeValues, ["agent"]);
-  assert.equal(codexSettingsConnectionEvidence.modeHidden, true, "设置页不得显示 Chat/Agent 模式选择器");
-  assert.equal(codexSettingsConnectionEvidence.selectedMode, codexSettingsConnectionEvidence.modeLabels[0]);
+  assert.equal(codexSettingsConnectionEvidence.legacyModeAbsent, true, "设置页应彻底移除 Chat/Agent 模式选择器");
   const codexSettingsScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
   await writeFile(codexSettingsConnectionEvidencePath, Buffer.from(codexSettingsScreenshot.data, "base64"));
 
@@ -1291,8 +1277,6 @@ try {
     const candidate = [...model.options].find((option) => /deepseek/iu.test(option.value)) || model.options[0];
     model.value = candidate?.value || 'deepseek-chat';
     model.dispatchEvent(new Event('change', { bubbles: true }));
-    form.elements.textExecutionMode.value = 'agent';
-    form.elements.textExecutionMode.dispatchEvent(new Event('change', { bubbles: true }));
     form.requestSubmit();
     return true;
   })()`);
@@ -1321,12 +1305,12 @@ try {
     count: document.querySelectorAll('[data-chat-agent-guidance]').length,
     input: document.querySelector('#chatInput')?.value || '',
     feedHasSubmittedInstruction: document.querySelector('#chatFeed')?.textContent.includes('请修改多个本地源码文件') || false,
-    activeMode: document.querySelector('#chatProviderSelect')?.value || '',
+    legacyModeAbsent: !document.querySelector('#chatProviderSelect'),
     agentProfile: document.querySelector('#quickAgentEngine')?.value || '',
   }))()`);
   assert.equal(chatAgentGuidanceEvidence.count, 0, "统一 Agent 提交不得再弹出旧 Chat→Agent 推荐卡");
   assert.equal(chatAgentGuidanceEvidence.input, "", "统一 Agent 提交后输入框应清空");
-  assert.equal(chatAgentGuidanceEvidence.activeMode, "codex_agent");
+  assert.equal(chatAgentGuidanceEvidence.legacyModeAbsent, true);
   assert.ok(chatAgentGuidanceEvidence.agentProfile, "统一 Agent 提交必须绑定当前文字配置");
   assert.equal(chatAgentGuidanceEvidence.feedHasSubmittedInstruction, true, "统一 Agent 提交必须进入当前对话消息流");
   const chatAgentGuidanceScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
