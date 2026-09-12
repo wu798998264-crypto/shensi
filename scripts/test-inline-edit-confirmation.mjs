@@ -118,7 +118,8 @@ assert.match(app, /const beginInlineEditRetarget[\s\S]{0,1000}ui\.inlineEditReta
 assert.match(app, /候选内容已保留，原文没有改动。只能在重新确认唯一位置后应用/u, "冲突提示必须明确禁止自动追加或全文覆盖");
 assert.doesNotMatch(app, /data-inline-edit-conflict-action="force"/u, "定位失效不得提供强制覆盖入口");
 assert.doesNotMatch(app, /placed\s*&&\s*landingDecision\.action\s*===\s*"land"[\s\S]{0,80}acceptInlineEdit/u, "局部候选不得自动接受");
-assert.match(app, /status:\s*placed\s*\?\s*"candidate"/u);
+assert.match(app, /const placed = workspaceTargetIsActive[\s\S]{0,420}showInlineEditCandidate\(edit\.id, pending\.content\)[\s\S]{0,420}if \(!placed\) retainInlineEditConflict/u, "生成完成后必须先尝试把候选放回原锚点，失败时保留候选并进入显式冲突处理");
+assert.match(app, /const showInlineEditCandidate[\s\S]{0,420}record\.status = "candidate"[\s\S]{0,520}suggestion\.innerHTML = inlineEditSuggestionHtml\(record\)/u, "已生成候选必须进入待确认态并刷新正文内的前后对比");
 assert.match(app, /const placeInlineEditSuggestion[\s\S]{0,260}original\.before\(suggestion\)[\s\S]{0,120}original\.after\(suggestion\)/u, "局部候选必须紧邻原文插入，不能移到整个段落之后");
 assert.match(app, /const suggestion = document\.createElement\("span"\)[\s\S]{0,320}dataset\.inlineEditSuggestion/u, "局部候选必须使用可嵌入正文字符位置的节点");
 assert.doesNotMatch(app, /message\.inlineEditResult\s*\?[^\n]*renderInlineEditResult\(message\)/u, "局部差异不得重复显示在右侧对话区");
