@@ -70,6 +70,7 @@ try {
 
 const appSource = await readFile(join(root, "src", "app.js"), "utf8");
 const dreaminaFailureSource = await readFile(join(root, "src", "dreamina-failure.js"), "utf8");
+const mediaErrorPresentationSource = await readFile(join(root, "src", "domains", "media", "media-error-presentation.js"), "utf8");
 assert.doesNotMatch(appSource, /durableJob\.status === "complete" \? "failed"/u, "厂商已完成任务不能因本地应用失败改写成失败");
 assert.match(appSource, /completedWhiteboardApplyPendingJob/u, "厂商完成与本地应用状态必须分层");
 assert.doesNotMatch(appSource, /requestMediaProviderTaskId/u, "找回不应要求用户填写无法获知的厂商任务 ID");
@@ -87,7 +88,8 @@ assert.match(appSource, /粘贴生成提示词与图片参考/u, "提示词图�
 assert.match(appSource, /probeHasAuthoritativeCatalogue/u, "A failed credential probe must not erase the provider video model catalogue");
 assert.match(appSource, /if \(probe\.connected !== true && probe\.available !== true\) return null;/u, "Login, credit and transient probe failures must leave media model selectors populated");
 assert.match(dreaminaFailureSource, /CREDITPREDEDUCTNOTENOUGH/u, "Dreamina credit failures must remain classified as insufficient credit instead of login failures");
-assert.match(appSource, /dreaminaFailureDisplayText/u, "Dreamina named-profile errors must use the shared structured failure display");
+assert.match(appSource, /mediaGenerationErrorText/u, "Whiteboard and conversation media errors must use the isolated shared failure display");
+assert.match(mediaErrorPresentationSource, /dreaminaFailureDisplayText/u, "The shared media failure display must preserve Dreamina structured diagnosis");
 assert.match(appSource, /candidate\.providerProgressPercent/u, "白板卡片必须绑定厂商返回的真实进度百分比");
 assert.match(appSource, /hasProviderProgress[\s\S]*?progressPercent: nextProgress/u, "对话媒体卡片必须优先使用厂商进度百分比");
 assert.match(appSource, /whiteboardGenerationProgressTarget/u, "白板媒体进度必须使用可测试的统一目标计算规则");
