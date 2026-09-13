@@ -9,6 +9,7 @@
 !/index.html
 !/server.mjs
 !/cloud-core.mjs
+!/update-config.json
 !/update-config.example.json
 !/src/
 !/scripts/

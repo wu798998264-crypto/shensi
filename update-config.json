@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "repository": "wu798998264-crypto/shensi",
+  "channel": "stable",
+  "assetPattern": "^Shensi-Setup-[0-9]+\\.[0-9]+\\.[0-9]+-[0-9]{17}-x64\\.exe$",
+  "checksumAssetPattern": "^SHA256SUMS\\.txt$",
+  "manifestAssetPattern": "^update-manifest\\.json$",
+  "allowedPublisher": "CN=Shensi Creative Engine, O=Shensi, C=CN",
+  "manifestProduct": "shensi-creative-engine",
+  "manifestSigningKeyId": "shensi-update-ed25519-2026-01",
+  "manifestPublicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAk1WbnTHoDP069Vy6jNOlylUbBbCCU/wnXac+1vwlsA4=\n-----END PUBLIC KEY-----\n",
+  "minimumSupportedVersion": "1.0.0",
+  "rollbackCompatibleFrom": "1.0.0",
+  "installerArgs": [
+    "/S"
+  ]
+}
