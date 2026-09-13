@@ -15,7 +15,8 @@ const [app, tools] = await Promise.all([
   readFile(new URL("../src/server/conversation-agent-tools.mjs", import.meta.url), "utf8"),
 ]);
 assert.doesNotMatch(app, /writer_count|writer_counts|确认主笔|单主笔生成多稿|多主笔生成候选/u);
-assert.match(tools, /保留多候选[\s\S]{0,120}不要提问选谁当主笔或几个主笔|不要提问选谁当主笔或几个主笔[\s\S]{0,120}保留多候选/u);
-assert.match(tools, /interaction\.candidates|tool\("candidates"/u);
+assert.match(tools, /tool\("candidates",\s*"交付多个候选稿，不要求选择主笔，也不自动写入文档。"/u);
+assert.match(tools, /variants:\s*\{\s*type:\s*"array"[\s\S]{0,260}title:[\s\S]{0,120}content:[\s\S]{0,120}required:\s*\["title",\s*"content"\]/u);
+assert.match(tools, /多候选必须包含至少两份完整内容/u);
 
 console.log("multi-candidate natural-language flow without writer selection passed");
