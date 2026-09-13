@@ -53,6 +53,13 @@ assert.match(runtimeContract, /正式内容.{0,40}(?:直接写入|自动落盘)/
 assert.match(runtimeContract, /完整可恢复历史版本/u);
 assert.match(runtimeContract, /真实工具回执/u);
 
+const contextRuntime = await readFile(path.join(repoRoot, "src", "server", "shensi-context.mjs"), "utf8");
+for (const retired of retiredFiles) {
+  assert.doesNotMatch(contextRuntime, new RegExp(retired.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"), `retired runtime source still required: ${retired}`);
+}
+assert.match(contextRuntime, /神思任务路由\.md/u);
+assert.match(contextRuntime, /神思运行规范\.md/u);
+
 const healthContract = await readFile(path.join(bundleRoot, "神思模块", "规则模块", "神思-框架健康检查规则.md"), "utf8");
 assert.match(healthContract, /“已读取”位于生成任务卡内部的最下方/u);
 assert.match(healthContract, /文档对话只进入 Conversation Agent/u);

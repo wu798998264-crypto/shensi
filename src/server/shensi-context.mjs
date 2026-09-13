@@ -7,7 +7,6 @@ const TYPE_THEORY_ROUTER = "小说类型理论研究.md";
 const PUBLIC_ACCOUNT_THEORY_ROUTER = "公众号文章创作理论.md";
 const SHORT_VIDEO_THEORY_ROUTER = "短视频剧本创作理论.md";
 const SHORT_VIDEO_GENERAL_SOURCE = "短视频剧本创作理论/general-short-video-screenwriting/SKILL.md";
-const CLOSURE_RULE_SOURCE = "神思-分级闭环与规则包规则.md";
 const THEORY_ENGINE_SOURCE = "小说写作技能skill/04-webnovel-theory-engine/SKILL.md";
 const CREATIVE_GUIDE_SOURCE = "小说写作技能skill/创作引导.md";
 const SHORT_DRAMA_GUIDE_SOURCE = "短剧剧本创作引导.md";
@@ -518,25 +517,25 @@ const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manusc
   // writer Skills are injected by the capability runtime separately; trusted
   // post-write gates still load their complete review sources.
   if (nativeFirstCreative) return proseLanguageRuleApplicable ? [HIGH_FREQUENCY_LANGUAGE_SOURCE] : [];
-  const refs = ["神思.md", "神思-双核运行规则.md"];
+  const refs = ["神思任务路由.md", "神思运行规范.md"];
   const novelChapterTask = !scriptTask && activeModule === "manuscript" && /^chapter-\d+$/.test(targetDocumentId);
   if (stage === "quick-revision") {
     refs.push(...specialty);
   } else if (stage === "visual-generation") {
     refs.push(...specialty);
   } else if (["planning", "drama-development", "drama-development-revision"].includes(stage)) {
-    if (workspaceKind !== "notebook") refs.push("神思-记忆核运行卡.md");
+    if (workspaceKind !== "notebook") refs.push("神思-记忆检查规则.md");
     refs.push(...guidance, ...specialty);
     if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
     if (workspaceKind !== "notebook" && facets.has("long_structure")) refs.push("神思-长篇结构自检规则.md");
   } else if (["creative", "revision"].includes(stage)) {
-    refs.push("神思-创作核运行卡.md", ...specialty);
+    refs.push(...specialty);
     if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
     if (scriptTask && !["visual_prompt", "visual_asset", "video_prompt", "panorama"].some((facet) => facets.has(facet))) refs.push(SHORT_DRAMA_FORMAT_SOURCE);
   } else if (["evaluation", "combined-check", "audit", "audit-final", "theory-support", "drama-development-check"].includes(stage)) {
     refs.push("神思-创作效果验收规则.md", ...specialty, "神思-正文自检共用规则.md", ...selfCheckSourceRefs({ prompt, routingText, activeModule, contextDomain, stage, fullAudit, workspaceKind, deliverableType, semanticAuthority, taskFacets }));
     if (stage === "combined-check" && workspaceKind !== "notebook") {
-      refs.push("神思-记忆核运行卡.md", "神思-结构化管理规则.md");
+      refs.push("神思-记忆检查规则.md", "神思-结构化管理规则.md");
       if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
     }
     if (fullAudit) refs.push(
@@ -550,16 +549,14 @@ const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manusc
     if (workspaceKind === "notebook") {
       refs.push("神思-创作效果验收规则.md", ...specialty);
     } else {
-      refs.push("神思-记忆核运行卡.md", "神思-结构化管理规则.md", ...specialty);
+      refs.push("神思-记忆检查规则.md", "神思-结构化管理规则.md", ...specialty);
       if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
     }
   } else {
     refs.push(...guidance, ...specialty);
   }
   if (proseLanguageRuleApplicable && proseLanguageRuleStage) refs.push(HIGH_FREQUENCY_LANGUAGE_SOURCE);
-  if (closure === "strong") refs.push(CLOSURE_RULE_SOURCE);
-  const closureRefs = closure === "strong" ? [CLOSURE_RULE_SOURCE] : [];
-  const ordered = [refs[0], refs[1], ...closureRefs, ...specialty, ...auxiliaries, ...refs.slice(2)];
+  const ordered = [refs[0], refs[1], ...specialty, ...auxiliaries, ...refs.slice(2)];
   return [...new Set(ordered)];
 };
 
