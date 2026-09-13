@@ -35840,6 +35840,12 @@ const recoverNativeConversationRuns = () => {
 const executeConversationAgentMessage = async (content, options) => {
   const { conversation, taskMessages, workspaceState, taskContextSnapshot, onPersist, queuedItem } = options;
   const sourceMessageId = String(options.sourceMessageId || queuedItem?.sourceMessageIdForRun || uid("message"));
+  const answerBranch = options.branchContext?.groupId && options.branchContext?.versionId
+    ? {
+        branchGroupId: String(options.branchContext.groupId),
+        branchVersionId: String(options.branchContext.versionId),
+      }
+    : {};
   if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
   const refs = queuedItem || resolveConversationReferenceContext(conversation);
   const targetDocumentId = options.inlineEdit?.documentId || "";
@@ -35853,13 +35859,13 @@ const executeConversationAgentMessage = async (content, options) => {
     video: snapshotAgentConfiguration(workspaceState.settings.videoConnections || []),
   };
   const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
-    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []) };
+    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []), ...answerBranch };
   removeImmediateConversationInstruction(options.immediateInstructionId);
   if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
   const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
     target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
     execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
-      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理" } };
+      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理" }, ...answerBranch };
   taskMessages.push(pending);
   conversation.messages = taskMessages;
   const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,

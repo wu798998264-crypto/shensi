@@ -257,7 +257,16 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         },
       };
       const key = laneFor(request), id = runIdFor(request);
-      const busy = lanes.get(key);
+      let busy = lanes.get(key);
+      // A status poll may observe the persisted terminal record in the tiny
+      // interval before execute() reaches its finally block. The next genuine
+      // user instruction must not be rejected as busy during that completed
+      // run's bookkeeping tail.
+      const busyEntry = busy ? runs.get(busy) : null;
+      if (busyEntry && terminal(busyEntry.record.status)) {
+        if (lanes.get(key) === busy) lanes.delete(key);
+        busy = null;
+      }
       if (busy && busy !== id) throw Object.assign(new Error("同一对话已有运行任务，请排队或补充"), { code: "AGENT_CONVERSATION_BUSY", runId: busy });
       if (busy === id && runs.has(id)) { await runs.get(id).saving; return { id, status: runs.get(id).record.status, reused: true }; }
       lanes.set(key, id);

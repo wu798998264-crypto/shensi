@@ -41,7 +41,10 @@ try {
     requestId: 'request-skill-alias',
     sourceMessageId: 'user-skill-alias',
     instruction: '读取所需 Skill',
-    catalog: [{ id: 'builtin:creative-guidance', name: '创作引导', description: '引导创作方向', capabilities: ['novel_guidance'] }],
+    catalog: [
+      { id: 'builtin:creative-guidance', name: '创作引导', description: '引导创作方向', capabilities: ['novel_guidance'] },
+      { id: 'builtin:public-account-writer', name: '公众号文章主笔', description: '根据受众、观点与传播目标完成文章', capabilities: ['public_account_writer'] },
+    ],
     readSkill: async (id) => {
       skillReads.push(id);
       return { id, name: '创作引导', text: '真实 Skill 全文', fullText: true, contentHash: 'skill-hash' };
@@ -59,6 +62,10 @@ try {
     assert.equal(result.success, true, result.contentItems[0].text);
   }
   assert.deepEqual(skillReads, Array(5).fill('builtin:creative-guidance'), 'Skill 参数别名必须解析到目录中的唯一真实 ID');
+  const semanticListResult = await skillTools.invoke({ namespace: 'skills', tool: 'list', arguments: { query: '完整公众号成稿' } });
+  assert.equal(semanticListResult.success, true, semanticListResult.contentItems[0].text);
+  const semanticList = JSON.parse(semanticListResult.contentItems[0].text);
+  assert.equal(semanticList[0]?.id, 'builtin:public-account-writer', '自然语言检索必须找到语义重合的面板 Skill，不能因整句不完全匹配返回空目录');
 
   const waiting = new Map();
   let choiceProtocol = '';
@@ -105,6 +112,13 @@ try {
   await new Promise((done) => setTimeout(done, 40));
   assert.equal((await service.status(a.id)).text, '我的其他想法');
   assert.equal((await service.status(b.id)).status, 'cancelled');
+  const immediateFollowup = await service.start({
+    ...request,
+    sourceMessageId: 'conv-a-immediate-followup',
+    messages: [...request.messages, { role: 'assistant', content: '我的其他想法' }, { role: 'user', content: '继续下一步' }],
+  });
+  assert.equal(immediateFollowup.status, 'running', '上一轮已呈现完成后，下一条指令不得被收尾中的旧任务误判为占用');
+  await service.cancel(immediateFollowup.id);
   const restarted = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions') });
   assert.equal((await restarted.status(a.id)).text, '我的其他想法');
 

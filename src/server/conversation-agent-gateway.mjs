@@ -31,6 +31,42 @@ const hash = (value) => createHash("sha256").update(String(value)).digest("hex")
 
 export const conversationAgentProcessEnvironment = (environment = process.env) => agentChildEnvironment(environment);
 
+// The trusted text binding records the resolved launcher for diagnostics and
+// compatibility checks. On npm installations that launcher is node.exe while
+// codex.js lives in prefixArgs. Resolve the complete launch tuple again here so
+// the conversation runtime never starts an empty Node process.
+export const resolveConversationCodexLaunch = ({
+  environment = process.env,
+  resolveLaunch = resolveLocalCodexLaunch,
+} = {}) => resolveLaunch({ environment });
+
+const TRUSTED_TEXT_PROFILE_FIELDS = [
+  "adapter", "provider", "protocol", "baseUrl", "model", "apiKey", "cliPath", "cliArgs",
+  "agentEngine", "agentModelId", "executionMode", "executionModes", "credentialSource", "systemManaged",
+];
+
+// Runtime bindings and DPAPI credentials are resolved after the portable
+// workspace settings reach the server. Keep that trusted result on both the
+// legacy top level and the selected registry record: downstream Agent helpers
+// deliberately re-select from textConnections and must not lose the key or
+// refreshed launcher in that normalization step.
+export const projectTrustedConversationRuntimeProfile = (settings = {}) => {
+  const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
+  const profileId = String(settings?.activeTextAgentConnectionId || settings?.activeTextConnectionId || settings?.connectionId || settings?.id || "").trim();
+  if (!profiles.length || !profileId) return settings;
+  const resolvedId = String(settings?.connectionId || settings?.id || profileId).trim();
+  if (resolvedId && resolvedId !== profileId) return settings;
+  const trustedFields = Object.fromEntries(TRUSTED_TEXT_PROFILE_FIELDS
+    .filter((field) => Object.hasOwn(settings, field))
+    .map((field) => [field, settings[field]]));
+  return {
+    ...settings,
+    textConnections: profiles.map((profile) => String(profile?.id || profile?.connectionId || "").trim() === profileId
+      ? { ...profile, ...trustedFields, id: profileId, connectionId: profileId }
+      : profile),
+  };
+};
+
 const internalAgentContracts = [
   { key: "taskRoute", label: "神思任务路由", parts: ["神思任务路由.md"] },
   { key: "operatingRules", label: "神思运行规范", parts: ["神思运行规范.md"] },
@@ -74,6 +110,7 @@ export const createConversationAgentGateway = ({
   resolveRuntimeSettings,
   apiRequest,
   externalRunners = {},
+  resolveCodexLaunch = resolveLocalCodexLaunch,
   startMcp = startConversationAgentMcp,
   browser = null,
 }) => createConversationAgentService({
@@ -86,7 +123,7 @@ export const createConversationAgentGateway = ({
   readRoute: async () => readInternalAgentContracts({ shensiRoot }),
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
-    const settings = await resolveRuntimeSettings(options.settings);
+    const settings = projectTrustedConversationRuntimeProfile(await resolveRuntimeSettings(options.settings));
     settings.agentPermissionMode = normalizeAgentPermissionMode(options.permissionContract?.mode || settings.agentPermissionMode);
     const permissionContract = options.permissionContract || permissionContractFor(settings.agentPermissionMode, { runner: settings.agentEngine });
     const shensiOnly = settings.agentPermissionMode === "shensi_only";
@@ -98,8 +135,12 @@ export const createConversationAgentGateway = ({
         ? shensiCodexEnvironment({ machineRoot: runtimeMachineRoot, environment: processEnvironment })
         : nativeCodexEnvironment({ environment: processEnvironment });
       const runtime = createShensiCodexAgentRuntime({ appRoot, machineRoot: runtimeMachineRoot, environment,
-        isolateConfig: shensiOnly,
-        launchResolver: () => resolveLocalCodexLaunch({ environment: { ...environment, ...(settings.cliPath && settings.cliPath !== "codex" ? { SHENSI_CODEX_EXECUTABLE: settings.cliPath } : {}) } }) });
+        // Permission controls which operations the Agent may perform; it must
+        // never switch the source of creative capabilities. Keep ambient Codex
+        // skills/plugins disabled in every permission mode so routing always
+        // uses the current Shensi Skill panel exposed through workspace tools.
+        isolateConfig: true,
+        launchResolver: () => resolveConversationCodexLaunch({ environment, resolveLaunch: resolveCodexLaunch }) });
       try { return await runtime.runStage({ settings, messages: [{ role: "user", content: options.prompt }], system: options.contextBlocks.map((block) => `# ${block.name}\n${block.text}`).join("\n\n"), shensiRuntime: { stage: "conversation_agent", sessionId: options.sessionId, agentDriven: true }, workspaceToolRuntime: options.workspaceToolRuntime, onToolEvent: options.onToolEvent, registerSteer: options.registerSteer, signal: options.signal, isWaitingForUser: options.isWaitingForUser, permissionContract, requestApproval: options.requestApproval }); }
       finally { await runtime.close(); }
     }

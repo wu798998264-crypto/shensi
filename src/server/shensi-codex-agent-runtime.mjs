@@ -69,6 +69,14 @@ const codexCliSettings = (settings = {}) => {
     || /@openai[\\/]codex[\\/]bin[\\/]codex\.js/i.test(String(settings.cliArgs || ""));
 };
 
+export const disabledAmbientSkillConfig = (response = {}) => {
+  const paths = (Array.isArray(response?.data) ? response.data : [])
+    .flatMap((entry) => Array.isArray(entry?.skills) ? entry.skills : [])
+    .map((skill) => String(skill?.path || "").trim())
+    .filter(Boolean);
+  return [...new Set(paths)].map((path) => ({ path, enabled: false }));
+};
+
 const supportedAttachments = (attachments = []) => attachments.every((attachment) => {
   if (String(attachment?.text || "").trim()) return true;
   return String(attachment?.mimeType || "").startsWith("image/") && Boolean(attachment?.absolutePath);
@@ -417,6 +425,22 @@ export class ShensiCodexAgentRuntime {
           "If evidence is missing, report it only through the schema required by the current stage.",
           "Return only the current stage result.",
         ].join("\n");
+    let ambientSkillOverrides = [];
+    if (options.shensiRuntime?.agentDriven === true) {
+      try {
+        const discovered = await this.request("skills/list", { cwds: [cwd], forceReload: true }, { timeoutMs: 15_000 });
+        ambientSkillOverrides = disabledAmbientSkillConfig(discovered);
+      } catch (error) {
+        throw runtimeError(`Codex 环境 Skill 隔离失败：${safeMessage(error)}`, "CODEX_AGENT_SKILL_ISOLATION_FAILED", false);
+      }
+    }
+    const agentConfig = options.shensiRuntime?.agentDriven ? {
+      ...(enhanced
+        ? { "features.shell_tool": true, "features.unified_exec": true, "features.apply_patch_freeform": true, "features.remote_models": true, "web_search": requestedWebSearchEnabled ? "live" : "disabled" }
+        : { "features.shell_tool": false, "features.unified_exec": false, "features.apply_patch_freeform": false, "features.remote_models": false, "web_search": "disabled" }),
+      // Thread-local only: never mutate the user's native Codex skill config.
+      "skills.config": ambientSkillOverrides,
+    } : null;
     let response;
     try {
       response = await this.request("thread/start", {
@@ -430,10 +454,11 @@ export class ShensiCodexAgentRuntime {
         sandboxPolicy: permission.sandboxPolicy,
         ...(!enhanced ? { environments: [] } : {}),
         dynamicTools: options.shensiRuntime?.agentDriven === true ? options.workspaceToolRuntime?.dynamicTools || [] : [],
+        // Permission level governs operations, not capability provenance.
+        // Conversation Agents must route through Shensi's live Skill panel in
+        // every permission mode instead of inheriting ambient Codex skills.
         ...(!enhanced ? { selectedCapabilityRoots: [] } : {}),
-        ...(options.shensiRuntime?.agentDriven ? { config: enhanced
-          ? { "features.shell_tool": true, "features.unified_exec": true, "features.apply_patch_freeform": true, "features.remote_models": true, "web_search": requestedWebSearchEnabled ? "live" : "disabled" }
-          : { "features.shell_tool": false, "features.unified_exec": false, "features.apply_patch_freeform": false, "features.remote_models": false, "web_search": "disabled" } } : {}),
+        ...(agentConfig ? { config: agentConfig } : {}),
         developerInstructions,
         ephemeral: true,
       }, { timeoutMs: 30_000 });

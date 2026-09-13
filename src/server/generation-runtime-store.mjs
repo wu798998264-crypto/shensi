@@ -544,7 +544,7 @@ export const resolveTrustedGenerationSettings = async ({
   const requested = requestedProfile(settings, channel, route);
   const publicPreset = getProviderPreset("免费模型");
   if (channel === "text" && requested.profileId === "text-public-kilo") {
-    return {
+    const resolved = {
       ...requested.settings,
       id: requested.profileId,
       connectionId: requested.profileId,
@@ -559,11 +559,26 @@ export const resolveTrustedGenerationSettings = async ({
       executionMode: "agent",
       executionModes: ["agent"],
       agentEngine: "codex_api",
+      credentialSource: "public",
       agentModelId: requested.settings.model || publicPreset.api.model,
+    };
+    return {
+      ...resolved,
+      textConnections: (requested.settings.textConnections || []).map((profile) => text(profile?.id || profile?.connectionId, 120) === requested.profileId
+        ? {
+            ...profile,
+            id: resolved.id, connectionId: resolved.connectionId, systemManaged: true,
+            adapter: resolved.adapter, provider: resolved.provider, protocol: resolved.protocol,
+            baseUrl: resolved.baseUrl, apiKey: "", cliPath: "", cliArgs: "",
+            executionMode: resolved.executionMode, executionModes: resolved.executionModes,
+            agentEngine: resolved.agentEngine, credentialSource: resolved.credentialSource,
+            model: resolved.model, agentModelId: resolved.agentModelId,
+          }
+        : profile),
     };
   }
   if (channel === "text" && requested.profileId === "text-public-agent") {
-    return {
+    const resolved = {
       ...requested.settings,
       id: requested.profileId,
       connectionId: requested.profileId,
@@ -580,6 +595,20 @@ export const resolveTrustedGenerationSettings = async ({
       agentEngine: "codex_api",
       credentialSource: "public",
       agentModelId: requested.settings.model,
+    };
+    return {
+      ...resolved,
+      textConnections: (requested.settings.textConnections || []).map((profile) => text(profile?.id || profile?.connectionId, 120) === requested.profileId
+        ? {
+            ...profile,
+            id: resolved.id, connectionId: resolved.connectionId, systemManaged: true,
+            adapter: resolved.adapter, provider: resolved.provider, protocol: resolved.protocol,
+            baseUrl: resolved.baseUrl, apiKey: "", cliPath: "", cliArgs: "",
+            executionMode: resolved.executionMode, executionModes: resolved.executionModes,
+            agentEngine: resolved.agentEngine, credentialSource: resolved.credentialSource,
+            model: resolved.model, agentModelId: resolved.agentModelId,
+          }
+        : profile),
     };
   }
   const candidateApiKey = text(requested.settings.apiKey, 16_384)

@@ -46,6 +46,42 @@ const resolveCatalogSkill = (catalog = [], args = {}) => {
   throw new Error("未知 Skill ID 或名称，请先查看目录");
 };
 
+const compactSearchText = (value) => text(value)
+  .toLocaleLowerCase("zh-CN")
+  .replace(/[\p{Separator}\p{Punctuation}\p{Symbol}]+/gu, "");
+
+const skillSearchParts = (query) => {
+  const compact = compactSearchText(query);
+  if (!compact) return [];
+  const parts = new Set([compact]);
+  const words = text(query).toLocaleLowerCase("zh-CN").match(/[\p{Letter}\p{Number}]+/gu) || [];
+  for (const word of words) {
+    if (word.length >= 2) parts.add(word);
+    if (/\p{Script=Han}/u.test(word)) {
+      const characters = Array.from(word);
+      for (let index = 0; index < characters.length - 1; index += 1) parts.add(characters.slice(index, index + 2).join(""));
+    }
+  }
+  return [...parts].filter((part) => part.length >= 2);
+};
+
+const searchSkillCatalog = (catalog = [], query = "") => {
+  const parts = skillSearchParts(query);
+  if (!parts.length) return catalog;
+  const fullQuery = compactSearchText(query);
+  const ranked = catalog.map((skill, index) => {
+    const haystack = compactSearchText([skill?.name, skill?.description, ...(skill?.capabilities || [])].join(" "));
+    let score = haystack.includes(fullQuery) ? 10_000 : 0;
+    for (const part of parts) if (haystack.includes(part)) score += part.length * part.length;
+    return { skill, index, score };
+  }).filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map((entry) => entry.skill);
+  // A semantic lookup must never hide the whole live panel merely because the
+  // Agent phrased its query differently from catalog metadata.
+  return ranked.length ? ranked : catalog;
+};
+
 export const conversationAgentInstructions = `你是神思的完整 Agent。以用户完整意图为任务源，以“神思任务路由”和“神思运行规范”为内部合同，以实时 Skill 面板和神思工具为可执行能力。自主判断目标、阶段、所需资料、Skill 与操作；不得用单个关键词替代语义判断。所有完成声明必须来自真实工具回执，任何失败必须保留真实原因。`;
 
 export const createConversationAgentTools = ({ appRoot, workspacePath, workspaceKind = "project", requestId, conversationId, sourceMessageId, instruction, catalog = [], mediaProfiles = {}, contentOnly = false, readSkill, ask, candidates, media, mediaStatus, browser, signal, emit = () => {}, load = loadWorkspaceState, save = saveWorkspaceState, write = executeDocumentTransaction } = {}) => {
@@ -119,7 +155,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
     if (!dynamicTools.some((entry) => entry.name === namespace && entry.tools.some((tool) => tool.name === name))) throw new Error("当前任务未提供此工具");
     if (namespace === "skills") {
-      if (name === "list") return catalog.filter((skill) => !args.query || text([skill.name, skill.description, skill.capabilities]).toLowerCase().includes(text(args.query).toLowerCase()));
+      if (name === "list") return searchSkillCatalog(catalog, args.query);
       if (name === "read") {
         const selected = resolveCatalogSkill(catalog, args);
         const result = await readSkill(selected.id);

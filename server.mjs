@@ -15,7 +15,7 @@ import { runOpenCodeAgent } from "./src/server/opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./src/server/claude-code-agent-runner.mjs";
 import { runExternalCliAgent } from "./src/server/external-cli-agent-runner.mjs";
 import { createCodexApiAgentRuntime } from "./src/server/codex-api-agent-runtime.mjs";
-import { createConversationAgentGateway } from "./src/server/conversation-agent-gateway.mjs";
+import { createConversationAgentGateway, projectTrustedConversationRuntimeProfile } from "./src/server/conversation-agent-gateway.mjs";
 import { createConversationAgentApi } from "./src/domains/document/conversation-agent-api.mjs";
 import { createMediaGenerationApi } from "./src/domains/media/media-generation-api.mjs";
 import { startConversationAgentMcp } from "./src/server/conversation-agent-mcp.mjs";
@@ -1474,7 +1474,15 @@ const conversationAgentGateway = createConversationAgentGateway({
   appRoot: root, machineRoot: machineLocalDataRoot(), shensiRoot: defaultShensiRoot,
   apiRuntime: codexAgentProvider.apiAgentRuntime, codexRuntime: shensiCodexAgentRuntime,
   resolveRuntimeSettings: async (settings) => {
-    const context = await trustedConversationModelSettings(settings);
+    // Conversation tasks must resolve the same trusted, current runtime
+    // binding as every other generation entry. A built-in Codex profile may
+    // retain an obsolete absolute executable path after an app update;
+    // refreshing the derived binding does not change the selected provider,
+    // model, or credentials.
+    const trustedSettings = projectTrustedConversationRuntimeProfile(
+      await resolveTrustedGenerationSettings({ channel: "text", settings, route: "agent" }),
+    );
+    const context = await trustedConversationModelSettings(trustedSettings);
     const selected = context.settings;
     const engine = selected.agentEngine || requiredRuntimeContract({ settings: selected }).engine;
     if (engine === "codex_api") return resolveCodexApiAgentSettings(selected);
