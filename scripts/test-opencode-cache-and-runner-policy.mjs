@@ -41,8 +41,8 @@ assert.equal(openCodeModelMatchesProvider("deepseek/deepseek-chat", "DeepSeek"),
 assert.equal(openCodeModelMatchesProvider("openai/gpt-5.6-sol", "DeepSeek"), false);
 assert.deepEqual(
   openCodeProviderFallbackGroup("DeepSeek", [
-    { slug: "deepseek-v4-pro", label: "DeepSeek V4 Pro", available: true },
-    { slug: "deepseek-v4-flash", label: "DeepSeek V4 Flash", available: true },
+    { slug: "deepseek-v4-pro", label: "DeepSeek V4 Pro", available: false },
+    { slug: "deepseek-v4-flash", label: "DeepSeek V4 Flash", available: false },
   ]),
   {
     provider: "deepseek",

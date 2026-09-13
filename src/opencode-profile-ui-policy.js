@@ -35,7 +35,10 @@ export const openCodeCatalogGroupsForProvider = (groups = [], provider = "") => 
 export const openCodeProviderFallbackGroup = (provider = "", models = []) => {
   const namespace = providerNamespace(provider);
   const normalized = (Array.isArray(models) ? models : []).map((item) => {
-    if (item?.selectable === false || item?.available === false) return null;
+    // `available:false` can mean only that the live OpenCode catalogue has not
+    // been fetched yet. Keep selectable provider presets visible as explicitly
+    // unverified fallbacks; submit-time probing still decides real availability.
+    if (item?.selectable === false) return null;
     const rawSlug = clean(item?.slug || item?.id || item?.name);
     if (!rawSlug) return null;
     const slug = rawSlug.includes("/") ? rawSlug : `${namespace}/${rawSlug}`;

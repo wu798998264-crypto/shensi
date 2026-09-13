@@ -57,7 +57,11 @@ const cdp = (method, params = {}) => new Promise((resolvePromise, reject) => {
   pending.set(id, { resolve: resolvePromise, reject });
   socket.send(JSON.stringify({ id, method, params }));
 });
-const evaluate = async (expression) => (await cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })).result?.value;
+const evaluate = async (expression) => {
+  const result = await cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || "界面脚本执行失败");
+  return result.result?.value;
+};
 const waitFor = async (expression, label) => {
   for (let deadline = Date.now() + 30_000; Date.now() < deadline;) {
     if (await evaluate(`Boolean(${expression})`)) return;
@@ -73,22 +77,46 @@ try {
   await waitFor("document.documentElement.dataset.bootReady === 'true'", "应用启动");
   await evaluate(`document.querySelector('#settingsButton').click(); true`);
   await waitFor("document.querySelector('#settingsDialog')?.open", "设置窗口");
+  await waitFor("document.querySelector('#settingsDialog')?.inert === false && document.querySelector('#settingsDialog')?.getAttribute('aria-busy') !== 'true'", "设置窗口可交互");
   await evaluate(`document.querySelector('[data-settings-section="model"]').click(); true`);
+  await waitFor("document.querySelector('#textAgentEngineSelect option[value=\"opencode\"]')?.dataset.runnerState === 'installed'", "OpenCode 运行器检测");
+  await evaluate(`document.querySelector('.add-generation-configuration[data-add-generation-connection="text"]').click(); true`);
+  await delay(100);
   await evaluate(`(() => {
-    document.querySelector('[data-add-generation-connection="text"]').click();
     const form = document.querySelector('#settingsForm');
     const set = (name, value) => {
       const control = form.elements.namedItem(name);
       control.value = value;
       control.dispatchEvent(new Event('change', { bubbles: true }));
     };
-    set('textExecutionMode', 'agent');
     set('textAgentEngine', 'opencode');
+    return true;
+  })()`);
+  await delay(300);
+  await evaluate(`(() => {
+    const form = document.querySelector('#settingsForm');
+    const set = (name, value) => {
+      const control = form.elements.namedItem(name);
+      control.value = value;
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+    };
     set('textCredentialSource', 'shensi');
     set('provider', 'DeepSeek');
     return true;
   })()`);
-  await waitFor("[...document.querySelector('#modelInput').options].some(o => o.value.startsWith('deepseek/'))", "DeepSeek 模型目录");
+  try {
+    await waitFor("[...document.querySelector('#modelInput').options].some(o => o.value.startsWith('deepseek/'))", "DeepSeek 模型目录");
+  } catch (error) {
+    const diagnostics = await evaluate(`(() => ({
+      provider: document.querySelector('#settingsForm').elements.provider.value,
+      engine: document.querySelector('#settingsForm').elements.textAgentEngine.value,
+      credentialSource: document.querySelector('#settingsForm').elements.textCredentialSource.value,
+      adapter: document.querySelector('#settingsForm').elements.adapter.value,
+      models: [...document.querySelector('#modelInput').options].map(item => item.value),
+      result: document.querySelector('#adapterResult')?.textContent || '',
+    }))()`);
+    throw new Error(`${error.message}；${JSON.stringify(diagnostics)}`);
+  }
   const state = await evaluate(`(() => ({
     provider: document.querySelector('#settingsForm').elements.provider.value,
     engine: document.querySelector('#settingsForm').elements.textAgentEngine.value,
