@@ -31222,24 +31222,6 @@ const bindCurrentWorkspaceOperationConfirmation = (plan, options = {}) => bindWo
   workspaceRevision: workspaceOperationStateRevision(options),
 });
 
-const workspaceOperationDocumentContext = (prompt = "", { taskContextSnapshot = null } = {}) => {
-  const source = String(prompt);
-  const activeId = requestsCurrentDocument(source) ? String(taskContextSnapshot?.activeDocumentId || "") : "";
-  const wantedModules = new Set();
-  if (/正文|章节|第\s*\d+\s*章/.test(source)) wantedModules.add("manuscript");
-  if (/规划|大纲|卷纲|章纲|集纲|卷名|分卷/.test(source)) wantedModules.add("outline");
-  if (/设定|人物|世界观|关系|地点|时间线/.test(source)) wantedModules.add("canon");
-  if (/记忆|伏笔|信息释放|状态快照/.test(source)) wantedModules.add("memory");
-  const candidates = Object.entries(state.documents).filter(([id, documentState]) => {
-    if (id === "library-trash") return false;
-    if (id === activeId || (documentState.title && source.includes(documentState.title))) return true;
-    return wantedModules.has(moduleForDocument(id));
-  }).sort(([leftId], [rightId]) => Number(rightId === activeId) - Number(leftId === activeId)).slice(0, 16);
-  return candidates.map(([id, documentState]) => `## ${id} · ${documentState.title}\n${stripHtml(documentState.html ?? "").slice(0, 3500)}`)
-    .join("\n\n")
-    .slice(0, 55_000);
-};
-
 const hasModelConfiguration = () => generationConnectionIsConfigured("text", activeQuickAgentProfile());
 
 const isDirectGenerationRequest = (value = "") => (
@@ -32527,47 +32509,6 @@ const discoverUnfinishedGenerationAttempts = async () => {
   }
   document.documentElement.dataset[earlyDiscovery ? "earlyAttemptRecoveryMs" : "attemptRecoveryMs"] = String(Math.round(performance.now() - discoveryStartedAt));
   return recoveredCount;
-};
-
-const deterministicStructuralWorkspacePlan = (prompt = "") => {
-  const source = String(prompt || "");
-  const range = source.match(/第\s*(\d+)\s*章\s*(?:至|到|[-~～—])\s*第?\s*(\d+)\s*章/u);
-  const folderMatch = source.match(/正文(?:文件夹|目录)\s*[“"「『]?([^”"」』，。；;]+)[”"」』]?/u);
-  if (!range || !folderMatch) return null;
-  const start = Number(range[1]);
-  const end = Number(range[2]);
-  const folderLabel = String(folderMatch[1] || "").trim();
-  if (!Number.isInteger(start) || !Number.isInteger(end) || end < start || end - start > 80 || !folderLabel) return null;
-  const documentIds = Array.from({ length: end - start + 1 }, (_, index) => `chapter-${start + index}`)
-    .filter((documentId) => Boolean(state.documents[documentId]));
-  if (!documentIds.length) return null;
-  const plan = normalizeWorkspaceOperationPlan({
-    id: `structural-${Date.now()}`,
-    intent: source,
-    summary: `将第${start}章至第${end}章归类到正文文件夹“${folderLabel}”`,
-    operations: [
-      { type: "folder.ensure", moduleId: "manuscript", viewId: "novel", name: folderLabel },
-      ...documentIds.map((documentId) => ({
-        type: "document.move",
-        documentId,
-        moduleId: "manuscript",
-        viewId: "novel",
-        treeGroup: "volume",
-        folderLabel,
-        volumeFolder: folderLabel,
-      })),
-    ],
-  }, {
-    documentIds: Object.keys(state.documents),
-    folders: state.customFolders ?? [],
-    documentRevisions: Object.fromEntries(Object.keys(state.documents).map((documentId) => [documentId, currentDocumentRevision(documentId)])),
-    documentTitles: Object.fromEntries(Object.entries(state.documents).map(([documentId, document]) => [documentId, document.title || documentId])),
-  });
-  return bindCurrentWorkspaceOperationConfirmation(plan, {
-    required: false,
-    source: "explicit_user_instruction",
-    reason: "文件夹名称、章节范围和目标位置均由用户原指令明确给出",
-  });
 };
 
 const assistantReplyFor = async (message, requestTarget = null, { conversation = activeConversation(), messages = state.messages, candidateState = state, taskContextSnapshot = null } = {}) => {
@@ -60555,54 +60496,6 @@ const conversationRememberedImageParameters = (conversation = activeConversation
     aspectRatio: String(remembered.aspectRatio || "").trim(),
     quality: String(remembered.quality || "").trim(),
   };
-};
-
-const lockedComposerMediaDispatch = (content, suppliedDispatch = null) => {
-  const conversation = activeConversation();
-  const repeatPreviousImage = conversationImageRepeatRequest(content)
-    && Boolean(conversationRememberedMediaProfileId(conversation, "image"));
-  const base = normalizeConversationMediaDispatchContract(suppliedDispatch)
-    || createConversationMediaDispatchContract({
-      text: content,
-      messages: conversationMessagesForTaskState(activeConversation()),
-    })
-    || (repeatPreviousImage ? createConversationMediaDispatchContract({
-      text: content,
-      messages: conversationMessagesForTaskState(conversation),
-      channel: "image",
-      reuseLastSuccessfulParameters: true,
-    }) : null);
-  if (!base || base.kind === "composite") return base;
-  const requestedProfiles = requestedConversationMediaConnectionCandidates(base.channel, content);
-  const explicitlyRequestedProfile = requestedProfiles.length === 1 ? requestedProfiles[0] : null;
-  const modelMatches = requestedConversationMediaModelMatches(base.channel, content, availableGenerationConnections(base.channel));
-  const explicitModelMatch = modelMatches.find((match) => match.profile.id === explicitlyRequestedProfile?.id)
-    || modelMatches.find((match) => match.profile.id === state.settings[generationProfileKeys(base.channel).active])
-    || modelMatches[0]
-    || null;
-  const rememberedImageParameters = repeatPreviousImage ? conversationRememberedImageParameters(conversation) : {};
-  const profileId = base.profileId
-    || explicitlyRequestedProfile?.id
-    || explicitModelMatch?.profile?.id
-    || (repeatPreviousImage ? conversationRememberedMediaProfileId(conversation, "image") : "");
-  const model = base.model
-    || explicitModelMatch?.model
-    || explicitlyRequestedProfile?.model
-    || (repeatPreviousImage ? conversationRememberedMediaModel(conversation, "image") : "");
-  const aspectRatio = base.channel === "image"
-    ? base.aspectRatio || explicitConversationImageAspectRatio(content) || rememberedImageParameters.aspectRatio || ""
-    : "";
-  const quality = base.channel === "image"
-    ? base.quality || explicitConversationImageQuality(content) || rememberedImageParameters.quality || ""
-    : "";
-  return normalizeConversationMediaDispatchContract({
-    ...base,
-    profileId,
-    model,
-    aspectRatio,
-    quality,
-    reuseLastSuccessfulParameters: base.reuseLastSuccessfulParameters === true || repeatPreviousImage,
-  });
 };
 
 const configureConversationMediaDefault = async (content, intent = conversationMediaDefaultIntent(content)) => {
