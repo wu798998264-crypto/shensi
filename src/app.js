@@ -112,7 +112,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.0.8-skill-relations";
+} from "./generation-profiles.js?v=6.0.9-responsiveness";
 import { assetHistoryEntryIsSuppressed, hideHistoricalAssets, normalizeAssetHistoryTombstones, unhideHistoricalAssets } from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
