@@ -191,6 +191,12 @@ try {
   const videoDuplicate = await request("/api/generation/jobs/media", videoPayload);
   assert.equal(videoDuplicate.job?.id, videoSubmitted.job?.id, "重复视频提交必须复用同一收费任务");
   const videoJob = await waitForTerminal(videoSubmitted.job);
+  assert.equal(videoJob.result?.attachment?.mimeType, "video/mp4", "真实视频必须保存为可播放的 MP4");
+  assert.equal(videoJob.result?.attachment?.videoCodec, "h264", "真实视频必须通过 H.264 视频流解析");
+  assert.ok(Number(videoJob.result?.attachment?.videoFrameCountRead || 0) > 0, "真实视频必须能够逐帧读取");
+  assert.equal(Number(videoJob.result?.attachment?.videoWidth || 0), 1280, "720p 横屏视频宽度必须为 1280");
+  assert.equal(Number(videoJob.result?.attachment?.videoHeight || 0), 720, "720p 横屏视频高度必须为 720");
+  assert.ok(Number(videoJob.result?.attachment?.durationMs || 0) >= 3_500, "最短视频必须包含完整的有效时长");
   const videoBytes = await verifyAttachment({ workspacePath, documentId, attachment: videoJob.result.attachment });
   const appliedVideo = await applyToCard({ workspacePath, documentId, nodeId: videoNodeId, job: videoJob, type: "video", name: "黄金验收最短视频" });
 
