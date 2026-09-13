@@ -1412,9 +1412,11 @@ const uiText = (value) => {
 };
 
 const refreshUiLanguagePresentation = () => {
+  renderWorkspaceChrome();
   renderModules();
   renderDocumentList();
   renderEditor();
+  renderChatFeed();
   renderContextChips();
   renderProjectMenu();
   renderTrashButton();
@@ -21286,6 +21288,7 @@ const renderCapabilityHistory = () => {
 const openCapabilityHistory = (scopeType, scopeId) => {
   ui.capabilityHistory = { scopeType, scopeId };
   renderCapabilityHistory();
+  localizeUi(elements.capabilityHistoryDialog, globalUiPreferences.uiLanguage);
   elements.capabilityHistoryDialog.showModal();
 };
 
@@ -21649,7 +21652,7 @@ const renderSkillSettings = () => {
     const marketplaceNotice = elements.skillSettingsContent.querySelector(".marketplace-local-notice");
     if (marketplaceNotice) marketplaceNotice.textContent = "上传后端尚未接通；当前发布只保存在本机。";
     const marketplaceShareLabel = elements.skillSettingsContent.querySelector("#shareSkillToMarketplace span");
-    if (marketplaceShareLabel) marketplaceShareLabel.textContent = "发布用户 Skill";
+    if (marketplaceShareLabel) marketplaceShareLabel.textContent = "发布 Skill 到广场";
     return;
   }
   const userSkills = ui.skillCatalog.user;
@@ -24638,9 +24641,9 @@ const renderWorkspaceChrome = () => {
   const emptyMode = workspaceHasNoActiveEntry();
   const copy = emptyWorkspaceCopy();
   document.querySelector("#projectName").textContent = emptyMode ? copy.name : state.projectName;
-  document.querySelector("#projectButton").title = uiText(emptyMode
-    ? `打开${copy.entry}列表`
-    : `右键打开${state.workspaceKind === "notebook" ? "笔记" : "作品"}历史版本或在文件夹中显示`);
+  document.querySelector("#projectButton").title = emptyMode
+    ? (globalUiPreferences.uiLanguage === "en-US" ? `Open ${copy.entry} list` : `打开${copy.entry}列表`)
+    : uiText(`右键打开${state.workspaceKind === "notebook" ? "笔记" : "作品"}历史版本或在文件夹中显示`);
   document.querySelector("#activityButton").disabled = emptyMode;
   document.querySelector("#quickNewConversationButton").disabled = emptyMode;
   document.querySelector("#trashButton").disabled = emptyMode;
