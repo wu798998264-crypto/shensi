@@ -10,8 +10,22 @@ $tool = Get-ChildItem -LiteralPath $sdkRoot -Directory | Sort-Object Name -Desce
     if (Test-Path -LiteralPath $candidate) { $candidate }
 } | Select-Object -First 1
 if (-not $tool) { throw 'Windows SDK x64 signtool is required to finalize release signing' }
-& $tool sign /sha1 $signing.certificateSha1 /s My /fd SHA256 /tr $signing.rfc3161TimeStampServer /td SHA256 $installer
-if ($LASTEXITCODE -ne 0) { throw 'Final installer signing failed' }
+$signingComplete = $false
+for ($attempt = 1; $attempt -le 5; $attempt += 1) {
+    $signOutput = & $tool sign /sha1 $signing.certificateSha1 /s My /fd SHA256 /tr $signing.rfc3161TimeStampServer /td SHA256 $installer 2>&1
+    $signExitCode = $LASTEXITCODE
+    if ($signExitCode -eq 0) {
+        $signingComplete = $true
+        break
+    }
+    $signError = ($signOutput | Out-String).Trim()
+    $sharingViolation = $signError -match 'being used by another process|sharing violation'
+    if (-not $sharingViolation -or $attempt -eq 5) {
+        throw "Final installer signing failed: $signError"
+    }
+    Start-Sleep -Seconds (2 * $attempt)
+}
+if (-not $signingComplete) { throw 'Final installer signing failed after file-lock retries' }
 $signature = Get-AuthenticodeSignature -LiteralPath $installer
 if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Final installer signature or trusted timestamp is invalid' }
 Write-Output 'Final installer signature and trusted timestamp verified'

@@ -26,6 +26,7 @@ assert.deepEqual(updateConfig.installerArgs, ["/S"], "update installation must u
 assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater must pin the release manifest public key");
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
 assert.match(finalSigner, /Get-Content\s+-Raw\s+-Encoding\s+UTF8/u, "Windows PowerShell must read UTF-8 package metadata without corrupting the Chinese product name");
+assert.match(finalSigner, /being used by another process\|sharing violation[\s\S]{0,300}Start-Sleep/u, "final signing must retry only transient installer file locks");
 assert.match(updatePreparation, /uploadPerformed:\s*false/u, "release preparation must remain local until the user explicitly requests upload");
 
 console.log("Shensi release engineering contract passed");
