@@ -17,5 +17,8 @@ assert.match(source, /RENDERER_UNRESPONSIVE_GRACE_MS = Math\.max\(10_000,[\s\S]{
 assert.match(source, /writeDiagnosticLog\(`renderer unresponsive; graceMs=\$\{RENDERER_UNRESPONSIVE_GRACE_MS\}`\)/u, "renderer unresponsive state must be recorded");
 assert.match(source, /writeDiagnosticLog\(`renderer process gone: reason=/u, "renderer termination reason must be recorded");
 assert.match(source, /writeDiagnosticLog\("desktop before-quit"\)/u, "desktop shutdown requests must be recorded");
+assert.match(source, /mainWindow\.on\("close"[\s\S]{0,700}requestApplicationQuit\(\{ rendererGraceMs: SYSTEM_CLOSE_GRACE_MS \}\)/u, "taskbar Close and Alt+F4 must request a real application quit");
+assert.match(source, /ipcMain\.handle\("shensi:window:close"[\s\S]{0,500}target\.hide\(\)/u, "the custom title-bar close button must retain background/tray behavior");
+assert.match(source, /shutdown watchdog elapsed[\s\S]{0,300}app\.exit\(0\)/u, "shutdown must have a bounded final exit watchdog");
 
 console.log("Shensi desktop process lifecycle contract passed");

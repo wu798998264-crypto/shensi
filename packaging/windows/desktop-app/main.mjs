@@ -32,6 +32,8 @@ const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 // renderer. Give the surface enough time to recover before replacing it.
 const RENDERER_UNRESPONSIVE_GRACE_MS = Math.max(10_000, Number(process.env.SHENSI_RENDERER_UNRESPONSIVE_GRACE_MS) || 20_000);
 const RENDERER_CLOSE_GRACE_MS = Math.max(4_000, Number(process.env.SHENSI_RENDERER_CLOSE_GRACE_MS) || 12_000);
+const SYSTEM_CLOSE_GRACE_MS = Math.max(1_500, Number(process.env.SHENSI_SYSTEM_CLOSE_GRACE_MS) || 3_000);
+const SHUTDOWN_WATCHDOG_MS = Math.max(6_000, Number(process.env.SHENSI_SHUTDOWN_WATCHDOG_MS) || 10_000);
 const WINDOW_STATE_FILE = "desktop-window-state.json";
 const MIN_WINDOW_WIDTH = 1120;
 const MIN_WINDOW_HEIGHT = 720;
@@ -160,6 +162,7 @@ let rendererRecoveryAttempts = 0;
 let rendererUnresponsiveTimer = null;
 let rendererUnresponsive = false;
 let rendererCloseTimer = null;
+let shutdownWatchdogTimer = null;
 let recoveryPageActive = false;
 let recoveryPageUrl = "";
 let controlledNavigationUrl = "";
@@ -597,7 +600,7 @@ const finishApplicationQuit = () => {
   app.quit();
 };
 
-const requestApplicationQuit = () => {
+const requestApplicationQuit = ({ rendererGraceMs = RENDERER_CLOSE_GRACE_MS } = {}) => {
   if (quitting || explicitQuitRequested) return;
   explicitQuitRequested = true;
   if (!mainWindow || mainWindow.isDestroyed() || recoveryPageActive) {
@@ -610,7 +613,7 @@ const requestApplicationQuit = () => {
     rendererCloseTimer = null;
     console.error("[shensi-desktop-quit-timeout] renderer did not acknowledge tray exit; using the durable recovery checkpoint");
     finishApplicationQuit();
-  }, RENDERER_CLOSE_GRACE_MS);
+  }, Math.max(1_000, Number(rendererGraceMs) || RENDERER_CLOSE_GRACE_MS));
   rendererCloseTimer.unref?.();
 };
 
@@ -1869,7 +1872,11 @@ const createMainWindowShell = async () => {
     if (rendererApprovedClose || quitting || mainWindow?.isDestroyed()) return;
     event.preventDefault();
     void persistWindowState();
-    mainWindow.hide();
+    // The in-app title-bar close button has its own IPC path and deliberately
+    // hides to the tray. A BrowserWindow close event therefore represents an
+    // OS request (Alt+F4 or the taskbar Close command) and must really quit,
+    // even when the renderer is currently too busy to acknowledge promptly.
+    requestApplicationQuit({ rendererGraceMs: SYSTEM_CLOSE_GRACE_MS });
   });
   mainWindow.on("closed", () => {
     clearTimeout(rendererCloseTimer);
@@ -1937,18 +1944,30 @@ app.on("before-quit", (event) => {
   clearTimeout(rendererCloseTimer);
   rendererCloseTimer = null;
   clearBackendStabilityTimer();
-  void (async () => {
-    await persistWindowState();
-    await stopBackend();
-    await stopAgentBrowserBridge();
-    tray?.destroy();
-    tray = null;
+  clearTimeout(shutdownWatchdogTimer);
+  shutdownWatchdogTimer = setTimeout(() => {
+    writeDiagnosticLog(`shutdown watchdog elapsed after ${SHUTDOWN_WATCHDOG_MS}ms; forcing process exit`);
     app.exit(0);
+  }, SHUTDOWN_WATCHDOG_MS);
+  shutdownWatchdogTimer.unref?.();
+  void (async () => {
+    try {
+      await persistWindowState();
+      await stopBackend();
+      await stopAgentBrowserBridge();
+      tray?.destroy();
+      tray = null;
+    } finally {
+      clearTimeout(shutdownWatchdogTimer);
+      shutdownWatchdogTimer = null;
+      app.exit(0);
+    }
   })();
 });
 
-// Closing the frameless window means "run in background". Only the tray Exit
-// command (or the operating system shutdown lifecycle) ends the process.
+// The custom title-bar button can keep the app in the tray through its explicit
+// IPC handler. Once every BrowserWindow is actually closed, shutdown is already
+// in progress and Electron must not create or hide another window implicitly.
 app.on("window-all-closed", () => {});
 
 const allowTrustedRendererPermission = (webContents, permission, requestingOrigin = "") => {
