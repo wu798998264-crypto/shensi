@@ -42,6 +42,10 @@ const revised = await runShensiOrchestration({
   contextDomain: "novel",
   workspaceKind: "project",
   targetDocumentId: "chapter-1",
+  semanticLane: "task_execution",
+  semanticWriteIntent: "commit",
+  semanticDeliverableType: "novel",
+  semanticExecutionPlan: { reviewTier: "none", candidateCount: 1 },
   cwd: root,
   languagePolicy: { absoluteTerms: ["仿佛"], creativeContractText: "项目禁用词：仿佛" },
   runModel: async ({ shensiRuntime }) => {
@@ -74,6 +78,10 @@ const degraded = await runShensiOrchestration({
   contextDomain: "novel",
   workspaceKind: "project",
   targetDocumentId: "chapter-1",
+  semanticLane: "task_execution",
+  semanticWriteIntent: "commit",
+  semanticDeliverableType: "novel",
+  semanticExecutionPlan: { reviewTier: "none", candidateCount: 1 },
   cwd: root,
   languagePolicy: { absoluteTerms: ["仿佛"], currentDocumentText: "前文已经出现仿佛。" },
   runModel: async ({ shensiRuntime }) => {

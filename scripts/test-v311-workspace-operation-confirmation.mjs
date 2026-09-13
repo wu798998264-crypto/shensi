@@ -47,11 +47,14 @@ assert.match(agentTools, /tool\("structure_apply"[\s\S]{0,1800}\["expectedRevisi
   "Agent 的结构管理必须使用带 revision 和幂等标识的原子事务工具");
 assert.match(agentTools, /请先读取 documents\.structure 或 documents\.list 获取结构版本/u,
   "Agent 未真实读取结构版本时不得执行移动、复制、删除或重命名");
-assert.match(agentTools, /interaction\.delivery 声明本轮是对话交付还是文档交付/u,
+assert.match(agentTools, /tool\("delivery", "声明本轮实际交付方式。[\s\S]{0,500}\["mode", "documentIds"\]/u,
   "统一 Agent 必须声明真实交付结果，不能只在文字中声称完成");
+assert.match(agentTools, /deliveryStatus:\s*\(\)\s*=>\s*\(\{ declared: Boolean\(delivery\), mode: delivery\?\.mode, missing:/u,
+  "统一 Agent 必须依据真实写入回执核对交付目标");
 assert.match(app, /workspaceOperationConfirmationIsCurrent\(plan,[\s\S]{0,160}workspaceOperationStateRevision/u, "执行前必须回读工作区结构版本");
 assert.match(app, /automatic:\s*true,\s*confirmed:\s*true/u, "已有用户确认的作者驾驶舱操作必须显式传递确认状态");
 assert.match(app, /确认并执行/u, "对话区必须明确显示确认操作按钮");
-assert.match(app, /source:\s*"model_planner"[\s\S]{0,220}workspaceRevision/u, "模型规划必须绑定确认原因和工作区版本");
+assert.doesNotMatch(app, /source:\s*"model_planner"/u,
+  "对话区不得回退到旧模型规划器；结构变更由统一 Agent 的 revision 原子事务执行");
 
 console.log("Shensi workspace operation confirmation passed");

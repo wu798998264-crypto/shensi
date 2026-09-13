@@ -33,6 +33,7 @@ for (const kind of ["artifact", "document", ""]) {
 const authorization = createFormalWriteAuthorization({
   instruction: prompt, sourceMessageId: "review-request",
   targetDocumentIds: [reportTarget.documentId], expectedRevisions: { "report-novel": "report-v1" },
+  semanticWritePlan: { intent: "commit", operation: "replace" },
 });
 assert.equal(authorization.state, "commit");
 assert.equal(authorization.allowBodyMutation, true, "保护源正文不能禁止独立报告写入");
@@ -138,6 +139,10 @@ const runReview = async ({ instruction = prompt, planning = protocol, audit = re
     projectContext: context, postwriteProjectContext: context,
     activeModule: "reports", contextDomain: "novel", targetDocumentId: "report-novel",
     userSkillRuntime: runtime, creativeTask: { writeAuthorization: authorization },
+    semanticLane: "task_execution", semanticTaskKind: "quality_review",
+    semanticWriteIntent: "commit", semanticWriteOperation: "replace",
+    semanticDeliverableType: "report",
+    semanticExecutionPlan: { reviewTier: "full", candidateCount: 1 },
     onAttempt: async (attempt) => attempts.push(attempt),
     runModel: async ({ shensiRuntime, system, messages }) => {
       const stage = shensiRuntime.stage;
@@ -157,7 +162,12 @@ const runReview = async ({ instruction = prompt, planning = protocol, audit = re
 };
 
 for (const instruction of [prompt, "直接检查前三章并保存自检报告，不要改动正文。", "自检前三章并直接执行，保存报告。"]) {
-  assert.equal(detectShensiRunProfile({ prompt: instruction, activeModule: "reports", targetDocumentId: "report-novel" }).diagnostic, true);
+  assert.equal(detectShensiRunProfile({
+    prompt: instruction, activeModule: "reports", targetDocumentId: "report-novel",
+    semanticLane: "task_execution", semanticTaskKind: "quality_review",
+    semanticWriteIntent: "commit", semanticDeliverableType: "report",
+    semanticExecutionPlan: { reviewTier: "full", candidateCount: 1 },
+  }).diagnostic, true);
   for (const planning of [protocol, unfinished, JSON.stringify({ action: "generate" }), JSON.stringify({ action: "respond" })]) {
     const { result, stages } = await runReview({ instruction, planning });
     assert.deepEqual(stages, ["planning", "audit"]);
