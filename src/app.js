@@ -208,7 +208,7 @@ import { liveWriteTargetDecision } from "./live-write-target-policy.js";
 import { supplementRequestsLatestDocument } from "./supplement-policy.js";
 import { manualMemorySyncDelay, memorySyncRevisionIsCurrent } from "./memory-sync-scheduler.js";
 import { createBlankDocumentBaseline, documentContentState, hasSubstantiveVersionContent } from "./version-store.js";
-import { historyOperationLabel, historySourceLabel, normalizeHistoryEntryIntegrity, stampHistoryEntryIntegrity, updateHistoryEntryMetadata, verifyHistoryEntryIntegrity } from "./version-integrity.js";
+import { historyOperationLabel, historySourceLabel, hydrateHistoryEntryIntegrity, normalizeHistoryEntryIntegrity, stampHistoryEntryIntegrity, updateHistoryEntryMetadata, verifyHistoryEntryIntegrity } from "./version-integrity.js";
 import { resolveWorkspaceLandingScope } from "./workspace-scope-policy.js";
 import { creativeGuidanceDepthPrompt } from "./pending-decision-policy.js";
 import { indexCanBeReadForStage } from "./index-policy.js";
@@ -304,6 +304,7 @@ import { applyStructureCreationLanguage, fixedStructureTitle, normalizeStructure
 import { moveWorkspaceEntry, orderWorkspaceEntries, replaceWorkspaceOrderPath } from "./workspace-order.js";
 import { resolveWorkspaceModeSelection, workspaceKindHasEntry } from "./workspace-mode.js";
 import { workspaceSaveRequest } from "./workspace-request.js";
+import { workspaceStateOnlyPatchPayload } from "./workspace-state-patch.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSave, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
 import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationFailureNeedsCard, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
@@ -364,6 +365,7 @@ import {
   addCanvasSplitTextNodes,
   addCanvasTextNode,
   appendGenerationAsset,
+  appendGenerationAssets,
   appendCanvasAsset,
   arrangeCanvasNodes,
   canvasGenerationAssetContent,
@@ -1416,7 +1418,7 @@ const refreshUiLanguagePresentation = () => {
   renderModules();
   renderDocumentList();
   renderEditor();
-  renderChatFeed();
+  renderMessages();
   renderContextChips();
   renderProjectMenu();
   renderTrashButton();
@@ -2904,28 +2906,33 @@ const appendConversationAttachmentHistory = (assets, attachment, {
 };
 
 const ensureWorkspaceAssetSchema = () => {
-  const previousAssets = JSON.stringify(normalizeGenerationAssets(state.workspaceAssets));
+  const assets = normalizeGenerationAssets(state.workspaceAssets);
+  const previousAssets = JSON.stringify(assets);
   state.assetHistoryTombstones = normalizeAssetHistoryTombstones(state.assetHistoryTombstones);
-  let assets = normalizeGenerationAssets(state.workspaceAssets);
+  const additions = [];
   const conversations = Array.isArray(state.conversations) ? state.conversations : [];
   const sources = conversations.length
     ? conversations
     : [{ id: state.activeConversationId || "conversation-main", boundDocumentId: state.activeDocument, messages: state.messages ?? [] }];
   for (const conversation of sources) {
     for (const attachment of conversation.attachments ?? []) {
-      assets = appendConversationAttachmentHistory(assets, attachment, {
+      const asset = conversationAttachmentUploadAsset({
+        attachment,
         conversationId: conversation.id || "conversation",
         sourceDocumentId: conversation.boundDocumentId || "",
       });
+      if (asset && !assetHistoryEntryIsSuppressed(state, asset)) additions.push(asset);
     }
     for (const message of conversation.messages ?? []) {
       for (const attachment of message.attachments ?? []) {
-        assets = appendConversationAttachmentHistory(assets, attachment, {
+        const asset = conversationAttachmentUploadAsset({
+          attachment,
           conversationId: conversation.id || "conversation",
           messageId: message.id || "",
           sourceDocumentId: conversation.boundDocumentId || "",
           createdAt: message.createdAt || "",
         });
+        if (asset && !assetHistoryEntryIsSuppressed(state, asset)) additions.push(asset);
       }
       if (message?.role !== "assistant") continue;
       const mediaGroups = [
@@ -2970,7 +2977,7 @@ const ensureWorkspaceAssetSchema = () => {
             ...(eventAt ? { createdAt: eventAt, sourceEventAt: eventAt } : { createdAt: "" }),
           };
           if (assetHistoryEntryIsSuppressed(state, asset)) continue;
-          assets = appendGenerationAsset(assets, asset);
+          additions.push(asset);
         }
       }
     }
@@ -2980,11 +2987,11 @@ const ensureWorkspaceAssetSchema = () => {
     for (const asset of normalizeCanvas(documentState.canvas).assets) {
       const workspaceAsset = asset.sourceDocumentId ? asset : { ...asset, sourceDocumentId: documentId };
       if (assetHistoryEntryIsSuppressed(state, workspaceAsset)) continue;
-      assets = appendGenerationAsset(assets, workspaceAsset);
+      additions.push(workspaceAsset);
     }
   }
-  state.workspaceAssets = assets;
-  if (JSON.stringify(assets) !== previousAssets) ui.structureMigrationPending = true;
+  state.workspaceAssets = appendGenerationAssets(assets, additions);
+  if (JSON.stringify(state.workspaceAssets) !== previousAssets) ui.structureMigrationPending = true;
 };
 
 const synchronizeLegacyWhiteboardAssetCards = () => {
@@ -3331,7 +3338,7 @@ const ensureStateSchema = () => {
     return !conversationRollback || !sameProjectHistoryContent(version, currentProjectContent);
   });
   const normalizeHistoryEntries = (entries = []) => (Array.isArray(entries) ? entries : [])
-    .map(normalizeHistoryEntryIntegrity);
+    .map(hydrateHistoryEntryIntegrity);
   state.histories = Object.fromEntries(Object.entries(state.histories).map(([id, entries]) => [id, normalizeHistoryEntries(entries)]));
   state.viewHistories = Object.fromEntries(Object.entries(state.viewHistories).map(([id, entries]) => [id, normalizeHistoryEntries(entries)]));
   state.volumeHistories = Object.fromEntries(Object.entries(state.volumeHistories).map(([id, entries]) => [id, normalizeHistoryEntries(entries)]));
@@ -3476,8 +3483,10 @@ const ensureStateSchema = () => {
 ensureStateSchema();
 
 const recoverInterruptedConversationMessages = () => {
-  recoverInterruptedLongFormState(state);
+  const recovered = recoverInterruptedLongFormState(state);
+  const pendingInlineEditCount = (state.pendingInlineEdits ?? []).length;
   state.pendingInlineEdits = (state.pendingInlineEdits ?? []).filter((record) => Boolean(record.candidate));
+  return recovered + Math.max(0, pendingInlineEditCount - state.pendingInlineEdits.length);
 };
 
 recoverInterruptedConversationMessages();
@@ -4265,6 +4274,18 @@ const cancelWorkspaceBaselinePreparation = ({ preserveUnavailable = false } = {}
   ui.workspaceBaselinePending = preserveUnavailable;
 };
 
+const applyBackgroundHistoryIntegrity = (results = []) => {
+  for (const result of Array.isArray(results) ? results : []) {
+    const entries = result?.collection === "projectHistories"
+      ? state.projectHistories
+      : state?.[result?.collection]?.[result?.scope];
+    const entry = Array.isArray(entries)
+      ? entries.find((candidate) => String(candidate?.id || "") === String(result?.id || ""))
+      : null;
+    if (entry) entry.verified = result.ok === true;
+  }
+};
+
 // Build the exact conflict baseline off the renderer thread. Large notebooks
 // can keep tens of megabytes in conversations and documents; JSON.stringify
 // plus hashing even one such field is not pre-emptible and used to freeze
@@ -4287,7 +4308,6 @@ const scheduleWorkspaceBaselinePreparation = ({ sourceState, identity, revision,
   const stillCurrent = () => !task.cancelled
     && ui.workspaceBaselineTask === task
     && workspaceIdentity() === identity
-    && ui.workspaceRevision === revision
     && String(ui.activeWorkspaceStamp || "") === String(stateStamp || "");
   const finish = () => {
     task.worker?.terminate?.();
@@ -4326,7 +4346,7 @@ const scheduleWorkspaceBaselinePreparation = ({ sourceState, identity, revision,
     task.worker = new Worker(new URL("./workspace-baseline-worker.js", import.meta.url), { type: "module" });
     task.worker.addEventListener("message", (event) => {
       if (!stillCurrent()) return;
-      const { type, target, key, hash, hashes, stateStamp: workerStateStamp } = event.data ?? {};
+      const { type, target, key, hash, hashes, historyIntegrity, stateStamp: workerStateStamp } = event.data ?? {};
       if (type === "error") {
         cancelWorkspaceBaselinePreparation({ preserveUnavailable: true });
         return;
@@ -4337,6 +4357,7 @@ const scheduleWorkspaceBaselinePreparation = ({ sourceState, identity, revision,
           return;
         }
         for (const [metadataKey, metadataHash] of hashes ?? []) baselineStateHashes.set(metadataKey, metadataHash);
+        applyBackgroundHistoryIntegrity(historyIntegrity);
         task.metadataReady = true;
         if (documentHashes.size >= documentEntries.length) finish();
         return;
@@ -4755,7 +4776,6 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
   const identity = workspaceIdentity();
   const workspacePath = state.settings.workspacePath;
   const conversationBaseline = ui.workspaceConversationBaseline;
-  const submittedConversationState = freezeConversationSaveState(state);
   const baselineDocumentHashes = new Map(ui.workspaceDocumentHashes);
   const baselineStateHashes = new Map(ui.workspaceBaselineStateHashes);
   const compilationStatusWasPending = ui.projectCompilationStatusPending;
@@ -4773,9 +4793,17 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
     && knownDirtyIds.size > 0
     && !operationDocumentIds
     && !operationVerification;
+  const stateOnlyPatch = !forceFullState
+    && Boolean(ui.activeWorkspaceStamp)
+    && !ui.workspaceDocumentChangesUnknown
+    && ui.workspaceStateChangesPending
+    && knownDirtyIds.size === 0
+    && !operationDocumentIds
+    && !operationVerification;
   let workspaceState;
   let nextDocumentHashes;
   let outboundState;
+  let submittedConversationState;
   let documentOnlyPatch = false;
   if (directDocumentPatch) {
     // The server's expected state stamp still protects this delta against
@@ -4813,8 +4841,25 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
       statePatch: { mode: "preserve-current-v1" },
     };
     documentOnlyPatch = true;
+    submittedConversationState = freezeConversationSaveState(persistedSource);
+  } else if (stateOnlyPatch) {
+    saveActiveConversation();
+    const persistedSource = persistableStateWithoutEphemeralConversationRollbacks(state, ui.ephemeralConversationRollbackBaselines);
+    const documentIds = Object.entries(persistedSource.documents ?? {})
+      .filter(([, documentState]) => !documentState?.virtual)
+      .map(([id]) => id);
+    workspaceState = workspaceStateOnlyPatchPayload(persistedSource);
+    nextDocumentHashes = new Map(ui.workspaceDocumentHashes);
+    outboundState = {
+      ...workspaceState,
+      documents: {},
+      documentPatch: { mode: "delta-v1", documentIds },
+      statePatch: { mode: "preserve-current-v1" },
+    };
+    submittedConversationState = workspaceState;
   } else {
     workspaceState = stateForWorkspace({ compilationStatusReady: compilationStatusWasPending });
+    submittedConversationState = freezeConversationSaveState(workspaceState);
     const useDocumentPatch = !forceFullState && Boolean(ui.activeWorkspaceStamp && ui.workspaceDocumentHashes.size);
     const canUseTrackedPatch = useDocumentPatch && !ui.workspaceDocumentChangesUnknown;
     if (canUseTrackedPatch) {
@@ -4858,7 +4903,7 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
           }
       : workspaceState;
   }
-  const rebuildBaselineAfterDirectPatch = directDocumentPatch && ui.workspaceBaselinePending;
+  const rebuildBaselineAfterPatch = (directDocumentPatch || stateOnlyPatch) && ui.workspaceBaselinePending;
   const operation = (async () => {
     try {
       ui.lastWorkspaceLandingReceipt = null;
@@ -4875,9 +4920,9 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
         });
       } catch (error) {
         if (!recoverConflict || !isWorkspaceStateConflict(error)) throw error;
-        const conflictWorkspaceState = directDocumentPatch
-          ? stateForWorkspace({ compilationStatusReady: true })
-          : workspaceState;
+          const conflictWorkspaceState = directDocumentPatch || stateOnlyPatch
+            ? stateForWorkspace({ compilationStatusReady: true })
+            : workspaceState;
         const rebased = await saveWorkspaceAfterConflict({
           workspacePath,
           workspaceState: conflictWorkspaceState,
@@ -4909,6 +4954,7 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
         if (cached) cached.stateStamp = payload.stateStamp;
       }
       if (workspaceIdentity() === identity) {
+        if (ui.workspaceBaselineTask) cancelWorkspaceBaselinePreparation({ preserveUnavailable: true });
         ui.workspaceDocumentHashes = persistedState === workspaceState
           ? nextDocumentHashes
           : documentSaveHashes(persistedState.documents);
@@ -4921,7 +4967,12 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
         // interaction. Keep the already-proven state baseline when the server
         // accepted the exact document patch; conflict rebases and state-level
         // saves still rebuild every hash as before.
-        if (!(documentOnlyPatch && persistedState === workspaceState)) {
+        if (stateOnlyPatch && persistedState === workspaceState) {
+          ui.workspaceBaselineStateHashes = new Map([
+            ...ui.workspaceBaselineStateHashes,
+            ...workspaceStateHashes(persistedState),
+          ]);
+        } else if (!(documentOnlyPatch && persistedState === workspaceState)) {
           ui.workspaceBaselineStateHashes = workspaceStateHashes(persistedState);
         }
         ui.workspaceBaselinePending = false;
@@ -4941,7 +4992,7 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
           documentHashes: ui.workspaceDocumentHashes,
           baselineStateHashes: ui.workspaceBaselineStateHashes,
         });
-        if (rebuildBaselineAfterDirectPatch) {
+        if (rebuildBaselineAfterPatch) {
           scheduleWorkspaceBaselinePreparation({
             sourceState: state,
             identity,
@@ -5303,7 +5354,6 @@ const persist = ({
   deferCompilationStatus = false,
   skipRecoveryCheckpoint = false,
 } = {}) => {
-  if (ui.workspaceBaselineTask) cancelWorkspaceBaselinePreparation({ preserveUnavailable: true });
   if (!workspaceHasNoActiveEntry()) persistActiveWorkspacePointer();
   if (workspaceHasNoActiveEntry()) {
     ui.workspaceDirty = false;
@@ -5358,7 +5408,6 @@ const persist = ({
 // for navigation or conversation task-state changes.
 const persistWorkspaceStateOnly = ({ saveDelay = 260 } = {}) => {
   if (workspaceHasNoActiveEntry()) return;
-  if (ui.workspaceBaselineTask) cancelWorkspaceBaselinePreparation({ preserveUnavailable: true });
   persistActiveWorkspacePointer();
   if (state.temporaryNotebook || state.readOnly) return;
   ui.workspaceDirty = true;
@@ -5633,7 +5682,6 @@ const hydrateWorkspace = async () => {
     const localLayout = clone(state.layout ?? PANE_LAYOUT_DEFAULTS);
     const payload = await fetchWorkspaceLoadWithRetry(state.settings.workspacePath);
     const checkpoint = await loadWorkspaceRecoveryForHydration(payload.workspaceRoot || state.settings.workspacePath);
-    const canonicalBaselineState = payload.state ? workspaceStatePayload(payload.state) : null;
     const checkpointCanRestore = Boolean(checkpoint?.dirty && checkpoint.state && (
       !payload.state
       || String(checkpoint.baseSavedAt || "") === String(payload.state.savedAt || "")
@@ -5658,12 +5706,13 @@ const hydrateWorkspace = async () => {
       }, machineGenerationRuntime, storedGenerationSecrets()),
     };
     ensureStateSchema();
-    recoverInterruptedConversationMessages();
+    const recoveredStateChanges = recoverInterruptedConversationMessages();
     updateTrashIndexDocument();
     restoreActiveWorkspaceView({ workspaceKind: state.workspaceKind, workspacePath: payload.workspaceRoot });
     ui.activeWorkspaceStamp = payload.stateStamp || "";
-    ui.workspaceDocumentHashes = canonicalBaselineState ? documentSaveHashes(canonicalBaselineState.documents) : new Map();
-    ui.workspaceBaselineStateHashes = canonicalBaselineState ? workspaceStateHashes(canonicalBaselineState) : new Map();
+    ui.workspaceDocumentHashes = new Map();
+    ui.workspaceBaselineStateHashes = new Map();
+    ui.workspaceBaselinePending = Boolean(payload.state);
     ui.workspaceRecoveryRestored = checkpointCanRestore;
     ui.recoveryCheckpointRevision = checkpointCanRestore ? Math.max(0, Number(checkpoint.revision) || 0) : 0;
     ui.recoveryCheckpointDraftRevision = checkpointCanRestore ? Math.max(0, Number(checkpoint.draftRevision) || 0) : 0;
@@ -5679,7 +5728,21 @@ const hydrateWorkspace = async () => {
     if (payload.recovery?.recoveredTransactions) {
       requestAnimationFrame(() => showToast(`已自动恢复并完成 ${payload.recovery.recoveredTransactions} 个未完成落盘事务`));
     }
-    return { status: "loaded", recovered: checkpointCanRestore };
+    const baselineSourceState = payload.state ? {
+      ...payload.state,
+      settings: { ...(payload.state.settings ?? {}), workspacePath: payload.workspaceRoot },
+    } : null;
+    return {
+      status: "loaded",
+      recovered: checkpointCanRestore,
+      recoveredStateChanges,
+      baselinePreparation: baselineSourceState ? {
+        sourceState: baselineSourceState,
+        identity: workspaceIdentity(),
+        revision: ui.workspaceRevision,
+        stateStamp: ui.activeWorkspaceStamp,
+      } : null,
+    };
   } catch (error) {
     ui.workspaceHydrationBlocked = true;
     ui.workspaceSaveError = error;
@@ -66380,6 +66443,7 @@ elements.settingsForm.addEventListener("input", (event) => {
 elements.settingsForm.addEventListener("change", (event) => {
   if (event.target.name === "editorFontFamily") syncTypographyOutputs();
   if (event.target.name === "themePreference") previewSelectedSettingsTheme();
+  if (event.target.name === "uiLanguage") previewSettingsUiLanguage(event.target.value);
 });
 
 elements.settingsForm.addEventListener("click", (event) => {
@@ -72650,7 +72714,7 @@ const bootstrap = async () => {
     document.documentElement.dataset.bootReady = "true";
     return;
   }
-  ensureStateSchema();
+  if (hydration?.status !== "loaded") ensureStateSchema();
   // Rebind DPAPI-backed API credentials before recovery workers need to
   // resume an older media job. The secrets never enter workspace state.
   try {
@@ -72660,13 +72724,16 @@ const bootstrap = async () => {
   } catch (error) {
     console.warn("Generation runtime credential rebind failed:", error.message);
   }
-  updateTrashIndexDocument();
-  restoreActiveWorkspaceView();
+  if (hydration?.status !== "loaded") {
+    updateTrashIndexDocument();
+    restoreActiveWorkspaceView();
+  }
   seedSnapshotPayloads();
   // Render the hydrated workspace and start deterministic task recovery before
   // waiting for the slower project/notebook directory refresh. This keeps a
   // refresh from hiding an already-saved candidate behind unrelated startup IO.
   renderAll();
+  if (hydration?.baselinePreparation) scheduleWorkspaceBaselinePreparation(hydration.baselinePreparation);
   // The hydrated workspace is now safe to use. Account discovery, provider
   // reconciliation, workspace enumeration and update checks may legitimately
   // take longer (or wait on an external process), but they must never keep the
@@ -72680,6 +72747,7 @@ const bootstrap = async () => {
   // refreshed page can reattach live starts/runs or terminate old orphan cards.
   await refreshCodexAgentStatus({ refreshAccount: currentCodexConnectionSelected() });
   renderMessages();
+  let startupConversationStateChanged = Number(hydration?.recoveredStateChanges) > 0;
   for (const conversation of state.conversations ?? []) {
     if (conversationTaskIsRunning(conversationMessagesForTaskState(conversation))) {
       const runningTasks = conversationMessagesForTaskState(conversation)
@@ -72696,13 +72764,15 @@ const bootstrap = async () => {
       // A running task owns only the queue item whose task identifiers and,
       // when available, lease both match. Every other stale dispatch is
       // requeued; startup never bulk-acks a conversation's dispatches.
-      recoverConversationTaskQueueForStartup(conversation, { runningTasks });
+      const recovery = recoverConversationTaskQueueForStartup(conversation, { runningTasks });
+      if (recovery.recoveredIds.length) startupConversationStateChanged = true;
     } else {
-      recoverConversationTaskQueue(conversation, { leaseTimeoutMs: 1 });
+      const recovery = recoverConversationTaskQueue(conversation, { leaseTimeoutMs: 1 });
+      if (recovery.recoveredIds.length) startupConversationStateChanged = true;
     }
     if ((conversation.queue ?? []).some((item) => item.state !== "dispatching")) scheduleConversationQueueDrain(conversation.id);
   }
-  persist();
+  if (startupConversationStateChanged) persistWorkspaceStateOnly({ saveDelay: 180 });
   if (allConversationMessages().some(({ message }) => message.pending && message.execution?.strength === "agent")) {
     void pollCodexAgentEvents();
   }

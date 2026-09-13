@@ -251,6 +251,18 @@ export const normalizeHistoryEntryIntegrity = (entry = {}) => {
   return { ...clone(entry), verified: verifyHistoryEntryIntegrity(entry).ok };
 };
 
+// Workspace hydration is not a trust boundary. Persisted history entries are
+// verified again immediately before restore or metadata mutation, so
+// synchronously cloning and hashing every historical payload during startup
+// only blocks the renderer without making those later operations safer.
+// Legacy entries still receive their first integrity manifest here.
+export const hydrateHistoryEntryIntegrity = (entry = {}) => {
+  if (Number(entry?.integritySchemaVersion) !== 1 || !clean(entry?.contentHash) || !clean(entry?.integrityHash)) {
+    return stampHistoryEntryIntegrity(entry);
+  }
+  return { ...entry };
+};
+
 export const updateHistoryEntryMetadata = (entry = null, patch = {}) => {
   if (!entry || typeof entry !== "object") throw new Error("历史版本不存在");
   if (entry.sourceHistoryReadOnly) throw new Error("只读历史版本不能重命名或修改备注");

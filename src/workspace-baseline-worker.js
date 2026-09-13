@@ -1,10 +1,26 @@
 import { contentRevision } from "./workspace-operations.js";
 import { portableGenerationSettings } from "./generation-profiles.js";
+import { verifyHistoryEntryIntegrity } from "./version-integrity.js";
 
 const workspaceValueHash = (value) => {
   if (value === undefined) return "";
   const serialized = JSON.stringify(value);
   return `${contentRevision(serialized)}:${serialized.length}`;
+};
+
+const historyIntegrityResults = (state = {}) => {
+  const results = [];
+  const collect = (collection, scope, entries) => {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      const verification = verifyHistoryEntryIntegrity(entry);
+      results.push({ collection, scope, id: String(entry?.id || ""), ok: verification.ok === true });
+    }
+  };
+  for (const collection of ["histories", "viewHistories", "volumeHistories", "moduleHistories"]) {
+    for (const [scope, entries] of Object.entries(state?.[collection] ?? {})) collect(collection, scope, entries);
+  }
+  collect("projectHistories", "project", state?.projectHistories);
+  return results;
 };
 
 self.addEventListener("message", async (event) => {
@@ -32,7 +48,12 @@ self.addEventListener("message", async (event) => {
       const hashes = Object.entries(metadata)
         .filter(([metadataKey]) => metadataKey !== "savedAt")
         .map(([metadataKey, metadataValue]) => [metadataKey, workspaceValueHash(metadataValue)]);
-      self.postMessage({ type: "metadata-batch", stateStamp: payload.stateStamp, hashes });
+      self.postMessage({
+        type: "metadata-batch",
+        stateStamp: payload.stateStamp,
+        hashes,
+        historyIntegrity: historyIntegrityResults(payload.state),
+      });
     } catch (error) {
       self.postMessage({ type: "error", message: error?.message || "工作区基线读取失败" });
     }

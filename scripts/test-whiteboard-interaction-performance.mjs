@@ -746,17 +746,21 @@ try {
   assert.ok(report.mediaVirtualization.videoActivationMs < 180, `休眠视频首次播放挂载必须低于 180ms：${JSON.stringify(report.mediaVirtualization)}`);
   await evaluate(`document.querySelector('#settingsButton').click(); true`);
   await waitFor("document.querySelector('#settingsDialog')?.open === true", "重新打开语言设置");
-  await evaluate(`(() => {
+  const englishSwitch = await evaluate(`(() => {
+    window.__shensiLanguageSwitchErrors = [];
+    window.addEventListener('error', (event) => window.__shensiLanguageSwitchErrors.push(String(event.error?.stack || event.message || 'unknown')), { once: true });
     const language = document.querySelector('#settingsForm [name="uiLanguage"]');
     language.value = 'en-US';
-    language.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+    return { lang: document.documentElement.lang, localization: document.querySelector('#root')?.dataset.uiLocalizationLanguage || '', errors: window.__shensiLanguageSwitchErrors, value: language.value, connected: language.isConnected };
   })()`);
+  assert.deepEqual(englishSwitch.errors, [], `切换英文界面时发生异常：${JSON.stringify(englishSwitch)}`);
+  assert.equal(englishSwitch.value, 'en-US', `语言控件没有接受英文选项：${JSON.stringify(englishSwitch)}`);
   await waitFor("document.documentElement.lang === 'en' && document.querySelector('#root')?.dataset.uiLocalizationLanguage === 'en-US'", "切换英文界面");
   await evaluate(`(() => {
     const language = document.querySelector('#settingsForm [name="uiLanguage"]');
     language.value = 'zh-CN';
-    language.dispatchEvent(new Event('input', { bubbles: true }));
+    language.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   })()`);
   await waitFor("document.documentElement.lang === 'zh-CN' && document.querySelector('#root')?.dataset.uiLocalizationLanguage === 'zh-CN'", "恢复中文界面");

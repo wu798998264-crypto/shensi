@@ -474,47 +474,52 @@ const mergeStableAssetTimes = (existing, incoming) => {
   return merged;
 };
 
-export const appendGenerationAsset = (assets, asset) => {
-  const entries = normalizeGenerationAssets(assets);
-  const normalizedIncoming = normalizeGenerationAsset(asset);
-  const existing = normalizedIncoming ? entries.find((item) => item.id === normalizedIncoming.id) : null;
-  const entry = normalizedIncoming ? normalizeGenerationAsset(mergeStableAssetTimes(existing, normalizedIncoming)) : null;
-  if (!entry) return entries;
-  const contentHash = String(entry.attachment?.sha256 || entry.attachment?.objectHash || "").trim().toLowerCase();
-  const deduplicateUploadedMedia = entry.origin === "upload" && ["image", "video", "audio"].includes(entry.kind) && Boolean(contentHash);
-  const generatedMediaAlreadyOwnsPath = entry.origin === "upload"
-    && ["image", "video", "audio"].includes(entry.kind)
-    && Boolean(entry.attachment?.relativePath)
-    && entries.some((item) => item.origin === "generated"
-      && item.kind === entry.kind
-      && item.attachment?.relativePath === entry.attachment.relativePath);
-  if (generatedMediaAlreadyOwnsPath) return entries;
-  const duplicateUpload = entry.origin === "upload" && ["image", "video", "audio"].includes(entry.kind)
-    ? entries.find((item) => item.origin === "upload" && item.kind === entry.kind && (
-        (deduplicateUploadedMedia && String(item.attachment?.sha256 || item.attachment?.objectHash || "").trim().toLowerCase() === contentHash)
-        || (!entry.generationJobId && Boolean(entry.attachment?.relativePath) && item.attachment?.relativePath === entry.attachment.relativePath)
-      ))
-    : null;
-  if (duplicateUpload && duplicateUpload.id !== entry.id) {
-    const currentTime = Date.parse(duplicateUpload.createdAt || "") || 0;
-    const candidateTime = Date.parse(entry.createdAt || "") || 0;
-    if (candidateTime < currentTime) return entries;
-  }
-  return [...entries.filter((item) => (
-    item.id !== entry.id
-    && (!entry.generationJobId
-      || item.generationJobId !== entry.generationJobId
-      || item.kind !== entry.kind
-      || item.attachment?.relativePath !== entry.attachment?.relativePath)
-    && !(entry.origin === "generated"
-      && item.origin === "upload"
-      && item.kind === entry.kind
+export const appendGenerationAssets = (assets, additions = []) => {
+  let entries = normalizeGenerationAssets(assets);
+  for (const asset of Array.isArray(additions) ? additions : [additions]) {
+    const normalizedIncoming = normalizeGenerationAsset(asset);
+    const existing = normalizedIncoming ? entries.find((item) => item.id === normalizedIncoming.id) : null;
+    const entry = normalizedIncoming ? normalizeGenerationAsset(mergeStableAssetTimes(existing, normalizedIncoming)) : null;
+    if (!entry) continue;
+    const contentHash = String(entry.attachment?.sha256 || entry.attachment?.objectHash || "").trim().toLowerCase();
+    const deduplicateUploadedMedia = entry.origin === "upload" && ["image", "video", "audio"].includes(entry.kind) && Boolean(contentHash);
+    const generatedMediaAlreadyOwnsPath = entry.origin === "upload"
+      && ["image", "video", "audio"].includes(entry.kind)
       && Boolean(entry.attachment?.relativePath)
-      && item.attachment?.relativePath === entry.attachment.relativePath)
-    && (!entry.attachment?.relativePath || entry.generationJobId || item.attachment?.relativePath !== entry.attachment.relativePath)
-    && (!deduplicateUploadedMedia || item.origin !== "upload" || item.kind !== entry.kind || String(item.attachment?.sha256 || item.attachment?.objectHash || "").trim().toLowerCase() !== contentHash)
-  )), entry];
+      && entries.some((item) => item.origin === "generated"
+        && item.kind === entry.kind
+        && item.attachment?.relativePath === entry.attachment.relativePath);
+    if (generatedMediaAlreadyOwnsPath) continue;
+    const duplicateUpload = entry.origin === "upload" && ["image", "video", "audio"].includes(entry.kind)
+      ? entries.find((item) => item.origin === "upload" && item.kind === entry.kind && (
+          (deduplicateUploadedMedia && String(item.attachment?.sha256 || item.attachment?.objectHash || "").trim().toLowerCase() === contentHash)
+          || (!entry.generationJobId && Boolean(entry.attachment?.relativePath) && item.attachment?.relativePath === entry.attachment.relativePath)
+        ))
+      : null;
+    if (duplicateUpload && duplicateUpload.id !== entry.id) {
+      const currentTime = Date.parse(duplicateUpload.createdAt || "") || 0;
+      const candidateTime = Date.parse(entry.createdAt || "") || 0;
+      if (candidateTime < currentTime) continue;
+    }
+    entries = [...entries.filter((item) => (
+      item.id !== entry.id
+      && (!entry.generationJobId
+        || item.generationJobId !== entry.generationJobId
+        || item.kind !== entry.kind
+        || item.attachment?.relativePath !== entry.attachment?.relativePath)
+      && !(entry.origin === "generated"
+        && item.origin === "upload"
+        && item.kind === entry.kind
+        && Boolean(entry.attachment?.relativePath)
+        && item.attachment?.relativePath === entry.attachment.relativePath)
+      && (!entry.attachment?.relativePath || entry.generationJobId || item.attachment?.relativePath !== entry.attachment.relativePath)
+      && (!deduplicateUploadedMedia || item.origin !== "upload" || item.kind !== entry.kind || String(item.attachment?.sha256 || item.attachment?.objectHash || "").trim().toLowerCase() !== contentHash)
+    )), entry];
+  }
+  return entries;
 };
+
+export const appendGenerationAsset = (assets, asset) => appendGenerationAssets(assets, [asset]);
 
 export const removeGenerationAssets = (assets, assetIds = []) => {
   const removedIds = new Set((Array.isArray(assetIds) ? assetIds : [assetIds]).map(String).filter(Boolean));

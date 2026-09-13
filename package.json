@@ -62,6 +62,7 @@
     "test:document-edit-history": "node scripts/test-v103-regressions.mjs && node scripts/test-v113-completion-evidence.mjs",
     "test:desktop": "node --check packaging/windows/desktop-app/main.mjs && node scripts/test-v103-regressions.mjs",
     "test:desktop-lifecycle": "node scripts/test-desktop-process-lifecycle.mjs",
+    "test:responsiveness": "node scripts/test-startup-hydration-performance.mjs && node scripts/test-generation-asset-batch-merge.mjs && node scripts/test-workspace-state-only-patch.mjs && node scripts/test-whiteboard-interaction-performance.mjs && node scripts/test-desktop-process-lifecycle.mjs",
     "test:external-markdown": "node scripts/test-v106-full-optimization.mjs",
     "test:document-transfer": "node scripts/test-v109-execution-authority.mjs",
     "test:nutstore-sync": "node scripts/test-nutstore-sync-v124.mjs && node scripts/test-nutstore-account-switch.mjs",
