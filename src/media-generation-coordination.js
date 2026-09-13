@@ -1,5 +1,4 @@
 import { appendGenerationAsset } from "./whiteboard.js";
-import { dreaminaJobRequiresCredentialProfile } from "./dreamina-manual-profile-policy.js";
 import { mediaGenerationHasTerminalProviderFailure } from "./media-execution-policy.js";
 
 const defaultWorkspaceConflict = (error) => Number(error?.status) === 409
@@ -128,25 +127,32 @@ export const whiteboardMediaJobHoldsCard = (job = {}) => {
 
 export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   if (!job || job.appliedAt || job.supersededBy || mediaGenerationResultSuppressed(job)) return false;
-  if (String(job.status || "") === "failed") return false;
+  const status = String(job.status || "");
+  if (["failed", "cancelled", "complete", "superseded"].includes(status)) return false;
   if (job.mode !== "server" || !["image", "video"].includes(String(job.channel || ""))) return false;
   if (job.target?.targetType === "capability-smoke") return false;
-  const status = String(job.status || "");
-  if (dreaminaJobRequiresCredentialProfile(job)) return true;
-  if (status === "complete") return !job.appliedAt;
+  if (job.forceReleasePendingAt && !job.forceReleaseCompletedAt) return true;
+  // A healthy provider task can legitimately queue or generate for many
+  // minutes. It still owns the Dreamina profile-switch gate, but it is not a
+  // recovery problem and must stay on its originating card instead of being
+  // presented as a global "pending action". Cross-profile attempts use the
+  // dedicated Dreamina lock-occupant dialog.
+  if (["queued", "submitting", "running", "polling", "downloading", "cancel_requested"].includes(status)) return false;
   if (!MEDIA_RECOVERY_BLOCKING_STATUSES.has(status)) return false;
+  // A bounded automatic reconciliation is still normal execution. Only show
+  // the task after automation stops and a user decision is genuinely needed.
+  if (status === "retry_required"
+    && (job.automaticRecoveryInProgress === true || String(job.providerStatus || "") === "reconciling")
+    && String(job.nextPollAt || "").trim()) return false;
   if (whiteboardMediaJobHoldsCard(job) || ["waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"].includes(status)) return true;
   return job.availableActions?.dismissUncertain === true;
 };
 
-// The recovery dialog is also the durable audit surface for a terminal
-// provider failure. A failed task no longer holds a card or credential slot,
-// but it still needs to expose the same error and retry preparation action as
-// its originating card. Keep visibility separate from blocking semantics.
-export const mediaRecoveryJobNeedsAttention = (job = {}) => (
-  mediaRecoveryJobBlocksOperation(job)
-  || mediaGenerationFailureNeedsCard(job)
-);
+// "Pending action" is reserved for an abnormal task that is actually blocking
+// subsequent work. Terminal failures remain visible on their originating card
+// and in durable history, but neither hold the Dreamina lock nor pollute the
+// global recovery queue.
+export const mediaRecoveryJobNeedsAttention = (job = {}) => mediaRecoveryJobBlocksOperation(job);
 
 export const whiteboardMediaJobIsSupersededByNodeGeneration = (job = {}, node = {}) => {
   const failedJobId = String(job?.id || "");

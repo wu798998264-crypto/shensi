@@ -306,18 +306,16 @@ try {
   assert.equal(failureView.retryInsideCard, true);
 
   await evaluate(`document.querySelector('#openMediaRecovery').click(); true`);
-  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open && document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}]')`, "明确失败同步到待处理界面");
+  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open`, "打开待处理界面");
   const synchronizedFailureView = await evaluate(`(() => {
     const item = document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}]');
     return {
-      text: item?.textContent || '',
-      retryVisible: Boolean(item?.querySelector('[data-media-job-action="retry_setup"]')),
+      pendingVisible: Boolean(item),
       cardVisible: Boolean(document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')),
     };
   })()`);
   assert.equal(synchronizedFailureView.cardVisible, true, "同一失败不得从原白板卡片消失");
-  assert.equal(synchronizedFailureView.retryVisible, true, "待处理界面必须提供与卡片一致的重新生成准备入口");
-  assert.match(synchronizedFailureView.text, /DREAMINA_REFERENCE_UPLOAD_NO_TASK/u);
+  assert.equal(synchronizedFailureView.pendingVisible, false, "明确失败已释放资源，不得进入待处理界面");
   await evaluate(`document.querySelector('#mediaRecoveryDialog')?.close(); true`);
 
   const beforeJobs = await evaluate(`(async () => {
@@ -398,7 +396,12 @@ try {
   await waitFor(`performance.timeOrigin !== ${lateFailureReloadOrigin} && document.documentElement?.dataset?.bootReady === 'true'`, "迟到失败后重新载入");
   await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')?.textContent.includes('DREAMINA_PROVIDER_TASK_AUTH_FAILURE')`, "迟到失败回到白板卡片", 45_000);
   await evaluate(`document.querySelector('#openMediaRecovery').click(); true`);
-  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open && document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}] [data-media-job-action="retry_setup"]')`, "迟到失败同步到待处理界面", 45_000);
+  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open`, "再次打开待处理界面", 45_000);
+  assert.equal(
+    await evaluate(`Boolean(document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}]'))`),
+    false,
+    "用户已停止后的迟到明确失败不得重新进入待处理界面",
+  );
 
   console.log("Whiteboard terminal media failure UI tests passed");
 } finally {

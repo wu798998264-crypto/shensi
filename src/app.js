@@ -13712,7 +13712,10 @@ const mediaGenerationActionMarkup = ({
   }
   if (desiredAction === "cancel" && !["complete", "cancelled"].includes(status)) {
     buttons.push(`<span class="media-job-cancel-pending" role="status">${icon("\uE73E", uiText("已停止"))}<span>${escapeHtml(uiText("已停止"))}</span></span>`);
-  } else if (!availableActions.dismissUncertain && !availableActions.dismissCompleted && (availableActions.stop || availableActions.cancel) && !["complete", "cancelled"].includes(status)) {
+  } else if (!availableActions.dismissUncertain
+    && !availableActions.dismissCompleted
+    && ((availableActions.stop || availableActions.cancel) || (jobId && MEDIA_JOB_ACTIVE_STATUSES.has(status)))
+    && !["complete", "cancelled"].includes(status)) {
     buttons.push(`<button class="media-job-cancel" type="button" data-whiteboard-candidate-action data-media-job-action="cancel" data-media-job-id="${escapeHtml(jobId)}" title="${escapeHtml(uiText("停止当前媒体任务"))}">${icon("\uE71A", uiText("停止任务"))}<span>${escapeHtml(uiText("停止任务"))}</span></button>`);
   }
   return buttons.length ? `<div class="media-generation-actions ${compact ? "compact" : ""}">${buttons.join("")}</div>` : "";
@@ -14110,31 +14113,70 @@ const waitForGenerationJob = async (jobId, {
   }
 };
 
+const whiteboardGenerationCandidateSnapshotFromJob = (job = {}) => ({
+  jobId: job.id,
+  status: job.status,
+  desiredAction: job.desiredAction || "run",
+  availableActions: job.availableActions ?? {},
+  providerStatus: job.providerStatus,
+  providerErrorCode: job.providerErrorCode || "",
+  model: String(job.request?.settings?.model || job.settings?.model || ""),
+  providerQueuePosition: job.providerQueuePosition,
+  providerQueueLength: job.providerQueueLength,
+  providerQueuePriority: job.providerQueuePriority,
+  providerQueueStatus: job.providerQueueStatus,
+  providerTaskId: job.providerTaskId,
+  submissionState: job.submissionState,
+  submittedAt: job.submittedAt,
+  providerProgressPercent: job.providerProgressPercent,
+  automaticRecoveryInProgress: job.automaticRecoveryInProgress === true,
+  progressPercent: Number(job.progressPercent) || 1,
+  connectionInterrupted: false,
+  error: mediaGenerationErrorText(job),
+  elapsedMs: Math.max(0, Date.now() - generationJobInteractionStartedAt(job)),
+  cardApplyStage: job.status === "complete" ? "saving" : "",
+  billingRisk: job.billingRisk || "",
+  resubmitConfirmationRequired: job.resubmitConfirmationRequired === true,
+});
+
+const synchronizeWhiteboardGenerationCandidateFromJob = (job, candidateKey = "", { claimProvisional = false } = {}) => {
+  if (!job?.id || !job.target?.nodeId) return false;
+  const target = job.target;
+  const key = candidateKey || whiteboardCandidateKey(target.nodeId, {
+    workspacePath: target.workspacePath,
+    documentId: target.documentId,
+  });
+  const existing = ui.whiteboardCandidates.get(key);
+  if (existing?.submissionAttemptId && !existing.jobId && !claimProvisional) return false;
+  // A newer replacement owns the card. Never let an older recovery poll take
+  // it back, but recreate a missing candidate even while the original poll
+  // promise is still alive.
+  if (existing?.jobId && String(existing.jobId) !== String(job.id)) return false;
+  const targetDocument = state.documents[target.documentId];
+  const targetNode = normalizeCanvas(targetDocument?.canvas).nodes.find((node) => node.id === target.nodeId);
+  if (targetNode && whiteboardMediaJobIsSupersededByNodeGeneration(job, targetNode)) return false;
+  const snapshot = whiteboardGenerationCandidateSnapshotFromJob(job);
+  if (!existing) {
+    beginWhiteboardGenerationCandidate({
+      nodeId: target.nodeId,
+      workspacePath: target.workspacePath,
+      documentId: target.documentId,
+      channel: job.channel,
+      kind: job.channel,
+      text: job.channel === "text" ? String(job.error || "") : "",
+      prompt: job.request?.displayPrompt || job.request?.prompt || "",
+      startedAt: generationJobInteractionStartedAt(job),
+      ...snapshot,
+    });
+  } else {
+    updateWhiteboardGenerationCandidate(key, snapshot);
+  }
+  return true;
+};
+
 const waitForWhiteboardGenerationJob = (jobId, candidateKey) => waitForGenerationJob(jobId, {
   onProgress: (job) => {
-    if (!whiteboardCandidateBelongsToJob(candidateKey, jobId)) return;
-    updateWhiteboardGenerationCandidate(candidateKey, {
-      jobId,
-      status: job.status,
-      desiredAction: job.desiredAction || "run",
-      availableActions: job.availableActions ?? {},
-      providerStatus: job.providerStatus,
-      model: String(job.request?.settings?.model || job.settings?.model || ""),
-      providerQueuePosition: job.providerQueuePosition,
-      providerQueueLength: job.providerQueueLength,
-      providerQueuePriority: job.providerQueuePriority,
-      providerQueueStatus: job.providerQueueStatus,
-      providerTaskId: job.providerTaskId,
-      submissionState: job.submissionState,
-      submittedAt: job.submittedAt,
-      providerProgressPercent: job.providerProgressPercent,
-      automaticRecoveryInProgress: job.automaticRecoveryInProgress === true,
-      progressPercent: Number(job.progressPercent) || 1,
-      connectionInterrupted: false,
-      error: mediaGenerationErrorText(job),
-      elapsedMs: Math.max(0, Date.now() - generationJobInteractionStartedAt(job)),
-      cardApplyStage: job.status === "complete" ? "saving" : "",
-    });
+    synchronizeWhiteboardGenerationCandidateFromJob(job, candidateKey);
   },
   onConnectionError: ({ error }) => {
     if (!whiteboardCandidateBelongsToJob(candidateKey, jobId)) return;
@@ -15244,39 +15286,18 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
 };
 
 const monitorWhiteboardGenerationJob = (job) => {
-  if (!job?.id || ui.generationJobPolls.has(job.id)) return;
+  if (!job?.id) return;
   if (job.userStoppedAt || job.resultSuppressed || job.userStopped) {
     showInterruptedWhiteboardGenerationJob(job);
     return;
   }
   const target = job.target ?? {};
   const candidateKey = whiteboardCandidateKey(target.nodeId, { workspacePath: target.workspacePath, documentId: target.documentId });
-  const activeCandidate = ui.whiteboardCandidates.get(candidateKey);
-  if (!activeCandidate || activeCandidate.jobId === job.id) {
-    beginWhiteboardGenerationCandidate({
-      nodeId: target.nodeId,
-      workspacePath: target.workspacePath,
-      documentId: target.documentId,
-      channel: job.channel,
-      kind: job.channel,
-      status: job.status,
-      progressPercent: job.progressPercent,
-      startedAt: generationJobInteractionStartedAt(job),
-      prompt: job.request?.prompt || "",
-      jobId: job.id,
-      desiredAction: job.desiredAction || "run",
-      availableActions: job.availableActions ?? {},
-      providerErrorCode: job.providerErrorCode || "",
-      providerStatus: job.providerStatus || "",
-      providerTaskId: job.providerTaskId || "",
-      submissionState: job.submissionState || "",
-      submittedAt: job.submittedAt || "",
-      providerProgressPercent: job.providerProgressPercent,
-      automaticRecoveryInProgress: job.automaticRecoveryInProgress === true,
-      providerQueuePosition: job.providerQueuePosition ?? null,
-      providerQueueLength: job.providerQueueLength ?? null,
-    });
-  }
+  synchronizeWhiteboardGenerationCandidateFromJob(job, candidateKey);
+  // Candidate restoration and worker polling are separate concerns. The old
+  // early return skipped restoration whenever a poll already existed, leaving
+  // a blank card with no actions until the provider eventually completed.
+  if (ui.generationJobPolls.has(job.id)) return;
   const operation = waitForWhiteboardGenerationJob(job.id, candidateKey)
     .then(async (completed) => {
       if (completed.status === "complete") await applyCompletedWhiteboardGenerationJob(completed);
@@ -15454,11 +15475,11 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       ...(smokeResponse.ok && smokePayload.ok ? smokePayload.jobs ?? [] : []),
     ].map((job) => [job.id, job])).values()];
     let recovered = 0;
-    // A task can be restored into its interrupted card without being resolved.
-    // Keep those jobs visible in the global recovery entry until the user
-    // cancels, dismisses, retries or successfully applies the existing result.
+    // Rehydrate every task into its own surface, but reserve the global pending
+    // entry for abnormal states that actually block subsequent generation.
+    // Healthy provider work and terminal failures stay on the originating card.
     const pendingManualRecoveryJobs = new Map(jobs
-      .filter((job) => String(job.status || "") !== "complete")
+      .filter(mediaRecoveryJobNeedsAttention)
       .filter(mediaRecoveryJobIsActionable)
       .map((job) => [job.id, { job, detail: mediaGenerationPhaseText(job) }]));
     for (const job of jobs) {
@@ -54970,16 +54991,7 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
           : null,
       },
     });
-    updateWhiteboardGenerationCandidate(candidateKey, {
-      jobId: durableJob.id,
-      status: durableJob.status,
-      providerStatus: durableJob.providerStatus,
-      model: String(durableJob.request?.settings?.model || durableJob.settings?.model || imageSettings?.model || ""),
-      providerTaskId: durableJob.providerTaskId,
-      submissionState: durableJob.submissionState,
-      submittedAt: durableJob.submittedAt,
-      progressPercent: durableJob.progressPercent,
-    });
+    synchronizeWhiteboardGenerationCandidateFromJob(durableJob, candidateKey, { claimProvisional: true });
     // The lock prevents an accidental double click only until the durable job
     // exists. A later deliberate click is a replacement request and must be
     // allowed to reach the server while this task continues in the background.
@@ -55698,16 +55710,7 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
               : 0,
           },
         });
-        updateWhiteboardGenerationCandidate(candidateKey, {
-          jobId: durableJob.id,
-          status: durableJob.status,
-          providerStatus: durableJob.providerStatus,
-          model: String(durableJob.request?.settings?.model || durableJob.settings?.model || videoSettings?.model || ""),
-          providerTaskId: durableJob.providerTaskId,
-          submissionState: durableJob.submissionState,
-          submittedAt: durableJob.submittedAt,
-          progressPercent: durableJob.progressPercent,
-        });
+        synchronizeWhiteboardGenerationCandidateFromJob(durableJob, candidateKey, { claimProvisional: true });
         if (targetNodeId === nodeId) {
           finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "video", form: elements.whiteboardVideoForm });
         }
@@ -55914,16 +55917,7 @@ elements.whiteboardAudioForm.addEventListener("submit", async (event) => {
         referenceMedia: referencePlan.directReferences,
       },
     });
-    updateWhiteboardGenerationCandidate(candidateKey, {
-      jobId: durableJob.id,
-      status: durableJob.status,
-      providerStatus: durableJob.providerStatus,
-      model: String(durableJob.request?.settings?.model || audioSettings.model || ""),
-      providerTaskId: durableJob.providerTaskId,
-      submissionState: durableJob.submissionState,
-      submittedAt: durableJob.submittedAt,
-      progressPercent: durableJob.progressPercent,
-    });
+    synchronizeWhiteboardGenerationCandidateFromJob(durableJob, candidateKey, { claimProvisional: true });
     finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "audio", form });
     durableJob = await waitForWhiteboardGenerationJob(durableJob.id, candidateKey);
     if (durableJob.status !== "complete") throw new Error(mediaGenerationErrorText(durableJob) || "音频生成失败");

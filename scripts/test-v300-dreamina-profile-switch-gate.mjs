@@ -13,7 +13,8 @@ const job = ({ profile = "a", status = "polling", providerStatus = "running" } =
 
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "submitting" })), true);
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "polling" })), true);
-assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), false);
+assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), true,
+  "厂商成功后的下载和完整性验收仍属于受保护执行链");
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "cancel_requested" })), false);
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "failed", providerStatus: "failed" })), false);
 

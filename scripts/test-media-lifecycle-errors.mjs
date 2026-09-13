@@ -9,6 +9,7 @@ import { dreaminaJobRequiresCredentialProfile } from "../src/dreamina-manual-pro
 import { dreaminaFailureDiagnosis } from "../src/dreamina-failure.js";
 import { classifyMediaSubmissionFailure } from "../src/server/media-submission-recovery.mjs";
 import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention } from "../src/media-generation-coordination.js";
+import { mediaGenerationErrorText } from "../src/domains/media/media-error-presentation.js";
 
 const dataRoot = await mkdtemp(join(tmpdir(), "shensi-media-lifecycle-"));
 process.env.SHENSI_DATA_ROOT = dataRoot;
@@ -53,7 +54,18 @@ assert.equal(mediaGenerationHasTerminalProviderFailure(terminalProviderFailure),
 assert.equal(mediaGenerationIssueNeedsCard(terminalProviderFailure), true, "用户停止后迟到的厂商明确失败仍必须回到原卡片");
 assert.equal(mediaGenerationFailureNeedsCard(terminalProviderFailure), true, "迟到失败必须恢复卡片上的重试准备入口");
 assert.equal(mediaRecoveryJobBlocksOperation(terminalProviderFailure), false, "迟到失败已经释放凭证锁，不得重新阻塞生成");
-assert.equal(mediaRecoveryJobNeedsAttention(terminalProviderFailure), true, "迟到失败必须同步到待处理审计界面");
+assert.equal(mediaRecoveryJobNeedsAttention(terminalProviderFailure), false, "明确失败只留在原卡片和历史记录，不得进入待处理");
+assert.equal(mediaRecoveryJobNeedsAttention({ ...dreamina, status: "polling", providerStatus: "queued", providerTaskId: "healthy-provider-task" }), false,
+  "正常厂商排队和生成不属于待处理");
+assert.equal(mediaRecoveryJobNeedsAttention({ ...dreamina, status: "retry_required", providerStatus: "unknown", error: "需要用户决定" }), true,
+  "自动恢复停止且阻断后续生成时必须进入待处理");
+const stoppedFailureText = mediaGenerationErrorText({
+  ...terminalProviderFailure,
+  error: "已终止本地执行并释放本地占用。",
+  lastProviderError: { message: "CreditPreDeductNotEnough", code: "DREAMINA_CREDIT_NOT_ENOUGH" },
+});
+assert.match(stoppedFailureText, /CreditPreDeductNotEnough/u, "用户终止后仍必须优先展示厂商原始失败原因");
+assert.match(stoppedFailureText, /用户处理结果/u, "厂商原因与用户处理结果必须分开显示");
 for (const code of ["", "DREAMINA_REFERENCE_UPLOAD_NO_TASK", "DREAMINA_UNCLASSIFIED_FAILURE"]) {
   const failure = dreaminaFailureDiagnosis({ code, providerTaskId: "keep-task", message: "ApplyImageUpload: context deadline exceeded" });
   assert.equal(failure.category, "reference_upload_failed");
