@@ -59,9 +59,12 @@ assert.match(appSource, /addEventListener\("submit", async[\s\S]{0,280}await bra
 const nativeTaskCard = appSource.slice(appSource.indexOf("const renderExecutionProcess"), appSource.indexOf("const renderAssistantWaiting"));
 assert.equal((nativeTaskCard.match(/renderNativeAgentEvidence\(message\)/gu) || []).length, 1, "已读取只能在原生 Agent 任务卡中渲染一次");
 assert.ok(nativeTaskCard.indexOf("renderNativeAgentEvidence(message)") > nativeTaskCard.indexOf("renderCodexAgentExecutionDetails"), "已读取必须位于任务卡全部项目的最底部");
+assert.match(nativeTaskCard, /!nativeAgentExecution && \(routedSkillSummary \|\| actualReadSkillCount\)/u, "原生 Agent 任务卡不得在顶部重复显示调用 Skill 计数");
 assert.match(taskCardEvidenceSource, /hasReadableContent[\s\S]{0,260}hasSkillIdentity/u, "空文档不得仅凭标题出现在已读取中，Skill 可按真实加载身份显示");
 assert.match(taskCardEvidenceSource, /item\.userVisible === false/u, "任务路由与运行规范等内部资料不得显示在任务卡读取清单");
+assert.match(taskCardEvidenceSource, /INTERNAL_AGENT_CONTRACT_TITLES/u, "历史读取事件即使缺少可见性标记也必须过滤内部合同");
 assert.match(conversationGatewaySource, /sources\.push\([\s\S]{0,260}userVisible:\s*false/u, "任务路由与运行规范必须在产生读取事件前标记为内部资料");
+assert.match(conversationGatewaySource, /projectConversationAgentSkillCatalog\(catalog\)/u, "文档对话 Agent 必须读取当前面板的结构化 Skill 关系目录");
 assert.match(conversationToolsSource, /emit\("resource_read", \{ kind: "document"[\s\S]{0,260}characters: excerpt\.length/u, "Agent 真实读取正文时必须把非空读取量交给任务卡，空文档不产生读取证据");
 const nativeDispatch = appSource.slice(appSource.indexOf("const executeConversationAgentMessage"), appSource.indexOf("const sendMessage"));
 assert.match(nativeDispatch, /taskMessages\.push\(pending\)[\s\S]{0,500}renderNativeConversation\(runtime, true\)[\s\S]{0,300}conversationAgentRequest/u, "任意对话指令必须先出现任务卡和运行态，再请求 Agent");

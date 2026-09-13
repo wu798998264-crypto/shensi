@@ -1,7 +1,14 @@
 const normalizedReadKind = (item = {}) => (item?.kind === "skill" ? "skill" : "document");
+const INTERNAL_AGENT_CONTRACT_TITLES = new Set(["神思任务路由", "神思运行规范"]);
+
+const internalAgentContractRead = (item = {}) => {
+  const candidates = [item.title, item.name, item.id, item.documentId, item.skillId]
+    .map((value) => String(value || "").trim().replace(/\.md$/iu, ""));
+  return candidates.some((value) => INTERNAL_AGENT_CONTRACT_TITLES.has(value));
+};
 
 const visibleActualRead = (item = {}) => {
-  if (!item || typeof item !== "object" || item.userVisible === false) return false;
+  if (!item || typeof item !== "object" || item.userVisible === false || internalAgentContractRead(item)) return false;
   const kind = normalizedReadKind(item);
   const hasReadableContent = Number(item.characters) > 0
     || Number(item.sourceCharacters) > 0

@@ -36,6 +36,7 @@ const reads = taskCardActualReadEvidence([
   { kind: "document", id: "outline", title: "故事大纲", characters: 300, readKind: "search_excerpt" },
   { kind: "document", id: "empty", title: "空文档", characters: 0 },
   { kind: "document", id: "route", title: "神思任务路由", characters: 900, userVisible: false },
+  { kind: "skill", id: "legacy-operating-contract", title: "神思运行规范.md", characters: 700 },
   { kind: "skill", id: "story", title: "故事创作", characters: 500 },
 ]);
 assert.deepEqual(reads.map((item) => item.title), ["故事大纲", "故事创作"],

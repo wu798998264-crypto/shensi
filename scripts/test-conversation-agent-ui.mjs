@@ -249,7 +249,7 @@ try {
   assert.equal(integratedTaskCard.legacyCardCount, 0, "不得在生成卡下方重复渲染第二张原生任务卡");
   assert.equal(integratedTaskCard.readoutCount, 1, "真实读取必须合并到同一张生成任务卡底部");
   assert.match(integratedTaskCard.text, /已读取[\s\S]*故事大纲[\s\S]*故事创作/u);
-  assert.doesNotMatch(integratedTaskCard.text, /空文档|当前状态/u, "空文档和重复当前状态不得显示在生成任务卡中");
+  assert.doesNotMatch(integratedTaskCard.text, /空文档|当前状态|调用 Skill/u, "空文档、重复当前状态和顶部 Skill 计数不得显示在生成任务卡中");
   assert.equal(await evaluate("window.nativeAgentStarts.length"), 2, "回答不能新建额外任务");
   await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
   await waitFor("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]')", "原对话入口");

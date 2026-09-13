@@ -19004,7 +19004,7 @@ const renderExecutionProcess = (message) => {
       ${execution.taskOverBudget ? `<div><dt>任务预算</dt><dd>总任务已超过8分钟，生成内容继续安全保留，可在后台等待。</dd></div>` : ""}
       ${durabilityStatusText ? `<div><dt>保存状态</dt><dd>${escapeHtml(durabilityStatusText)}</dd></div>` : ""}
       ${execution.nextStep ? `<div><dt>下一步</dt><dd>${escapeHtml(execution.nextStep)}</dd></div>` : ""}
-      ${routedSkillSummary || actualReadSkillCount ? `<div><dt>${escapeHtml(uiText("调用 Skill"))}</dt><dd>${escapeHtml(actualReadSkillCount ? `已实际加载 ${actualReadSkillCount} 个（完整清单见下方）` : routedSkillSummary)}</dd></div>` : ""}
+      ${!nativeAgentExecution && (routedSkillSummary || actualReadSkillCount) ? `<div><dt>${escapeHtml(uiText("调用 Skill"))}</dt><dd>${escapeHtml(actualReadSkillCount ? `已实际加载 ${actualReadSkillCount} 个（完整清单见下方）` : routedSkillSummary)}</dd></div>` : ""}
       ${routedModuleNames.length ? `<div><dt>${escapeHtml(uiText("调用模组"))}</dt><dd>${escapeHtml(routedModuleNames.join("；"))}</dd></div>` : ""}
       ${experienceRecallSummary ? `<div><dt>${escapeHtml(uiText("本轮经验"))}</dt><dd>${escapeHtml(experienceRecallSummary)}</dd></div>` : ""}
       ${nativeAgentExecution ? "" : `<div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>`}
