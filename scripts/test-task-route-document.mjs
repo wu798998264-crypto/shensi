@@ -3,6 +3,7 @@ import { createInitialCapabilityTemplate, capabilityTemplateTopology } from "../
 import {
   compactCapabilityRouteTopology,
   parseTaskRouteDocumentCandidate,
+  TASK_ROUTE_GENERATION_TIMEOUT_MS,
   taskRouteDocumentGenerationPrompt,
   validateTaskRouteDocumentCandidate,
 } from "../src/server/task-route-document.mjs";
@@ -11,6 +12,8 @@ const bundle = createInitialCapabilityTemplate();
 const topology = capabilityTemplateTopology(bundle);
 const topologyHash = "a".repeat(64);
 const routeRevision = 7;
+assert.ok(TASK_ROUTE_GENERATION_TIMEOUT_MS > 0 && TASK_ROUTE_GENERATION_TIMEOUT_MS < 30_000,
+  "保存面板时的可选动态路由生成不得让界面等待到看似卡死");
 const prompt = taskRouteDocumentGenerationPrompt({ bundle, routeRevision, topologyHash });
 assert.match(prompt.system, /只输出一个 JSON 对象/u);
 const compact = compactCapabilityRouteTopology({ bundle, routeRevision, topologyHash });

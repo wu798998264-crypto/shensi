@@ -226,7 +226,7 @@ import {
   recordManagedTaskRouteDocumentFailure,
   seedBundledCustomSkills,
 } from "./src/server/skill-store.mjs";
-import { parseTaskRouteDocumentCandidate, taskRouteDocumentGenerationPrompt, taskRouteDocumentModelSnapshot } from "./src/server/task-route-document.mjs";
+import { parseTaskRouteDocumentCandidate, taskRouteDocumentGenerationPrompt, taskRouteDocumentModelSnapshot, TASK_ROUTE_GENERATION_TIMEOUT_MS } from "./src/server/task-route-document.mjs";
 import { resolveSkillRuntime, skillIdsForStage, skillPromptForStage, skillRuntimePublicSummary, withModelCapabilityFallback } from "./src/skill-routing.js";
 import { planWhiteboardSkillRoute, whiteboardAutoSkillSelections } from "./src/whiteboard-skill-route.js";
 import { allowedSkillCapabilities, extractSkillDraft, resolveRequiredCapabilities } from "./src/skill-contract.js";
@@ -8378,7 +8378,7 @@ const handleApiRequest = async (request, response, pathname) => {
         settings: routeModelSettings,
         ...prompt,
         cwd: resolve(process.env.TEMP || process.env.TMP || root),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(TASK_ROUTE_GENERATION_TIMEOUT_MS),
         permissionContract: permissionContractFor("shensi_only", { runner: model.agentEngine || "task_route_generator" }),
         shensiRuntime: {
           agentPreferred: true,

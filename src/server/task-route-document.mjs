@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+export const TASK_ROUTE_GENERATION_TIMEOUT_MS = 20_000;
+
 const text = (value, limit = 20_000) => String(value ?? "").trim().slice(0, limit);
 const list = (value) => Array.isArray(value) ? value : [];
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
