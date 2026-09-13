@@ -306,7 +306,7 @@ import { resolveWorkspaceModeSelection, workspaceKindHasEntry } from "./workspac
 import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSave, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationFailureNeedsCard, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationFailureNeedsCard, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -13694,6 +13694,8 @@ const mediaGenerationActionMarkup = ({
     status,
     providerStatus,
     providerTaskId,
+    providerErrorCode: providerErrorCode || errorCode,
+    error,
     billingRisk,
     resultSuppressed,
   })) {
@@ -13718,7 +13720,8 @@ const mediaGenerationActionMarkup = ({
 
 const updateMediaJobTargetAfterAction = (job) => {
   if (!job?.id) return;
-  const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped);
+  const failureNeedsCard = mediaGenerationFailureNeedsCard(job);
+  const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped) && !failureNeedsCard;
   if (job.target?.nodeId && (userStopped || !whiteboardMediaJobHoldsCard(job))) {
     releaseWhiteboardMediaSubmissionLockForJob(job);
   }
@@ -15168,7 +15171,8 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
   const target = job.target ?? {};
   const documentState = state.documents[target.documentId];
   if (!documentState || documentState.documentKind !== "whiteboard") return;
-  const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped);
+  const failureNeedsCard = mediaGenerationFailureNeedsCard(job);
+  const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped) && !failureNeedsCard;
   const targetWasDeleted = canvasGenerationRecoveryTargetDeleted(documentState.canvas, {
     nodeId: target.nodeId,
     generationJobId: job.id,
@@ -15321,7 +15325,7 @@ const mediaRecoveryAttentionStatuses = new Set([
 ]);
 
 const mediaRecoveryJobIsActionable = (job = {}) => {
-  if (!mediaRecoveryJobBlocksOperation(job)) return false;
+  if (!mediaRecoveryJobNeedsAttention(job)) return false;
   if (job.mode === "server" && ["image", "video", "audio"].includes(job.channel)) return true;
   const status = String(job.status || "");
   if (status === "complete") return true;
@@ -15368,7 +15372,7 @@ const renderMediaRecoveryJobs = (jobs = []) => {
       providerStatus: job.providerStatus || "",
       billingRisk: job.billingRisk || "",
       resultSuppressed: job.resultSuppressed === true,
-    });
+    }, { allowFailureRetrySetup: true });
     const reapply = status === "complete" && !job.appliedAt
       ? `<button class="media-job-resume" type="button" data-media-recovery-action="reapply" data-media-job-id="${escapeHtml(job.id)}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button>`
       : "";
@@ -15402,7 +15406,7 @@ const readMediaRecoveryJobsForDialog = async () => {
     ].map((job) => [job.id, job])).values()]
       .filter((job) => job.target?.targetType !== "capability-smoke")
       .filter((job) => job.forceReleasePendingAt && !job.forceReleaseCompletedAt || mediaRecoveryAttentionStatuses.has(String(job.status || "")))
-      .filter(mediaRecoveryJobBlocksOperation)
+      .filter(mediaRecoveryJobNeedsAttention)
       .filter(mediaRecoveryJobIsActionable)
       .sort((left, right) => Date.parse(right.updatedAt || right.createdAt || "") - Date.parse(left.updatedAt || left.createdAt || ""));
     renderMediaRecoveryJobs(jobs);
@@ -15559,7 +15563,7 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
         }
       } catch (error) {
         console.warn(`Generation job ${job.id} recovery skipped:`, error.message);
-        if (mediaRecoveryJobBlocksOperation(job) && mediaRecoveryJobIsActionable(job)) {
+        if (mediaRecoveryJobNeedsAttention(job) && mediaRecoveryJobIsActionable(job)) {
           pendingManualRecoveryJobs.set(job.id, { job, detail: error.message });
         }
       }

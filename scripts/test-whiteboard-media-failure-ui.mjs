@@ -305,6 +305,21 @@ try {
   assert.equal(failureView.detailInsideCard, true);
   assert.equal(failureView.retryInsideCard, true);
 
+  await evaluate(`document.querySelector('#openMediaRecovery').click(); true`);
+  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open && document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}]')`, "明确失败同步到待处理界面");
+  const synchronizedFailureView = await evaluate(`(() => {
+    const item = document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}]');
+    return {
+      text: item?.textContent || '',
+      retryVisible: Boolean(item?.querySelector('[data-media-job-action="retry_setup"]')),
+      cardVisible: Boolean(document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')),
+    };
+  })()`);
+  assert.equal(synchronizedFailureView.cardVisible, true, "同一失败不得从原白板卡片消失");
+  assert.equal(synchronizedFailureView.retryVisible, true, "待处理界面必须提供与卡片一致的重新生成准备入口");
+  assert.match(synchronizedFailureView.text, /DREAMINA_REFERENCE_UPLOAD_NO_TASK/u);
+  await evaluate(`document.querySelector('#mediaRecoveryDialog')?.close(); true`);
+
   const beforeJobs = await evaluate(`(async () => {
     const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
     const payload = await fetch('/api/generation/jobs?workspacePath=' + encodeURIComponent(${JSON.stringify(workspace.workspacePath)}), { headers: { 'x-shensi-session': token } }).then((response) => response.json());
@@ -362,6 +377,28 @@ try {
   await waitFor(`performance.timeOrigin !== ${previousLoadOrigin} && document.documentElement?.dataset?.bootReady === 'true'`, "终止后重新载入");
   const pendingAfterReload = await evaluate(`fetch('/api/generation/jobs/pending-media', {headers:{'x-shensi-session':document.querySelector('meta[name="shensi-session-token"]').content}}).then(r=>r.json()).then(p=>{if(!p.ok)throw new Error(p.message);return p.jobs.map(j=>j.id)})`);
   assert.equal(pendingAfterReload.includes(silentFailureJob.id), false, "重新载入不得恢复已彻底终止的媒体任务");
+
+  // Reproduce the race from the real provider: the user has already requested
+  // stop, then a durable provider task reports a terminal failure. The late
+  // failure must remain visible on both surfaces without reacquiring a lock.
+  await generationStore.updateMediaGenerationJob({ jobId: job.id, patch: {
+    status: "failed",
+    providerStatus: "failed",
+    providerTaskId: "late-provider-task",
+    providerErrorCode: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+    submissionState: "submitted",
+    progressPercent: 100,
+    failedAt: new Date().toISOString(),
+    userStoppedAt: new Date().toISOString(),
+    resultSuppressed: true,
+    error: "resource store: authsdk: not logged in",
+  } });
+  const lateFailureReloadOrigin = await evaluate("performance.timeOrigin");
+  await cdp("Page.reload", { ignoreCache: true });
+  await waitFor(`performance.timeOrigin !== ${lateFailureReloadOrigin} && document.documentElement?.dataset?.bootReady === 'true'`, "迟到失败后重新载入");
+  await waitFor(`document.querySelector('[data-canvas-node=${JSON.stringify(workspace.nodeId)}] .whiteboard-generation-failure-detail')?.textContent.includes('DREAMINA_PROVIDER_TASK_AUTH_FAILURE')`, "迟到失败回到白板卡片", 45_000);
+  await evaluate(`document.querySelector('#openMediaRecovery').click(); true`);
+  await waitFor(`document.querySelector('#mediaRecoveryDialog')?.open && document.querySelector('[data-media-recovery-job=${JSON.stringify(job.id)}] [data-media-job-action="retry_setup"]')`, "迟到失败同步到待处理界面", 45_000);
 
   console.log("Whiteboard terminal media failure UI tests passed");
 } finally {

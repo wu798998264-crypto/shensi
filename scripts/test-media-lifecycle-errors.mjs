@@ -4,11 +4,11 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { LibTvMediaDriver } from "../src/server/media-provider-drivers.mjs";
 import { libtvTaskFromPayload, parseLibTvCliOutput } from "../src/libtv-result.js";
-import { mediaConnectionRetry, mediaGenerationIssueNeedsCard } from "../src/media-execution-policy.js";
+import { mediaConnectionRetry, mediaGenerationHasTerminalProviderFailure, mediaGenerationIssueNeedsCard } from "../src/media-execution-policy.js";
 import { dreaminaJobRequiresCredentialProfile } from "../src/dreamina-manual-profile-policy.js";
 import { dreaminaFailureDiagnosis } from "../src/dreamina-failure.js";
 import { classifyMediaSubmissionFailure } from "../src/server/media-submission-recovery.mjs";
-import { mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
+import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention } from "../src/media-generation-coordination.js";
 
 const dataRoot = await mkdtemp(join(tmpdir(), "shensi-media-lifecycle-"));
 process.env.SHENSI_DATA_ROOT = dataRoot;
@@ -39,6 +39,21 @@ for (const targetType of ["whiteboard-node", "conversation-message"]) {
   assert.equal(mediaGenerationIssueNeedsCard(pending), true);
 }
 assert.equal(mediaGenerationIssueNeedsCard({ ...dreamina, status: "retry_required", billingRisk: "submission_outcome_unknown", error: "CLI 原因" }), true);
+const terminalProviderFailure = {
+  ...dreamina,
+  status: "failed",
+  providerStatus: "failed",
+  providerTaskId: "provider-task-late-failure",
+  providerErrorCode: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+  error: "resource store: authsdk: not logged in",
+  userStoppedAt: new Date(nowMs).toISOString(),
+  resultSuppressed: true,
+};
+assert.equal(mediaGenerationHasTerminalProviderFailure(terminalProviderFailure), true);
+assert.equal(mediaGenerationIssueNeedsCard(terminalProviderFailure), true, "用户停止后迟到的厂商明确失败仍必须回到原卡片");
+assert.equal(mediaGenerationFailureNeedsCard(terminalProviderFailure), true, "迟到失败必须恢复卡片上的重试准备入口");
+assert.equal(mediaRecoveryJobBlocksOperation(terminalProviderFailure), false, "迟到失败已经释放凭证锁，不得重新阻塞生成");
+assert.equal(mediaRecoveryJobNeedsAttention(terminalProviderFailure), true, "迟到失败必须同步到待处理审计界面");
 for (const code of ["", "DREAMINA_REFERENCE_UPLOAD_NO_TASK", "DREAMINA_UNCLASSIFIED_FAILURE"]) {
   const failure = dreaminaFailureDiagnosis({ code, providerTaskId: "keep-task", message: "ApplyImageUpload: context deadline exceeded" });
   assert.equal(failure.category, "reference_upload_failed");

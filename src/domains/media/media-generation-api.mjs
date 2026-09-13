@@ -210,7 +210,7 @@ export const createMediaGenerationApi = ({
   }
 
   if (pathname === "/api/generation/jobs/pending-media" && request.method === "GET") {
-    const jobs = await listGenerationJobs({ pendingMediaOnly: true });
+    const jobs = await listGenerationJobs({ attentionMediaOnly: true });
     return respond(200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
   }
 

@@ -30,7 +30,7 @@ import {
 import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
 import { builtInAggregateImageRecoveryJob, legacyAggregateReferencePreflightFailurePatch } from "./media-submission-recovery.mjs";
 import { boundedCliMediaJob, clearedMediaConnectionRetry } from "../media-execution-policy.js";
-import { mediaRecoveryJobBlocksOperation } from "../media-generation-coordination.js";
+import { mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention } from "../media-generation-coordination.js";
 
 const JOB_SCHEMA_VERSION = 3;
 const RUNNING_STALE_MS = 15_000;
@@ -1335,7 +1335,7 @@ export const getGenerationJob = async ({ jobId } = {}) => {
   return publicGenerationJob(await recoverStaleJob(job));
 };
 
-export const listGenerationJobs = async ({ workspacePath = "", includeApplied = false, targetType = "", profileSignature = "", pendingMediaOnly = false } = {}) => {
+export const listGenerationJobs = async ({ workspacePath = "", includeApplied = false, targetType = "", profileSignature = "", pendingMediaOnly = false, attentionMediaOnly = false } = {}) => {
   const requestedPath = String(workspacePath || "").trim();
   const targetPath = requestedPath ? resolve(requestedPath).toLowerCase() : "";
   const requestedTargetType = String(targetType || "").trim();
@@ -1354,13 +1354,14 @@ export const listGenerationJobs = async ({ workspacePath = "", includeApplied = 
     if (!includeApplied && recovered.appliedAt) continue;
     const publicJob = publicGenerationJob(recovered);
     if (pendingMediaOnly && !mediaRecoveryJobBlocksOperation(publicJob)) continue;
+    if (attentionMediaOnly && !mediaRecoveryJobNeedsAttention(publicJob)) continue;
     jobs.push(publicJob);
   }
   // Workspace card reconciliation must be able to inspect older applied jobs:
   // their media can still exist in the asset ledger while a legacy card lost
   // its display binding. Keep global polling bounded, but widen the explicitly
   // scoped applied audit so startup can repair those cards without resubmitting.
-  const resultLimit = pendingMediaOnly ? undefined : includeApplied && targetPath ? 500 : 100;
+  const resultLimit = pendingMediaOnly || attentionMediaOnly ? undefined : includeApplied && targetPath ? 500 : 100;
   return jobs.sort((a, b) => Date.parse(b.createdAt || 0) - Date.parse(a.createdAt || 0)).slice(0, resultLimit);
 };
 

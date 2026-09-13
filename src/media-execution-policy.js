@@ -30,8 +30,13 @@ export const clearedMediaConnectionRetry = () => ({
   connectionRetryAttempts: 0, connectionRetryExhausted: false,
 });
 
+export const mediaGenerationHasTerminalProviderFailure = (job = {}) => normalized(job.status) === "failed"
+  && normalized(job.providerStatus) === "failed"
+  && Boolean(String(job.providerErrorCode || job.errorCode || job.error || "").trim());
+
 export const mediaGenerationIssueNeedsCard = (job = {}) => !job.supersededBy
-  && !job.userStoppedAt && !job.resultSuppressed && !job.userStopped
+  && (!job.userStoppedAt && !job.resultSuppressed && !job.userStopped
+    || mediaGenerationHasTerminalProviderFailure(job))
   && !["complete", "cancelled", "superseded"].includes(normalized(job.status))
   && (Boolean(String(job.error || "").trim())
     || ["failed", "retry_required", "waiting_credentials", "waiting_storage", "reconciliation_required"].includes(normalized(job.status)));

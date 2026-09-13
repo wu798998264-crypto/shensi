@@ -1,5 +1,6 @@
 import { appendGenerationAsset } from "./whiteboard.js";
 import { dreaminaJobRequiresCredentialProfile } from "./dreamina-manual-profile-policy.js";
+import { mediaGenerationHasTerminalProviderFailure } from "./media-execution-policy.js";
 
 const defaultWorkspaceConflict = (error) => Number(error?.status) === 409
   || error?.code === "WORKSPACE_STATE_CONFLICT";
@@ -85,7 +86,7 @@ export const mediaGenerationResultSuppressed = (job = {}) => {
 
 export const mediaGenerationFailureNeedsCard = (job = {}) => (
   String(job?.status || "") === "failed"
-  && !mediaGenerationResultSuppressed(job)
+  && (!mediaGenerationResultSuppressed(job) || mediaGenerationHasTerminalProviderFailure(job))
   && !job?.supersededBy
 );
 
@@ -137,6 +138,15 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   if (whiteboardMediaJobHoldsCard(job) || ["waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"].includes(status)) return true;
   return job.availableActions?.dismissUncertain === true;
 };
+
+// The recovery dialog is also the durable audit surface for a terminal
+// provider failure. A failed task no longer holds a card or credential slot,
+// but it still needs to expose the same error and retry preparation action as
+// its originating card. Keep visibility separate from blocking semantics.
+export const mediaRecoveryJobNeedsAttention = (job = {}) => (
+  mediaRecoveryJobBlocksOperation(job)
+  || mediaGenerationFailureNeedsCard(job)
+);
 
 export const whiteboardMediaJobIsSupersededByNodeGeneration = (job = {}, node = {}) => {
   const failedJobId = String(job?.id || "");

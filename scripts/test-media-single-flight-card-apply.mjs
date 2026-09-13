@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
+import { mediaGenerationFailureNeedsCard, mediaRecoveryJobBlocksOperation, mediaRecoveryJobNeedsAttention } from "../src/media-generation-coordination.js";
 
 const [app, server, mediaWorker, mediaErrorPresentation, mediaGenerationApi] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
@@ -53,7 +53,7 @@ assert.match(app, /mediaGenerationActionMarkup\(documentArtifactJobSnapshot\(tas
 assert.match(app, /mediaGenerationActionMarkup\(\{ jobId: execution\.generationJobId/u, "对话区媒体任务必须复用可停止的媒体任务控件");
 assert.match(app, /candidate \? mediaGenerationActionMarkup\(\{ jobId: candidate\.jobId/u, "白板媒体任务必须复用可停止的媒体任务控件");
 assert.match(app, /旧任务已忽略，当前卡片和配置选择已恢复/u, "忽略旧任务后必须明确告知卡片与配置选择已经恢复");
-assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面必须只显示真实阻塞软件操作的媒体任务");
+assert.match(app, /filter\(mediaRecoveryJobNeedsAttention\)/u, "待处理页面必须同时显示阻塞任务和需要处理的终态失败");
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
 assert.match(app, /!whiteboardMediaJobHoldsCard\(job\) && !mediaGenerationFailureNeedsCard\(job\)/u, "明确失败必须保留在原卡片，但不得重新成为全局阻塞任务");
 assert.match(app, /class="whiteboard-generation-failure-detail" role="alert"/u, "失败卡片必须直接显示真实错误和任务编号");
@@ -77,7 +77,8 @@ assert.match(app, /if \(pendingManualRecoveryJobs\.size\)[\s\S]{0,520}showMediaR
 assert.match(app, /const remaining = await readMediaRecoveryJobsForDialog\(\);[\s\S]{0,100}clearMediaRecoveryBanner\(\)/u, "处理完成后必须立即刷新列表并清除阻塞横幅");
 assert.match(app, /addCanvasGenerationRecoveryTombstone\(removed\.canvas, \{ nodeId, generationJobId \}\)/u, "单卡片删除必须持久化生成目标删除墓碑");
 assert.match(app, /targetWasDeleted = canvasGenerationRecoveryTargetDeleted/u, "恢复扫描必须识别用户已经删除的生成目标");
-assert.match(app, /if \(userStopped \|\| targetWasDeleted\)/u, "已停止或已删除的任务不得重建卡片");
+assert.match(app, /const userStopped = Boolean\([^\n]+\) && !failureNeedsCard/u, "没有终态厂商失败证据的已停止任务不得重建卡片");
+assert.match(app, /if \(userStopped \|\| targetWasDeleted\)/u, "已停止且没有迟到终态失败证据、或已删除的任务不得重建卡片");
 assert.match(app, /preserveAssetOnly: true,[\s\S]{0,500}保留已停止任务的图片资产/u, "厂商迟到结果必须只进入全部资产而不重建已删除卡片");
 assert.match(server, /WHITEBOARD_HISTORY_CONTEXT_FORBIDDEN/u, "白板卡片请求必须拒绝历史对话上下文");
 assert.match(mediaGenerationApi, /dismissMediaGenerationJob/u, "服务端媒体域必须提供持久化的旧任务释放动作");
@@ -98,6 +99,7 @@ const blockingJob = {
 };
 assert.equal(mediaRecoveryJobBlocksOperation(blockingJob), false, "有限核对已经明确失败的任务不得继续阻塞待处理列表");
 assert.equal(mediaGenerationFailureNeedsCard(blockingJob), true, "有限核对失败仍必须留在原卡片显示真实原因");
+assert.equal(mediaRecoveryJobNeedsAttention(blockingJob), true, "有限核对失败必须同步显示在待处理界面");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "running" }), false, "正常生成中的任务不属于待处理阻塞项目");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, billingRisk: "", availableActions: {} }), false, "没有卡片锁或收费不确定性的历史失败不得污染待处理页面");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, resultSuppressed: true }), false, "用户已处理并放弃的任务必须立即隐藏");
@@ -113,11 +115,16 @@ const terminalProviderFailure = {
   status: "failed",
   providerStatus: "failed",
   providerTaskId: "provider-task-failed",
+  providerErrorCode: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+  error: "resource store: authsdk: not logged in",
   billingRisk: "",
 };
 assert.equal(mediaGenerationFailureNeedsCard(terminalProviderFailure), true, "厂商明确失败必须留在原卡片显示原因和重试入口");
 assert.equal(mediaRecoveryJobBlocksOperation(terminalProviderFailure), false, "厂商明确失败不得污染全局待处理阻塞列表");
-assert.equal(mediaGenerationFailureNeedsCard({ ...terminalProviderFailure, resultSuppressed: true }), false, "用户已替代或停止的失败任务不得再次显示");
+assert.equal(mediaRecoveryJobNeedsAttention(terminalProviderFailure), true, "厂商明确失败必须同步显示在待处理界面");
+assert.equal(mediaGenerationFailureNeedsCard({ ...terminalProviderFailure, resultSuppressed: true }), true, "停止后迟到的厂商终态失败仍必须回到原卡片");
+assert.equal(mediaRecoveryJobNeedsAttention({ ...terminalProviderFailure, resultSuppressed: true }), true, "停止后迟到的厂商终态失败仍必须同步到待处理界面");
+assert.equal(mediaGenerationFailureNeedsCard({ ...terminalProviderFailure, providerStatus: "", providerErrorCode: "", error: "" , resultSuppressed: true }), false, "没有终态厂商失败证据的已停止任务必须保持隐藏");
 
 const dataRoot = await mkdtemp(join(tmpdir(), "shensi-media-single-flight-"));
 process.env.SHENSI_DATA_ROOT = dataRoot;
