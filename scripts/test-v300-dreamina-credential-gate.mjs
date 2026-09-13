@@ -27,8 +27,8 @@ const job = ({
 });
 
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "polling" })), true);
-assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), false,
-  "厂商已经成功后，下载和卡片回填不得继续占用配置切换权");
+assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), true,
+  "厂商成功后仍须保护下载、完整性验收和卡片回填这一完整串行链路");
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "waiting_storage", providerStatus: "completed" })), false,
   "本地存储等待不得占用即梦账号切换门禁");
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "complete", providerStatus: "completed" })), false);
@@ -55,10 +55,10 @@ const recentUnknown = job({
 });
 assert.equal(dreaminaJobRequiresCredentialProfile(recentUnknown, {
   nowMs: Date.parse("2026-08-24T01:00:00.000Z"),
-}), true, "提交结果未知的短时核验可以临时保护当前配置");
+}), false, "提交结果未知的核验态不属于生成到回写链路，不得继续占用配置切换权");
 assert.equal(dreaminaJobRequiresCredentialProfile(recentUnknown, {
   nowMs: Date.parse("2026-08-24T01:11:00.000Z"),
-}), false, "短时核验超时后不得永久占用配置切换权");
+}), false, "核验态无论持续多久都不得永久占用配置切换权");
 
 const [worker, runner] = await Promise.all([
   readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
