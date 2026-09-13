@@ -46,6 +46,45 @@ const resolveCatalogSkill = (catalog = [], args = {}) => {
   throw new Error("未知 Skill ID 或名称，请先查看目录");
 };
 
+const selectedSkillPlacement = (selected = {}, args = {}) => {
+  const placements = Array.isArray(selected.placements) ? selected.placements : [];
+  const requested = text(args.placementId).trim();
+  if (requested) {
+    const placement = placements.find((item) => text(item?.placementId).trim() === requested);
+    if (!placement) throw new Error(`Skill“${selected.name || selected.id}”没有目录中的关系位置：${requested}`);
+    return placement;
+  }
+  if (selected.requiresPlacementSelection === true) {
+    const choices = placements.map((item) => `${item.placementId}（${(item.path || []).map((part) => part.name).filter(Boolean).join(" / ")}）`).join("；");
+    throw new Error(`Skill“${selected.name || selected.id}”位于多个不同关系位置，请按任务语义传入 placementId：${choices}`);
+  }
+  return placements[0] || null;
+};
+
+const orderedCatalogSkillReadPlan = (catalog = [], selected = {}, args = {}) => {
+  const byId = new Map(catalog.map((skill) => [text(skill?.id).trim(), skill]));
+  const visiting = new Set();
+  const emitted = new Set();
+  const ordered = [];
+  const visit = (skill) => {
+    const id = text(skill?.id).trim();
+    if (!id || emitted.has(id)) return;
+    if (visiting.has(id)) throw new Error(`Skill 组织关系存在循环依赖：${id}`);
+    visiting.add(id);
+    for (const requiredId of Array.isArray(skill.requiredUpperSkillIds) ? skill.requiredUpperSkillIds : []) {
+      const required = byId.get(text(requiredId).trim());
+      if (!required) throw new Error(`下位 Skill“${skill.name || id}”缺少必需的上位 Skill：${requiredId}`);
+      visit(required);
+    }
+    visiting.delete(id);
+    emitted.add(id);
+    ordered.push(skill);
+  };
+  const placement = selectedSkillPlacement(selected, args);
+  visit(placement ? { ...selected, requiredUpperSkillIds: placement.requiredUpperSkillIds || [] } : selected);
+  return ordered;
+};
+
 const compactSearchText = (value) => text(value)
   .toLocaleLowerCase("zh-CN")
   .replace(/[\p{Separator}\p{Punctuation}\p{Symbol}]+/gu, "");
@@ -119,13 +158,14 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       }, ["expectedRevision", "operationId", "operations"]),
     ]),
     namespace("skills", [
-      tool("list", "列出已配置的 Skill 名称、说明和能力，由你按当前任务阶段选择。", { query: str("可选语义检索词；留空列出目录") }),
-      tool("read", "加载目录中的具体 Skill 和其必需规则，不能假称已加载其他 Skill。优先传 id；也兼容 skillId、skill_id、selection 或唯一名称。", {
+      tool("list", "列出当前 Skill 面板中可达、启用且有效的 Skill，并返回所在路径、并行/主次/组织角色和必需的上位 Skill。由你按完整语义和当前阶段选择。", { query: str("可选语义检索词；留空列出目录") }),
+      tool("read", "真实加载目录中的 Skill。若目标是组织关系的下位 Skill，工具会先按外层到内层自动加载全部上位 Skill；主次与并行关系不会被错误并用。同一 Skill 位于多个不同关系位置时，须传目录返回的 placementId。优先传 id；也兼容 skillId、skill_id、selection 或唯一名称。", {
         id: str("目录中真实ID"),
         skillId: str("兼容字段：目录中真实ID"),
         skill_id: str("兼容字段：目录中真实ID"),
         selection: { anyOf: [str("兼容字段：Skill ID 或名称"), { type: "object", properties: { id: str("Skill ID"), skillId: str("Skill ID"), skill_id: str("Skill ID"), name: str("Skill 名称") }, additionalProperties: false }] },
         name: str("目录中的唯一 Skill 名称"),
+        placementId: str("同一 Skill 位于多个关系位置时，使用目录 placements 返回的精确位置 ID"),
       }),
     ]),
     namespace("web_browser", [
@@ -158,9 +198,54 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       if (name === "list") return searchSkillCatalog(catalog, args.query);
       if (name === "read") {
         const selected = resolveCatalogSkill(catalog, args);
-        const result = await readSkill(selected.id);
-        if (text(result?.text).trim()) await emit("resource_read", { kind: "skill", id: selected.id, title: result.name || selected.name || selected.id, fullText: result.fullText === true, characters: result.text.length, version: result.contentHash || result.version });
-        return result;
+        const readPlan = orderedCatalogSkillReadPlan(catalog, selected, args);
+        const loaded = [];
+        let selectedResult = null;
+        for (const planned of readPlan) {
+          const runtimeSkillId = text(planned.runtimeSkillId || planned.id).trim();
+          const result = await readSkill(runtimeSkillId);
+          const sourceText = text(result?.text);
+          if (!sourceText.trim()) throw new Error(`Skill“${planned.name || planned.id}”没有可读取的规则正文`);
+          const loadedSkill = {
+            id: planned.id,
+            runtimeSkillId,
+            name: planned.name || result.name || planned.id,
+            relationType: planned.relationType || "parallel",
+            relationRole: planned.relationRole || "peer",
+            relationshipSummary: planned.relationshipSummary || "",
+            fullText: result.fullText === true,
+            characters: sourceText.length,
+            version: result.contentHash || result.version,
+            text: sourceText,
+          };
+          loaded.push(loadedSkill);
+          if (planned.id === selected.id) selectedResult = result;
+          await emit("resource_read", {
+            kind: "skill",
+            id: planned.id,
+            runtimeSkillId,
+            title: loadedSkill.name,
+            fullText: loadedSkill.fullText,
+            characters: loadedSkill.characters,
+            version: loadedSkill.version,
+            relationType: loadedSkill.relationType,
+            relationRole: loadedSkill.relationRole,
+          });
+        }
+        const combinedText = loaded.map((item) => `# ${item.name}\n\n${item.text}`).join("\n\n");
+        return {
+          ...(selectedResult || {}),
+          id: selected.id,
+          runtimeSkillId: selected.runtimeSkillId || selected.id,
+          name: selected.name || selectedResult?.name || selected.id,
+          text: combinedText,
+          fullText: loaded.every((item) => item.fullText),
+          relationType: selected.relationType || "parallel",
+          relationRole: selected.relationRole || "peer",
+          relationshipSummary: selected.relationshipSummary || "",
+          requiredUpperSkillIds: Array.isArray(selected.requiredUpperSkillIds) ? selected.requiredUpperSkillIds : [],
+          loadedSkills: loaded.map(({ text: _sourceText, ...item }) => item),
+        };
       }
     }
     if (namespace === "web_browser") {

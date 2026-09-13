@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { createConversationAgentService } from "./conversation-agent-service.mjs";
 import { startConversationAgentMcp } from "./conversation-agent-mcp.mjs";
 import { listManagedSkills, readManagedTaskRouteDocument } from "./skill-store.mjs";
+import { projectConversationAgentSkillCatalog } from "./conversation-agent-skill-catalog.mjs";
 import { inspectSelectedSkillSource } from "./skill-library.mjs";
 import { loadWorkspaceState, saveWorkspaceState } from "./workspace.mjs";
 import { applyConversationMediaResultToWorkspace } from "../media-generation-coordination.js";
@@ -118,7 +119,7 @@ export const createConversationAgentGateway = ({
   storageRoot: join(machineRoot, "conversation-agent-v1", "runs"),
   skillCatalog: async () => {
     const catalog = await listManagedSkills({ shensiRoot });
-    return [...catalog.builtins, ...catalog.user].filter((skill) => skill.disabled !== true && skill.testStatus !== "failed").map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
+    return projectConversationAgentSkillCatalog(catalog);
   },
   readRoute: async () => readInternalAgentContracts({ shensiRoot }),
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
