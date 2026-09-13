@@ -27,6 +27,7 @@ assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater mu
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
 assert.match(finalSigner, /Get-Content\s+-Raw\s+-Encoding\s+UTF8/u, "Windows PowerShell must read UTF-8 package metadata without corrupting the Chinese product name");
 assert.match(finalSigner, /being used by another process\|sharing violation[\s\S]{0,300}Start-Sleep/u, "final signing must retry only transient installer file locks");
+assert.match(finalSigner, /previousErrorActionPreference[\s\S]{0,300}ErrorActionPreference = 'Continue'[\s\S]{0,500}ErrorActionPreference = \$previousErrorActionPreference/u, "native signtool stderr must be classified without weakening the rest of the release script");
 assert.match(updatePreparation, /uploadPerformed:\s*false/u, "release preparation must remain local until the user explicitly requests upload");
 
 console.log("Shensi release engineering contract passed");

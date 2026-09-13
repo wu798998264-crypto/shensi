@@ -12,8 +12,17 @@ $tool = Get-ChildItem -LiteralPath $sdkRoot -Directory | Sort-Object Name -Desce
 if (-not $tool) { throw 'Windows SDK x64 signtool is required to finalize release signing' }
 $signingComplete = $false
 for ($attempt = 1; $attempt -le 5; $attempt += 1) {
-    $signOutput = & $tool sign /sha1 $signing.certificateSha1 /s My /fd SHA256 /tr $signing.rfc3161TimeStampServer /td SHA256 $installer 2>&1
-    $signExitCode = $LASTEXITCODE
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell can promote native stderr to a terminating
+        # NativeCommandError when the surrounding script uses Stop. Capture
+        # the text and classify the real signtool exit code below instead.
+        $ErrorActionPreference = 'Continue'
+        $signOutput = & $tool sign /sha1 $signing.certificateSha1 /s My /fd SHA256 /tr $signing.rfc3161TimeStampServer /td SHA256 $installer 2>&1
+        $signExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
     if ($signExitCode -eq 0) {
         $signingComplete = $true
         break
