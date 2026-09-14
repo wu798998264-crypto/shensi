@@ -107,6 +107,7 @@ import {
   uniqueGenerationPickerProfiles,
   validateDeepSeekOpenCodeConnection,
   validateGenericOpenCodeConnection,
+  withoutTextGenerationConfiguration,
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
@@ -39326,7 +39327,7 @@ const activateProjectState = (nextState, { name, workspacePath, apiKey, workspac
   const baselinePreparationRequired = hasLoadedBaseline && !hasCachedBaselineHashes;
   const initial = createInitialState();
   const localLayout = clone(state.layout ?? PANE_LAYOUT_DEFAULTS);
-  const currentConnectionSettings = { ...(state.settings ?? {}) };
+  const currentConnectionSettings = withoutTextGenerationConfiguration(state.settings ?? {});
   delete currentConnectionSettings.workspacePath;
   const nextKind = workspaceKind === "notebook" ? "notebook" : "project";
   state = {

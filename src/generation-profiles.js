@@ -21,6 +21,38 @@ const LEGACY_GENERATION_RUNTIME_FIELDS = Object.freeze([
   "audioCliPath",
   "audioCliArgs",
 ]);
+const TEXT_GENERATION_CONFIGURATION_FIELDS = Object.freeze([
+  "textConnections",
+  "activeTextConnectionId",
+  "activeTextChatConnectionId",
+  "activeTextAgentConnectionId",
+  "adapter",
+  "provider",
+  "protocol",
+  "baseUrl",
+  "model",
+  "reasoningEffort",
+  "speedMode",
+  "temperature",
+  "maxOutputTokens",
+  "timeoutMs",
+  "cliPath",
+  "cliArgs",
+  "executionMode",
+  "executionModes",
+  "agentEngine",
+  "agentModelId",
+  "chatModelId",
+  "agentReasoningEffort",
+  "agentSpeedMode",
+  "credentialSource",
+  "runtimeProfileId",
+  "runtimeConfigPath",
+  "disabledBuiltInTextProfileIds",
+  "retiredTextProfileBackup",
+  "textProfileAliases",
+  "textProfileCleanupVersion",
+]);
 export const IMAGE_MODEL_SELECTION_VERSION = 4;
 export const VIDEO_CLI_DEFAULT_VERSION = 3;
 export const CLI_REMARK_MIGRATION_VERSION = 2;
@@ -550,11 +582,6 @@ const isCodexTextCliProfile = (profile = {}) => profile.adapter === "cli"
   && profile.provider === "OpenAI"
   && (profile.agentEngine === "codex"
     || /^codex(?:\.(?:exe|cmd|ps1))?$/i.test(String(profile.cliPath || "").split(/[\\/]/u).at(-1) || ""));
-
-const isCodexTextCliBinding = (binding = {}) => binding.channel === "text"
-  && binding.adapter === "cli"
-  && binding.provider === "OpenAI"
-  && /^codex(?:\.(?:exe|cmd|ps1))?$/i.test(String(binding.cliPath || "").split(/[\\/]/u).at(-1) || "codex");
 
 // A Codex CLI profile supports both Chat and Agent. Older migrations could
 // materialize the same connection twice when text-default was already in use.
@@ -1841,6 +1868,12 @@ export const withoutGenerationRuntime = (settings = {}) => {
   return next;
 };
 
+export const withoutTextGenerationConfiguration = (settings = {}) => {
+  const next = { ...settings };
+  for (const field of TEXT_GENERATION_CONFIGURATION_FIELDS) delete next[field];
+  return next;
+};
+
 export const portableGenerationSettings = (settings = {}) => {
   const next = withoutGenerationRuntime(withoutGenerationSecrets(settings));
   for (const key of ["apiKey", "imageApiKey", "videoApiKey", "audioApiKey"]) delete next[key];
@@ -1889,9 +1922,11 @@ export const generationRuntimeBindings = (settings = {}) => ({
   }),
 });
 
-const comparableEndpoint = (value) => String(value || "").trim().replace(/\/+$/, "").toLocaleLowerCase();
-
-const profileFromRuntimeBinding = (channel, binding = {}, apiKey = "") => {
+const profileFromRuntimeBinding = (channel, binding = {}) => {
+  // Text profile identity and user metadata belong to textConnections. Legacy
+  // runtime bindings do not contain enough information to recreate them
+  // safely, so only media channels may still use binding-based recovery.
+  if (channel === "text") return null;
   const provider = String(binding.provider || "").trim();
   const preset = getProviderPreset(provider);
   const model = channel === "text"
@@ -1910,7 +1945,7 @@ const profileFromRuntimeBinding = (channel, binding = {}, apiKey = "") => {
     baseUrl: String(binding.baseUrl || ""),
     model,
     reasoningEffort: modelOption?.defaultReasoningLevel || DEFAULTS.text.reasoningEffort,
-    apiKey,
+    apiKey: "",
     cliPath: String(binding.cliPath || ""),
     cliArgs: String(binding.cliArgs || ""),
     dreaminaCliProfile: String(binding.dreaminaCliProfile || ""),
@@ -1922,19 +1957,20 @@ export const applyGenerationRuntimeBindings = (settings = {}, payload = {}, secr
   if (!Array.isArray(source) || !source.length) return settings;
   const bindings = new Map(source.map((binding) => [`${binding.channel}:${binding.profileId}`, binding]));
   const next = normalizeGenerationProfiles(settings, secrets);
-  const disabledBuiltInTextProfileIds = new Set(Array.isArray(next.disabledBuiltInTextProfileIds)
-    ? next.disabledBuiltInTextProfileIds.map((profileId) => String(profileId || "").trim()).filter(Boolean)
-    : []);
   for (const channel of CHANNELS) {
     const keys = PROFILE_KEYS[channel];
     const channelProfiles = next[keys.list] ?? [];
-    const hasCodexProfile = channel === "text" && channelProfiles.some(isCodexTextCliProfile);
     const profiles = channelProfiles.map((profile) => {
-      const binding = bindings.get(`${channel}:${profile.id}`)
-        || (hasCodexProfile && isCodexTextCliProfile(profile)
-          ? source.find(isCodexTextCliBinding)
-          : null);
+      const binding = bindings.get(`${channel}:${profile.id}`);
       if (!binding) return profile;
+      if (channel === "text") {
+        return {
+          ...profile,
+          baseUrl: String(binding.baseUrl || profile.baseUrl || ""),
+          cliPath: String(binding.cliPath || profile.cliPath || ""),
+          cliArgs: String(binding.cliArgs || profile.cliArgs || ""),
+        };
+      }
       return {
         ...profile,
         adapter: String(binding.adapter || ""),
@@ -1948,24 +1984,14 @@ export const applyGenerationRuntimeBindings = (settings = {}, payload = {}, secr
       };
     });
     const existingIds = new Set(profiles.map((profile) => profile.id));
-    const recovered = source
+    const recovered = channel === "text" ? [] : source
       .filter((binding) => binding?.channel === channel
         && String(binding.profileId || "").trim()
-        && !(channel === "text" && disabledBuiltInTextProfileIds.has(String(binding.profileId).trim()))
-        && !(hasCodexProfile && isCodexTextCliBinding(binding))
         && !existingIds.has(String(binding.profileId).trim())
         && ["api", "cli"].includes(String(binding.adapter || ""))
         && (String(binding.provider || "").trim()
           || (channel === "text" && ["trae_work", "workbuddy", "custom"].includes(String(binding.agentEngine || "").trim()))))
-      .map((binding) => {
-        const endpoint = comparableEndpoint(binding.baseUrl);
-        const legacySecretDonor = channel === "text" && binding.adapter === "api" && endpoint
-          ? profiles.find((profile) => profile.apiKey
-            && profile.provider !== binding.provider
-            && comparableEndpoint(profile.baseUrl) === endpoint)
-          : null;
-        return profileFromRuntimeBinding(channel, binding, legacySecretDonor?.apiKey || "");
-      });
+      .map((binding) => profileFromRuntimeBinding(channel, binding));
     next[keys.list] = [...profiles, ...recovered];
   }
   return normalizeGenerationProfiles(next, secrets);
