@@ -10,7 +10,7 @@ import { resolveCodexImagegenSkillPath, runCodexImageAppServer } from "./codex-i
 import { DEFAULT_MODEL_MEDIA_REFERENCES } from "../model-presets.js";
 
 const VERSION = "2.19.5";
-const DEFAULT_MODEL = "gpt-image-2";
+const DEFAULT_MODEL = "gpt-image-2.5";
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const STRUCTURED_ERROR_PREFIX = "SHENSI_MEDIA_ERROR_JSON:";

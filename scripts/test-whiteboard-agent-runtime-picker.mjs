@@ -29,6 +29,6 @@ const profiles = [
 ];
 assert.deepEqual(agentProfilesForEngine(profiles, "deepseek_opencode").map((profile) => profile.id), ["deepseek"]);
 assert.deepEqual(agentProfilesForEngine(profiles, "opencode").map((profile) => profile.id), ["opencode-deepseek"]);
-assert.deepEqual(AGENT_ENGINE_IDS, ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code"]);
+assert.deepEqual(AGENT_ENGINE_IDS, ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"]);
 
 console.log("Whiteboard Agent runtime picker contract tests passed");

@@ -255,7 +255,7 @@ export const createInitialState = () => ({
     imageAdapter: "cli",
     imageProtocol: "images",
     imageBaseUrl: "https://api.openai.com/v1",
-    imageModel: "gpt-image-2",
+    imageModel: "gpt-image-2.5",
     imageApiKey: "",
     imageTimeoutMs: "660000",
     imageCliPath: OPENAI_IMAGE_CLI_ALIAS,

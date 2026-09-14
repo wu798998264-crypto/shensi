@@ -123,8 +123,12 @@ assert.match(app, /const applyCompletedWhiteboardGenerationJob[\s\S]{0,260}updat
 assert.match(app, /updateWhiteboardCompletedApplyStage\(job, "verifying"\);\s+const cardReadback = await verifyWhiteboardGenerationCardReadback/u, "回读开始前必须先显示回读状态");
 assert.match(app, /await markWhiteboardGenerationJobApplied[\s\S]{0,180}finalizeWhiteboardCompletedCandidate\(job\)/u, "只有回读和应用标记成功后才能移除活动候选状态");
 assert.match(app, /if \(ownsCandidate && !retainCandidateUntilVerified\)/u, "回读确认前不得提前清除卡片状态");
-assert.match(app, /whiteboardGenerationCompletedElapsedMs\(node\) > 0[\s\S]{0,220}已完成[\s\S]{0,160}总用时/u, "文字、图片和视频完成后都必须固定显示总耗时");
-assert.match(app, /if \(card\) dismissWhiteboardGenerationElapsed\(card\)/u, "完成总耗时只能在用户点击对应卡片后隐藏");
+assert.match(app, /completedGenerationStatusVisible = Boolean\(!candidate && !generating && !generationElapsedDismissed && completedGenerationElapsedMs > 0\)/u, "文字、图片和视频成功回填后都必须继续固定显示完整生成状态");
+assert.match(app, /completedGenerationStatusVisible \? uiText\("生成成功"\)/u, "成功卡片左上角必须明确显示生成成功，不能退化成没有状态含义的耗时文字");
+assert.match(app, /candidate\s+\? durableMediaCandidate \? providerQueueLabel \|\| mediaGenerationPhaseText\(candidate\)/u, "候选任务仍存在时必须始终显示状态文案，不能因未知中间态静默消失");
+assert.match(app, /data-generation-complete-status="true" title="点击卡片隐藏本次生成状态"/u, "成功状态必须保留到用户点击卡片为止");
+assert.match(app, /querySelector\(":scope > \.whiteboard-card-kind\[data-generation-complete-status=\\"true\\"\]"\)[\s\S]{0,420}status\.remove\(\)/u, "点击卡片必须一次性隐藏完整成功状态，而不是只移除耗时");
+assert.match(app, /if \(card\) dismissWhiteboardGenerationElapsed\(card\)/u, "完成状态只能在用户点击对应卡片后隐藏");
 assert.match(app, /const storedWhiteboardDismissedGenerationElapsed[\s\S]{0,800}WHITEBOARD_DISMISSED_GENERATION_ELAPSED_KEY/u, "用户已点击隐藏的完成耗时必须在重启后保持隐藏");
 assert.match(app, /const storedWhiteboardGenerationCompletionTimes[\s\S]{0,1200}persistWhiteboardGenerationCompletionTimes/u, "回读完成时的最终总耗时必须跨重绘和重启保持稳定");
 assert.match(app, /patch\.status === "complete"[\s\S]{0,220}candidate\.cardApplyStage \|\| "saving"/u, "瞬时完成的任务也必须直接进入保存阶段，不能闪出空状态");
@@ -140,6 +144,7 @@ assert.match(app, /pendingGenerationType = !hasGeneratedContent && !hasVisibleTe
 assert.match(app, /card\.dataset\.cardHasText === "true"[\s\S]{0,180}whiteboard-card-generation-type/u, "增量同步生成类型图标时也必须尊重现有文字内容");
 assert.match(app, /\$\{generatedNodeTitle\}\s+\$\{kindMarkup\}\s+\$\{generationTypeIndicator\}/u, "生成状态必须位于卡片根层，不能随媒体内容分支丢失");
 assert.match(styles, /\.whiteboard-card\.generating \.whiteboard-generation-status:not\(\.interrupted\)[\s\S]{0,320}color: var\(--text-secondary\)/u);
+assert.match(styles, /\.whiteboard-generation-status \{[\s\S]{0,80}z-index: 8/u, "生成状态必须稳定显示在图片、视频和卡片交互层之上");
 assert.match(styles, /\.whiteboard-generation-phase-label[\s\S]{0,180}text-overflow: ellipsis/u, "长状态文案必须省略，不能挤掉生成指标");
 assert.match(styles, /\.whiteboard-generation-metrics[\s\S]{0,100}flex: 0 0 auto/u, "生成百分比和耗时必须保持完整可见");
 assert.match(styles, /\.whiteboard-card:has\(\.whiteboard-generation-metrics\.complete\) textarea[\s\S]{0,80}padding-top: 30px/u, "文字卡片完成总耗时不得遮挡正文");

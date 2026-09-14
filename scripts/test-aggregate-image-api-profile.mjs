@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
   AGGREGATE_IMAGE_API_PROFILE_VERSION,
+  IMAGE_MODEL_SELECTION_VERSION,
   generationRuntimeBindings,
   normalizeGenerationProfiles,
 } from "../src/generation-profiles.js";
+import { DEFAULT_IMAGE_GENERATION_MODEL } from "../src/conversation-image-settings.js";
+import { createInitialState } from "../src/data.js";
 import { imageGenerationMode } from "../src/model-presets.js";
 import { publicGenerationJob } from "../src/server/generation-job-store.mjs";
 import {
@@ -34,6 +37,9 @@ assert.equal(isUpstreamStreamOpenTimeout(upstreamTimeoutError), true, "聚合上
 assert.equal(isUpstreamStreamOpenTimeout({ providerErrorCode: "HTTP_401", message: "invalid api key" }), false);
 
 const initial = normalizeGenerationProfiles({});
+assert.equal(DEFAULT_IMAGE_GENERATION_MODEL, "gpt-image-2.5", "对话区默认图片模型必须使用 GPT Image 2.5");
+assert.equal(createInitialState().settings.imageModel, "gpt-image-2.5", "初始设置必须使用 GPT Image 2.5");
+assert.equal(initial.imageConnections.some((profile) => profile.id === "image-default"), false, "不得再补入独立 GPT Image 配置");
 const aggregate = initial.imageConnections.find((profile) => profile.id === profileId);
 assert.ok(aggregate, "空设置应补入聚合 API 图片配置");
 assert.equal(aggregate.name, "聚合api");
@@ -42,7 +48,7 @@ assert.equal(aggregate.adapter, "api");
 assert.equal(aggregate.provider, "自定义兼容接口");
 assert.equal(aggregate.protocol, "images");
 assert.equal(aggregate.baseUrl, expectedBaseUrl);
-assert.equal(aggregate.model, "gpt-image-2");
+assert.equal(aggregate.model, "gpt-image-2.5");
 assert.equal(aggregate.timeoutMs, "660000");
 assert.equal(aggregate.apiKey, "", "源码预设不得包含 API Key");
 assert.equal(initial.aggregateImageApiProfileVersion, AGGREGATE_IMAGE_API_PROFILE_VERSION);
@@ -107,6 +113,71 @@ assert.equal(preserved.activeImageConnectionId, "image-user-selected", "不得�
 assert.ok(preserved.imageConnections.some((profile) => profile.id === "image-user-selected"), "不得覆盖现有配置");
 assert.equal(preserved.imageConnections.filter((profile) => profile.id === profileId).length, 1);
 
+const preservedOpenAiSelection = normalizeGenerationProfiles({
+  imageModelSelectionVersion: Number.MAX_SAFE_INTEGER,
+  imageConnections: [{
+    id: "image-user-openai",
+    name: "用户 OpenAI 配置",
+    adapter: "cli",
+    provider: "OpenAI",
+    protocol: "images",
+    model: "gpt-image-2",
+    cliPath: "user-openai-image-cli",
+  }],
+});
+assert.equal(
+  preservedOpenAiSelection.imageConnections.find((profile) => profile.id === "image-user-openai")?.model,
+  "gpt-image-2",
+  "修改默认值不得覆盖用户已有的 OpenAI 图片模型选择",
+);
+
+const migratedBuiltInDefaults = normalizeGenerationProfiles({
+  imageModelSelectionVersion: IMAGE_MODEL_SELECTION_VERSION - 1,
+  aggregateImageApiProfileVersion: AGGREGATE_IMAGE_API_PROFILE_VERSION,
+  activeImageConnectionId: "image-default",
+  imageConnections: [
+    {
+      id: "image-default",
+      name: "OpenAI GPT 图片 CLI",
+      adapter: "cli",
+      provider: "OpenAI",
+      protocol: "images",
+      model: "gpt-image-2",
+      cliPath: "shensi-openai-image",
+    },
+    {
+      id: profileId,
+      name: "聚合api",
+      adapter: "api",
+      provider: "自定义兼容接口",
+      protocol: "images",
+      baseUrl: expectedBaseUrl,
+      model: "gpt-image-2",
+    },
+  ],
+}, { image: { [profileId]: "aggregate-test-key" } });
+assert.equal(migratedBuiltInDefaults.imageConnections.some((profile) => profile.id === "image-default"), false);
+assert.equal(migratedBuiltInDefaults.imageConnections.find((profile) => profile.id === profileId)?.model, "gpt-image-2.5");
+assert.equal(migratedBuiltInDefaults.activeImageConnectionId, profileId, "移除正在使用的旧内置配置后必须切换到聚合 API");
+
+const preservedUserOpenAiCli = normalizeGenerationProfiles({
+  imageModelSelectionVersion: IMAGE_MODEL_SELECTION_VERSION,
+  aggregateImageApiProfileVersion: AGGREGATE_IMAGE_API_PROFILE_VERSION,
+  activeImageConnectionId: "image-user-openai-cli",
+  imageConnections: [{
+    id: "image-user-openai-cli",
+    name: "用户自建 GPT 图片",
+    remarkName: "我的 GPT 图片",
+    adapter: "cli",
+    provider: "OpenAI",
+    protocol: "images",
+    model: "gpt-image-2.5",
+    cliPath: "shensi-openai-image",
+  }],
+});
+assert.ok(preservedUserOpenAiCli.imageConnections.some((profile) => profile.id === "image-user-openai-cli"), "不得删除用户手动建立的 OpenAI 图片配置");
+assert.equal(preservedUserOpenAiCli.activeImageConnectionId, "image-user-openai-cli");
+
 const normalizedAgain = normalizeGenerationProfiles(preserved);
 assert.equal(normalizedAgain.imageConnections.filter((profile) => profile.id === profileId).length, 1, "重复规范化不得重复新增");
 
@@ -119,7 +190,7 @@ const existingEndpoint = normalizeGenerationProfiles({
       provider: "自定义兼容接口",
       protocol: "images",
       baseUrl: `${expectedBaseUrl}/`,
-      model: "gpt-image-2",
+      model: "gpt-image-2.5",
       timeoutMs: "660000",
       apiKey: "existing-secret",
     },

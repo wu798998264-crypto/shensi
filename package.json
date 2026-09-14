@@ -1,6 +1,6 @@
 {
   "name": "shensi-creative-engine",
-  "version": "6.0.3",
+  "version": "6.1.3",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
@@ -174,8 +174,7 @@
       "signAndEditExecutable": true,
       "signtoolOptions": {
         "certificateSha1": "3B868B287E2564AB18294ED0C3216D83D92A4436",
-        "rfc3161TimeStampServer": "http://timestamp.digicert.com",
-        "timeStampServer": "http://timestamp.digicert.com"
+        "rfc3161TimeStampServer": "http://timestamp.globalsign.com/tsa/r6advanced1"
       }
     },
     "nsis": {

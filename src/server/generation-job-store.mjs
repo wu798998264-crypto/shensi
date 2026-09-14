@@ -505,14 +505,18 @@ const publicRequest = (channel, request = {}) => {
   const multiframeTransitions = channel === "video" && request.generationMode === "smart_multiframe"
     ? publicMultiframeTransitions(request)
     : [];
+  const preserveReferenceTokens = channel === "video"
+    && isDreaminaCliSettings(request.settings || {})
+    && request.preserveReferenceTokens === true;
   return ({
   channel,
   // The UI starts its user-visible timer before the durable server task is
   // created. Preserve that click timestamp across restart and recovery.
   interactionStartedAt: normalizedInteractionStartedAt(request),
-  prompt: String(request.displayPrompt || (channel === "text" ? request.prompt : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens })) || ""),
-  executionPrompt: channel === "text" ? String(request.prompt || "") : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens }),
+  prompt: String(request.displayPrompt || (channel === "text" ? request.prompt : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens })) || ""),
+  executionPrompt: channel === "text" ? String(request.prompt || "") : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens }),
   providerPromptReferenceTokens,
+  ...(preserveReferenceTokens ? { preserveReferenceTokens: true } : {}),
   capabilityProfileSignature: String(request.capabilityProfileSignature || request.settings?.capabilityProfileSignature || "").slice(0, 2000),
   aspectRatio: String(request.aspectRatio || ""),
   quality: String(request.quality || ""),
@@ -1080,9 +1084,12 @@ export const createMediaGenerationJob = async ({ channel, target, request, repla
   const providerPromptReferenceTokens = Array.isArray(request?.providerPromptReferenceTokens)
     ? [...new Set(request.providerPromptReferenceTokens.map(String).filter(Boolean))].slice(0, 300)
     : [];
-  const prompt = sanitizeMediaProviderPrompt(request?.prompt, { referenceTokens: providerPromptReferenceTokens });
+  const preserveReferenceTokens = channel === "video"
+    && isDreaminaCliSettings(request?.settings || {})
+    && request?.preserveReferenceTokens === true;
+  const prompt = sanitizeMediaProviderPrompt(request?.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens });
   if (!prompt) throw new Error(channel === "video" ? "视频提示词不能为空" : channel === "audio" ? "音频提示词不能为空" : "生图提示词不能为空");
-  const normalizedRequest = { ...request, prompt, providerPromptReferenceTokens };
+  const normalizedRequest = { ...request, prompt, providerPromptReferenceTokens, ...(preserveReferenceTokens ? { preserveReferenceTokens: true } : {}) };
   if (isDreaminaCliSettings(normalizedRequest.settings || {})) {
     requireDreaminaCliProfileId(normalizedRequest.settings || {});
   }

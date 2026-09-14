@@ -34,7 +34,8 @@ const [appSource, jobStoreSource, driverSource] = await Promise.all([
   readFile(new URL("../src/server/media-provider-drivers.mjs", import.meta.url), "utf8"),
 ]);
 assert.match(appSource, /providerPromptReferenceTokens:\s*whiteboardGenerationProviderReferenceTokens\(generationContext\)/u, "白板图片和视频任务必须携带已解析引用标记清单");
-assert.match(jobStoreSource, /sanitizeMediaProviderPrompt\(request\?\.prompt,\s*\{ referenceTokens: providerPromptReferenceTokens \}\)/u, "服务端创建任务前必须按解析结果清理提示词");
+assert.match(jobStoreSource, /preserveReferenceTokens = channel === "video"[\s\S]{0,260}sanitizeMediaProviderPrompt\(request\?\.prompt,\s*\{ referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens \}\)/u, "服务端创建任务前必须按通道保留或清理解析引用标记");
+assert.match(appSource, /preserveReferenceTokens: channel === "video"/u, "视频编译提示词必须保留引用标记供即梦 CLI 使用");
 assert.match(driverSource, /const providerPrompt = \(job = \{\}\) => sanitizeMediaProviderPrompt/u, "媒体驱动必须在最终厂商边界再次清理提示词");
 assert.match(driverSource, /JSON\.stringify\(targetFirstImageReferences\(references\)\.map\(\(item\) => item\.absolutePath\)/u, "即梦图片参考文件必须独立于提示词通道传递");
 assert.match(driverSource, /JSON\.stringify\(targetFirstReferences\(references\)\.map\(\(item\) => \(\{[\s\S]{0,300}absolutePath: item\.absolutePath/u, "即梦视频参考文件必须独立于提示词通道传递");

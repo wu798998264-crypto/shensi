@@ -941,6 +941,12 @@ const applyOperation = (state, operation) => {
   return reorderDocument(state, operation);
 };
 
+// Document writes use these pure state helpers so folder placement and
+// document content can be committed from the same cloned workspace state.
+export const ensureWorkspaceFolderInState = (state, operation) => ensureFolder(state, operation);
+export const applyWorkspaceDocumentLocationInState = (state, operation) => moveDocument(state, operation);
+export const refreshWorkspaceFolderMetadata = (state) => refreshCustomFolderMetadata(state);
+
 export const executeWorkspaceStructureTransaction = async ({
   appRoot,
   workspacePath,

@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.0.3-conversation-reliability";
+} from "./generation-profiles.js?v=6.1.3-conversation-reliability";
 import { assetHistoryEntryIsSuppressed, hideHistoricalAssets, normalizeAssetHistoryTombstones, unhideHistoricalAssets } from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
@@ -119,6 +119,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentTaskWayLabel } from "./conversation-agent-task-route.js?v=1.0.0";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -1571,6 +1572,7 @@ let ui = {
   workspaceDragCompletedAt: 0,
   deleteProjectTarget: null,
   confirmAction: null,
+  pendingConfirm: null,
   dreaminaConfigSyncProposal: null,
   // A verified account identity is durable evidence. Keep a very short
   // read-only status TTL so a submit does not wait on the same control-plane
@@ -17071,7 +17073,11 @@ const patchStableWhiteboardMediaCard = (card, replacement, mediaIdentity) => {
 
 const whiteboardGenerationElapsedDismissKey = (node, documentId = state.activeDocument) => {
   const generation = node?.generation;
-  if (!documentId || !node?.id || !generation || Number(generation.elapsedMs) <= 0) return "";
+  const elapsedMs = Math.max(
+    Number(generation?.elapsedMs) || 0,
+    Number(whiteboardGenerationCompletionTimes.get(String(generation?.jobId || ""))) || 0,
+  );
+  if (!documentId || !node?.id || !generation || elapsedMs <= 0) return "";
   const generationIdentity = generation.jobId
     || generation.createdAt
     || `${generation.channel || ""}:${generation.elapsedMs}:${generation.prompt || ""}`;
@@ -17084,17 +17090,15 @@ const whiteboardGenerationCompletedElapsedMs = (node) => Math.max(
 );
 
 const dismissWhiteboardGenerationElapsed = (card) => {
-  const metrics = card?.querySelector(".whiteboard-generation-metrics.complete");
-  if (!metrics) return false;
+  const status = card?.querySelector(":scope > .whiteboard-card-kind[data-generation-complete-status=\"true\"]");
+  if (!status) return false;
   const node = whiteboardNodeById(card.dataset.canvasNode);
   const dismissKey = whiteboardGenerationElapsedDismissKey(node);
   if (dismissKey) {
     addToBoundedSet(ui.whiteboardDismissedGenerationElapsed, dismissKey, WHITEBOARD_DISMISSED_METRIC_LIMIT);
     persistWhiteboardDismissedGenerationElapsed(ui.whiteboardDismissedGenerationElapsed);
   }
-  const status = metrics.closest(".whiteboard-card-kind");
-  metrics.remove();
-  if (status && !status.textContent.trim() && !status.querySelector(".whiteboard-generation-spinner")) status.remove();
+  status.remove();
   return true;
 };
 
@@ -17444,8 +17448,15 @@ const renderWhiteboard = (documentState) => {
     const visibleMediaIdentity = ["image", "video"].includes(visibleNode.kind) && visibleMediaUrl
       ? whiteboardCardRenderSignature({ kind: visibleNode.kind, source: visibleNode.kind === "video" ? visibleVideoUrl : visibleMediaUrl, poster: visiblePosterUrl })
       : "";
-    const generationChannel = ["image", "video", "audio"].includes(candidate?.channel) ? candidate.channel : "text";
-    const generationTaskLabel = generating
+    const completedGenerationElapsedMs = whiteboardGenerationCompletedElapsedMs(node);
+    const generationElapsedDismissed = ui.whiteboardDismissedGenerationElapsed.has(whiteboardGenerationElapsedDismissKey(node));
+    const completedGenerationStatusVisible = Boolean(!candidate && !generating && !generationElapsedDismissed && completedGenerationElapsedMs > 0);
+    const generationChannel = ["text", "image", "video", "audio"].includes(candidate?.channel)
+      ? candidate.channel
+      : ["text", "image", "video", "audio"].includes(node.generation?.channel)
+        ? node.generation.channel
+        : "text";
+    const generationTaskLabel = generating || completedGenerationStatusVisible
       ? uiText({ text: "文本", image: "图片", video: "视频", audio: "音频" }[generationChannel])
       : "";
     const queuePosition = Number.isFinite(Number(candidate?.providerQueuePosition)) && candidate?.providerQueuePosition !== null
@@ -17471,20 +17482,22 @@ const renderWhiteboard = (documentState) => {
         ? durableMediaCandidate
           ? `${mediaGenerationPhaseText(candidate)}${candidate.error ? `：${String(candidate.error).slice(0, 120)}` : ""}`
           : uiText("连接中断，需重新生成")
-      : generating ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText("正在生成") : "";
+      : candidate
+        ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText(candidate.status === "complete" ? "生成成功" : "正在生成")
+      : completedGenerationStatusVisible ? uiText("生成成功") : "";
     const generationMeasurementActive = Boolean(candidate && whiteboardGenerationMeasurementActive(candidate));
     const generationMeasurementStarted = Boolean(candidate && Number(candidate.startedAt) > 0);
     const visibleGenerationProgress = Boolean(candidate && whiteboardGenerationProgressActive(candidate) && whiteboardProgressTarget(candidate) !== null);
-    const generationElapsedDismissed = ui.whiteboardDismissedGenerationElapsed.has(whiteboardGenerationElapsedDismissKey(node));
     const generationMetrics = candidate && (generationMeasurementActive || (candidateInterrupted && generationMeasurementStarted))
       ? candidateInterrupted
         ? `<span class="whiteboard-generation-metrics interrupted"><time>${escapeHtml(formatWhiteboardGenerationDuration(candidate.elapsedMs))}</time></span>`
         : `<span class="whiteboard-generation-metrics">${visibleGenerationProgress ? `<b>${whiteboardDisplayedProgress(candidate)}%</b>` : ""}<time>${escapeHtml(formatWhiteboardGenerationDuration(candidate.elapsedMs))}</time></span>`
-      : !generating && !generationElapsedDismissed && whiteboardGenerationCompletedElapsedMs(node) > 0
-        ? `<span class="whiteboard-generation-metrics complete"><span>${escapeHtml(uiText("已完成"))} · ${escapeHtml(uiText("总用时"))}</span><time>${escapeHtml(formatWhiteboardGenerationDuration(whiteboardGenerationCompletedElapsedMs(node)))}</time></span>`
+      : completedGenerationStatusVisible
+        ? `<span class="whiteboard-generation-metrics complete"><span>${escapeHtml(uiText("总用时"))}</span><time>${escapeHtml(formatWhiteboardGenerationDuration(completedGenerationElapsedMs))}</time></span>`
         : "";
+    const generationStatusVisible = Boolean(candidate || completedGenerationStatusVisible);
     const kindMarkup = generationTaskLabel || generationStatusLabel || generationMetrics
-      ? `<span class="whiteboard-card-kind ${generating || candidateInterrupted ? "whiteboard-generation-status" : ""} ${candidateInterrupted ? "interrupted" : ""}"${candidate?.error ? ` title="${escapeHtml(candidate.error)}"` : ""}>${generationTaskLabel ? `<span class="whiteboard-generation-task-type" data-generation-task-type="${escapeHtml(generationChannel)}">${escapeHtml(generationTaskLabel)}</span>` : ""}${generationStatusLabel ? `<span class="whiteboard-generation-phase-label">${escapeHtml(generationStatusLabel)}</span>` : ""}${generationMetrics}${generating ? '<span class="whiteboard-generation-spinner" aria-hidden="true"></span>' : ""}</span>`
+      ? `<span class="whiteboard-card-kind ${generationStatusVisible ? "whiteboard-generation-status" : ""} ${candidateInterrupted ? "interrupted" : ""}"${completedGenerationStatusVisible ? ' data-generation-complete-status="true" title="点击卡片隐藏本次生成状态"' : candidate?.error ? ` title="${escapeHtml(candidate.error)}"` : ""}>${generationTaskLabel ? `<span class="whiteboard-generation-task-type" data-generation-task-type="${escapeHtml(generationChannel)}">${escapeHtml(generationTaskLabel)}</span>` : ""}${generationStatusLabel ? `<span class="whiteboard-generation-phase-label">${escapeHtml(generationStatusLabel)}</span>` : ""}${generationMetrics}${generating ? '<span class="whiteboard-generation-spinner" aria-hidden="true"></span>' : ""}</span>`
       : "";
     const textEditor = lowDetail
       ? ""
@@ -18715,6 +18728,7 @@ const renderExecutionProcess = (message) => {
   const execution = message.execution;
   if (!execution) return "";
   const pending = conversationTaskMessageIsRunning(message);
+  const nativeAgentExecution = execution.strength === "native_agent";
   const agentExecution = execution.strength === "agent";
   const agentRuntime = agentExecution ? agentRuntimeProfileFromExecution(execution) : null;
   const intentEnvelope = execution.taskRoute?.intentEnvelope && typeof execution.taskRoute.intentEnvelope === "object"
@@ -18795,7 +18809,9 @@ const renderExecutionProcess = (message) => {
   const heartbeatLabel = Number.isFinite(heartbeatTimestamp)
     ? new Date(heartbeatTimestamp).toLocaleString("zh-CN", { hour12: false })
     : "";
-  const strengthLabel = qualityReviewExecution ? "内容质检" : execution.strength === "agent" ? agentRuntime.label : execution.strength === "image" ? "图片生成" : execution.strength === "video" ? "视频生成" : execution.strength === "general" ? "普通对话" : execution.strength === "operation" ? "软件操作" : conversationOnlyExecution ? "仅对话" : execution.strength === "full" ? "完整创作" : execution.strength === "standard" ? "正式创作" : execution.strength === "diagnostic" ? "内容质检" : execution.direct ? "直接生成" : "创作引导";
+  const strengthLabel = nativeAgentExecution
+    ? nativeAgentTaskWayLabel({ execution, guided: guidedExecution, qualityReview: qualityReviewExecution })
+    : qualityReviewExecution ? "内容质检" : execution.strength === "agent" ? agentRuntime.label : execution.strength === "image" ? "图片生成" : execution.strength === "video" ? "视频生成" : execution.strength === "general" ? "普通对话" : execution.strength === "operation" ? "软件操作" : conversationOnlyExecution ? "仅对话" : execution.strength === "full" ? "完整创作" : execution.strength === "standard" ? "正式创作" : execution.strength === "diagnostic" ? "内容质检" : execution.direct ? "直接生成" : "Agent 执行";
   const agentCapabilityText = agentExecution ? agentCapabilitySummary(agentRuntime) : "";
   const taskLifecycle = execution.lifecycle && typeof execution.lifecycle === "object"
     ? execution.lifecycle
@@ -18957,7 +18973,12 @@ const renderExecutionProcess = (message) => {
   const contextReadState = executionContextReadStateFor(execution);
   const actualReadDocumentCount = contextReadState.actual?.documents?.length || 0;
   const actualReadSkillCount = contextReadState.actual?.skills?.length || 0;
-  return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}" ${expanded ? "open" : ""}>
+  const nativeDeliveryTargets = nativeAgentExecution ? (execution.deliveryTargets || []) : [];
+  const nativeTargetText = nativeDeliveryTargets
+    .map((item) => item.title || item.documentId)
+    .filter(Boolean)
+    .join("、");
+  return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}"${nativeAgentExecution ? ` data-native-task-card="${escapeHtml(message.id)}"` : ""} ${expanded ? "open" : ""}>
     <summary><span class="execution-progress-ring" style="--execution-progress:${progress * 3.6}deg" role="progressbar" aria-label="任务处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span>${escapeHtml(progressLabel)}</span></span><span>${escapeHtml(uiText(processTitle))}${!agentExecution && stepProgress ? ` · ${escapeHtml(stepProgress)}` : ""}</span><span class="execution-time"${timerData}>${timeText}</span></summary>
     ${pending && execution.requestId ? `<button class="execution-stop" type="button" data-cancel-run="${escapeHtml(execution.requestId)}" title="${cancelling ? "正在终止任务" : "终止任务"}" ${cancelling ? "disabled" : ""}>${icon("\uE71A", cancelling ? "正在终止任务" : "终止任务")}</button>` : ""}
     ${pending && agentExecution && execution.agentTurnId ? `<button class="execution-stop" type="button" data-stop-codex-turn="${escapeHtml(execution.agentTurnId)}" title="${escapeHtml(uiText("停止 Agent 任务"))}">${icon("\uE71A", uiText("停止 Agent 任务"))}</button>` : ""}
@@ -18971,8 +18992,8 @@ const renderExecutionProcess = (message) => {
       ${agentExecution ? `<div><dt>${escapeHtml(uiText("模型"))}</dt><dd>${escapeHtml(agentRuntime.model || "本次运行未记录模型")}</dd></div><div><dt>${escapeHtml(uiText("Agent 能力"))}</dt><dd>${escapeHtml(agentCapabilityText)}</dd></div><div><dt>${escapeHtml(uiText("Agent 阶段"))}</dt><dd>${escapeHtml(agentPhase)}</dd></div><div><dt>${escapeHtml(uiText("Agent 耗时"))}</dt><dd class="execution-agent-elapsed"${agentTimerData}>${escapeHtml(agentElapsedText)}</dd></div>` : ""}
       <div><dt>${escapeHtml(uiText("当前阶段"))}</dt><dd>${escapeHtml(taskLifecycleSummary)}</dd></div>
       ${intentSummary ? `<div><dt>本轮任务</dt><dd>${escapeHtml(intentSummary)}</dd></div>` : ""}
-      <div><dt>目标文档</dt><dd>${escapeHtml(execution.targetLabel || "当前绑定文档")}</dd></div>
-      <div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>
+      <div><dt>目标文档</dt><dd>${escapeHtml(nativeAgentExecution ? nativeTargetText || "尚未确定写入目标" : execution.targetLabel || "当前绑定文档")}</dd></div>
+      ${nativeAgentExecution ? "" : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
       ${contextCoverageText ? `<div><dt>创作依据</dt><dd>${escapeHtml(contextCoverageText)}</dd></div>` : ""}
       ${contextDependencySummary ? `<div><dt>资料缺口</dt><dd>${escapeHtml(contextDependencySummary)}</dd></div>` : ""}
       ${taskCanonModeLabel ? `<div><dt>${escapeHtml(uiText("正典模式"))}</dt><dd>${escapeHtml(taskCanonModeLabel)}</dd></div>` : ""}
@@ -18993,9 +19014,9 @@ const renderExecutionProcess = (message) => {
       ${routedSkillSummary || actualReadSkillCount ? `<div><dt>${escapeHtml(uiText("调用 Skill"))}</dt><dd>${escapeHtml(actualReadSkillCount ? `已实际加载 ${actualReadSkillCount} 个（完整清单见下方）` : routedSkillSummary)}</dd></div>` : ""}
       ${routedModuleNames.length ? `<div><dt>${escapeHtml(uiText("调用模组"))}</dt><dd>${escapeHtml(routedModuleNames.join("；"))}</dd></div>` : ""}
       ${experienceRecallSummary ? `<div><dt>${escapeHtml(uiText("本轮经验"))}</dt><dd>${escapeHtml(experienceRecallSummary)}</dd></div>` : ""}
-      <div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>
+      ${nativeAgentExecution ? "" : `<div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>`}
     </dl>
-    ${executionContextReadMarkup(execution)}
+    ${nativeAgentExecution ? renderNativeAgentEvidence(message) : executionContextReadMarkup(execution)}
     ${stageRows ? `<ol class="execution-stages">${stageRows}</ol>` : ""}
     ${adaptiveEvidenceRows ? `<details class="execution-capability-trace"><summary>查看本轮动态取证依据</summary><ol class="execution-stages">${adaptiveEvidenceRows}</ol></details>` : ""}
       ${experienceRecallRows ? `<details class="execution-experience-trace"><summary>${escapeHtml(uiText("查看本轮参考的经验"))}</summary><ul>${experienceRecallRows}</ul></details>` : ""}
@@ -19317,9 +19338,21 @@ const renderNativeAgentDocumentLinks = (message = {}) => {
 };
 
 const renderNativeAgentEvidence = (message) => {
-  const reads = message.execution?.actualReads || [];
-  const targets = message.execution?.deliveryTargets || [];
-  return `${targets.length ? `<div class="native-agent-targets">目标文档：${targets.map(item => escapeHtml(item.title || item.documentId)).join("、")}</div>` : ""}${reads.length ? `<details class="native-agent-reads"><summary>实际读取 ${reads.length} 项</summary>${reads.map(item => `<div>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")} · ${escapeHtml(item.title || item.id)}${item.fullText ? "（全文）" : item.readKind === "search_excerpt" ? "（检索片段）" : "（部分内容）"}</div>`).join("")}</details>` : ""}`;
+  const merged = new Map();
+  for (const item of message.execution?.actualReads || []) {
+    if (item?.userVisible === false || !(Number(item?.characters) > 0 || String(item?.title || item?.id || "").trim())) continue;
+    const key = `${item.kind === "skill" ? "skill" : "document"}:${item.id || item.title}`;
+    const previous = merged.get(key);
+    merged.set(key, previous ? { ...previous, ...item, fullText: previous.fullText || item.fullText } : item);
+  }
+  const reads = [...merged.values()];
+  if (!reads.length) return "";
+  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
+  const preview = reads.slice(0, 3).map(row).join("");
+  const remaining = reads.length > 3
+    ? `<details><summary>展开全部 ${reads.length} 项</summary><div class="native-agent-read-all">${reads.map(row).join("")}</div></details>`
+    : "";
+  return `<section class="native-agent-reads" aria-label="已读取"><header><strong>已读取</strong><span>${reads.length} 项</span></header><div class="native-agent-read-preview">${preview}</div>${remaining}</section>`;
 };
 
 const renderVerifiedLandedContent = (message = {}) => {
@@ -19800,7 +19833,6 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
       ${messageRunning ? "" : renderGeneratedVideos(message)}
       ${messageRunning ? "" : renderWorkspaceOperationPlan(message)}
       ${renderNativeAgentDocumentLinks(message)}
-      ${message.execution?.nativeAgentRunId ? `<section class="native-agent-task-card" data-native-task-card="${escapeHtml(message.id)}"><div role="status" class="${message.pending ? "native-agent-live-status" : "native-agent-final-status"}">${escapeHtml(message.execution.result || "Agent 正在处理")}</div>${renderNativeAgentEvidence(message)}</section>` : ""}
       ${messageRunning ? "" : renderLandingDocumentLinks(message)}
       ${messageRunning ? "" : `<div class="message-actions assistant-actions"><button class="icon-button bare tiny" type="button" data-copy-message="${message.id}" title="${generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制"}">${icon("\uE8C8", generatedMessageMediaEntries(message).length ? "复制生成媒体文件" : "复制")}</button>${canCreateConversationCard() ? `<button class="icon-button bare tiny" type="button" data-message-to-card="${message.id}" title="将本轮问答新建为白板卡片">${icon("\uE710", "将本轮问答新建为白板卡片")}</button>` : ""}${renderBranchNavigator(message)}</div>`}
     </section>`;
@@ -25291,6 +25323,7 @@ const openVersionSaveConfirmation = () => {
     return;
   }
   ui.confirmAction = { type: "save-version", documentId };
+  ui.pendingConfirm = { type: "save-version", documentId };
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   document.querySelector("#confirmDialogTitle").textContent = uiText("创建历史版本");
@@ -26242,6 +26275,7 @@ const openDirectoryBatchMenu = ({ x, y, targetToken = "" }) => {
 const confirmDirectorySelectionDelete = (context) => {
   if (!context?.tokens?.length || state.temporaryNotebook || state.readOnly) return false;
   ui.confirmAction = { type: "delete-directory-selection", context: clone(context) };
+  ui.pendingConfirm = { type: "delete-directory-selection", context: clone(context) };
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   const folderCount = context.tokens.filter((token) => token.startsWith("folder:")).length;
@@ -35949,6 +35983,8 @@ const monitorNativeConversation = (runtime, pending) => {
           else reads.push(event.payload);
         } else if (event.type === "delivery") {
           pending.execution.deliveryTargets = event.payload.targets || [];
+          const routedTask = agentTaskRouteFromDelivery(event.payload);
+          if (routedTask) pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), ...routedTask };
         } else if (event.type === "progress") {
           pending.streamText = "";
           pending.execution.result = event.payload.message;
@@ -35979,6 +36015,15 @@ const monitorNativeConversation = (runtime, pending) => {
           pending.execution.agentResultReferences ??= [];
           if (!pending.execution.agentResultReferences.some((entry) => entry.sequence === event.sequence)) {
             pending.execution.agentResultReferences.push({ sequence: event.sequence, type: event.type, ...event.payload });
+          }
+          if (event.type === "media_job" || event.type === "media_saved") {
+            const taskKind = event.payload.channel === "video" ? "video_generation" : "image_generation";
+            pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), mode: "media", taskKind, direct: true };
+            pending.execution.generationJobId = event.payload.jobId || pending.execution.generationJobId || "";
+            pending.execution.mediaJobStatus = event.type === "media_saved" ? "complete" : "running";
+            pending.execution.result = event.type === "media_saved"
+              ? `${event.payload.channel === "video" ? "视频" : "图片"}生成并归档完成`
+              : `${event.payload.channel === "video" ? "视频" : "图片"}已提交，正在生成`;
           }
           if (event.type === "document_saved" && event.payload.trustedDocumentSave) {
             const targets = pending.execution.deliveryTargets ??= [];
@@ -36097,6 +36142,9 @@ const executeConversationAgentMessage = async (content, options) => {
     image: snapshotAgentConfiguration(workspaceState.settings.imageConnections || []),
     video: snapshotAgentConfiguration(workspaceState.settings.videoConnections || []),
   };
+  const mediaDispatch = normalizeConversationMediaDispatchContract(queuedItem?.mediaDispatch)
+    || normalizeConversationMediaDispatchContract(options.mediaDispatch);
+  const initialTaskRoute = agentTaskRouteFromMediaDispatch(mediaDispatch);
   const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
     time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []) };
   removeImmediateConversationInstruction(options.immediateInstructionId);
@@ -36104,7 +36152,8 @@ const executeConversationAgentMessage = async (content, options) => {
   const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
     target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
     execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
-      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理" } };
+      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理",
+      ...(initialTaskRoute ? { taskRoute: initialTaskRoute } : {}) } };
   taskMessages.push(pending);
   conversation.messages = taskMessages;
   const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,
@@ -36126,6 +36175,7 @@ const executeConversationAgentMessage = async (content, options) => {
       })),
       previousResults: taskMessages.flatMap((message) => message.execution?.agentResultReferences || []),
       settings: profileSettings, references: refs.references || [], selectedSkills: refs.skillReferences || [], attachments: refs.attachments || [], mediaProfiles,
+      mediaDispatch,
     });
     pending.execution.nativeAgentRunId = started.id;
     conversation.nativeAgentRun = { id: started.id, pendingMessageId: pending.id, workspacePath: taskContextSnapshot.workspacePath };
@@ -40146,6 +40196,7 @@ const confirmProjectDelete = (target) => {
   ui.deleteProjectTarget = target;
   ui.deleteDocumentId = null;
   ui.confirmAction = null;
+  ui.pendingConfirm = { type: target.workspaceKind === "notebook" ? "delete-notebook" : "delete-project", target: clone(target) };
   const notebook = target.workspaceKind === "notebook";
   document.querySelector("#confirmDialogTitle").textContent = notebook ? "删除笔记本" : "删除作品";
   document.querySelector("#confirmDialogCopy").textContent = notebook
@@ -40165,6 +40216,7 @@ const confirmFolderDelete = (folderId) => {
   const documentCount = itemsForModuleView(record.moduleId, record.viewId).filter(([, , options = {}]) => folderIds.has(options.customFolderId)).length;
   const childFolderCount = Math.max(0, folderIds.size - 1);
   ui.confirmAction = { type: "delete-folder", folderId };
+  ui.pendingConfirm = { type: "delete-folder", folderId };
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   document.querySelector("#confirmDialogTitle").textContent = "删除文件夹";
@@ -40191,6 +40243,7 @@ const confirmManuscriptVolumeDelete = (node) => {
   const childFolderCount = selection.customFolders.length;
   if (!documentCount && !childFolderCount) return;
   ui.confirmAction = { type: "delete-manuscript-volume", folderId: node.id, label: node.label };
+  ui.pendingConfirm = { type: "delete-manuscript-volume", folderId: node.id, label: node.label };
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   document.querySelector("#confirmDialogTitle").textContent = "删除分卷";
@@ -40223,6 +40276,7 @@ const treeFolderDeleteSelection = (node) => {
 const confirmTreeFolderDelete = ({ node, moduleId, viewId }) => {
   const selection = treeFolderDeleteSelection(node);
   ui.confirmAction = { type: "delete-tree-folder", node: clone(node), moduleId, viewId };
+  ui.pendingConfirm = { type: "delete-tree-folder", node: clone(node), moduleId, viewId };
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   document.querySelector("#confirmDialogTitle").textContent = "删除文件夹";
@@ -40683,7 +40737,10 @@ const renameFolder = async (folderId, nextName, context = {}) => {
 
 const deleteCustomFolder = async (folderId) => {
   const record = customFolder(folderId);
-  if (!record) return false;
+  if (!record) {
+    showToast("文件夹不存在或已被移除");
+    return false;
+  }
   const rollbackState = clone(state);
   const scope = { type: "volume", id: folderId, label: record.label, moduleId: record.moduleId, viewId: record.viewId };
   snapshotVolume(scope, `文件夹“${record.label}”移入回收区之前的结构`);
@@ -40743,6 +40800,10 @@ const deleteCustomFolder = async (folderId) => {
 };
 
 const deleteTreeFolder = async ({ node, moduleId, viewId }) => {
+  if (!node?.id) {
+    showToast("未找到可删除的文件夹");
+    return false;
+  }
   const rollbackState = clone(state);
   const selection = treeFolderDeleteSelection(node);
   const documentIds = selection.documentIds;
@@ -40807,7 +40868,10 @@ const deleteManuscriptVolume = async ({ folderId, label }) => {
   const items = clone(selection.items);
   const documentIds = selection.documentIds;
   const hydratedDocumentIds = documentIds.filter((id) => state.documents[id]);
-  if (!documentIds.length && !selection.customFolders.length) return false;
+  if (!documentIds.length && !selection.customFolders.length) {
+    showToast("分卷不存在或已被移除");
+    return false;
+  }
   const rollbackState = clone(state);
   const scope = { type: "volume", id: folderId, label, moduleId: "manuscript", viewId: "novel" };
   snapshotVolume(scope, `分卷“${label}”移入回收区之前的结构`);
@@ -40946,10 +41010,16 @@ const deleteDocument = async (documentId) => {
     documentId,
     moduleId: locatedDocument?.moduleId || documentState?.moduleId,
     workspaceKind: state.workspaceKind,
-  })) return false;
+  })) {
+    showToast("该文档或白板属于系统固定内容，不能删除");
+    return false;
+  }
   if (!documentState) {
     const orphan = orphanTreeReferenceTrashPayload({ documentId, located: locatedDocument, fallbackModuleId: state.activeModule });
-    if (!orphan) return false;
+    if (!orphan) {
+      showToast("文档目录记录不存在或已被移除");
+      return false;
+    }
     const rollbackState = clone(state);
     const viewId = itemWorkspaceView(orphan.moduleId, orphan.item);
     snapshotStructure(orphan.moduleId, viewId, `${orphan.title}移入回收区之前的目录结构`);
@@ -43663,6 +43733,7 @@ elements.documentMenu.addEventListener("click", async (event) => {
   }
   if (action === "delete") {
     ui.deleteDocumentId = ui.menuDocument;
+    ui.pendingConfirm = { type: "delete-document", documentId: ui.menuDocument };
     ui.deleteProjectTarget = null;
     ui.confirmAction = null;
     document.querySelector("#confirmDialogTitle").textContent = "删除文档";
@@ -46885,10 +46956,16 @@ const pushWhiteboardHistory = (beforeCanvas, { documentId = state.activeDocument
 
 const deleteWhiteboardNode = (nodeId) => {
   const documentState = activeWhiteboardDocument();
-  if (!documentState || !nodeId) return false;
+  if (!documentState || !nodeId) {
+    showToast("未找到可删除的白板卡片");
+    return false;
+  }
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   const removed = removeCanvasNodeWithRecord(documentState.canvas, nodeId);
-  if (!removed.record) return false;
+  if (!removed.record) {
+    showToast("白板卡片已不存在或无法删除");
+    return false;
+  }
   removeWhiteboardGenerationReferencesForEdges(documentState.canvas, removed.record.edges?.map((edge) => edge.id), removed.canvas);
   closeWhiteboardGenerationSessionsForNodes([nodeId], { documentId: state.activeDocument });
   finishWhiteboardEditing();
@@ -46908,7 +46985,10 @@ const deleteWhiteboardNode = (nodeId) => {
 const deleteWhiteboardNodes = (nodeIds = []) => {
   const documentState = activeWhiteboardDocument();
   const ids = [...new Set(nodeIds.map(String).filter(Boolean))];
-  if (!documentState || !ids.length) return false;
+  if (!documentState || !ids.length) {
+    showToast("未找到可删除的白板卡片");
+    return false;
+  }
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   let canvas = documentState.canvas;
   let deleted = 0;
@@ -46924,7 +47004,10 @@ const deleteWhiteboardNodes = (nodeIds = []) => {
     deletedIds.push(nodeId);
     removedEdgeIds.push(...(removal.record.edges || []).map((edge) => edge.id));
   }
-  if (!deleted) return false;
+  if (!deleted) {
+    showToast("所选白板卡片已不存在或无法删除");
+    return false;
+  }
   removeWhiteboardGenerationReferencesForEdges(documentState.canvas, removedEdgeIds, canvas);
   closeWhiteboardGenerationSessionsForNodes(deletedIds, { documentId: state.activeDocument });
   finishWhiteboardEditing();
@@ -50359,6 +50442,40 @@ const scheduleUiInitializationAfterPaint = (callback, { timeout = 160 } = {}) =>
   fallbackTimer = setTimeout(dispatch, Math.max(0, Number(timeout) || 160));
 };
 
+const releaseWhiteboardGenerationDialogInteractivity = (dialog, nodeId) => {
+  if (!dialog?.open || dialog.dataset.anchorNodeId !== String(nodeId || "")) return false;
+  dialog.removeAttribute("aria-busy");
+  dialog.inert = false;
+  return true;
+};
+
+const scheduleWhiteboardGenerationInitialization = (dialog, nodeId, callback) => {
+  const documentId = String(dialog?.dataset?.anchorDocumentId || state.activeDocument || "");
+  scheduleUiInitializationAfterPaint(() => {
+    const current = dialog?.open
+      && dialog.dataset.anchorNodeId === String(nodeId || "")
+      && dialog.dataset.anchorDocumentId === documentId
+      && state.activeDocument === documentId;
+    if (!current) {
+      // A stale deferred callback must never leave a native dialog intercepting
+      // clicks while inert. A newer card/session owns a different anchor and is
+      // intentionally left alone for its own initializer.
+      if (dialog?.open && dialog.dataset.anchorNodeId === String(nodeId || "")) {
+        releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+        dialog.close();
+      }
+      return;
+    }
+    try {
+      callback();
+    } catch (error) {
+      console.error("Whiteboard generation toolbar initialization failed:", error);
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+      showToast(`生成操作栏初始化失败：${error.message || "未知错误"}。提示词仍可编辑，请关闭后重试。`);
+    }
+  });
+};
+
 const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
   // A card click schedules a delayed open so a drag can still start. When an
   // explicit open has already reached this point, cancel that pending callback;
@@ -50389,28 +50506,34 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
   syncWhiteboardCardGenerationTypeIndicator(nodeId, whiteboardGenerationConfigFor(dialog)?.channel);
   renderWhiteboardGenerationCollapsedSessions();
   renderWhiteboardGenerationTypeMenu(dialog);
-  requestAnimationFrame(() => {
+  let finalized = false;
+  const finalizeOpen = () => {
+    if (finalized) return;
     if (!dialog.open || dialog.dataset.anchorNodeId !== nodeId) return;
-    positionWhiteboardGenerationDialog(dialog, nodeId);
-    const richFocusTarget = focusTarget?.closest?.(".whiteboard-generation-prompt-editor")?.querySelector?.(".whiteboard-generation-inline-mentions");
-    if (richFocusTarget) {
-      richFocusTarget.scrollIntoView({ block: "center", inline: "nearest" });
-      const selection = document.getSelection();
-      const hasLiveSelection = document.activeElement === richFocusTarget
-        && selection?.rangeCount
-        && richFocusTarget.contains(selection.anchorNode);
-      if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(richFocusTarget.closest("form"), { focus: true });
-    } else {
-      focusTarget?.focus({ preventScroll: true });
+    finalized = true;
+    try {
+      positionWhiteboardGenerationDialog(dialog, nodeId);
+      const richFocusTarget = focusTarget?.closest?.(".whiteboard-generation-prompt-editor")?.querySelector?.(".whiteboard-generation-inline-mentions");
+      if (richFocusTarget) {
+        richFocusTarget.scrollIntoView({ block: "center", inline: "nearest" });
+        const selection = document.getSelection();
+        const hasLiveSelection = document.activeElement === richFocusTarget
+          && selection?.rangeCount
+          && richFocusTarget.contains(selection.anchorNode);
+        if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(richFocusTarget.closest("form"), { focus: true });
+      } else {
+        focusTarget?.focus({ preventScroll: true });
+      }
+      dialog.scrollTop = 0;
+      saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
+    } finally {
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
     }
-    dialog.scrollTop = 0;
-    saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
-    // Ready means all synchronous positioning/focus/draft work has finished.
-    // Previously the flag was cleared one frame early, so an immediate Close
-    // or type switch could land inside this final block and feel ignored.
-    dialog.removeAttribute("aria-busy");
-    dialog.inert = false;
-  });
+  };
+  requestAnimationFrame(finalizeOpen);
+  // Chromium can throttle RAF while restoring/minimizing a desktop window.
+  // The fallback guarantees the prompt editor cannot stay inert forever.
+  setTimeout(finalizeOpen, 180);
 };
 
 const whiteboardGenerationExplicitReferenceIds = (form) => new Set(String(form?.elements?.explicitReferences?.value || "")
@@ -52070,10 +52193,7 @@ const openWhiteboardGenerateDialog = (nodeId, { centered = false } = {}) => {
   // Close choice but keeps the saved prompt, so generated cards remain
   // click-to-open after a successful run.
   primeWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardGenerateDialog.open
-      || elements.whiteboardGenerateDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardGenerateDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardGenerateDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("text", nodeId);
     elements.whiteboardGenerateForm.dataset.nodeId = nodeId;
@@ -52546,10 +52666,7 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardImageDialog.open
-      || elements.whiteboardImageDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardImageDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardImageDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("image", nodeId);
     elements.whiteboardImageForm.dataset.nodeId = nodeId;
@@ -52910,10 +53027,7 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardVideoDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardVideoDialog.open
-      || elements.whiteboardVideoDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardVideoDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardVideoDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("video", nodeId);
     elements.whiteboardVideoForm.dataset.nodeId = nodeId;
@@ -52996,10 +53110,7 @@ const openWhiteboardAudioDialog = (nodeId, { allowUnavailable = false, centered 
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
   primeWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, { centered });
-  scheduleUiInitializationAfterPaint(() => {
-    if (!elements.whiteboardAudioDialog.open
-      || elements.whiteboardAudioDialog.dataset.anchorNodeId !== nodeId
-      || elements.whiteboardAudioDialog.dataset.anchorDocumentId !== state.activeDocument) return;
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardAudioDialog, nodeId, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("audio", nodeId);
     const form = elements.whiteboardAudioForm;
@@ -54421,6 +54532,7 @@ const buildWhiteboardMediaProviderPrompt = async ({ prompt, channel, generationC
   return sanitizeMediaProviderPrompt(providerSource, {
     maxCharacters: Infinity,
     referenceTokens: providerReferenceTokens,
+    preserveReferenceTokens: channel === "video",
   });
 };
 
@@ -55556,6 +55668,7 @@ const runCompositeLongVideoManifest = async ({ nodeId, manifest, workspaceKind, 
           prompt: segment.prompt,
           displayPrompt: segment.localPrompt,
           providerPromptReferenceTokens: current.providerPromptReferenceTokens || [],
+          preserveReferenceTokens: true,
           settings: { ...settings, workspacePath },
           aspectRatio: current.settings.aspectRatio,
           generationMode: "smart_params",
@@ -55908,6 +56021,7 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
         prompt: effectivePrompt,
         displayPrompt: prompt,
         providerPromptReferenceTokens: whiteboardGenerationProviderReferenceTokens(generationContext),
+        preserveReferenceTokens: true,
         referenceOrder,
         promptReferenceSequence,
         settings: { ...videoSettings, workspacePath: sourceWorkspacePath },
@@ -60940,7 +61054,7 @@ const configureConversationMediaDefault = async (content, intent = conversationM
 };
 
 const dispatchComposerContent = (content, {
-  conversationId = "", taskContextSnapshot = null, displayContent = "",
+  conversationId = "", taskContextSnapshot = null, displayContent = "", mediaDispatch = null,
 } = {}) => {
   const targetConversationId = String(conversationId || state.activeConversationId || "");
   const snapshot = taskContextSnapshot ? clone(taskContextSnapshot) : captureTaskContextSnapshot(targetConversationId);
@@ -60948,7 +61062,8 @@ const dispatchComposerContent = (content, {
   const immediateInstructionId = showImmediateConversationInstruction(displayContent || content);
   dispatchAfterImmediateInstructionPaint(() => {
     void sendMessage(content, { immediateInstructionId, conversationId: targetConversationId,
-      taskContextSnapshot: snapshot, executionSurface: "agent", displayContent });
+      taskContextSnapshot: snapshot, executionSurface: "agent", displayContent,
+      mediaDispatch: normalizeConversationMediaDispatchContract(mediaDispatch) });
   });
   return true;
 };
@@ -63264,6 +63379,7 @@ elements.moveDocumentForm.addEventListener("submit", async (event) => {
 
 document.querySelector("#cancelConfirmDialog").addEventListener("click", () => {
   ui.confirmAction = null;
+  ui.pendingConfirm = null;
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   elements.confirmDialog.close();
@@ -63271,19 +63387,26 @@ document.querySelector("#cancelConfirmDialog").addEventListener("click", () => {
 
 elements.confirmDialogForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const pendingConfirm = ui.pendingConfirm;
   elements.confirmDialog.close();
-  const action = ui.confirmAction;
+  const action = pendingConfirm || ui.confirmAction;
   if (action?.type === "save-version") saveCurrentDocumentVersion(action.documentId);
   else if (action?.type === "delete-directory-selection") await deleteDirectorySelection(action.context);
   else if (action?.type === "delete-folder") await deleteCustomFolder(action.folderId);
   else if (action?.type === "delete-tree-folder") await deleteTreeFolder(action);
   else if (action?.type === "delete-manuscript-volume") await deleteManuscriptVolume(action);
+  else if (action?.type === "delete-notebook" || action?.type === "delete-project") {
+    if (action.target.workspaceKind === "notebook") await deleteNotebook(action.target);
+    else await deleteProject(action.target);
+  }
   else if (ui.deleteProjectTarget) {
     if (ui.deleteProjectTarget.workspaceKind === "notebook") await deleteNotebook(ui.deleteProjectTarget);
     else await deleteProject(ui.deleteProjectTarget);
   }
+  else if (action?.type === "delete-document") await deleteDocument(action.documentId);
   else if (ui.deleteDocumentId) await deleteDocument(ui.deleteDocumentId);
   ui.confirmAction = null;
+  ui.pendingConfirm = null;
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
 });
@@ -69162,7 +69285,7 @@ document.querySelector("#useOpenAiImageCli").addEventListener("click", () => {
   form.imageAdapter.value = "cli";
   form.imageProvider.value = "OpenAI";
   applyImageProviderPreset("OpenAI");
-  form.imageModel.value = "gpt-image-2";
+  form.imageModel.value = "gpt-image-2.5";
   form.imageBaseUrl.value = "https://api.openai.com/v1";
   form.imageTimeoutMs.value = "660000";
   form.imageCliPath.value = OPENAI_IMAGE_CLI_ALIAS;

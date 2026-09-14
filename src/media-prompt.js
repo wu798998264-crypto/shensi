@@ -46,8 +46,8 @@ const applyCharacterLimit = (value, maxCharacters) => {
   return Number.isFinite(limit) && limit > 0 ? String(value).slice(0, limit) : String(value);
 };
 
-export const sanitizeMediaProviderPrompt = (value, { maxCharacters = MEDIA_PROVIDER_PROMPT_MAX_CHARACTERS, referenceTokens = [] } = {}) => {
-  const markerCleaned = stripResolvedMediaReferenceMarkers(value, { referenceTokens });
+export const sanitizeMediaProviderPrompt = (value, { maxCharacters = MEDIA_PROVIDER_PROMPT_MAX_CHARACTERS, referenceTokens = [], preserveReferenceTokens = false } = {}) => {
+  const markerCleaned = preserveReferenceTokens ? String(value ?? "") : stripResolvedMediaReferenceMarkers(value, { referenceTokens });
   const cleaned = compactBlankLines(String(markerCleaned || "")
     .split(/\r?\n/)
     .filter((line) => {

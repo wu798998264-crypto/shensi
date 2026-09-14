@@ -25,7 +25,7 @@ const asError = (message, code = "") => {
 
 const providerPrompt = (job = {}) => sanitizeMediaProviderPrompt(
   job.request?.executionPrompt || job.request?.prompt || "",
-  { referenceTokens: job.request?.providerPromptReferenceTokens || [] },
+  { referenceTokens: job.request?.providerPromptReferenceTokens || [], preserveReferenceTokens: job.channel === "video" && String(job.request?.settings?.provider || "") === "即梦" && String(job.request?.settings?.adapter || "") === "cli" && job.request?.preserveReferenceTokens === true },
 );
 
 const parsedJson = (source) => {

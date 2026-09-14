@@ -138,7 +138,11 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   const whiteboardTarget = !job.target?.targetType
     || job.target.targetType === "whiteboard-node"
     || Boolean(job.target?.nodeId);
-  if (status === "complete") return whiteboardTarget;
+  // A completed provider job is no longer a blocking operation. If its
+  // result has not been applied to a card, the card/result-recovery path owns
+  // that repair; it must not pollute the user's blocking queue or hold a
+  // provider credential lock.
+  if (status === "complete") return false;
   if (!MEDIA_RECOVERY_BLOCKING_STATUSES.has(status)) return false;
   if (whiteboardTarget && whiteboardMediaJobHoldsCard(job)) return true;
   return job.availableActions?.dismissUncertain === true;

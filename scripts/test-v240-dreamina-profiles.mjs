@@ -31,7 +31,8 @@ const migratedSettings = normalizeGenerationProfiles({
   }],
 });
 assert.equal(migratedSettings.textConnections.find(({ id }) => id === "text-default")?.remarkName, "麻雀");
-assert.equal(migratedSettings.imageConnections.find(({ id }) => id === "image-default")?.remarkName, "麻雀");
+assert.equal(migratedSettings.imageConnections.some(({ id }) => id === "image-default"), false, "旧内置 GPT 图片配置必须移除");
+assert.ok(migratedSettings.imageConnections.some(({ id }) => id === "image-cockpit-aggregate-api"), "聚合 API 必须接替内置 GPT 图片入口");
 assert.equal(migratedSettings.videoConnections.find(({ id }) => id === "video-dreamina-cli")?.remarkName, "柏物语");
 assert.ok(migratedSettings.videoConnections
   .filter(({ provider, adapter }) => provider === "即梦" && adapter === "cli")
@@ -41,7 +42,7 @@ const portableImageRemarkMigration = normalizeGenerationProfiles({
   cliRemarkMigrationVersion: 1,
   imageConnections: [{ id: "image-default", provider: "OpenAI", adapter: "cli", model: "gpt-image-2" }],
 });
-assert.equal(portableImageRemarkMigration.imageConnections.find(({ id }) => id === "image-default")?.remarkName, "麻雀");
+assert.equal(portableImageRemarkMigration.imageConnections.some(({ id }) => id === "image-default"), false);
 
 const appSource = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(appSource, /providerId === "即梦"[\s\S]*?option\.value === "seedance2\.5"[\s\S]*?form\.videoModel\.value = "seedance2\.5"/);

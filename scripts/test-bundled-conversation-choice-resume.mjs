@@ -35,6 +35,8 @@ try {
         }
         if (calls === 2) {
           assert.match(toolOutputs, /方向乙/u, "继续推理请求必须包含用户刚确认的选择");
+          assert.match(toolOutputs, /userInstruction/u, "选择结果必须以最新用户指令语义返回给同一 Agent");
+          assert.match(toolOutputs, /continueOriginalTask/u, "选择结果必须明确要求继续原任务");
           return Response.json({ choices: [{ message: { role: "assistant", content: null, tool_calls: [{
             id: "delivery-one",
             type: "function",

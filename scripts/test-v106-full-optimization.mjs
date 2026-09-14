@@ -113,8 +113,8 @@ assert.match(app, /data-capability-context-action="disable"/u);
 assert.match(app, /模型基础能力回退/u);
 
 // Generic provider architecture exposes API/CLI separation and agent environments.
-assert.match(modelPresets, /id:\s*"Trae Work"/u);
-assert.match(modelPresets, /id:\s*"WorkBuddy"/u);
+assert.match(app, /option value="trae_work">Trae Work<\/option>/u);
+assert.match(app, /option value="workbuddy">WorkBuddy<\/option>/u);
 assert.match(app, /syncGenerationAdapterFields/u);
 assert.match(app, /for \(const key of \["baseUrl", "apiKey"\]\)[\s\S]{0,180}label\.hidden = isCli/u);
 assert.match(app, /for \(const key of \["cliPath", "cliArgs"\]\)[\s\S]{0,180}label\.hidden = !isCli/u);

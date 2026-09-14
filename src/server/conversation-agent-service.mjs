@@ -13,7 +13,7 @@ const runIdFor = (request) => {
 };
 const terminal = (status) => ["completed", "failed", "cancelled", "interrupted"].includes(status);
 const safeRequest = (value) => JSON.parse(JSON.stringify(value, (key, entry) => /api.?key|password|secret|access.?token|refresh.?token/iu.test(key) ? undefined : entry));
-const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
+const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
 const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
   const prompt = String(question || "").trim();
@@ -187,7 +187,12 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         const value = await answer;
         record.status = "running";
         await event(entry, "answer", { decisionId: decision.id, answer: value });
-        return { answer: value };
+        return {
+          answer: value,
+          instruction: value,
+          userInstruction: value,
+          continueOriginalTask: true,
+        };
       };
       const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, routeBundle, readSkill: (id) => readSkill(id, request), browser,
         ask: requestUserInput,
@@ -201,21 +206,21 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model, permissionMode: request.settings.agentPermissionMode });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
-      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
+      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
       // Reconcile conversation-only delivery against the original user request,
       // not the writer's self-declared mode. This stays semantic, never keyword-routed.
       if (tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
         await event(entry, "progress", { message: "正在核对成果归档" });
         const previousText = result.text;
-        const checked = await run({ ...runOptions, deliveryReview: true, prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。若需要归档，先声明documents并完成写入；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
+        const checked = await run({ ...runOptions, deliveryReview: true, prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
         result = { ...checked, text: checked.text || previousText };
       }
       for (let attempt = 0; attempt < 2 && tools.deliveryStatus; attempt++) {
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;
         await event(entry, "progress", { message: "Agent 正在核对并完成交付" });
-        result = await run({ ...runOptions, prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: result.text, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。调用 interaction.delivery 声明实际交付方式；要求保存的内容必须用 documents 工具完成并验收。不要重复已成功的操作，不要凭文字声称已保存。" }) });
+        result = await run({ ...runOptions, prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: result.text, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。调用 interaction.delivery 声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存或已生成。" }) });
       }
       const finalDelivery = tools.deliveryStatus?.();
       if (finalDelivery && (!finalDelivery.declared || finalDelivery.missing.length || finalDelivery.failed.length)) {

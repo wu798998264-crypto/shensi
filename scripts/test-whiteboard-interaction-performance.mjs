@@ -438,6 +438,19 @@ try {
   const generationReadyStart = await evaluate("performance.now()");
   await waitFor("document.querySelector('#whiteboardGenerateDialog')?.getAttribute('aria-busy') !== 'true'", "文本生成操作栏可交互");
   const generationReadyMs = generationOpen.latencyMs + (await evaluate("performance.now()") - generationReadyStart);
+  const promptSelector = "#whiteboardGenerateDialog .whiteboard-generation-inline-mentions";
+  await clickCenter(promptSelector);
+  await cdp("Input.insertText", { text: "真实键盘输入提示词" });
+  await waitFor("document.querySelector('#whiteboardGenerateForm').elements.instruction.value.includes('真实键盘输入提示词')", "卡片生成提示词真实输入");
+  const promptInputState = await evaluate(`(() => {
+    const dialog = document.querySelector('#whiteboardGenerateDialog');
+    const editor = dialog?.querySelector('.whiteboard-generation-inline-mentions');
+    return { focused: document.activeElement === editor, inert: dialog?.inert === true, busy: dialog?.getAttribute('aria-busy'), text: editor?.innerText || '' };
+  })()`);
+  assert.equal(promptInputState.focused, true, "生成操作栏提示词区域必须可获得真实键盘焦点");
+  assert.equal(promptInputState.inert, false, "生成操作栏初始化后不得残留 inert 阻止输入");
+  assert.notEqual(promptInputState.busy, "true", "生成操作栏初始化后不得残留忙碌门禁");
+  assert.match(promptInputState.text, /真实键盘输入提示词/u);
   await evaluate(`document.querySelector('#whiteboardTextRuntimeButton')?.click(); true`);
   await waitFor("document.querySelector('#whiteboardTextRuntimePanel')?.hidden === false", "卡片文本模型设置展开");
   const modelVerificationEvidence = await evaluate(`(() => ({

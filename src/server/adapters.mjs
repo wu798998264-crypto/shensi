@@ -1690,7 +1690,7 @@ const videoSize = (aspectRatio, resolution) => {
 const generateVideoWithPreparedReferences = async ({ settings, prompt, signal, aspectRatio = "16:9", generationMode = "smart_params", duration = 4, resolution = "720p", multiframeTransitions = [], referenceImages = [], referencePromptTokens = [] }) => {
   const mode = videoGenerationMode(settings);
   if (!mode) throw new Error("当前所选模型不具备已接入的视频生成能力");
-  const effectivePrompt = sanitizeMediaProviderPrompt(prompt, { referenceTokens: referencePromptTokens });
+  const effectivePrompt = sanitizeMediaProviderPrompt(prompt, { referenceTokens: referencePromptTokens, preserveReferenceTokens: String(settings?.provider || "") === "即梦" && String(settings?.adapter || "") === "cli" });
   if (!effectivePrompt) throw new Error("视频提示词只包含内部控制规则，没有可提交的创作内容");
   if (mode === "media_cli") {
     const template = String(settings.cliArgs || (settings.cliPath === DREAMINA_VIDEO_CLI_ALIAS ? DREAMINA_VIDEO_CLI_ARGS : ""));
@@ -1837,7 +1837,7 @@ export const testModelAdapter = async ({ settings, cwd }) => {
     if (settings.imageChannel === true && settings.cliPath === OPENAI_IMAGE_CLI_ALIAS) {
       const result = await spawnCaptured({
         executable: process.execPath,
-        args: [OPENAI_IMAGE_CLI_PATH, "--check", "--model", settings.model || "gpt-image-2"],
+        args: [OPENAI_IMAGE_CLI_PATH, "--check", "--model", settings.model || "gpt-image-2.5"],
         input: "",
         cwd,
         env: { ...(await cliProxyEnvironment()), ...buildCliEnvironment(settings) },

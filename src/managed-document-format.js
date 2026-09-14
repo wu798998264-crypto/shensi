@@ -31,7 +31,34 @@ const INDEX_SCHEMAS = Object.freeze({
   "index-update-log": { id: "shensi.index.update-log.v1", label: "更新日志", systemManaged: true, fields: ["sourceCommit", "changedDocuments", "verifiedAt"] },
 });
 
-export const managedDocumentSchemaFor = ({ documentId = "", moduleId = "" } = {}) => {
+const normalizeExplicitFormatContract = (formatContract = null, formatContractId = "", formatContractVersion = 1) => {
+  const source = formatContract && typeof formatContract === "object"
+    ? formatContract
+    : formatContractId
+      ? { formatContractId, formatContractVersion }
+      : null;
+  if (!source) return null;
+  const id = text(source.formatContractId || source.id);
+  if (!id) return null;
+  return {
+    id,
+    label: text(source.label || source.documentRole || id),
+    version: Math.max(1, Number(source.formatContractVersion || source.version) || 1),
+    documentRole: text(source.documentRole),
+    persistence: text(source.persistence),
+    updateMode: text(source.updateMode),
+    requiredSections: Array.isArray(source.requiredSections) ? source.requiredSections.map(text).filter(Boolean) : [],
+    requiredFields: Array.isArray(source.requiredFields) ? source.requiredFields.map(text).filter(Boolean) : [],
+    forbiddenBehaviors: Array.isArray(source.forbiddenBehaviors) ? source.forbiddenBehaviors.map(text).filter(Boolean) : [],
+    validationMode: text(source.validationMode) || "semantic",
+    explicit: true,
+  };
+};
+
+export const managedDocumentSchemaFor = ({ documentId = "", moduleId = "", formatContract = null, formatContractId = "", formatContractVersion = 1, allowLegacyInference = true } = {}) => {
+  const explicit = normalizeExplicitFormatContract(formatContract, formatContractId, formatContractVersion);
+  if (explicit) return explicit;
+  if (!allowLegacyInference) return null;
   const id = text(documentId);
   if (CANON_SCHEMAS[id]) return { ...CANON_SCHEMAS[id], moduleId: "canon", version: 1 };
   const script = scriptCanonSchema(id);
@@ -57,8 +84,8 @@ export const managedDocumentFormatInstruction = (targets = []) => {
 
 const FOREIGN_TOP_LEVEL_PATTERN = /^(?:#{1,3}\s*)?(?:第\s*[零〇一二两三四五六七八九十百千万\d]+\s*章|全集大纲|全书大纲|卷纲|章纲|小说自检|剧本自检|任务完成|执行说明)(?:\s|[：:—-]|$)/mu;
 
-export const validateManagedDocumentFormat = ({ documentId = "", moduleId = "", content = "", systemProjection = false } = {}) => {
-  const schema = managedDocumentSchemaFor({ documentId, moduleId });
+export const validateManagedDocumentFormat = ({ documentId = "", moduleId = "", content = "", systemProjection = false, formatContract = null, formatContractId = "", formatContractVersion = 1, allowLegacyInference = true } = {}) => {
+  const schema = managedDocumentSchemaFor({ documentId, moduleId, formatContract, formatContractId, formatContractVersion, allowLegacyInference });
   if (!schema) return { valid: true, schema: null, reason: "unmanaged_document" };
   if (schema.systemManaged && systemProjection !== true && schema.moduleId !== "canon") {
     return { valid: false, schema, reason: "system_managed_document" };
@@ -69,13 +96,22 @@ export const validateManagedDocumentFormat = ({ documentId = "", moduleId = "", 
   }
   const body = plain(content);
   if (!body) return { valid: false, schema, reason: "managed_document_empty" };
+  if (schema.explicit) {
+    const missingSections = schema.requiredSections.filter((section) => !body.includes(section));
+    const missingFields = schema.requiredFields.filter((field) => !body.includes(field));
+    if (missingSections.length || missingFields.length) {
+      return { valid: false, schema, reason: "format_contract_missing_requirements", missingSections, missingFields };
+    }
+  }
   if (schema.moduleId === "canon" && FOREIGN_TOP_LEVEL_PATTERN.test(String(content))) {
     return { valid: false, schema, reason: "foreign_document_type_content" };
   }
   return { valid: true, schema, reason: "format_contract_satisfied" };
 };
 
-export const managedDocumentFormatMetadata = ({ documentId = "", moduleId = "", source = "trusted-write", validatedAt = new Date().toISOString() } = {}) => {
-  const schema = managedDocumentSchemaFor({ documentId, moduleId });
+export const managedDocumentFormatMetadata = ({ documentId = "", moduleId = "", formatContract = null, formatContractId = "", formatContractVersion = 1, allowLegacyInference = true, source = "trusted-write", validatedAt = new Date().toISOString() } = {}) => {
+  const schema = managedDocumentSchemaFor({ documentId, moduleId, formatContract, formatContractId, formatContractVersion, allowLegacyInference });
   return schema ? { schemaId: schema.id, schemaVersion: schema.version, source, validatedAt } : null;
 };
+
+export const normalizeManagedFormatContract = normalizeExplicitFormatContract;

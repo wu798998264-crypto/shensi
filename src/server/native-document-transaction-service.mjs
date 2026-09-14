@@ -10,6 +10,8 @@ import { validateFormalWriteAuthorization } from "../formal-write-authorization.
 import { preserveProtectedDocumentMedia } from "../protected-document-media.js";
 import { managedDocumentFormatMetadata, validateManagedDocumentFormat } from "../managed-document-format.js";
 import { loadWorkspaceState, saveWorkspaceState, workspaceKindForPath } from "./workspace.mjs";
+import { addDocumentHierarchyPrewriteHistory } from "./document-hierarchy-prewrite-history.mjs";
+import { applyWorkspaceDocumentLocationInState, ensureWorkspaceFolderInState, refreshWorkspaceFolderMetadata } from "./native-workspace-structure-service.mjs";
 
 const clone = (value) => structuredClone(value);
 const clean = (value = "") => String(value ?? "").trim();
@@ -21,6 +23,13 @@ const operationFingerprint = (operation = {}) => createHash("sha256")
     targetDirectoryId: clean(operation.targetDirectoryId),
     contentType: clean(operation.contentType),
     requestedTitle: clean(operation.requestedTitle),
+    viewId: clean(operation.viewId),
+    folderId: clean(operation.folderId),
+    folderLabel: clean(operation.folderLabel),
+    parentFolderId: clean(operation.parentFolderId),
+    formatContractId: clean(operation.formatContractId),
+    formatContractVersion: Number(operation.formatContractVersion) || 0,
+    formatContract: operation.formatContract && typeof operation.formatContract === "object" ? operation.formatContract : null,
     content: String(operation.content ?? ""),
     patches: Array.isArray(operation.patches) ? operation.patches : [],
   }))
@@ -120,6 +129,10 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
     documentId,
     moduleId: intendedModuleId,
     content: nextContent,
+    formatContract: operation.formatContract,
+    formatContractId: operation.formatContractId,
+    formatContractVersion: operation.formatContractVersion,
+    allowLegacyInference: false,
   });
   if (!managedFormatCheck.valid && task?.allowFormatMismatch !== true) {
     throw Object.assign(new Error(`目标 ${documentId} 没有通过结构化文档格式校验：${managedFormatCheck.reason}`), { code: "MANAGED_DOCUMENT_FORMAT_INVALID" });
@@ -203,7 +216,15 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
     placementOverride: true,
     updatedAt: new Date().toISOString(),
   };
-  const managedFormat = managedDocumentFormatMetadata({ documentId, moduleId: intendedModuleId, source: "native-document-transaction" });
+  const managedFormat = managedDocumentFormatMetadata({
+    documentId,
+    moduleId: intendedModuleId,
+    formatContract: operation.formatContract,
+    formatContractId: operation.formatContractId,
+    formatContractVersion: operation.formatContractVersion,
+    allowLegacyInference: false,
+    source: "native-document-transaction",
+  });
   if (managedFormat) state.documents[documentId].managedFormat = managedFormat;
   state.moduleItems ??= {};
   const moduleId = state.documents[documentId].moduleId;
@@ -264,6 +285,8 @@ const receiptForOperation = (batchReceipt, applied) => {
     navigationTarget: {
       documentId: applied.documentId,
       moduleId: applied.targetDirectoryId,
+      ...(applied.viewId ? { viewId: applied.viewId } : {}),
+      ...(applied.folderId ? { folderId: applied.folderId } : {}),
     },
   } : null;
 };
@@ -315,8 +338,39 @@ export const executeDocumentTransaction = async ({
   const batchId = clean(requestedBatchId) || `batch-${randomUUID()}`;
   if (commitMode === "atomic") {
     const loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
-    const next = clone(loaded.state ?? initialTransactionWorkspaceState({ appRoot, workspacePath, task }));
-    const applied = requested.map((operation) => applyOperation({ state: next, task, operation, expectedRevisions, transactionId: batchId, writeAuthorization: task.writeAuthorization }));
+    const before = clone(loaded.state ?? initialTransactionWorkspaceState({ appRoot, workspacePath, task }));
+    const next = clone(before);
+    const structuralOperations = requested.filter((operation) => clean(operation.folderId || operation.folderLabel || operation.parentFolderId || operation.viewId || operation.targetDirectoryId));
+    if (structuralOperations.length) addDocumentHierarchyPrewriteHistory({ beforeState: before, nextState: next, operations: structuralOperations, reason: "文档与目录原子写入前的层级历史快照" });
+    const applied = requested.map((operation) => {
+      let placement = null;
+      if (clean(operation.folderLabel || operation.name) && !clean(operation.folderId)) placement = ensureWorkspaceFolderInState(next, {
+        moduleId: clean(operation.targetDirectoryId) || clean(operation.moduleId) || clean(task?.target?.directoryId) || "library",
+        viewId: clean(operation.viewId) || clean(operation.workspaceView) || "novel",
+        name: operation.folderLabel || operation.name,
+        parentFolderId: operation.parentFolderId,
+      });
+      const item = applyOperation({ state: next, task, operation, expectedRevisions, transactionId: batchId, writeAuthorization: task.writeAuthorization });
+      const folderId = clean(operation.folderId) || clean(placement?.folderId);
+      const moduleId = clean(operation.targetDirectoryId) || item.targetDirectoryId;
+      const viewId = clean(operation.viewId) || (clean(operation.contentType) === "script" ? "script" : clean(operation.contentType) === "novel" ? "novel" : "");
+      if (folderId || viewId) {
+        const location = applyWorkspaceDocumentLocationInState(next, {
+          documentId: item.documentId,
+          moduleId,
+          viewId: viewId || "novel",
+          folderId,
+          folderLabel: operation.folderLabel,
+          treeGroup: operation.treeGroup,
+        });
+        item.viewId = viewId || location?.viewId || "";
+        item.folderId = folderId;
+      }
+      item.viewId ||= clean(operation.viewId);
+      item.folderId ||= folderId;
+      return item;
+    });
+    refreshWorkspaceFolderMetadata(next);
     const committed = await saveWorkspaceState({
       appRoot,
       requestedPath: workspacePath,
