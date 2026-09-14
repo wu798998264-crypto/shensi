@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "bundleId": "shensi-capability-bundle",
-  "bundleVersion": "sha256:4d143a8194be4bb1",
-  "bundleSha256": "4d143a8194be4bb1a44575aefcb83e40a547ca80bc5586c324b84a770c94c10d",
+  "bundleVersion": "sha256:06f688b336cb1148",
+  "bundleSha256": "06f688b336cb11487f02a987ce5c1242be04c756dce05d04112c3537b3133aa6",
   "entry": "神思.md",
-  "fileCount": 598,
-  "totalBytes": 19168326,
+  "fileCount": 600,
+  "totalBytes": 19135229,
   "contentSummary": {
-    "runtime-content": 176,
+    "runtime-content": 178,
     "runtime-data": 25,
     "reference-only": 397
   },
@@ -3291,8 +3291,8 @@
     },
     {
       "path": "神思.md",
-      "sizeBytes": 12266,
-      "sha256": "e8a44eff0ae590f55a4a9866a6936170a4472c903f24b621534e580c6a49620a",
+      "sizeBytes": 12357,
+      "sha256": "a073e5c0aba6125acf4236eaa8b8ed0c20babf7e03961ecae2b72ff74cf0c990",
       "role": "runtime-content"
     },
     {
@@ -3303,8 +3303,8 @@
     },
     {
       "path": "神思模块/任务路由模块.md",
-      "sizeBytes": 898,
-      "sha256": "c0e0f25e036d1164997620bb5dcd466ae2fea0e38953a5a2c63466cbc3ecb981",
+      "sizeBytes": 1037,
+      "sha256": "6b2b7304b5d014de46e1cd1c81aa4528e1f21fa55a79c30735b78edf153738a3",
       "role": "runtime-content"
     },
     {
@@ -3335,6 +3335,18 @@
       "path": "神思模块/漫剧模块.md",
       "sizeBytes": 2849,
       "sha256": "763336607ad491b4a0d2ea35b741e969a71522f5772ea0bcbebe0aa6a3467335",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/神思任务路由.md",
+      "sizeBytes": 4016,
+      "sha256": "221dd92cb53f58951cb8145609ab814766c0a04eb00e7dc65c0c0030caadcaa4",
+      "role": "runtime-content"
+    },
+    {
+      "path": "神思模块/神思运行规范.md",
+      "sizeBytes": 3272,
+      "sha256": "8e8c8555c9fcfd8add32bba8a98247209b594f2ff51623fdc39d7dae8100e89c",
       "role": "runtime-content"
     },
     {
@@ -3411,8 +3423,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-任务路由规则.md",
-      "sizeBytes": 31291,
-      "sha256": "a3da14d793723aeb2dfd12a8d17d5885801900a9c046c4872abcdd3f6f279daf",
+      "sizeBytes": 506,
+      "sha256": "e3aad9aa26ae35da8bf506281426a9b38a44dc4e2f4a06d55a78b328eca1ab99",
       "role": "runtime-content"
     },
     {
@@ -3489,8 +3501,8 @@
     },
     {
       "path": "神思模块/规则模块/神思-执行入口映射表.md",
-      "sizeBytes": 10237,
-      "sha256": "a9a5b83ad4614e962d6d3dd9f1fcfe5ea5a76c007a1077c5acf8e9f10faccbce",
+      "sizeBytes": 407,
+      "sha256": "d79b0d1199df0b51cc23477eacdec623cf91c3580406a157db1f75b6521b1b1a",
       "role": "runtime-content"
     },
     {

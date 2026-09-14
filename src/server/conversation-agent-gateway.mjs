@@ -19,6 +19,7 @@ import { imageModelCapabilities, videoModelCapabilities } from "../model-presets
 import { createAgentBrowserService } from "./agent-browser-service.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
+import { filterAgentSkillCatalog } from "../managed-route-document.js";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -31,12 +32,11 @@ const hash = (value) => createHash("sha256").update(String(value)).digest("hex")
 export const conversationAgentProcessEnvironment = (environment = process.env) => agentChildEnvironment(environment);
 
 const routeDocumentCandidates = [
-  { label: "任务路由模块.md", parts: ["任务路由模块.md"], required: false },
-  { label: "神思-任务路由规则.md", parts: ["规则模块", "神思-任务路由规则.md"], required: false },
-  { label: "神思-执行入口映射表.md", parts: ["规则模块", "神思-执行入口映射表.md"], required: false },
+  { label: "神思任务路由.md", parts: ["神思任务路由.md"], required: false },
+  { label: "神思运行规范.md", parts: ["神思运行规范.md"], required: false },
 ];
 
-const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
+const readAvailableRoute = async ({ shensiRoot, requested = [], dynamicRoute = "" } = {}) => {
   const requestedLabels = new Set((Array.isArray(requested) ? requested : []).map((item) => String(item || "").trim()).filter(Boolean));
   const candidates = requestedLabels.size
     ? routeDocumentCandidates.filter((candidate) => requestedLabels.has(candidate.label))
@@ -48,12 +48,16 @@ const readAvailableRoute = async ({ shensiRoot, requested = [] } = {}) => {
       const text = await readFile(join(shensiRoot, "神思模块", ...candidate.parts), "utf8");
       if (String(text).trim()) {
         blocks.push(`# ${candidate.label}\n${text}`);
-        sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length });
+        // Routing/runtime contracts are host instructions, not user evidence.
+        // They are loaded for every Agent run but intentionally omitted from
+        // the user-facing "已读取" list.
+        sources.push({ kind: "document", id: candidate.label, title: candidate.label, fullText: true, characters: text.length, userVisible: false });
       }
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
     }
   }
+  if (String(dynamicRoute).trim()) blocks.push(String(dynamicRoute).trim());
   return { text: blocks.join("\n\n") || "当前没有可用的任务路由附录；请根据用户原始指令和可用 Skill 自主判断，空白路由资料不是阻断条件。", sources };
 };
 
@@ -71,11 +75,17 @@ export const createConversationAgentGateway = ({
 }) => createConversationAgentService({
   appRoot,
   storageRoot: join(machineRoot, "conversation-agent-v1", "runs"),
-  skillCatalog: async () => {
+  skillCatalog: async (request = {}) => {
     const catalog = await listManagedSkills({ shensiRoot });
-    return [...catalog.builtins, ...catalog.user].filter((skill) => skill.disabled !== true && skill.testStatus !== "failed").map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
+    const available = [...catalog.builtins, ...catalog.user]
+      .filter((skill) => skill.disabled !== true && skill.testStatus !== "failed")
+      .map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
+    return filterAgentSkillCatalog({ catalog: available, routeTopology: catalog.routeTopology, request });
   },
-  readRoute: async (request = {}) => readAvailableRoute({ shensiRoot, requested: request.routeDocuments }),
+  readRoute: async (request = {}) => {
+    const catalog = await listManagedSkills({ shensiRoot });
+    return readAvailableRoute({ shensiRoot, requested: request.routeDocuments, dynamicRoute: catalog.routeDocument });
+  },
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {
     const settings = await resolveRuntimeSettings(options.settings);

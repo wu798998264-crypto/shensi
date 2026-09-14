@@ -49,6 +49,7 @@ import {
   compositeRelationAnalysisSummary,
   compositeTopologyHash,
 } from "./composite-relation-inference.mjs";
+import { buildManagedRouteDocument } from "../managed-route-document.js";
 
 const REGISTRY_SCHEMA_VERSION = 18;
 const MAX_SKILL_SOURCE_BYTES = 256 * 1024;
@@ -348,6 +349,7 @@ const capabilityTemplateHistoryRecord = ({
   sourceScopeType = scopeType,
   sourceScopeId = scopeId,
   restoredFromRouteRevision = 0,
+  routeDocument = "",
 }) => ({
   id: `template-version:${scopeType}:${String(scopeId).replace(/[^a-z0-9._:-]/gi, "-")}:${version}:${randomUUID()}`,
   scopeType,
@@ -365,6 +367,7 @@ const capabilityTemplateHistoryRecord = ({
   sourceScopeType: ["template", "group", "module", "slot", "slot-group", "skill", "route"].includes(sourceScopeType) ? sourceScopeType : scopeType,
   sourceScopeId: String(sourceScopeId || scopeId || "").slice(0, 180),
   restoredFromRouteRevision: Math.max(0, Number(restoredFromRouteRevision) || 0),
+  routeDocument: String(routeDocument || ""),
 });
 
 const createInitialCapabilityTemplateState = ({ customSlots = [], customSlotGroups = [] } = {}) => {
@@ -403,6 +406,7 @@ const normalizedTemplateHistoryEntries = (entries, { scopeType, scopeId, fallbac
         sourceScopeType: ["template", "group", "module", "slot", "slot-group", "skill", "route"].includes(entry.sourceScopeType) ? entry.sourceScopeType : scopeType,
         sourceScopeId: String(entry.sourceScopeId || scopeId || "").slice(0, 180),
         restoredFromRouteRevision: Math.max(0, Number(entry.restoredFromRouteRevision) || 0),
+        routeDocument: String(entry.routeDocument || ""),
       };
     })
     .sort((left, right) => left.version - right.version)
@@ -1600,9 +1604,12 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   await Promise.all(registry.skills.map((entry) => ensureStandardSkillPackage(root, entry)));
   const remoteMarketplace = await readRemoteMarketplace();
   const localMarketplaceItems = marketplaceCatalogItems(registry).map((item) => publicMarketplaceSkill(item, registry));
+  const builtins = listBuiltinSkills();
+  const user = managedPersonalSkillCatalog(registry);
+  const routeTopology = compileRouteTopology(registry, { fixedSlots, customSlots });
   return {
     root,
-    builtins: listBuiltinSkills(),
+    builtins,
     fixedSlots,
     slotChains: FIXED_SKILL_SLOT_CHAINS.map((chain) => ({
       ...chain,
@@ -1615,7 +1622,7 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
       })),
     })),
     slotGroups: [...fixedGroups, ...customGroups],
-    user: managedPersonalSkillCatalog(registry),
+    user,
     importProcessor: COMPOSITE_SKILL_PROCESSOR,
     capabilityAssets: (registry.capabilityAssets ?? [])
       .map((asset) => publicCapabilityAsset(asset, registry))
@@ -1624,7 +1631,8 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
     capabilityTemplate: publicCapabilityTemplateState(registry.capabilityTemplate),
     officialCapabilityTemplate: createInitialCapabilityTemplate(),
     routeRevision: registry.routeRevision,
-    routeTopology: compileRouteTopology(registry, { fixedSlots, customSlots }),
+    routeTopology,
+    routeDocument: buildManagedRouteDocument({ topology: routeTopology, skills: [...builtins, ...user] }),
     marketplace: {
       connected: remoteMarketplace.connected === true,
       mode: remoteMarketplace.mode,
@@ -4659,6 +4667,10 @@ const appendUnifiedRouteHistory = (registry, {
     currentRouteSnapshot: routeSnapshot,
     topologyHash: routeTopology.hash || "",
   });
+  const routeDocument = buildManagedRouteDocument({
+    topology: routeTopology,
+    skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
+  });
   const record = capabilityTemplateHistoryRecord({
     scopeType: "template",
     scopeId: state.current.template.id,
@@ -4673,6 +4685,7 @@ const appendUnifiedRouteHistory = (registry, {
     sourceScopeType,
     sourceScopeId,
     restoredFromRouteRevision,
+    routeDocument,
   });
   bucket.push(record);
   if (bucket.length > TEMPLATE_HISTORY_LIMIT) bucket.splice(0, bucket.length - TEMPLATE_HISTORY_LIMIT);
@@ -4903,6 +4916,7 @@ export const saveManagedCapabilityTemplate = async ({ bundle, scopeType = "templ
     routeVersion: publicTemplateHistoryRecord(routeRecord),
     routeRevision: catalog.routeRevision,
     routeTopology: catalog.routeTopology,
+    routeDocument: catalog.routeDocument,
     lint,
     routingAudit,
     adaptiveRouteUpdate: {
@@ -4979,12 +4993,17 @@ export const restoreManagedCapabilityTemplateVersion = async ({ scopeType = "tem
   const routeRecord = registry.capabilityTemplate.history.template.at(-1);
   const record = localRecord || routeRecord;
   await writeRegistry(root, registry);
+  const restoredTopology = compileRouteTopology(registry);
   return {
     capabilityTemplate: publicCapabilityTemplateState(registry.capabilityTemplate),
     restoredVersion: publicTemplateHistoryRecord(record),
     routeVersion: publicTemplateHistoryRecord(routeRecord),
     routeRevision: registry.routeRevision,
-    routeTopology: compileRouteTopology(registry),
+    routeTopology: restoredTopology,
+    routeDocument: buildManagedRouteDocument({
+      topology: restoredTopology,
+      skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
+    }),
     lint: candidateLint,
     routingAudit: candidateAudit,
   };
@@ -5096,6 +5115,7 @@ export const touchManagedRouteRevision = async ({ shensiRoot = "" } = {}) => {
   return {
     routeRevision: catalog.routeRevision,
     routeTopology: topology,
+    routeDocument: catalog.routeDocument,
     refreshReport: {
       refreshedAt: new Date().toISOString(),
       topologyHash: topology.hash,

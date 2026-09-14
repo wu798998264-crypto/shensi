@@ -27,6 +27,7 @@ import { episodeHeadingParts, episodeMarkdownFileName } from "../episode-documen
 import { freeDocumentTitle, sequencedDocumentKind, sequencedDocumentLabel } from "../document-title-policy.js";
 import { verifyCommittedWorkspaceDocuments } from "./document-transaction-service.mjs";
 import { prepareFullPrewriteHistory, verifyFullPrewriteHistory } from "./document-prewrite-history.mjs";
+import { addDocumentHierarchyPrewriteHistory } from "./document-hierarchy-prewrite-history.mjs";
 import { isStructuredMemoryDocumentId, memoryProjectionMarkdownToHtml } from "../structured-memory-store.js";
 
 const normalizeForCompare = (value) => {
@@ -5486,6 +5487,17 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
       const previous = previousManifest?.manifest?.[id];
       return previous && hashText(serializedWorkspaceDocument({ id, documentState: document, workspaceKind: desiredState.workspaceKind })) !== previous.hash;
     }).map(([id]) => id);
+    // Every save lane, including manual UI saves, receives the same hierarchy
+    // before-image policy as the Agent document transaction. The existing
+    // document-level prewrite receipts remain the hard write gate below.
+    if (changedDocumentIds.length) {
+      addDocumentHierarchyPrewriteHistory({
+        beforeState: rollbackState,
+        nextState: desiredState,
+        operations: changedDocumentIds.map((documentId) => ({ targetDocumentId: documentId })),
+        reason: "保存修改前的层级历史快照",
+      });
+    }
     const prewriteHistory = await prepareFullPrewriteHistory({ currentState: rollbackState, nextState: desiredState, changedDocumentIds, transactionId });
     if (rollbackState && prewriteHistory.length) {
       // Preserve these before-images even if the write must roll back.
