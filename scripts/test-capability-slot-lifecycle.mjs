@@ -58,7 +58,8 @@ assert.throws(
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const server = await readFile(new URL("../src/server/skill-store.mjs", import.meta.url), "utf8");
 assert.match(app, /removeCapabilityTemplateSlot\(bundle, \{ moduleId: scope\.node\.id, slotId \}\)/u);
-assert.match(app, /\.filter\(\(slot\) => Boolean\(slot\.skillId\)\)\.map\(\(slot\) => renderCapabilitySkillCell/u);
+assert.match(app, /const members = scope\.scopeType === "module"[\s\S]{0,180}\.filter\(\(slot\) => Boolean\(slot\.skillId\)\)/u);
+assert.match(app, /const renderMember = \(member\) => scope\.scopeType === "module"[\s\S]{0,120}renderCapabilitySkillCell/u);
 assert.match(server, /const adapted = pruneCapabilityTemplateEmptySlots\(bundle\)/u);
 
 console.log("capability slot removal and re-add lifecycle contracts passed");

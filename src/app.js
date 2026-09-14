@@ -8532,9 +8532,9 @@ root.innerHTML = `
       </section>
       <label>关系<select name="relationType" required><option value="parallel">并行</option><option value="primary-secondary">主次</option><option value="organization">组织</option></select></label>
       <label>具体作用<textarea name="description" rows="4" maxlength="500" required></textarea></label>
-      <label>触发和使用规则<textarea name="triggerRules" rows="5" maxlength="800" required></textarea></label>
-      <div class="capability-relation-help"><p><strong>并行</strong>：同级、不同方向，可同时按需启用。</p><p><strong>主次</strong>：默认主要项；次要项只有被明确点名才替代主要项。</p><p><strong>组织</strong>：第一项为上位；命中下位时同时调用上位。</p></div>
-      <footer><button class="secondary-button" id="cancelCapabilityNodeEditor" type="button">取消</button><button class="primary-button" type="submit">应用到草稿</button></footer>
+      <label><span id="capabilityRouteFieldLabel">模块路由</span><textarea name="triggerRules" rows="5" maxlength="800" required></textarea></label>
+      <div class="capability-relation-help"><p><strong>并行</strong>：同级、不同方向，可同时按需启用。</p><p><strong>主次</strong>：主要项承担默认主责；次要项按任务完整语义替代或协作。</p><p><strong>组织</strong>：第一项为上位；命中下位时默认调用上位，只有语义判断确实不需要时才能记录理由后跳过。</p></div>
+      <footer><button class="secondary-button" id="cancelCapabilityNodeEditor" type="button">取消</button><button class="primary-button" type="submit">保存并更新路由</button></footer>
     </form>
   </dialog>
 
@@ -8548,7 +8548,7 @@ root.innerHTML = `
 
   <dialog class="text-dialog skill-history-dialog" id="capabilityHistoryDialog">
     <form method="dialog">
-      <header class="dialog-header"><div><h2 id="capabilityHistoryTitle">任务路由历史</h2><p id="capabilityHistoryDescription">完整面板与对应任务路由统一保存、审计和恢复。</p></div><button class="icon-button bare" id="closeCapabilityHistory" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
+      <header class="dialog-header"><div><h2 id="capabilityHistoryTitle">面板历史版本</h2><p id="capabilityHistoryDescription">结构与对应路由统一保存、审计和恢复。</p></div><button class="icon-button bare" id="closeCapabilityHistory" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
       <div class="skill-history-list" id="capabilityHistoryList"></div>
       <footer><button class="primary-button" id="closeCapabilityHistoryFooter" type="button">关闭</button></footer>
     </form>
@@ -8559,7 +8559,7 @@ root.innerHTML = `
     <button type="button" data-capability-context-action="edit">${icon("\uE70F")}<span>编辑</span></button>
     <button type="button" data-capability-context-action="replace">${icon("\uE8AB")}<span>替换</span></button>
     <button type="button" data-capability-context-action="copy">${icon("\uE8C8")}<span>复制为可编辑副本</span></button>
-    <button type="button" data-capability-context-action="history">${icon("\uE81C")}<span>任务路由历史</span></button>
+    <button type="button" data-capability-context-action="history">${icon("\uE81C")}<span>历史版本</span></button>
     <button type="button" data-capability-context-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
     <button type="button" data-capability-context-action="share">${icon("\uE72D")}<span>分享到广场</span></button>
     <button type="button" data-capability-context-action="delete" class="danger">${icon("\uE74D")}<span>删除</span></button>
@@ -20417,7 +20417,7 @@ const applyTemplateSkillSelection = (skillId = "") => {
   slot.legacyBindingAllowed = false;
   setCapabilityTemplateDraft(bundle);
   elements.skillPickerDialog.close();
-  showToast("Skill 已插入插槽，请保存模块版本");
+  showToast("Skill 已插入插槽，请点击保存并更新路由");
 };
 
 const clearSkillOverridesForId = (skillId) => {
@@ -20904,7 +20904,7 @@ const renderCapabilityTemplateManager = () => {
   const breadcrumbs = capabilityScopeBreadcrumbs(bundle);
   const back = scope.scopeType === "template" ? "" : `<button class="icon-button bare" type="button" data-capability-back title="返回上一步">${icon("\uE72B", "返回上一步")}</button>`;
   const crumbs = breadcrumbs.map((crumb, index) => `<button type="button" data-capability-breadcrumb="${index}">${escapeHtml(crumb.name)}</button>`).join('<span aria-hidden="true">/</span>');
-  const saveLabel = scope.scopeType === "template" ? "保存面板版本" : scope.scopeType === "group" ? "保存模组版本" : "保存模块版本";
+  const saveLabel = "保存并更新路由";
   const typeLabel = scope.scopeType === "template" ? "面板" : scope.scopeType === "group" ? "模组" : "模块";
   const scopeSummary = globalUiPreferences.uiLanguage === "en-US"
     ? `Editing ${translateUiText(typeLabel, "en-US")}; route revision ${ui.skillCatalog.routeRevision || 0}.`
@@ -20921,16 +20921,16 @@ const renderCapabilityTemplateManager = () => {
     <ul>${lintIssues.slice(0, 100).map((issue) => `<li data-severity="${escapeHtml(issue.severity)}"><strong>${escapeHtml(issue.code)}</strong><span>${escapeHtml(capabilityLintMessage(issue))}</span></li>`).join("")}</ul>
   </details>` : "";
   return `<div class="capability-template-manager">
-    <div class="capability-template-brief"><div><strong>面板决定神思可调动的能力上限和边界。</strong><span>${escapeHtml(scopeSummary)}</span></div><details><summary>查看能力结构说明</summary><p>任务路由会读取完整 Skill 面板，并按意图、文体、上下文、触发规则和明确点名实时组合能力；这里不是线性工作流。</p><ol><li><b>面板</b><span>当前唯一生效的能力版图</span></li><li><b>模组</b><span>按内容形态组织多个模块</span></li><li><b>模块</b><span>定义关系与一组兼容插槽</span></li><li><b>Skill</b><span>在单一插槽中执行具体能力</span></li></ol></details></div>
+    <div class="capability-template-brief"><div><strong>面板决定神思可调动的能力上限和边界。</strong><span>${escapeHtml(scopeSummary)}</span></div><details><summary>查看能力结构说明</summary><p>面板路由只选择顶层模组或模块；模组路由与模块路由再逐层决定内部实际分工，避免每轮预读无关分支。</p><ol><li><b>面板</b><span>当前唯一生效的能力版图与顶层路由</span></li><li><b>模组</b><span>组织内部模组或模块并保存模组路由</span></li><li><b>模块</b><span>定义插槽关系并保存模块路由</span></li><li><b>Skill</b><span>在真实插槽位置执行具体能力</span></li></ol></details></div>
     ${warning}
     ${lint}
     <header class="capability-template-header" data-capability-node-context-type="${scope.scopeType}" data-capability-node-context-id="${escapeHtml(scope.scopeId)}">
-      ${back}<div><nav>${crumbs}</nav><span>${typeLabel} · ${escapeHtml(capabilityRelationLabel(node.relationType))}关系</span><h4>${escapeHtml(node.name)}</h4><p>${escapeHtml(node.description || "尚未填写具体作用。")}</p><small>触发规则：${escapeHtml(node.triggerRules || "尚未填写")}</small></div>
+      ${back}<div><nav>${crumbs}</nav><span>${typeLabel} · ${escapeHtml(capabilityRelationLabel(node.relationType))}关系</span><h4>${escapeHtml(node.name)}</h4><p>${escapeHtml(node.description || "尚未填写具体作用。")}</p><small>${scope.scopeType === "template" ? "面板路由" : scope.scopeType === "group" ? "模组路由" : "模块路由"}：${escapeHtml(node.triggerRules || "尚未填写")}</small></div>
     </header>
     ${renderCapabilityRelationBoard(scope, bundle)}
     <footer class="capability-template-footer">
-      ${scope.scopeType === "template" ? `<span class="capability-template-footer-actions"><button class="secondary-button" type="button" data-open-route-history>${icon("\uE81C")}<span>任务路由历史</span></button><button class="secondary-button" type="button" data-reset-capability-template>${icon("\uE777")}<span>一键还原初始面板</span></button></span>` : "<span></span>"}
-      <button class="primary-button" type="button" data-save-capability-scope ${validation.valid ? "" : "disabled"}>${icon("\uE74E")}<span>${saveLabel}</span></button>
+      ${scope.scopeType === "template" ? `<span class="capability-template-footer-actions"><button class="secondary-button" type="button" data-reset-capability-template>${icon("\uE777")}<span>一键还原初始面板</span></button></span>` : "<span></span>"}
+      <button class="primary-button" type="button" data-save-capability-scope ${validation.valid && ui.capabilityTemplateDirty ? "" : "disabled"}>${icon("\uE74E")}<span>${saveLabel}</span></button>
     </footer>
   </div>`;
 };
@@ -21096,7 +21096,8 @@ const openCapabilityNodeEditor = ({ scopeType = "module", scopeId = "", create =
   if (!create && (node?.kernelManaged === true || isKernelManagedCapabilityNode(scopeType, scopeId))) throw new Error("这是神思内置运行机制，不可编辑修改");
   const form = elements.capabilityNodeEditorForm;
   form.reset();
-  form.querySelector('[type="submit"]').textContent = "应用到草稿";
+  form.querySelector('[type="submit"]').textContent = "保存并更新路由";
+  document.querySelector("#capabilityRouteFieldLabel").textContent = scopeType === "template" ? "面板路由" : scopeType === "group" ? "模组路由" : "模块路由";
   form.dataset.mode = create ? "create" : "edit";
   form.elements.id.value = node?.id || capabilityDraftId(scopeType);
   form.elements.nodeType.value = scopeType;
@@ -21166,7 +21167,6 @@ const applyCapabilityNodeEditor = (form) => {
     if (current?.scopeId !== scopeId) ui.capabilityTemplatePath.push({ scopeType, scopeId });
     renderSkillSettings();
   }
-  showToast(`已更新${scopeType === "group" ? "模组" : scopeType === "module" ? "模块" : "面板"}草稿，请在页面下方保存版本`);
 };
 
 const addCapabilitySlot = async () => {
@@ -21219,25 +21219,18 @@ const detachCapabilityPlacement = (placementId) => {
 
 const capabilityHistoryEntries = (scopeType, scopeId) => {
   const history = ui.skillCatalog.capabilityTemplate?.history;
-  const routeEntries = (history?.template ?? []).map((entry) => ({
+  if (scopeType === "template") return (history?.template ?? []).map((entry) => ({
     entry,
     historyScopeType: "template",
     historyScopeId: ui.skillCatalog.capabilityTemplate?.current?.template?.id || entry.scopeId,
-    kind: "route",
+    kind: "unified",
   }));
-  if (scopeType === "template") return routeEntries;
-  const relatedRoutes = routeEntries.filter(({ entry }) => (
-    entry.sourceScopeId === scopeId
-    || (entry.routeDiff?.affectedNodeIds ?? []).includes(scopeId)
-  ));
-  const localEntries = ((scopeType === "group" ? history?.groups?.[scopeId] : history?.modules?.[scopeId]) ?? []).map((entry) => ({
+  return ((scopeType === "group" ? history?.groups?.[scopeId] : history?.modules?.[scopeId]) ?? []).map((entry) => ({
     entry,
     historyScopeType: scopeType,
     historyScopeId: scopeId,
-    kind: "local",
-  }));
-  return [...relatedRoutes, ...localEntries]
-    .sort((left, right) => Number(right.entry.createdAt) - Number(left.entry.createdAt));
+    kind: "unified",
+  })).sort((left, right) => Number(right.entry.createdAt) - Number(left.entry.createdAt));
 };
 
 const renderCapabilityHistory = () => {
@@ -21250,27 +21243,24 @@ const renderCapabilityHistory = () => {
     slot_deleted: "删除插槽", slot_group_saved: "插槽组保存/移动", slot_group_deleted: "删除插槽组",
     skill_changed: "Skill 变更", route_refreshed: "路由刷新",
   };
-  document.querySelector("#capabilityHistoryTitle").textContent = scopeType === "template"
-    ? `${node?.name || "Skill 面板"} · 任务路由历史`
-    : `${node?.name || "面板节点"} · 相关路由变更`;
-  document.querySelector("#capabilityHistoryDescription").textContent = scopeType === "template"
-    ? "每条记录统一绑定完整面板快照、路由版本、拓扑哈希、变更差异与审计结论；恢复会同时恢复面板与对应路由。"
-    : "优先显示此节点相关的完整路由变更，同时保留该模组或模块原有的局部结构历史。";
+  const historyTypeLabel = scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块";
+  document.querySelector("#capabilityHistoryTitle").textContent = `${node?.name || historyTypeLabel} · ${historyTypeLabel}历史版本`;
+  document.querySelector("#capabilityHistoryDescription").textContent = `每条${historyTypeLabel}历史都绑定当时的${historyTypeLabel}结构与对应路由；恢复结构时会自动重新编译并恢复生效路由。`;
   elements.capabilityHistoryList.innerHTML = records.length ? records.map(({ entry, historyScopeType, historyScopeId, kind }) => {
-    const isRoute = kind === "route";
-    const current = isRoute && Number(entry.routeRevision) > 0 && Number(entry.routeRevision) === Number(ui.skillCatalog.routeRevision);
+    const hasBoundRoute = Number(entry.routeRevision) > 0 && Boolean(entry.topologyHash);
+    const current = hasBoundRoute && Number(entry.routeRevision) === Number(ui.skillCatalog.routeRevision);
     const audit = entry.routingAudit;
     const auditLabel = audit ? (audit.valid ? "审计通过" : "审计未通过") : "旧版本未记录审计";
     const summaries = (entry.routeDiff?.summary ?? []).slice(0, 3);
     const capabilities = (entry.routeDiff?.affectedCapabilities ?? []).slice(0, 8);
-    const routeMeta = isRoute
-      ? `<p>面板 v${entry.version} · 路由 r${entry.routeRevision || "未记录"} · ${escapeHtml(auditLabel)}</p><small>拓扑 ${escapeHtml(entry.topologyHash ? `${entry.topologyHash.slice(0, 12)}…` : "旧版本未记录")}${capabilities.length ? ` · 影响能力：${escapeHtml(capabilities.join("、"))}` : ""}</small>${summaries.length ? `<small>${escapeHtml(summaries.join("；"))}</small>` : ""}`
-      : `<p>局部 v${entry.version} · 不作为完整任务路由版本</p><small>恢复后会重新生成完整面板—路由联合版本</small>`;
+    const routeMeta = hasBoundRoute
+      ? `<p>${historyTypeLabel} v${entry.version} · 路由 r${entry.routeRevision} · ${escapeHtml(auditLabel)}</p><small>拓扑 ${escapeHtml(`${entry.topologyHash.slice(0, 12)}…`)}${capabilities.length ? ` · 影响能力：${escapeHtml(capabilities.join("、"))}` : ""}</small>${summaries.length ? `<small>${escapeHtml(summaries.join("；"))}</small>` : ""}`
+      : `<p>${historyTypeLabel} v${entry.version} · 旧版本未绑定分层路由</p><small>恢复后会生成新的结构—路由联合版本</small>`;
     return `<article class="skill-history-row" data-history-kind="${kind}">
     <div><strong>${escapeHtml(reasonLabels[entry.reason] || "路由变更")} · ${escapeHtml(new Date(entry.createdAtIso || entry.createdAt).toLocaleString())}</strong>${routeMeta}${current ? "<small>当前正在使用</small>" : ""}</div>
-    <span class="skill-history-actions"><button class="secondary-button compact" type="button" data-restore-capability-version="${escapeHtml(entry.id)}" data-history-scope-type="${escapeHtml(historyScopeType)}" data-history-scope-id="${escapeHtml(historyScopeId)}" ${current || audit?.valid === false ? "disabled" : ""}>${isRoute ? "恢复面板与路由" : "恢复局部为新版本"}</button><button class="danger-button compact" type="button" data-delete-capability-version="${escapeHtml(entry.id)}" data-history-scope-type="${escapeHtml(historyScopeType)}" data-history-scope-id="${escapeHtml(historyScopeId)}" ${current ? "disabled" : ""}>删除版本</button></span>
+    <span class="skill-history-actions"><button class="secondary-button compact" type="button" data-restore-capability-version="${escapeHtml(entry.id)}" data-history-scope-type="${escapeHtml(historyScopeType)}" data-history-scope-id="${escapeHtml(historyScopeId)}" ${current || audit?.valid === false ? "disabled" : ""}>恢复${historyTypeLabel}与路由</button><button class="danger-button compact" type="button" data-delete-capability-version="${escapeHtml(entry.id)}" data-history-scope-type="${escapeHtml(historyScopeType)}" data-history-scope-id="${escapeHtml(historyScopeId)}" ${current ? "disabled" : ""}>删除版本</button></span>
   </article>`;
-  }).join("") : '<p class="settings-empty">当前没有可显示的任务路由或局部历史记录。</p>';
+  }).join("") : `<p class="settings-empty">当前没有可显示的${historyTypeLabel}历史版本。</p>`;
 };
 
 const openCapabilityHistory = (scopeType, scopeId) => {
@@ -21312,9 +21302,8 @@ const saveCapabilityTemplateScope = async () => {
 };
 
 const restoreCapabilityTemplateVersion = async (versionId, scopeType, scopeId) => {
-  if (!window.confirm(uiText(scopeType === "template"
-    ? "恢复这个任务路由版本？完整面板与对应路由会一起恢复，重新审计通过后才会激活；当前版本仍会保留。"
-    : "恢复这个局部版本？恢复后会重新编译并审计完整任务路由，当前版本仍会保留。"))) return;
+  const typeLabel = scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块";
+  if (!window.confirm(uiText(`恢复这个${typeLabel}历史版本？${typeLabel}结构与绑定路由会一起恢复，重新审计通过后才会激活；当前版本仍会保留。`))) return;
   const response = await fetch("/api/skills/capability-template/restore", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -21324,7 +21313,7 @@ const restoreCapabilityTemplateVersion = async (versionId, scopeType, scopeId) =
   if (!response.ok || !payload.ok) throw new Error(payload.message || "历史版本恢复失败");
   applyCapabilityTemplatePayload(payload);
   elements.capabilityHistoryDialog.close();
-  showToast(`已恢复并审计通过；当前面板 v${payload.routeVersion?.version || payload.restoredVersion.version}，任务路由 r${payload.routeRevision}`);
+  showToast(`已恢复${typeLabel}结构并重新编译路由；当前路由 r${payload.routeRevision}`);
 };
 
 const resetCapabilityTemplate = async () => {
@@ -21367,7 +21356,7 @@ const showCapabilityContextMenu = (event, scopeType, scopeId, meta = {}) => {
   replaceButton.querySelector("span:last-child").textContent = `替换${scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块"}`;
   copyButton.hidden = kernelManaged;
   copyButton.querySelector("span:last-child").textContent = `复制${scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块"}为可编辑副本`;
-  historyButton.querySelector("span:last-child").textContent = scopeType === "template" ? "任务路由历史" : "查看此节点相关变更";
+  historyButton.querySelector("span:last-child").textContent = scopeType === "template" ? "面板历史版本" : scopeType === "group" ? "模组历史版本" : "模块历史版本";
   shareButton.hidden = true;
   deleteButton.hidden = scopeType === "template" || kernelManaged;
   elements.capabilityNodeContextMenu.hidden = false;
@@ -67805,9 +67794,9 @@ elements.capabilityNodeEditorForm.addEventListener("submit", async (event) => {
       ? { ...ui.marketplaceRepublish }
       : null;
     applyCapabilityNodeEditor(event.currentTarget);
+    await saveCapabilityTemplateScope();
     if (republish) {
       ui.marketplaceRepublish = null;
-      await saveCapabilityTemplateScope();
       await refreshSkillCatalog({ force: true });
       if (republish.assetId) await shareCapabilityAssetToMarketplace(capabilityAssetById(republish.assetId));
       else await shareCapabilityToMarketplace(republish.assetType, republish.scopeId);
@@ -68134,11 +68123,6 @@ elements.skillContextMenu.addEventListener("click", async (event) => {
 });
 
 elements.skillSettingsContent.addEventListener("click", async (event) => {
-  if (event.target.closest("[data-open-route-history]")) {
-    const bundle = capabilityTemplateBundle();
-    if (bundle?.template?.id) openCapabilityHistory("template", bundle.template.id);
-    return;
-  }
   if (event.target.closest("[data-save-capability-scope]")) {
     await saveCapabilityTemplateScope().catch((error) => showToast(error.message || "面板版本保存失败"));
     return;

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { buildManagedRouteDocument, filterAgentSkillCatalog } from "../src/managed-route-document.js";
+import { compileManagedRouteBundle, filterAgentSkillCatalog } from "../src/managed-route-document.js";
 import { createBlankNotebookState } from "../src/data.js";
 import { loadWorkspaceState, saveWorkspaceState } from "../src/server/workspace.mjs";
 
@@ -27,12 +27,13 @@ const skills = [
   { id: "builtin:secondary", name: "次能力", description: "次能力说明", capabilities: ["repair_writer"] },
   { id: "user:outside", name: "面板外能力", description: "不应自动进入", capabilities: ["auxiliary_advisor"] },
 ];
-const route = buildManagedRouteDocument({ topology, skills });
-assert.match(route, /路由版本：7/u);
-assert.match(route, /主位.*主能力/u);
-assert.match(route, /次位.*次能力/u);
-assert.match(route, /面板外 Skill 只有本轮被用户明确点名/u);
-assert.match(buildManagedRouteDocument({ topology: { ...topology, slots: [{ id: "outside-slot", name: "注册槽", skillId: "user:outside", enabled: true, parentGroupId: "" }] }, skills }), /注册槽/u);
+const routeBundle = compileManagedRouteBundle({ topology, skills });
+assert.match(routeBundle.panel.text, /路由版本：7/u);
+assert.doesNotMatch(routeBundle.panel.text, /主能力|次能力/u, "面板路由不得展开模块内 Skill");
+const moduleRoute = routeBundle.routes.find((route) => route.nodeId === "module:test");
+assert.match(moduleRoute.text, /\[主要\].*主能力/u);
+assert.match(moduleRoute.text, /\[次要\].*次能力/u);
+assert.equal(routeBundle.skillPlacements.some((placement) => placement.skillId === "user:outside"), false, "面板外 Skill 不得进入分层路由");
 assert.deepEqual(filterAgentSkillCatalog({ catalog: skills, routeTopology: topology, request: { messages: [{ role: "user", content: "普通正文任务" }] } }).map((skill) => skill.id), ["builtin:primary", "builtin:secondary"]);
 assert.deepEqual(filterAgentSkillCatalog({ catalog: skills, routeTopology: topology, request: { messages: [{ role: "user", content: "请使用 @outside" }] } }).map((skill) => skill.id), ["builtin:primary", "builtin:secondary", "user:outside"]);
 

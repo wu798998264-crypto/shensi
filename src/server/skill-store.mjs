@@ -49,7 +49,7 @@ import {
   compositeRelationAnalysisSummary,
   compositeTopologyHash,
 } from "./composite-relation-inference.mjs";
-import { buildManagedRouteDocument } from "../managed-route-document.js";
+import { compileManagedRouteBundle } from "../managed-route-document.js";
 
 const REGISTRY_SCHEMA_VERSION = 18;
 const MAX_SKILL_SOURCE_BYTES = 256 * 1024;
@@ -1607,6 +1607,8 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   const builtins = listBuiltinSkills();
   const user = managedPersonalSkillCatalog(registry);
   const routeTopology = compileRouteTopology(registry, { fixedSlots, customSlots });
+  const routeSkills = [...builtins, ...user];
+  const routeBundle = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills });
   return {
     root,
     builtins,
@@ -1632,7 +1634,8 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
     officialCapabilityTemplate: createInitialCapabilityTemplate(),
     routeRevision: registry.routeRevision,
     routeTopology,
-    routeDocument: buildManagedRouteDocument({ topology: routeTopology, skills: [...builtins, ...user] }),
+    routeBundle,
+    routeDocument: routeBundle.panel.text,
     marketplace: {
       connected: remoteMarketplace.connected === true,
       mode: remoteMarketplace.mode,
@@ -4667,10 +4670,8 @@ const appendUnifiedRouteHistory = (registry, {
     currentRouteSnapshot: routeSnapshot,
     topologyHash: routeTopology.hash || "",
   });
-  const routeDocument = buildManagedRouteDocument({
-    topology: routeTopology,
-    skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
-  });
+  const routeSkills = [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)];
+  const routeDocument = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills }).panel.text;
   const record = capabilityTemplateHistoryRecord({
     scopeType: "template",
     scopeId: state.current.template.id,
@@ -4894,6 +4895,23 @@ export const saveManagedCapabilityTemplate = async ({ bundle, scopeType = "templ
     adaptationActions: adapted.actions,
   });
   const routeRecord = registry.capabilityTemplate.history.template.at(-1);
+  if (localRecord && routeRecord) {
+    const currentTopology = compileRouteTopology(registry);
+    const scopedRoutes = compileManagedRouteBundle({
+      topology: currentTopology,
+      skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
+    }).routes.filter((route) => route.kind === normalized.scopeType && route.nodeId === normalized.scopeId);
+    Object.assign(localRecord, {
+      routeRevision: routeRecord.routeRevision,
+      topologyHash: routeRecord.topologyHash,
+      routingAudit: structuredClone(routeRecord.routingAudit),
+      routeDiff: structuredClone(routeRecord.routeDiff),
+      routeSnapshot: structuredClone(routeRecord.routeSnapshot),
+      sourceScopeType: normalized.scopeType,
+      sourceScopeId: normalized.scopeId,
+      routeDocument: scopedRoutes.map((route) => route.text).join("\n\n---\n\n"),
+    });
+  }
   const record = localRecord || routeRecord;
   await writeRegistry(root, registry);
   const catalog = await buildManagedSkillCatalog({ shensiRoot });
@@ -4916,6 +4934,7 @@ export const saveManagedCapabilityTemplate = async ({ bundle, scopeType = "templ
     routeVersion: publicTemplateHistoryRecord(routeRecord),
     routeRevision: catalog.routeRevision,
     routeTopology: catalog.routeTopology,
+    routeBundle: catalog.routeBundle,
     routeDocument: catalog.routeDocument,
     lint,
     routingAudit,
@@ -4991,19 +5010,38 @@ export const restoreManagedCapabilityTemplateVersion = async ({ scopeType = "tem
     adaptationActions: restoreAdaptationActions,
   });
   const routeRecord = registry.capabilityTemplate.history.template.at(-1);
+  if (localRecord && routeRecord) {
+    const restoredBundle = compileManagedRouteBundle({
+      topology: compileRouteTopology(registry),
+      skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
+    });
+    Object.assign(localRecord, {
+      routeRevision: routeRecord.routeRevision,
+      topologyHash: routeRecord.topologyHash,
+      routingAudit: structuredClone(routeRecord.routingAudit),
+      routeDiff: structuredClone(routeRecord.routeDiff),
+      routeSnapshot: structuredClone(routeRecord.routeSnapshot),
+      sourceScopeType: scopeType,
+      sourceScopeId: effectiveScopeId,
+      restoredFromRouteRevision: selected.routeRevision,
+      routeDocument: restoredBundle.routes.filter((route) => route.kind === scopeType && route.nodeId === effectiveScopeId).map((route) => route.text).join("\n\n---\n\n"),
+    });
+  }
   const record = localRecord || routeRecord;
   await writeRegistry(root, registry);
   const restoredTopology = compileRouteTopology(registry);
+  const restoredRouteBundle = compileManagedRouteBundle({
+    topology: restoredTopology,
+    skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
+  });
   return {
     capabilityTemplate: publicCapabilityTemplateState(registry.capabilityTemplate),
     restoredVersion: publicTemplateHistoryRecord(record),
     routeVersion: publicTemplateHistoryRecord(routeRecord),
     routeRevision: registry.routeRevision,
     routeTopology: restoredTopology,
-    routeDocument: buildManagedRouteDocument({
-      topology: restoredTopology,
-      skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
-    }),
+    routeBundle: restoredRouteBundle,
+    routeDocument: restoredRouteBundle.panel.text,
     lint: candidateLint,
     routingAudit: candidateAudit,
   };
@@ -5019,8 +5057,8 @@ export const deleteManagedCapabilityTemplateVersion = async ({ scopeType = "temp
   if (!selected) throw new Error("历史版本不存在");
   const retained = bucket.filter((entry) => entry.id !== selected.id);
   if (!retained.length) throw new Error("至少需要保留一个可恢复的历史版本");
-  if (scopeType === "template" && Number(selected.routeRevision) > 0 && Number(selected.routeRevision) === Number(registry.routeRevision)) {
-    throw new Error("当前正在使用的任务路由版本不能删除");
+  if (Number(selected.routeRevision) > 0 && Number(selected.routeRevision) === Number(registry.routeRevision)) {
+    throw new Error(`当前正在使用的${scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块"}—路由联合版本不能删除`);
   }
   if (scopeType === "template") registry.capabilityTemplate.history.template = retained;
   else if (scopeType === "group") registry.capabilityTemplate.history.groups[effectiveScopeId] = retained;

@@ -14,7 +14,21 @@ try {
     setManagedCustomSlotEnabled,
   } = await import("../src/server/skill-store.mjs");
 
-  const initial = await listManagedSkills();
+  const initial = await listManagedSkills({ shensiRoot: join(process.cwd(), "packaging", "bundled", "skill", "神思") });
+  assert.match(initial.routeBundle.panel.text, /# 面板路由/u);
+  assert.ok(initial.routeBundle.routes.some((route) => route.kind === "group"), "默认面板必须生成模组路由");
+  assert.ok(initial.routeBundle.routes.some((route) => route.kind === "module"), "默认面板必须生成模块路由");
+  assert.ok(initial.routeBundle.skillPlacements.length >= 20, "默认面板中启用的 Skill 必须生成真实位置目录");
+  const availableSkillIds = new Set([...initial.builtins, ...initial.user].flatMap((skill) => {
+    const id = String(skill.id || "");
+    const plain = id.replace(/^user:/u, "");
+    return [id, plain, `user:${plain}`];
+  }));
+  const missingPlacementSkills = initial.routeBundle.skillPlacements.filter((placement) => placement.enabled && !availableSkillIds.has(placement.skillId)).map((placement) => placement.skillId);
+  assert.deepEqual(missingPlacementSkills, [], `每个启用位置都必须绑定可真实读取的 Skill：${missingPlacementSkills.join("、")}`);
+  const imageCharacterPlacement = initial.routeBundle.skillPlacements.find((placement) => placement.skillId === "builtin:industrial-character-prompt-writer");
+  assert.ok(imageCharacterPlacement, "默认图片资产模块必须保留角色专项下位 Skill");
+  assert.deepEqual(imageCharacterPlacement.organizationUpperPlacementIds.map((id) => initial.routeBundle.skillPlacements.find((placement) => placement.placementId === id)?.skillId), ["builtin:visual-asset-prompt-writer"], "图片资产专项默认必须加载兼具通用主笔和提取主笔职责的上位 Skill");
   const saved = await saveManagedCapabilityTemplate({
     bundle: initial.capabilityTemplate.current,
     scopeType: "template",
@@ -23,6 +37,8 @@ try {
   assert.equal(saved.routeVersion.routeRevision, saved.routeRevision);
   assert.equal(saved.routeVersion.version, saved.savedVersion.version);
   assert.match(saved.routeVersion.topologyHash, /^[a-f0-9]{64}$/u);
+  assert.match(saved.routeVersion.routeDocument, /# 面板路由/u);
+  assert.doesNotMatch(saved.routeVersion.routeDocument, /## 模块路由/u, "面板历史只能内含顶层面板路由");
   assert.equal(saved.routeVersion.routingAudit.valid, true);
   assert.ok(Array.isArray(saved.routeVersion.routeDiff.summary));
   assert.equal(saved.capabilityTemplate.history.template[0].routeRevision, saved.routeRevision);
@@ -57,6 +73,16 @@ try {
   assert.equal(moduleSaved.routeVersion.scopeType, "template");
   assert.equal(moduleSaved.routeVersion.sourceScopeId, moduleScope.id);
   assert.equal(moduleSaved.routeVersion.routeRevision, moduleSaved.routeRevision);
+  assert.equal(moduleSaved.savedVersion.routeRevision, moduleSaved.routeRevision, "模块结构历史必须绑定同次路由版本");
+  assert.match(moduleSaved.savedVersion.routeDocument, /# 模块路由/u, "模块历史必须内含对应模块路由");
+  assert.doesNotMatch(moduleSaved.savedVersion.routeDocument, /# 面板路由/u, "模块历史不应复制无关面板路由");
+  const moduleRestored = await restoreManagedCapabilityTemplateVersion({
+    scopeType: "module",
+    scopeId: moduleScope.id,
+    versionId: moduleSaved.savedVersion.id,
+  });
+  assert.equal(moduleRestored.restoredVersion.routeRevision, moduleRestored.routeRevision, "恢复模块时必须建立新的模块—路由联合版本");
+  assert.match(moduleRestored.restoredVersion.routeDocument, /# 模块路由/u);
 
   console.log("task route unified history runtime contracts passed");
 } finally {
