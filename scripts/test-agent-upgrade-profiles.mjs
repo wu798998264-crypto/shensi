@@ -8,7 +8,7 @@ const limited = defaults.textConnections.find((profile) => profile.id === "text-
 assert.equal(generationProfileLabel(limited), "免费模型");
 assert.equal(limited.agentEngine, "codex_api");
 assert.equal(limited.model, getProviderPreset("免费模型").api.model);
-assert.equal(getProviderPreset("免费模型").label, "限免模型");
+assert.equal(getProviderPreset("免费模型").label, "免费模型");
 
 const deepseek = (id, engine) => ({ id, name: "DeepSeek Agent · CLI · duplicate", remarkName: "DeepSeek Agent · CLI · duplicate", adapter: "cli", provider: "DeepSeek", agentEngine: engine, model: engine === "opencode" ? "deepseek/deepseek-v4-pro" : "deepseek-v4-pro", cliPath: engine === "opencode" ? "opencode" : "claude", credentialSource: "shensi", apiKey: `mock-${id}`, baseUrl: "https://deepseek.invalid/v1", executionModes: ["agent"] });
 const active = deepseek("active-deepseek", "claude_code");

@@ -921,7 +921,7 @@ export const PROVIDER_PRESETS = [
   },
   {
     id: "免费模型",
-    label: "限免模型",
+    label: "免费模型",
     api: { protocol: "chat_completions", baseUrl: "https://api.kilo.ai/api/openrouter", model: "poolside/laguna-s-2.1:free" },
     cli: { path: "", args: "", testArgs: ["--version"], apiKeyEnv: "" },
     public: true,
