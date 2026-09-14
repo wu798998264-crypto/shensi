@@ -58,7 +58,7 @@ try {
     const result = await skillTools.invoke({ namespace: 'skills', tool: 'read', arguments: argumentsValue });
     assert.equal(result.success, true, result.contentItems[0].text);
   }
-  assert.deepEqual(skillReads, Array(5).fill('builtin:creative-guidance'), 'Skill 参数别名必须解析到目录中的唯一真实 ID');
+  assert.deepEqual(skillReads, ['builtin:creative-guidance'], 'Skill 参数别名必须解析到目录中的唯一真实 ID，并在同一任务内复用已读取全文');
 
   const waiting = new Map();
   let choiceProtocol = '';

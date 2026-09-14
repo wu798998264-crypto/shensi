@@ -157,12 +157,15 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (!textTimer) textTimer = setTimeout(() => { void flushText().catch(() => {}); }, 160);
     };
     try {
-      const catalog = await skillCatalog(request);
-      const routeSource = await readRoute(request);
+      const catalogSource = await skillCatalog(request);
+      const catalog = Array.isArray(catalogSource) ? catalogSource : catalogSource?.skills || [];
+      const routeSource = await readRoute({ ...request, routeBundle: catalogSource?.routeBundle || null });
+      const routeBundle = routeSource?.routeBundle || catalogSource?.routeBundle || null;
       const route = typeof routeSource === "string" ? routeSource : routeSource?.text || "";
       for (const source of routeSource?.sources || []) {
-        if (source.characters > 0) await event(entry, "resource_read", source);
+        if (source.characters > 0) await event(entry, source.userVisible === false ? "route_read" : "resource_read", source);
       }
+      if (routeBundle?.panel?.text) await event(entry, "route_read", { kind: "panel_route", placementId: routeBundle.panel.placementId, title: routeBundle.panel.name || "面板路由", characters: routeBundle.panel.text.length, userVisible: false });
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
       const requestUserInput = async ({ question, options = [], multiple = false, presentation = "", metadata = null, kind = "question", detail = null }) => {
         const decision = kind === "agent_permission"
@@ -186,7 +189,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         await event(entry, "answer", { decisionId: decision.id, answer: value });
         return { answer: value };
       };
-      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, readSkill: (id) => readSkill(id, request), browser,
+      const tools = toolsFactory({ appRoot, ...request, requestId: record.id, signal: controller.signal, catalog, routeBundle, readSkill: (id) => readSkill(id, request), browser,
         ask: requestUserInput,
         candidates: async (variants) => { record.candidates = variants; await event(entry, "candidates", { variants }); return { delivered: variants.length, savedToDocument: false }; },
         media: (args) => media(args, { request, runId: record.id, signal: controller.signal, emit: (type, payload) => event(entry, type, payload) }),
@@ -198,7 +201,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model, permissionMode: request.settings.agentPermissionMode });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
-      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "任务路由文档", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
+      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [] }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
       // Reconcile conversation-only delivery against the original user request,
       // not the writer's self-declared mode. This stays semantic, never keyword-routed.

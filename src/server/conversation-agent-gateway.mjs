@@ -19,7 +19,7 @@ import { imageModelCapabilities, videoModelCapabilities } from "../model-presets
 import { createAgentBrowserService } from "./agent-browser-service.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
-import { filterAgentSkillCatalog } from "../managed-route-document.js";
+import { catalogWithManagedPlacements, filterAgentSkillCatalog } from "../managed-route-document.js";
 
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
   if (signal?.aborted) return reject(new Error("任务已取消"));
@@ -32,7 +32,6 @@ const hash = (value) => createHash("sha256").update(String(value)).digest("hex")
 export const conversationAgentProcessEnvironment = (environment = process.env) => agentChildEnvironment(environment);
 
 const routeDocumentCandidates = [
-  { label: "神思任务路由.md", parts: ["神思任务路由.md"], required: false },
   { label: "神思运行规范.md", parts: ["神思运行规范.md"], required: false },
 ];
 
@@ -80,11 +79,16 @@ export const createConversationAgentGateway = ({
     const available = [...catalog.builtins, ...catalog.user]
       .filter((skill) => skill.disabled !== true && skill.testStatus !== "failed")
       .map((skill) => ({ id: /^(builtin|official|user):/u.test(skill.id) ? skill.id : `user:${skill.id}`, name: skill.name, description: skill.description || "", capabilities: skill.capabilities || [] }));
-    return filterAgentSkillCatalog({ catalog: available, routeTopology: catalog.routeTopology, request });
+    const filtered = filterAgentSkillCatalog({ catalog: available, routeTopology: catalog.routeTopology, request });
+    return {
+      skills: catalogWithManagedPlacements({ catalog: filtered, routeBundle: catalog.routeBundle }),
+      routeBundle: catalog.routeBundle,
+    };
   },
   readRoute: async (request = {}) => {
-    const catalog = await listManagedSkills({ shensiRoot });
-    return readAvailableRoute({ shensiRoot, requested: request.routeDocuments, dynamicRoute: catalog.routeDocument });
+    const routeBundle = request.routeBundle || (await listManagedSkills({ shensiRoot })).routeBundle;
+    const source = await readAvailableRoute({ shensiRoot, requested: request.routeDocuments, dynamicRoute: routeBundle?.panel?.text });
+    return { ...source, routeBundle };
   },
   readSkill: (id) => inspectSelectedSkillSource({ selection: id, shensiRoot }),
   run: async (options) => {

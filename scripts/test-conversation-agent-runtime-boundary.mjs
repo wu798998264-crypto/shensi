@@ -34,7 +34,11 @@ try {
       ...options,
       load: async () => { workspaceReads += 1; throw new Error("不应预读工作区"); },
     }),
-    run: async (options) => { capturedRun = options; return { text: "只讨论，不读取空文档。" }; },
+    run: async (options) => {
+      capturedRun = options;
+      await options.workspaceToolRuntime.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } });
+      return { text: "只讨论，不读取空文档。" };
+    },
   });
   const semanticInstruction = "不要生成视频；这里的‘覆盖、续写’只是讨论词语，不修改任何文档。";
   const started = await noPreloadService.start({
@@ -54,7 +58,7 @@ try {
   assert.equal(semanticStatus.status, "completed");
   assert.equal(workspaceReads, 0, "不调用文档工具时不得读取记忆、大纲、设定或其他空文档");
   assert.match(capturedRun.prompt, /不要生成视频/u, "原始语义必须完整交给 Agent，不得先按媒体关键词改写任务");
-  assert.ok(capturedRun.contextBlocks.some((block) => block.name === "任务路由文档"));
+  assert.ok(capturedRun.contextBlocks.some((block) => block.name === "面板路由与运行规范"));
 
   const handoffs = [];
   let openedHosts = 0;
@@ -68,11 +72,11 @@ try {
     startMcp: async ({ tools }) => {
       openedHosts += 1;
       assert.ok(tools.dynamicTools.some((entry) => entry.name === "documents"));
-      return { url: `http://127.0.0.1:${41000 + openedHosts}/mcp`, headers: { Authorization: "Bearer test" }, close: async () => { closedHosts += 1; } };
+      return { url: `http://127.0.0.1:${41000 + openedHosts}/mcp`, headers: { Authorization: "Bearer test" }, tools, close: async () => { closedHosts += 1; } };
     },
     externalRunners: {
-      openCode: async (options) => { handoffs.push({ engine: "opencode", options }); return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" }; },
-      claudeCode: async (options) => { handoffs.push({ engine: "claude_code", options }); return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" }; },
+      openCode: async (options) => { handoffs.push({ engine: "opencode", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } }); return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" }; },
+      claudeCode: async (options) => { handoffs.push({ engine: "claude_code", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } }); return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" }; },
     },
   });
   const runExternal = async (agentEngine, conversationId) => {
@@ -96,15 +100,15 @@ try {
   ]);
   assert.equal(openCode.status.status, "completed", openCode.status.error);
   assert.equal(claude.status.status, "completed", claude.status.error);
-  assert.equal(handoffs.length, 2);
+  assert.equal(handoffs.length, 4, "两个外置 Agent 各执行一次并各完成一次独立交付复核");
   for (const handoff of handoffs) {
     assert.match(handoff.options.prompt, /完整执行这项任务/u);
     assert.ok(handoff.options.nativeHost?.url, "外置 Agent 必须获得完整神思 MCP 工具入口");
     assert.equal(handoff.options.allowEdits, false, "不得绕开神思文档事务直接写作品文件");
-    assert.ok(handoff.options.contextBlocks.some((block) => block.name === "任务路由文档"));
+    assert.ok(handoff.options.contextBlocks.some((block) => block.name === "面板路由与运行规范"));
   }
-  assert.equal(openedHosts, 2);
-  assert.equal(closedHosts, 2, "每个外置 Agent 完成后必须关闭隔离 MCP 服务");
+  assert.equal(openedHosts, 4);
+  assert.equal(closedHosts, 4, "每次外置 Agent 执行与交付复核后必须关闭隔离 MCP 服务");
   console.log("Conversation Agent boundary: no keyword imports/preloads and complete OpenCode/Claude MCP handoff passed");
 } finally {
   const rel = relative(resolve(tmpdir()), root);
