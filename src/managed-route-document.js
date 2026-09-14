@@ -146,88 +146,215 @@ export const filterAgentSkillCatalog = ({ catalog = [], routeTopology = null, re
   });
 };
 
-const field = (label, value) => value ? `${label}=${limited(value)}` : "";
-const joined = (values, empty = "未声明") => list(values).map((value) => limited(value, 100)).filter(Boolean).join("、") || empty;
+const placementIdentity = (parts = []) => list(parts).map((part) => clean(part)).filter(Boolean).join(">");
 
-export const buildManagedRouteDocument = ({ topology = {}, skills = [] } = {}) => {
-  const bundle = topologyBundle(topology);
-  if (!bundle?.template) return "# 当前 Skill 面板任务路由\n\n当前没有可用的面板拓扑；面板外 Skill 仅可由用户明确点名或 @ 引用。";
-  const indexedSkills = skillIndex(skills);
+const scopedRouteTitle = (kind) => kind === "template" ? "面板路由" : kind === "group" ? "模组路由" : "模块路由";
+
+const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = "" } = {}) => {
+  const node = entry.node || {};
   const lines = [
-    "# 当前 Skill 面板任务路由",
+    `# ${scopedRouteTitle(entry.kind)} · ${limited(entry.name || entry.nodeId)}`,
     "",
-    `路由版本：${Math.max(0, Number(topology.revision) || 0)}；拓扑哈希：${clean(topology.hash) || "未生成"}`,
+    `路由版本：${Math.max(0, Number(revision) || 0)}；拓扑哈希：${clean(topologyHash) || "未生成"}`,
+    `位置：${entry.pathNames.map((part) => limited(part, 100)).join(" / ")}`,
+    `自身关系：${relationLabel(entry.relationType)}；状态=${entry.enabled ? "启用" : "禁用"}`,
+    `具体作用：${limited(node.description || "按当前节点所含能力处理任务", 600)}`,
+    `${scopedRouteTitle(entry.kind)}：${limited(node.triggerRules || "根据任务完整语义选择当前层真正需要的成员", 1_200)}`,
     "",
-    "此文档由可信内核根据当前 Skill 面板确定性编译。面板的真实层级、位置、顺序、关系角色、启用状态和 Skill 绑定是自动路由的唯一事实来源；旧路由文字、文件名和单个关键词不能覆盖本快照。",
-    "",
-    "- 并行：同级能力可按完整任务语义独立或同时调用。",
-    "- 主次：第一项为主要，其余为次要；任务明确命中次要时由次要精确替代主要，不自动叠加。",
-    "- 组织：第一项为上位，其余为下位；命中下位时同时加载完成该任务所必需的上位能力。",
-    "- 面板内且启用的 Skill 才进入自动路由候选。面板外 Skill 只有本轮被用户明确点名或 @ 引用时才临时开放，不能通过普通语义检索自动导航。",
-    "- 禁用、失效、未绑定或不在当前拓扑可达路径上的 Skill 不得自动调用。",
-    "",
-    "## 面板总览",
-    "",
-    `模板：${limited(bundle.template.name || bundle.template.id)} [${relationLabel(bundle.template.relationType)}]；${field("用途", bundle.template.description) || "用途=统筹当前面板能力"}；${field("适用场景", bundle.template.triggerRules) || "适用场景=按本轮任务完整语义判断"}`,
-    "",
-    "## 当前位置、能力与适用场景",
+    "## 当前层成员",
     "",
   ];
-  const placements = reachablePlacements(topology, { includeDisabled: true });
-  const representedSlotIds = new Set(placements
-    .filter((placement) => placement.kind === "slot")
-    .flatMap((placement) => [clean(placement.node.id), clean(placement.node.id).replace(/^slot:/u, "")].filter(Boolean)));
-  let ordinal = 0;
-  for (const placement of placements) {
-    if (placement.kind === "group") {
-      ordinal += 1;
-      lines.push(`### ${ordinal}. 模组：${limited(placement.node.name || placement.node.id)}`);
-      lines.push("");
-      lines.push(`- 位置：${placement.path.map((part) => limited(part, 100)).join(" / ")}；父容器关系=${relationLabel(placement.relationType)}；角色=${roleLabel(placement.role)}；状态=${placement.enabled ? "启用" : "禁用"}`);
-      lines.push(`- 自身关系：${relationLabel(placement.node.relationType)}；${field("用途", placement.node.description) || "用途=组织下级能力"}；${field("适用场景", placement.node.triggerRules) || "适用场景=继承模板与下级能力声明"}`);
-      lines.push("");
-      continue;
-    }
-    if (placement.kind === "module") {
-      ordinal += 1;
-      lines.push(`### ${ordinal}. 模块：${limited(placement.node.name || placement.node.id)}`);
-      lines.push("");
-      lines.push(`- 位置：${placement.path.map((part) => limited(part, 100)).join(" / ")}；父容器关系=${relationLabel(placement.relationType)}；角色=${roleLabel(placement.role)}；状态=${placement.enabled ? "启用" : "禁用"}`);
-      lines.push(`- 自身关系：${relationLabel(placement.node.relationType)}；${field("用途", placement.node.description) || "用途=承载具体 Skill 插槽"}；${field("适用场景", placement.node.triggerRules) || "适用场景=由插槽能力和任务交付物共同判断"}`);
-      lines.push("");
-      continue;
-    }
-    const slot = placement.node;
-    const id = boundSkillId(slot);
-    const skill = identityVariants(id).map((variant) => indexedSkills.get(variant)).find(Boolean);
-    const capabilities = list(slot.capabilities).length ? slot.capabilities : skill?.capabilities;
-    const purpose = slot.description || skill?.description || placement.module.description;
-    const scenario = slot.triggerRules || placement.module.triggerRules;
-    const routeFields = [
-      field("能力", joined(capabilities, "模型基础能力")),
-      field("用途", purpose || "按 Skill 自身说明执行"),
-      field("适用场景", scenario || "按交付物、阶段和完整语义判断"),
-      list(slot.phases).length ? field("阶段", joined(slot.phases)) : "",
-      list(slot.stages).length ? field("运行阶段", joined(slot.stages)) : "",
-    ].filter(Boolean).join("；");
-    lines.push(`- 插槽 [${roleLabel(placement.role)}] ${limited(slot.name || slot.id)} → ${limited(skill?.name || id || "未绑定 Skill")}（${limited(id || "无ID")}）；状态=${placement.enabled && id ? "启用" : "不参与自动路由"}；${routeFields}`);
+  for (const child of children) {
+    const target = child.kind === "skill" ? `Skill=${limited(child.skillName || child.skillId)}` : `${child.kind === "group" ? "模组" : "模块"}=${limited(child.name || child.nodeId)}`;
+    lines.push(`- [${roleLabel(child.parentRole)}] ${target}；placementId=${child.placementId}；状态=${child.enabled ? "启用" : "禁用"}${child.guidance ? `；用途=${limited(child.guidance, 500)}` : ""}`);
   }
-  const unexpandedSlots = list(topology.slots).filter((slot) => {
-    const id = clean(slot.id);
-    const alreadyNamed = clean(slot.name) && lines.some((line) => line.includes(clean(slot.name)));
-    return id && (!representedSlotIds.has(id) && !representedSlotIds.has(id.replace(/^slot:/u, "")) || !alreadyNamed);
-  });
-  if (unexpandedSlots.length) {
-    lines.push("", "## 面板注册槽位（模板树未重复展开）", "");
-    const groupsById = new Map(list(topology.groups).map((group) => [group.id, group]));
-    for (const slot of unexpandedSlots) {
-      const id = boundSkillId(slot) || clean(slot.id);
-      const skill = identityVariants(id).map((variant) => indexedSkills.get(variant)).find(Boolean);
-      const group = groupsById.get(slot.parentGroupId);
-      const capabilities = list(slot.capabilities).length ? slot.capabilities : skill?.capabilities;
-      lines.push(`- 注册槽位 ${limited(slot.name || slot.id)} → ${limited(skill?.name || id || "未绑定 Skill")}（${limited(id || "无ID")}）；位置=${limited(group?.name || "面板")}; 关系=${relationLabel(group?.groupType)}；状态=${slot.enabled === false ? "不参与自动路由" : "可参与自动路由"}；能力=${joined(capabilities, "模型基础能力")}；用途=${limited(slot.description || skill?.description || "按任务语义调用")}`);
-    }
+  if (entry.kind === "template") {
+    lines.push("", "只先选择本轮需要的顶层模组或模块；选中后再读取对应模组路由或模块路由。不得为了浏览完整面板而预读无关分支。");
+  } else if (entry.kind === "group") {
+    lines.push("", "选中内部模组或模块后继续读取该节点路由。并行成员可独立或组合；主次关系由主要承担默认主责，次要按任务完整语义替代或协作；组织成员命中下位时默认继承上位。具体上位是否参与由最终 Skill 读取计划按任务语义审计决定。");
+  } else {
+    lines.push("", "读取 Skill 时使用 placementId。组织关系默认加载上位；只有 Agent 明确判断当前输入已具备下位所需信息、当前环节不需要上位能力或用户明确限定下位时，才可携带理由跳过上位。");
   }
-  lines.push("", "## 更新绑定", "", "保存面板、模组、模块、插槽或 Skill 状态后，可信内核递增路由版本、重算拓扑哈希、重新编译本全文，并把面板快照、位置变化、启用 Skill、路由差异和审计结果写入同一条任务路由历史。下一轮任务只读取最新通过校验的版本。", "");
   return lines.join("\n");
+};
+
+/**
+ * Compile the capability template into small, placement-aware route documents.
+ * The template remains authoritative; editable prose can explain intent but
+ * cannot change members, roles, order, enabled state or ancestry.
+ */
+export const compileManagedRouteBundle = ({ topology = {}, skills = [] } = {}) => {
+  const bundle = topologyBundle(topology);
+  const revision = Math.max(0, Number(topology.revision) || 0);
+  const topologyHash = clean(topology.hash);
+  if (!bundle?.template) return {
+    schemaVersion: 1,
+    revision,
+    topologyHash,
+    panel: { placementId: "", text: "# 面板路由\n\n当前没有可用的 Skill 面板。" },
+    routes: [],
+    skillPlacements: [],
+  };
+  const indexedSkills = skillIndex(skills);
+  const maps = topologyMaps(bundle);
+  const routes = [];
+  const skillPlacements = [];
+  const entries = new Map();
+  const visit = ({ kind, node, item = null, parent = null, parentRole = "peer", pathIds = [], pathNames = [], routePlacementIds = [], enabled = true, ancestors = new Set() }) => {
+    if (!node || ancestors.has(`${kind}:${node.id}`)) return null;
+    const ownEnabled = enabled && node.disabled !== true;
+    const segment = item?.id || node.id;
+    const nextPathIds = [...pathIds, segment];
+    const nextPathNames = [...pathNames, node.name || node.id];
+    const placementId = placementIdentity(nextPathIds);
+    const entry = {
+      placementId,
+      kind,
+      nodeId: node.id,
+      name: node.name || node.id,
+      node,
+      guidance: node.triggerRules || node.description || "",
+      parentPlacementId: parent?.placementId || "",
+      parentRole,
+      parentRelationType: parent?.relationType || "parallel",
+      relationType: node.relationType || "parallel",
+      enabled: ownEnabled,
+      pathIds: nextPathIds,
+      pathNames: nextPathNames,
+      childPlacementIds: [],
+    };
+    entries.set(placementId, entry);
+    routes.push(entry);
+    const nextRoutePlacementIds = [...routePlacementIds, placementId];
+    const nextAncestors = new Set(ancestors).add(`${kind}:${node.id}`);
+    const children = kind === "template" || kind === "group" ? list(node.items) : list(node.slots);
+    children.forEach((child, index) => {
+      const role = relationRole(node.relationType, child.role, index);
+      if (kind === "module") {
+        const skillId = boundSkillId(child);
+        const skill = identityVariants(skillId).map((variant) => indexedSkills.get(variant)).find(Boolean);
+        const childPlacementId = placementIdentity([...nextPathIds, child.id || skillId]);
+        const skillPlacement = {
+          placementId: childPlacementId,
+          kind: "skill",
+          slotId: clean(child.id),
+          skillId,
+          skillName: skill?.name || child.name || skillId,
+          name: child.name || skill?.name || skillId,
+          guidance: child.triggerRules || child.description || skill?.description || "",
+          capabilities: list(child.capabilities).length ? [...child.capabilities] : [...list(skill?.capabilities)],
+          enabled: ownEnabled && child.disabled !== true && Boolean(skillId) && Boolean(skill),
+          parentPlacementId: placementId,
+          parentRole: role,
+          parentRelationType: node.relationType || "parallel",
+          modulePlacementId: placementId,
+          routePlacementIds: nextRoutePlacementIds,
+          pathIds: [...nextPathIds, child.id || skillId],
+          pathNames: [...nextPathNames, child.name || skill?.name || skillId],
+          organizationUpperPlacementIds: [],
+        };
+        entries.set(childPlacementId, skillPlacement);
+        skillPlacements.push(skillPlacement);
+        entry.childPlacementIds.push(childPlacementId);
+        return;
+      }
+      const childKind = child.targetType === "group" ? "group" : "module";
+      const target = childKind === "group" ? maps.groups.get(child.targetId) : maps.modules.get(child.targetId);
+      const childEntry = visit({
+        kind: childKind,
+        node: target,
+        item: child,
+        parent: entry,
+        parentRole: role,
+        pathIds: nextPathIds,
+        pathNames: nextPathNames,
+        routePlacementIds: nextRoutePlacementIds,
+        enabled: ownEnabled,
+        ancestors: nextAncestors,
+      });
+      if (childEntry) entry.childPlacementIds.push(childEntry.placementId);
+    });
+    return entry;
+  };
+  const panel = visit({ kind: "template", node: bundle.template });
+  const defaultSkillPlacements = (placementId, visiting = new Set()) => {
+    if (!placementId || visiting.has(placementId)) return [];
+    const current = entries.get(placementId);
+    if (!current || current.enabled === false) return [];
+    if (current.kind === "skill") return [current.placementId];
+    const nextVisiting = new Set(visiting).add(placementId);
+    const children = current.childPlacementIds.map((id) => entries.get(id)).filter((child) => child?.enabled !== false);
+    if (!children.length) return [];
+    const selected = current.relationType === "parallel" ? children : children.slice(0, 1);
+    return selected.flatMap((child) => defaultSkillPlacements(child.placementId, nextVisiting));
+  };
+  for (const skillPlacement of skillPlacements) {
+    const upperLayers = [];
+    let current = skillPlacement;
+    while (current?.parentPlacementId) {
+      const parent = entries.get(current.parentPlacementId);
+      if (!parent) break;
+      if (parent.relationType === "organization" && current.parentRole === "lower") {
+        const upperChild = parent.childPlacementIds.map((id) => entries.get(id)).find((child) => child?.parentRole === "upper" && child.enabled !== false);
+        if (upperChild) upperLayers.push(defaultSkillPlacements(upperChild.placementId));
+      }
+      current = parent;
+    }
+    skillPlacement.organizationUpperPlacementIds = [...new Set(upperLayers.reverse().flat())]
+      .filter((placementId) => placementId !== skillPlacement.placementId);
+  }
+  const publicRoute = (entry) => {
+    const children = entry.childPlacementIds.map((id) => entries.get(id)).filter(Boolean);
+    return {
+      placementId: entry.placementId,
+      kind: entry.kind,
+      nodeId: entry.nodeId,
+      name: entry.name,
+      parentPlacementId: entry.parentPlacementId,
+      parentRole: entry.parentRole,
+      relationType: entry.relationType,
+      enabled: entry.enabled,
+      childPlacementIds: [...entry.childPlacementIds],
+      text: scopedRouteText({ entry, children, revision, topologyHash }),
+    };
+  };
+  return {
+    schemaVersion: 1,
+    revision,
+    topologyHash,
+    panel: publicRoute(panel),
+    routes: routes.filter((entry) => entry.kind !== "template").map(publicRoute),
+    skillPlacements: skillPlacements.map((placement) => ({
+      placementId: placement.placementId,
+      slotId: placement.slotId,
+      skillId: placement.skillId,
+      skillName: placement.skillName,
+      enabled: placement.enabled,
+      parentPlacementId: placement.parentPlacementId,
+      parentRole: placement.parentRole,
+      parentRelationType: placement.parentRelationType,
+      modulePlacementId: placement.modulePlacementId,
+      routePlacementIds: [...placement.routePlacementIds],
+      pathNames: [...placement.pathNames],
+      capabilities: [...placement.capabilities],
+      organizationUpperPlacementIds: [...placement.organizationUpperPlacementIds],
+    })),
+  };
+};
+
+export const catalogWithManagedPlacements = ({ catalog = [], routeBundle = null } = {}) => {
+  const placementsBySkill = new Map();
+  for (const placement of list(routeBundle?.skillPlacements)) {
+    if (!placement.enabled || !placement.skillId) continue;
+    for (const id of identityVariants(placement.skillId)) {
+      const bucket = placementsBySkill.get(id) || [];
+      if (!bucket.some((candidate) => candidate.placementId === placement.placementId)) bucket.push(placement);
+      placementsBySkill.set(id, bucket);
+    }
+  }
+  return list(catalog).map((skill) => ({
+    ...skill,
+    placements: identityVariants(skillIdentity(skill)).flatMap((id) => placementsBySkill.get(id) || [])
+      .filter((placement, index, values) => values.findIndex((candidate) => candidate.placementId === placement.placementId) === index),
+  }));
 };
