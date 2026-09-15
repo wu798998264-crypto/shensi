@@ -1609,6 +1609,24 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   const routeTopology = compileRouteTopology(registry, { fixedSlots, customSlots });
   const routeSkills = [...builtins, ...user];
   const routeBundle = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills });
+  let routeHistoryChanged = false;
+  const routeForScope = (scopeType, scopeId) => scopeType === "template"
+    ? routeBundle.panel
+    : routeBundle.routes.find((route) => route.kind === scopeType && route.nodeId === scopeId);
+  const hydrateHistoryBucket = (entries, scopeType, scopeId) => {
+    const route = routeForScope(scopeType, scopeId);
+    if (!route?.text) return;
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      if (String(entry.routeDocument || "").trim()) continue;
+      entry.routeDocument = route.text;
+      routeHistoryChanged = true;
+    }
+  };
+  const capabilityHistory = registry.capabilityTemplate?.history;
+  hydrateHistoryBucket(capabilityHistory?.template, "template", registry.capabilityTemplate?.current?.template?.id || "");
+  for (const [scopeId, entries] of Object.entries(capabilityHistory?.groups || {})) hydrateHistoryBucket(entries, "group", scopeId);
+  for (const [scopeId, entries] of Object.entries(capabilityHistory?.modules || {})) hydrateHistoryBucket(entries, "module", scopeId);
+  if (routeHistoryChanged) await writeRegistry(root, registry);
   return {
     root,
     builtins,

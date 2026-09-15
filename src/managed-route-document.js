@@ -23,6 +23,33 @@ const roleLabel = (value) => ({
   lower: "下位",
 }[value] || "并行");
 
+const relationInstruction = (value) => ({
+  parallel: "同层成员按任务语义分别启用，可独立处理，也可组合协作；普通排序不会改变关系类型。",
+  "primary-secondary": "第一位成员承担默认主责；其余成员只在任务需要替代、协作或多候选比较时启用，不因排列顺序自动成为第二主笔。",
+  organization: "第一位成员是通用上位能力；命中下位成员时默认共同参与，只有任务已经提供上位所需信息、当前环节不需要上位能力或用户明确限定下位时才记录理由后跳过。",
+}[value] || "按当前层真实结构和任务完整语义决定成员。");
+
+const routeMemberTarget = (child = {}) => child.kind === "skill"
+  ? `Skill=${limited(child.skillName || child.skillId)}`
+  : `${child.kind === "group" ? "模组" : "模块"}=${limited(child.name || child.nodeId)}`;
+
+const routeMemberDetail = (child = {}) => {
+  const details = [
+    `[${roleLabel(child.parentRole)}] ${routeMemberTarget(child)}`,
+    `placementId=${child.placementId}`,
+    `状态=${child.enabled ? "启用" : "禁用"}`,
+  ];
+  if (child.kind === "skill") {
+    details.push(`能力=${list(child.capabilities).length ? list(child.capabilities).map((capability) => limited(capability, 120)).join("、") : "未声明"}`);
+    if (child.organizationUpperPlacementIds?.length) details.push(`默认上位=${child.organizationUpperPlacementIds.join("、")}`);
+  } else {
+    details.push(`下级数量=${list(child.childPlacementIds).length}`);
+    details.push(`下一层路由=${scopedRouteTitle(child.kind)}（${child.placementId}）`);
+  }
+  if (child.guidance) details.push(`用途=${limited(child.guidance, 500)}`);
+  return `- ${details.join("；")}`;
+};
+
 const identityVariants = (value) => {
   const id = clean(value);
   if (!id) return [];
@@ -152,6 +179,13 @@ const scopedRouteTitle = (kind) => kind === "template" ? "面板路由" : kind =
 
 const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = "" } = {}) => {
   const node = entry.node || {};
+  const childCount = children.length;
+  const enabledChildCount = children.filter((child) => child.enabled !== false).length;
+  const scopeDescription = entry.kind === "template"
+    ? "面板是唯一生效的能力版图，只负责选择本轮需要进入的顶层模组或模块，不直接执行深层 Skill。"
+    : entry.kind === "group"
+      ? "模组负责组织内部模组与模块，先按本层关系缩小分支，再读取命中成员的下一层路由。"
+      : "模块负责组织真实 Skill 插槽；只有模块路由选中的插槽才进入 Skill 读取和执行阶段。";
   const lines = [
     `# ${scopedRouteTitle(entry.kind)} · ${limited(entry.name || entry.nodeId)}`,
     "",
@@ -161,19 +195,24 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
     `具体作用：${limited(node.description || "按当前节点所含能力处理任务", 600)}`,
     `${scopedRouteTitle(entry.kind)}：${limited(node.triggerRules || "根据任务完整语义选择当前层真正需要的成员", 1_200)}`,
     "",
+    "## 本层职责与决策",
+    "",
+    `- ${scopeDescription}`,
+    `- 当前关系规则：${relationInstruction(entry.relationType)}`,
+    `- 当前层成员：共 ${childCount} 个，其中启用 ${enabledChildCount} 个；只读取本轮命中的分支，不预读无关分支。`,
+    "",
     "## 当前层成员",
     "",
   ];
   for (const child of children) {
-    const target = child.kind === "skill" ? `Skill=${limited(child.skillName || child.skillId)}` : `${child.kind === "group" ? "模组" : "模块"}=${limited(child.name || child.nodeId)}`;
-    lines.push(`- [${roleLabel(child.parentRole)}] ${target}；placementId=${child.placementId}；状态=${child.enabled ? "启用" : "禁用"}${child.guidance ? `；用途=${limited(child.guidance, 500)}` : ""}`);
+    lines.push(routeMemberDetail(child));
   }
   if (entry.kind === "template") {
-    lines.push("", "只先选择本轮需要的顶层模组或模块；选中后再读取对应模组路由或模块路由。不得为了浏览完整面板而预读无关分支。");
+    lines.push("", "## 读取顺序", "", "先根据用户任务完整语义选择一个或多个顶层模组/模块；随后使用返回的 placementId 读取对应模组路由或模块路由。面板路由不展开深层成员，也不把面板外 Skill 当作自动候选。", "", "## 事实边界", "", "面板结构中的成员、顺序、角色和启用状态是唯一事实来源；本文件中的文字只解释用途，不能改变面板结构。");
   } else if (entry.kind === "group") {
-    lines.push("", "选中内部模组或模块后继续读取该节点路由。并行成员可独立或组合；主次关系由主要承担默认主责，次要按任务完整语义替代或协作；组织成员命中下位时默认继承上位。具体上位是否参与由最终 Skill 读取计划按任务语义审计决定。");
+    lines.push("", "## 读取顺序", "", "先依据本模组的关系和成员用途确定实际分支，再读取命中模组或模块的路由文档；不得因成员存在就读取整个模组的所有深层 Skill。", "", "## 事实边界", "", "模组只负责内部组织和分支选择，不改变下级模块的插槽能力；下级模块的具体 Skill 角色以模块路由为准。");
   } else {
-    lines.push("", "读取 Skill 时使用 placementId。组织关系默认加载上位；只有 Agent 明确判断当前输入已具备下位所需信息、当前环节不需要上位能力或用户明确限定下位时，才可携带理由跳过上位。");
+    lines.push("", "## 读取顺序", "", "先按本模块关系确定主要/次要、上位/下位或并行插槽，再使用具体 placementId 读取 Skill。每个 Skill 的能力边界、触发说明和启用状态必须同时纳入执行计划。", "", "## 上位协作", "", "组织关系默认加载上位；只有 Agent 明确判断当前输入已具备下位所需信息、当前环节不需要上位能力或用户明确限定下位时，才可携带语义理由跳过上位。", "", "## 事实边界", "", "模块路由只描述当前模块的真实插槽，不自动调用面板外 Skill；未出现在当前面板插槽中的 Skill 只有用户明确点名或 @ 引用时才能调用。");
   }
   return lines.join("\n");
 };
