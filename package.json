@@ -9,6 +9,7 @@
     "test:route-isolation": "node scripts/test-generation-route-isolation-matrix.mjs",
     "test:protected-image-profile-switch": "node scripts/test-protected-image-profile-switch-workflow.mjs",
     "test:public-model": "node scripts/test-public-model-provider.mjs",
+    "test:obsolete-compatibility": "node scripts/test-obsolete-compatibility-cleanup.mjs",
     "test:formal-candidate-normalization": "node scripts/test-formal-candidate-normalization.mjs",
     "start": "electron packaging/windows/desktop-app",
     "start:browser-preview": "node scripts/launcher.mjs",

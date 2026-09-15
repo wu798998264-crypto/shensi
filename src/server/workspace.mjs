@@ -309,6 +309,7 @@ const PATH_MAP = {
 // refuses to persist these former standalone documents if an older client sends
 // them, so they cannot reappear as active Markdown sources.
 const RETIRED_PERSISTED_DOCUMENT_IDS = new Set([
+  "index-creative-guidance",
   "memory-chapters",
   "memory-context",
   "script-memory-episodes",
@@ -4881,14 +4882,8 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     RETIRED_CANON_DOCUMENT_IDS.forEach((documentId) => retiredDocumentIds.add(documentId));
   }
   for (const documentId of retiredDocumentIds) delete safeState.documents?.[documentId];
-  if (safeState.moduleItems?.memory) {
-    safeState.moduleItems.memory = safeState.moduleItems.memory.filter(([documentId]) => !retiredDocumentIds.has(documentId));
-  }
-  if (safeState.moduleItems?.library) {
-    safeState.moduleItems.library = safeState.moduleItems.library.filter(([documentId]) => !retiredDocumentIds.has(documentId));
-  }
-  if (safeState.moduleItems?.canon) {
-    safeState.moduleItems.canon = safeState.moduleItems.canon.filter(([documentId]) => !retiredDocumentIds.has(documentId));
+  for (const [moduleId, items] of Object.entries(safeState.moduleItems ?? {})) {
+    safeState.moduleItems[moduleId] = (items ?? []).filter(([documentId]) => !retiredDocumentIds.has(documentId));
   }
   if (retiredDocumentIds.has(safeState.activeDocument)) {
     safeState.activeDocument = Object.keys(safeState.documents ?? {})[0] ?? null;

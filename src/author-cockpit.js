@@ -6,7 +6,6 @@ export const AUTHOR_COCKPIT_MODULE_ID = "reports";
 export const AUTHOR_COCKPIT_SOURCE_MODULE_IDS = Object.freeze(["reports", "index"]);
 
 const COCKPIT_LABELS = Object.freeze({
-  "index-creative-guidance": "创作引导",
   "report-compile": "项目总览",
   "index-language-blacklist": "创作合同",
   "index-pending": "待确认事项",
@@ -246,7 +245,6 @@ export const authorCockpitSections = ({ moduleItems = {}, documents = {}, report
       id: "project-control",
       label: "项目管理",
       items: [
-        cockpitItem(moduleItems, documents, "index", "index-creative-guidance"),
         cockpitItem(moduleItems, documents, "reports", "report-compile"),
         cockpitItem(moduleItems, documents, "index", "index-language-blacklist"),
       ].filter(Boolean),

@@ -25,7 +25,6 @@ export const AUTOMATIC_RUNTIME_DOCUMENT_IDS = Object.freeze([
 
 const formalFactModule = (moduleId = "") => ["canon", "outline"].includes(text(moduleId));
 const selfCheckReport = (documentId = "") => ["report-novel", "report-script", "report-adaptation"].includes(text(documentId));
-const creativeGuidanceRecord = (documentId = "") => text(documentId) === "index-creative-guidance";
 
 export const authorizeFormalMutation = ({ instruction = "", plan = null, targets = [], taskContract = null } = {}) => {
   const source = text(instruction);
@@ -82,11 +81,6 @@ export const authorizeFormalMutation = ({ instruction = "", plan = null, targets
       rejected.push({ ...target, reason: "创作合同只能由明确的作者规则修改指令更新" });
       continue;
     }
-    if (contentPolicy.mode === "creative_guidance") {
-      if (/(?:落盘|写入|保存|记录|归档)/u.test(source)) continue;
-      rejected.push({ ...target, reason: "创作引导记录需要明确的保存指令" });
-      continue;
-    }
     if (formalFactModule(target.moduleId) && contractAuthorizesTarget(target)) continue;
     if (plannedIds.has(target.documentId)
       && (!formalFactModule(target.moduleId) || !contractDecision.authoritative || contractAuthorizesTarget(target))) continue;
@@ -95,7 +89,6 @@ export const authorizeFormalMutation = ({ instruction = "", plan = null, targets
       rejected.push({ ...target, reason: "设定和大纲必须由用户明确指定目标并下达写入指令" });
       continue;
     }
-    if (creativeGuidanceRecord(target.documentId) && /(?:落盘|写入|保存|记录|归档)/u.test(source)) continue;
     rejected.push({ ...target, reason: "目标不在本轮明确授权的写入清单中" });
   }
 

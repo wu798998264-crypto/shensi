@@ -14,7 +14,7 @@ const mismatch = formalTargetCompatibility({
 });
 assert.equal(mismatch.compatible, false);
 assert.equal(mismatch.recommendedModuleId, "manuscript");
-assert.match(mismatch.message, /只用于保存已确认的推演记录/u);
+assert.match(mismatch.message, /不属于对应板块/u);
 assert.equal(formalTargetCompatibility({
   instruction: "把这段正文写入第三章",
   target: { documentId: "chapter-3", moduleId: "manuscript", title: "第三章" },

@@ -3,7 +3,6 @@ const text = (value = "") => String(value ?? "").trim();
 export const INDEX_ROLES = Object.freeze({
   control: "control",
   decision: "decision",
-  guidance: "guidance",
   continuity: "continuity",
   display: "display",
 });
@@ -11,7 +10,6 @@ export const INDEX_ROLES = Object.freeze({
 export const INDEX_CONTEXT_MODES = Object.freeze({
   constraints: "constraints",
   relevant: "relevant",
-  guidance: "guidance",
   displayOnly: "display-only",
 });
 
@@ -33,15 +31,6 @@ const INDEX_POLICIES = Object.freeze({
     writeScenarios: ["author_confirmation_queue", "post_commit_pending"],
     writeTarget: "index-pending",
     writeAuthority: "host_transaction",
-  },
-  "index-creative-guidance": {
-    role: INDEX_ROLES.guidance,
-    contextMode: INDEX_CONTEXT_MODES.guidance,
-    readStages: ["guidance", "planning"],
-    syncMode: "explicit-author-update",
-    writeScenarios: ["explicit_guidance_update"],
-    writeTarget: "index-creative-guidance",
-    writeAuthority: "user_explicit",
   },
   "memory-foreshadowing": {
     role: INDEX_ROLES.continuity,

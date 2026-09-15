@@ -20,7 +20,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { CREATIVE_GUIDANCE_DOCUMENT_ID, creativeGuidanceDocumentPatch, creativeGuidanceInferenceRecord, creativeGuidanceLandingTarget, creativeGuidanceRecordInstruction } from "./creative-guidance-record.js?v=3.0.10-task-contract-dreamina-entry";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.5";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -222,7 +222,7 @@ import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfile
 import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { journalManualConversation, forgetManualConversation, restoreManualConversations } from "./manual-conversation-journal.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelsForEngine, agentProfilesForEngine } from "./agent-engine-registry.js";
-import { shouldShowCodexAccountControls } from "./effective-runtime-contract.js";
+import { shouldShowCodexAccountControls, shouldShowCodexAccountControlsForSettings } from "./effective-runtime-contract.js";
 import { executionModeOptionState } from "./model-execution-capabilities.js";
 import {
   CODEX_AGENT_MODE_LABEL,
@@ -3115,6 +3115,7 @@ const ensureStateSchema = () => {
   );
   state.pendingInlineEdits = (state.pendingInlineEdits ?? []).filter((record) => record?.id && record?.documentId && state.documents[record.documentId]);
   state.moduleItems ??= clone(MODULE_ITEMS);
+  if (purgeObsoleteWorkspaceCompatibility(state).changed) ui.structureMigrationPending = true;
   state.authorCockpitReportOrder = Array.isArray(state.authorCockpitReportOrder) ? [...new Set(state.authorCockpitReportOrder.filter(Boolean))] : [];
   state.directoryOrders = state.directoryOrders && typeof state.directoryOrders === "object" && !Array.isArray(state.directoryOrders)
     ? Object.fromEntries(Object.entries(state.directoryOrders).filter(([, order]) => Array.isArray(order)).map(([key, order]) => [key, [...new Set(order.filter(Boolean))]]))
@@ -3278,15 +3279,6 @@ const ensureStateSchema = () => {
     };
     state.histories[LIBRARY_MEMO_DOCUMENT_ID] ??= [];
     ui.structureMigrationPending = true;
-  }
-  // Preserve existing guidance records without creating a document for new work.
-  if (state.workspaceKind === "project" && state.documents[CREATIVE_GUIDANCE_DOCUMENT_ID]) {
-    if (!state.moduleItems.index.some(([id]) => id === CREATIVE_GUIDANCE_DOCUMENT_ID)) {
-      state.moduleItems.index.unshift([CREATIVE_GUIDANCE_DOCUMENT_ID, "创作引导"]);
-      ui.structureMigrationPending = true;
-    }
-    const previousGuidance = state.documents[CREATIVE_GUIDANCE_DOCUMENT_ID];
-    state.documents[CREATIVE_GUIDANCE_DOCUMENT_ID] = creativeGuidanceDocumentPatch(previousGuidance);
   }
   if (state.workspaceKind === "project" && !state.moduleItems.index.some(([id]) => id === "index-language-blacklist")) state.moduleItems.index.push(["index-language-blacklist", "创作合同"]);
   if (state.workspaceKind === "project") state.documents["index-language-blacklist"] ??= {
@@ -24286,7 +24278,12 @@ const whiteboardTextGenerationSettings = (connectionId, model, { reasoningEffort
   };
 };
 
-const activeAgentEngine = () => AGENT_ENGINE_IDS.includes(ui.codexAgent.status?.agentEngine) ? ui.codexAgent.status.agentEngine : "codex";
+const activeAgentEngine = () => {
+  const profile = activeAgentTextProfile(state.settings);
+  const profileEngine = profile ? agentEngineForTextProfile(profile) : "";
+  if (AGENT_ENGINE_IDS.includes(profileEngine)) return profileEngine;
+  return AGENT_ENGINE_IDS.includes(ui.codexAgent.status?.agentEngine) ? ui.codexAgent.status.agentEngine : "codex";
+};
 const activeAgentLabel = () => agentEngineDisplayLabel(activeAgentEngine());
 
 const activeAgentTextProfile = (settings = state.settings) => {
@@ -24395,13 +24392,8 @@ const activeQuickChatProfile = () => {
 };
 
 const currentCodexConnectionSelected = () => {
-  const status = ui.codexAgent.status || {};
-  if (status.provider === "codex_agent") {
-    const profile = activeAgentTextProfile(state.settings);
-    return activeAgentEngine() === "codex" && shouldShowCodexAccountControls(profile || {});
-  }
-  const profile = activeQuickChatProfile();
-  return shouldShowCodexAccountControls(profile || {}) && codexCliProfile(profile || {});
+  if (ui.temporaryCodexSelected && detectedCodexEntryAvailable()) return true;
+  return shouldShowCodexAccountControlsForSettings(state.settings);
 };
 
 const currentChatAgentModeAvailability = () => {
@@ -24435,10 +24427,12 @@ const syncChatModeOptions = () => {
 const renderCodexConnectionControls = () => {
   const status = ui.codexAgent.status || {};
   const selected = currentCodexConnectionSelected();
-  const actualConnected = status.codexAuthenticated === true || (status.agentEngine === "codex" && status.authenticated === true);
+  const actualConnected = selected && (status.codexAuthenticated === true || (status.agentEngine === "codex" && status.authenticated === true));
   const connected = actualConnected && (!ui.temporaryCodexSelected || ui.temporaryCodexLoginRequested);
   if (elements.quickCodexConnection) elements.quickCodexConnection.hidden = !selected || connected;
-  if (elements.codexConnectionStatus) elements.codexConnectionStatus.textContent = connected ? "Codex 已连接" : "Codex 未连接";
+  if (elements.codexConnectionStatus) elements.codexConnectionStatus.textContent = selected
+    ? (connected ? "Codex 已连接" : "Codex 未连接")
+    : "当前配置无需 Codex 登录";
   if (elements.codexAgentLogin) {
     elements.codexAgentLogin.hidden = !selected || connected || status.codexCliInstalled === false;
     elements.codexAgentLogin.disabled = status.accountLogin?.active === true;
@@ -30239,9 +30233,6 @@ const buildProjectContext = (requestedTarget = null, { writingPhase = "full", re
     ? String(targetSpec.documentId || (requestsCurrentDocument(prompt) ? taskContextSnapshot?.activeDocumentId || "" : ""))
     : associatedDocumentId(conversation, state.activeDocument) || "";
   const targetDocumentId = targetSpec.documentId || boundDocumentId || "";
-  const guidanceContextInstruction = targetDocumentId === CREATIVE_GUIDANCE_DOCUMENT_ID
-    ? `${creativeGuidanceRecordInstruction()}\n创作引导只是可选起点，不是正文门禁；作者直接打开正文时必须保留完全相同的讨论、生成与落盘能力。`
-    : "";
   const contextPrompt = prompt || [...(conversation?.messages ?? state.messages ?? [])].reverse().find((message) => message.role === "user")?.content || "";
   const freshStart = targetSpec.freshStart === true || isExplicitFreshCreativeStart({ text: contextPrompt });
   if (state.workspaceKind === "notebook") {
@@ -30633,7 +30624,6 @@ const buildProjectContext = (requestedTarget = null, { writingPhase = "full", re
           ? "本轮只修改用户在当前消息中完整提供的创作原文；粘贴原文已经构成本轮来源，不把空白目标文档、章纲或前序脚手架升级为阻塞条件。"
         : "本轮只修改或诊断当前已有创作资产；目标正文是硬依赖，章纲、前序正文和其他规划资料仅在实际存在时作为辅助依据。"
       : "",
-    guidanceContextInstruction,
     "以下只包含当前版本；历史版本和回退分支已在编译前排除。",
     prewritePhase
       ? freshStart
@@ -33309,19 +33299,10 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
           boundDocumentId: taskAnchorDocumentId || legacyConversationDocumentId,
           activeDocumentId: "",
         });
-        const guidanceRecord = documentId === CREATIVE_GUIDANCE_DOCUMENT_ID
-          ? creativeGuidanceInferenceRecord({
-            userClues: messages.filter((item) => item?.role === "user").map((item) => item.content),
-            acceptedChanges: [artifact.content],
-            guidanceState: candidateTarget?.guidanceState,
-          })
-          : "";
         return {
           ...document,
-          target: documentId === CREATIVE_GUIDANCE_DOCUMENT_ID
-            ? { ...artifactTarget, landingMode: "append_report" }
-            : artifactTarget,
-          content: documentId === CREATIVE_GUIDANCE_DOCUMENT_ID ? guidanceRecord : artifact.content,
+          target: artifactTarget,
+          content: artifact.content,
           documentId,
           requestedOperation: trustedMaterialOperation || artifact.operation,
           materialUpdateChangeType: plannedMaterialChange?.changeType || "",
@@ -37228,12 +37209,8 @@ const renderConversationChoicePanel = () => {
     elements.conversationChoiceHint.textContent = "确认后恢复写入前状态；这是唯一不新增历史版本的恢复操作。";
   } else if (pending.kind === "landing_resolution") {
     const selectedTarget = pending.targets.find((item) => item.documentId === pending.selectedTargetId) || null;
-    const guidanceRecordConfirmation = pending.fixedOperation === "append"
-      && selectedTarget?.documentId === CREATIVE_GUIDANCE_DOCUMENT_ID;
     const writeConfirmation = pending.reason === "write_confirmation";
-    const question = guidanceRecordConfirmation
-      ? `是否将本轮已确认的创作决策写入“${selectedTarget?.title || "创作引导"}”？`
-      : writeConfirmation
+    const question = writeConfirmation
         ? `是否将本轮生成结果写入“${selectedTarget?.title || "目标文档"}”？`
       : pending.step === "operation"
       ? `怎样写入“${selectedTarget?.title || "目标文档"}”？`
@@ -37250,19 +37227,12 @@ const renderConversationChoicePanel = () => {
       elements.conversationChoiceHint.textContent = "在与成果类型匹配的板块创建；仍需通过正式写入校验，不重新生成内容。";
     } else if (pending.step === "operation") {
       const hasContent = selectedTarget ? documentHasSubstantiveContent(selectedTarget.documentId) : false;
-      elements.conversationChoiceOptions.innerHTML = guidanceRecordConfirmation
-        ? [
-          conversationChoiceButton({ label: "确认写入推演记录", type: "landing_resolution_operation", value: "append" }),
-          conversationChoiceButton({ label: "仅保留在对话区", type: "landing_resolution_action", value: "keep" }),
-        ].join("")
-        : [
-          conversationChoiceButton({ label: hasContent ? "追加到文档末尾" : "写入该文档", type: "landing_resolution_operation", value: hasContent ? "append" : "replace" }),
-          hasContent ? conversationChoiceButton({ label: "覆盖当前文档", type: "landing_resolution_operation", value: "replace" }) : "",
-          conversationChoiceButton({ label: "仅保留在对话区", type: "landing_resolution_action", value: "keep" }),
-        ].filter(Boolean).join("");
-      elements.conversationChoiceHint.textContent = guidanceRecordConfirmation
-        ? "写入内容类型：推演记录。只追加已确认或明确委托的作者决策；取消后正式文档保持不变。"
-        : writeConfirmation
+      elements.conversationChoiceOptions.innerHTML = [
+        conversationChoiceButton({ label: hasContent ? "追加到文档末尾" : "写入该文档", type: "landing_resolution_operation", value: hasContent ? "append" : "replace" }),
+        hasContent ? conversationChoiceButton({ label: "覆盖当前文档", type: "landing_resolution_operation", value: "replace" }) : "",
+        conversationChoiceButton({ label: "仅保留在对话区", type: "landing_resolution_action", value: "keep" }),
+      ].filter(Boolean).join("");
+      elements.conversationChoiceHint.textContent = writeConfirmation
           ? "系统无法确定这次结果是否需要落盘。选择写入后才会执行正式文档事务；选择仅保留则原文档不变。"
         : "选择后直接写入现有正式内容，不会重新调用模型。";
     } else {

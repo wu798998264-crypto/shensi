@@ -30,6 +30,9 @@ export const formalDocumentContentPolicy = ({
 } = {}) => {
   const id = text(documentId);
   const module = text(moduleId);
+  if (id === "index-creative-guidance") {
+    return { formal: false, directWrite: false, mode: "retired", reason: "obsolete_compatibility_document" };
+  }
   if (!id || !FORMAL_CONTENT_MODULE_SET.has(module)) {
     return { formal: false, directWrite: false, mode: "unsupported", reason: "unsupported_document_scope" };
   }
@@ -48,9 +51,5 @@ export const formalDocumentContentPolicy = ({
   if (id === "index-language-blacklist") {
     return { formal: true, directWrite: false, mode: "creative_contract", reason: "document_uses_contract_update" };
   }
-  if (id === "index-creative-guidance") {
-    return { formal: true, directWrite: false, mode: "creative_guidance", reason: "document_uses_guidance_record" };
-  }
   return { formal: true, directWrite: true, mode: "direct", reason: "formal_document_content" };
 };
-

@@ -13,7 +13,6 @@ const intendedDomain = (instruction = "") => {
   const text = clean(instruction);
   if (/(?:大纲|卷纲|章纲|剧情规划)/u.test(text)) return "outline";
   if (/(?:设定|世界观|人物档案|角色档案)/u.test(text)) return "setting";
-  if (/(?:创作引导|推演记录|创作记录)/u.test(text)) return "guidance";
   if (/(?:正文|章节|第[零〇一二两三四五六七八九十百\d]+章)/u.test(text)) return "novel";
   return "";
 };
@@ -23,7 +22,6 @@ const targetMatchesDomain = (target, domain) => {
   if (domain === "novel") return target.moduleId === "manuscript" || /^chapter-\d+$/u.test(target.documentId);
   if (domain === "setting") return ["canon", "settings"].includes(target.moduleId) || target.contextDomain === "setting" || /^(?:canon-|script-canon-|setting)/u.test(target.documentId);
   if (domain === "outline") return target.moduleId === "outline" || target.contextDomain === "outline" || /^(?:outline-|script-outline-)/u.test(target.documentId);
-  if (domain === "guidance") return target.documentId === "index-creative-guidance" || target.contextDomain === "guidance";
   return true;
 };
 

@@ -129,3 +129,13 @@ export const shouldShowCodexAccountControls = (profile = {}) => (
   && text(profile.adapter) === "cli"
   && agentEngineForProfile(profile) === "codex"
 );
+
+export const activeTextProfileForAccountControls = (settings = {}) => {
+  const profiles = Array.isArray(settings.textConnections) ? settings.textConnections : [];
+  const profileId = text(settings.activeTextAgentConnectionId || settings.activeTextConnectionId);
+  return profiles.find((profile) => text(profile?.id || profile?.connectionId) === profileId) || null;
+};
+
+export const shouldShowCodexAccountControlsForSettings = (settings = {}) => (
+  shouldShowCodexAccountControls(activeTextProfileForAccountControls(settings) || {})
+);
