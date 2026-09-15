@@ -16,8 +16,13 @@ try {
 
   const initial = await listManagedSkills({ shensiRoot: join(process.cwd(), "packaging", "bundled", "skill", "神思") });
   assert.match(initial.routeBundle.panel.text, /# 面板路由/u);
+  assert.match(initial.capabilityTemplate.history.template[0].routeDocument, /# 面板路由/u, "初始面板历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.routes.some((route) => route.kind === "group"), "默认面板必须生成模组路由");
   assert.ok(initial.routeBundle.routes.some((route) => route.kind === "module"), "默认面板必须生成模块路由");
+  const initialGroup = initial.capabilityTemplate.current.groups[0];
+  const initialModule = initial.capabilityTemplate.current.modules[0];
+  assert.match(initial.capabilityTemplate.history.groups[initialGroup.id][0].routeDocument, /# 模组路由/u, "初始模组历史必须有可恢复的详细路由文档");
+  assert.match(initial.capabilityTemplate.history.modules[initialModule.id][0].routeDocument, /# 模块路由/u, "初始模块历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.skillPlacements.length >= 20, "默认面板中启用的 Skill 必须生成真实位置目录");
   const availableSkillIds = new Set([...initial.builtins, ...initial.user].flatMap((skill) => {
     const id = String(skill.id || "");

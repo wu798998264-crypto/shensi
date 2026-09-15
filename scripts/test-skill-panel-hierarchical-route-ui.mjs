@@ -11,6 +11,12 @@ assert.match(app, /data-save-capability-scope \$\{validation\.valid && ui\.capab
 assert.doesNotMatch(app, /应用到草稿/u);
 assert.doesNotMatch(app, /data-open-route-history/u, "底部重复历史入口必须移除");
 assert.match(app, /scopeType === "template" \? "面板历史版本" : scopeType === "group" \? "模组历史版本" : "模块历史版本"/u);
+const capabilityMenu = app.match(/<div class="context-menu" id="capabilityNodeContextMenu"[\s\S]*?<\/div>/u)?.[0] || "";
+assert.ok(capabilityMenu.indexOf('data-capability-context-action="disable"') < capabilityMenu.indexOf('data-capability-context-action="history"'), "层级节点历史版本必须紧跟在禁用下面");
+assert.ok(capabilityMenu.indexOf('data-capability-context-action="history"') < capabilityMenu.indexOf('data-capability-context-action="edit"'), "层级节点历史版本必须位于编辑之前");
+assert.match(app, /scopeType === "template" \? "编辑面板信息" : scopeType === "group" \? "编辑模组" : "编辑模块"/u);
+assert.match(app, /data-capability-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);
+assert.match(app, /data-skill-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);
 assert.match(app, /面板路由只选择顶层模组或模块/u);
 assert.match(app, /命中下位时默认调用上位，只有语义判断确实不需要时才能记录理由后跳过/u);
 

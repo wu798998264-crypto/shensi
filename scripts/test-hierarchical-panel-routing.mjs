@@ -73,18 +73,26 @@ const bundle = compileManagedRouteBundle({ topology, skills });
 assert.equal(bundle.revision, 12);
 assert.equal(bundle.topologyHash, topology.hash);
 assert.match(bundle.panel.text, /面板路由/u);
+assert.match(bundle.panel.text, /## 本层职责与决策/u);
+assert.match(bundle.panel.text, /## 读取顺序/u);
+assert.match(bundle.panel.text, /## 事实边界/u);
 assert.match(bundle.panel.text, /小说模组/u);
 assert.match(bundle.panel.text, /图片资产/u);
 assert.doesNotMatch(bundle.panel.text, /真假千金/u, "面板路由不能展开深层 Skill 或模块");
 
 const fictionRoute = bundle.routes.find((route) => route.nodeId === "group:fiction");
 assert.ok(fictionRoute);
+assert.match(fictionRoute.text, /## 本层职责与决策/u);
+assert.match(fictionRoute.text, /下级数量=/u);
+assert.match(fictionRoute.text, /下一层路由=模块路由/u);
 assert.match(fictionRoute.text, /小说理论顾问/u);
 assert.match(fictionRoute.text, /女频模组/u);
 assert.doesNotMatch(fictionRoute.text, /女频通用理论/u, "模组路由只能列直接成员");
 
 const identityRoute = bundle.routes.find((route) => route.nodeId === "module:identity");
 assert.ok(identityRoute);
+assert.match(identityRoute.text, /## 上位协作/u);
+assert.match(identityRoute.text, /能力=/u);
 assert.match(identityRoute.text, /Skill=真假千金/u);
 assert.match(identityRoute.text, /真假千金路由规则/u);
 
