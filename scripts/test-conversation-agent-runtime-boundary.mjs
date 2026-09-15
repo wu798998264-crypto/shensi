@@ -19,6 +19,8 @@ for (const source of runtimeSources) {
   assert.doesNotMatch(source, /from\s+["'][^"']*(?:request-routing|agent-task-policy|conversation-media-routing)\.js/u,
     "统一对话 Agent 主链不得导入旧关键词任务路由");
 }
+assert.ok(runtimeSources.some((source) => /每次新指令开始时，宿主已经先读取当前生效的面板路由/u.test(source)), "内置与外置 Agent 必须共享面板优先路由契约");
+assert.ok(runtimeSources.some((source) => /不得把面板路由当成已经读取了下级路由/u.test(source)), "面板命中后必须真实读取模组或模块路由");
 
 const root = await mkdtemp(join(tmpdir(), "shensi-agent-boundary-"));
 try {
