@@ -64,6 +64,8 @@ const normalizedDeepSeek = normalized.textConnections.find((profile) => profile.
 assert.equal(normalizedDeepSeek.name, "DeepSeek Agent");
 assert.equal(normalizedDeepSeek.remarkName, "DeepSeek Agent");
 assert.equal(normalizedDeepSeek.apiKey, "deepseek-test-secret");
+assert.equal(normalizedDeepSeek.model, "deepseek/deepseek-v4-pro", "DeepSeek 服务商不得保留 GPT 模型 ID");
+assert.equal(normalizedDeepSeek.agentModelId, "deepseek/deepseek-v4-pro", "DeepSeek Agent 模型必须与服务商匹配");
 const preservedImage = normalized.imageConnections.find((profile) => profile.id === imageSentinel.id);
 assert.equal(preservedImage?.name, imageSentinel.name);
 assert.equal(preservedImage?.baseUrl, imageSentinel.baseUrl);

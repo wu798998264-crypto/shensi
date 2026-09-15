@@ -775,7 +775,19 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
     };
   }
   if (engine === "opencode") {
-    const qualified = qualifiedOpenCodeModel(profile.agentModelId || model, profile.provider);
+    const requested = String(profile.agentModelId || model).trim();
+    const deepSeekModel = profile.provider === "DeepSeek"
+      ? getProviderModelOptions("DeepSeek")
+        .filter((item) => item?.available !== false && item?.selectable !== false)
+        .find((item) => {
+          const slug = String(item?.slug || "").trim();
+          const candidate = requested.includes("/") ? requested.slice(requested.indexOf("/") + 1) : requested;
+          return slug === candidate;
+        })?.slug || "deepseek-v4-pro"
+      : "";
+    const qualified = profile.provider === "DeepSeek"
+      ? `deepseek/${deepSeekModel}`
+      : qualifiedOpenCodeModel(requested, profile.provider);
     const source = profile.credentialSource === "shensi" ? "shensi" : "opencode";
     return {
       ...profile,
@@ -1566,6 +1578,13 @@ export const validateDeepSeekOpenCodeConnection = ({ profile = {}, capability = 
   if (capability.modelsVerified === false) return { ok: false, stage: "model", message: `OpenCode 模型目录核验失败${capability.modelProbeError ? `：${capability.modelProbeError}` : ""}` };
   const models = (Array.isArray(capability.models) ? capability.models : []).map((item) => String(item?.slug || "").trim()).filter(Boolean);
   if (!String(profile.model || "").trim()) return { ok: false, stage: "model", message: "请先从 OpenCode 能力探测结果中选择模型" };
+  const modelId = String(profile.model || "").trim();
+  const modelSlug = modelId.includes("/") ? modelId.slice(modelId.indexOf("/") + 1) : modelId;
+  const deepSeekModels = getProviderModelOptions("DeepSeek")
+    .filter((item) => item?.available !== false && item?.selectable !== false)
+    .map((item) => String(item?.slug || "").trim())
+    .filter(Boolean);
+  if (!deepSeekModels.includes(modelSlug)) return { ok: false, stage: "model", message: `DeepSeek 服务商与模型不匹配：${modelId}；请选择 DeepSeek V4 Pro 或 DeepSeek V4 Flash` };
   if (models.length && !models.includes(profile.model)) return { ok: false, stage: "model", message: `OpenCode 当前没有报告模型 ${profile.model}` };
   return { ok: true, stage: "ready", message: "DeepSeek / OpenCode CLI 配置字段完整" };
 };
