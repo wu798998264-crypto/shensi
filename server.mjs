@@ -1518,7 +1518,13 @@ const conversationAgentGateway = createConversationAgentGateway({
   apiRuntime: codexAgentProvider.apiAgentRuntime, codexRuntime: shensiCodexAgentRuntime,
   resolveRuntimeSettings: async (settings) => {
     const context = await trustedConversationModelSettings(settings);
-    const selected = context.settings;
+    // The workspace profile is the source of user-facing metadata, while the
+    // machine runtime binding owns local endpoint details. Hydrate the Agent
+    // profile from that binding before validating the codex_api runner so a
+    // redacted/portable profile cannot fall back to an empty or stale URL.
+    const selected = context.settings?.agentEngine === "codex_api"
+      ? await resolveTrustedGenerationSettings({ channel: "text", settings: context.settings, route: "agent" })
+      : context.settings;
     const engine = selected.agentEngine || requiredRuntimeContract({ settings: selected }).engine;
     if (engine === "codex_api") return resolveCodexApiAgentSettings(selected);
     if (engine === "claude_code") return resolveClaudeCodeAgentSettings(selected);
