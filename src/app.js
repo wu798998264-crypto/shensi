@@ -8451,7 +8451,7 @@ root.innerHTML = `
           <div class="skill-review-list" id="skillDetailReviewList"></div>
         </section>
       </div>
-      <footer><button class="secondary-button" id="editSkillFromDetail" type="button" hidden>直接修改</button><button class="secondary-button" id="copyOfficialSkillFromDetail" type="button" hidden>复制为可编辑副本</button><button class="primary-button" id="closeSkillDetailFooter" type="button">关闭</button></footer>
+      <footer><button class="secondary-button" id="editSkillFromDetail" type="button" hidden>直接修改</button><button class="secondary-button" id="copyOfficialSkillFromDetail" type="button" hidden>创建副本</button><button class="primary-button" id="closeSkillDetailFooter" type="button">关闭</button></footer>
     </form>
   </dialog>
 
@@ -67685,14 +67685,14 @@ document.querySelector("#copyOfficialSkillFromDetail").addEventListener("click",
   try {
     if (ui.skillDetail.kind === "capability-asset" || ui.skillDetail.assetType !== "skill") {
       const assetId = ui.skillDetail.kind === "capability-asset" ? ui.skillDetail.id : ui.skillDetail.item?.installedAssetId;
-      if (!assetId) throw new Error("请先下载该能力资产，再复制为可编辑副本");
+      if (!assetId) throw new Error("请先下载该能力资产，再创建副本");
       elements.skillDetailDialog.close();
       await copyCapabilityForEditing({ assetId });
     } else {
       await copySkillForEditing(ui.skillDetail.id, ui.skillDetail.kind);
     }
   } catch (error) {
-    showToast(error.message || "复制为可编辑副本失败");
+    showToast(error.message || "创建副本失败");
   } finally {
     event.currentTarget.disabled = false;
   }
@@ -68228,7 +68228,7 @@ elements.skillContextMenu.addEventListener("click", async (event) => {
     }
     if (action === "copy") {
       if (ui.skillContextKind === "marketplace" && ui.skillContextMeta?.assetType !== "skill") {
-        if (!ui.skillContextMeta?.installedAssetId) throw new Error("请先下载该能力资产，再复制为可编辑副本");
+        if (!ui.skillContextMeta?.installedAssetId) throw new Error("请先下载该能力资产，再创建副本");
         await copyCapabilityForEditing({ assetId: ui.skillContextMeta.installedAssetId });
       } else {
         await copySkillForEditing(ui.skillContextId, ui.skillContextKind, { closeDetail: false });

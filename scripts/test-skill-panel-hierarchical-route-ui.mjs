@@ -17,6 +17,8 @@ assert.ok(capabilityMenu.indexOf('data-capability-context-action="history"') < c
 assert.match(app, /scopeType === "template" \? "编辑面板信息" : scopeType === "group" \? "编辑模组" : "编辑模块"/u);
 assert.match(app, /data-capability-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);
 assert.match(app, /data-skill-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);
+assert.match(app, /id="copyOfficialSkillFromDetail"[^>]*>创建副本<\/button>/u);
+assert.doesNotMatch(app, /复制为可编辑副本/u, "面板、模组、模块与 Skill 的副本操作必须统一命名为创建副本");
 assert.match(app, /面板路由只选择顶层模组或模块/u);
 assert.match(app, /命中下位时默认调用上位，只有语义判断确实不需要时才能记录理由后跳过/u);
 
