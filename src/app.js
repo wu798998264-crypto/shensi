@@ -7590,7 +7590,7 @@ root.innerHTML = `
     <button type="button" data-skill-context-action="detail">${icon("\uE8A5")}<span>查看 Skill 详情</span></button>
     <button type="button" data-skill-context-action="replace">${icon("\uE8AB")}<span>替换 Skill</span></button>
     <button type="button" data-skill-context-action="edit">${icon("\uE70F")}<span>编辑为新版本</span></button>
-    <button type="button" data-skill-context-action="copy">${icon("\uE8C8")}<span>复制为可编辑副本</span></button>
+    <button type="button" data-skill-context-action="copy">${icon("\uE8C8")}<span>创建副本</span></button>
     <button type="button" data-skill-context-action="history">${icon("\uE81C")}<span>查看历史版本</span></button>
     <button type="button" data-skill-context-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
     <button type="button" data-skill-context-action="share">${icon("\uE72D")}<span>分享到广场</span></button>
@@ -8558,10 +8558,10 @@ root.innerHTML = `
 
   <div class="context-menu" id="capabilityNodeContextMenu" hidden>
     <button type="button" data-capability-context-action="disable">${icon("\uE711")}<span>禁用</span></button>
-    <button type="button" data-capability-context-action="edit">${icon("\uE70F")}<span>编辑</span></button>
-    <button type="button" data-capability-context-action="replace">${icon("\uE8AB")}<span>替换</span></button>
-    <button type="button" data-capability-context-action="copy">${icon("\uE8C8")}<span>复制为可编辑副本</span></button>
     <button type="button" data-capability-context-action="history">${icon("\uE81C")}<span>历史版本</span></button>
+    <button type="button" data-capability-context-action="edit">${icon("\uE70F")}<span>编辑面板信息</span></button>
+    <button type="button" data-capability-context-action="replace">${icon("\uE8AB")}<span>替换</span></button>
+    <button type="button" data-capability-context-action="copy">${icon("\uE8C8")}<span>创建副本</span></button>
     <button type="button" data-capability-context-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
     <button type="button" data-capability-context-action="share">${icon("\uE72D")}<span>分享到广场</span></button>
     <button type="button" data-capability-context-action="delete" class="danger">${icon("\uE74D")}<span>删除</span></button>
@@ -21383,11 +21383,11 @@ const showCapabilityContextMenu = (event, scopeType, scopeId, meta = {}) => {
   disableButton.hidden = kernelManaged;
   disableButton.querySelector("span:last-child").textContent = node?.disabled ? "重新启用" : "禁用";
   editButton.hidden = kernelManaged;
-  editButton.querySelector("span:last-child").textContent = scopeType === "template" ? "编辑面板信息" : "编辑";
+  editButton.querySelector("span:last-child").textContent = scopeType === "template" ? "编辑面板信息" : scopeType === "group" ? "编辑模组" : "编辑模块";
   replaceButton.hidden = kernelManaged || (scopeType !== "template" && !parent.placementId);
   replaceButton.querySelector("span:last-child").textContent = `替换${scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块"}`;
   copyButton.hidden = kernelManaged;
-  copyButton.querySelector("span:last-child").textContent = `复制${scopeType === "template" ? "面板" : scopeType === "group" ? "模组" : "模块"}为可编辑副本`;
+  copyButton.querySelector("span:last-child").textContent = "创建副本";
   historyButton.querySelector("span:last-child").textContent = scopeType === "template" ? "面板历史版本" : scopeType === "group" ? "模组历史版本" : "模块历史版本";
   shareButton.hidden = true;
   deleteButton.hidden = scopeType === "template" || kernelManaged;
@@ -21438,9 +21438,7 @@ const showSkillContextMenu = (event, { id, kind = "mine", meta = null } = {}) =>
     ? "直接修改"
     : kind === "capability-asset" ? `修改${capabilityAssetTypeLabel(meta?.assetType)}` : "编辑为新版本";
   copy.hidden = false;
-  copy.querySelector("span:last-child").textContent = kind === "capability-asset" && meta?.assetType !== "skill"
-    ? `复制${capabilityAssetTypeLabel(meta?.assetType)}为可编辑副本`
-    : "复制为可编辑副本";
+  copy.querySelector("span:last-child").textContent = "创建副本";
   history.hidden = false;
   share.hidden = kind === "marketplace";
   share.disabled = officialOriginal;
