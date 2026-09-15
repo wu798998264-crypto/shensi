@@ -1610,14 +1610,32 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   const routeSkills = [...builtins, ...user];
   const routeBundle = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills });
   let routeHistoryChanged = false;
-  const routeForScope = (scopeType, scopeId) => scopeType === "template"
-    ? routeBundle.panel
-    : routeBundle.routes.find((route) => route.kind === scopeType && route.nodeId === scopeId);
+  const routeForHistoryEntry = (entry, scopeType, scopeId) => {
+    const historicalBundle = scopeType === "template"
+      ? normalizeCapabilityTemplate(entry?.snapshot || registry.capabilityTemplate?.current || createInitialCapabilityTemplate())
+      : normalizeCapabilityTemplate(registry.capabilityTemplate?.current || createInitialCapabilityTemplate());
+    if (scopeType !== "template") {
+      const collection = scopeType === "group" ? historicalBundle.groups : historicalBundle.modules;
+      const index = collection.findIndex((node) => node.id === scopeId);
+      if (index < 0 || !entry?.snapshot) return null;
+      collection[index] = structuredClone(entry.snapshot);
+    }
+    const historicalTopology = {
+      ...routeTopology,
+      revision: Math.max(0, Number(entry?.routeRevision) || routeTopology.revision),
+      hash: /^[a-f0-9]{64}$/i.test(String(entry?.topologyHash || "")) ? String(entry.topologyHash).toLowerCase() : routeTopology.hash,
+      capabilityTemplate: historicalBundle,
+    };
+    const historicalBundleRoutes = compileManagedRouteBundle({ topology: historicalTopology, skills: routeSkills });
+    return scopeType === "template"
+      ? historicalBundleRoutes.panel
+      : historicalBundleRoutes.routes.find((route) => route.kind === scopeType && route.nodeId === scopeId);
+  };
   const hydrateHistoryBucket = (entries, scopeType, scopeId) => {
-    const route = routeForScope(scopeType, scopeId);
-    if (!route?.text) return;
     for (const entry of Array.isArray(entries) ? entries : []) {
       if (String(entry.routeDocument || "").trim()) continue;
+      const route = routeForHistoryEntry(entry, scopeType, scopeId);
+      if (!route?.text) continue;
       entry.routeDocument = route.text;
       routeHistoryChanged = true;
     }
