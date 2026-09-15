@@ -175,6 +175,10 @@
       "signAndEditExecutable": true,
       "signtoolOptions": {
         "certificateSha1": "3B868B287E2564AB18294ED0C3216D83D92A4436",
+        "sign": "scripts/windows/sign-electron-file.cjs",
+        "signingHashAlgorithms": [
+          "sha256"
+        ],
         "rfc3161TimeStampServer": "http://timestamp.globalsign.com/tsa/r6advanced1"
       }
     },
