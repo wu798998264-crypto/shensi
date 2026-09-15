@@ -256,7 +256,8 @@ import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSessi
 import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=5.4.11-single-semantic-pass";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
-import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
+import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
+import { compileManagedRouteBundle } from "./managed-route-document.js";
 import { SKILL_CAPABILITY_CATEGORIES, resolveSkillCapabilitiesFromCategories, skillCapabilityCategoryIds, skillCapabilityCategoryLabels } from "./skill-capability-categories.js?v=0.36.35-skill-categories";
 import { compatibleTriggerDeclaration } from "./skill-trigger.js?v=0.43.0-import-compatibility";
 import { mergeSkillDraftValues } from "./skill-draft-merge.js?v=0.43.1-preserve-user-input";
@@ -8526,7 +8527,8 @@ root.innerHTML = `
       </section>
       <label>关系<select name="relationType" required><option value="parallel">并行</option><option value="primary-secondary">主次</option><option value="organization">组织</option></select></label>
       <label>具体作用<textarea name="description" rows="4" maxlength="500" required></textarea></label>
-      <label><span id="capabilityRouteFieldLabel">模块路由</span><textarea name="triggerRules" rows="5" maxlength="800" required></textarea></label>
+      <input name="triggerRules" type="hidden" />
+      <label><span id="capabilityRouteFieldLabel">模块路由</span><textarea name="routeDocument" rows="12" readonly aria-readonly="true"></textarea><small>路由正文由当前真实结构自动编译维护；无需手动填写。</small></label>
       <div class="capability-relation-help"><p><strong>并行</strong>：同级、不同方向，可同时按需启用。</p><p><strong>主次</strong>：主要项承担默认主责；次要项按任务完整语义替代或协作。</p><p><strong>组织</strong>：第一项为上位；命中下位时默认调用上位，只有语义判断确实不需要时才能记录理由后跳过。</p></div>
       <footer><button class="secondary-button" id="cancelCapabilityNodeEditor" type="button">取消</button><button class="primary-button" type="submit">保存并更新路由</button></footer>
     </form>
@@ -20419,7 +20421,7 @@ const applyFixedSkillSelection = async (skillId = "") => {
 };
 
 const setCapabilityTemplateDraft = (bundle, { dirty = true } = {}) => {
-  ui.capabilityTemplateDraft = normalizeCapabilityTemplate(bundle);
+  ui.capabilityTemplateDraft = compileCapabilityDraftRouteDocuments(bundle);
   ui.capabilityTemplateDirty = dirty;
   renderSkillSettings();
 };
@@ -20750,6 +20752,57 @@ const capabilityTemplateBundle = () => {
   return source ? normalizeCapabilityTemplate(source) : null;
 };
 
+const compileCapabilityDraftRouteDocuments = (sourceBundle) => {
+  const bundle = normalizeCapabilityTemplate(sourceBundle);
+  const baseTopology = ui.skillCatalog.routeTopology || {};
+  const topology = {
+    ...baseTopology,
+    revision: Number(ui.skillCatalog.routeRevision) || Number(baseTopology.revision) || 0,
+    capabilityTemplate: capabilityTemplateTopology(bundle),
+  };
+  const routeBundle = compileManagedRouteBundle({
+    topology,
+    skills: [...(ui.skillCatalog.builtins ?? []), ...(ui.skillCatalog.user ?? [])],
+  });
+  const routeByNodeId = new Map((routeBundle.routes ?? []).map((route) => [route.nodeId, route.text]));
+  if (routeBundle.panel?.text) bundle.template.routeDocument = routeBundle.panel.text;
+  for (const node of [...(bundle.groups ?? []), ...(bundle.modules ?? [])]) {
+    if (routeByNodeId.has(node.id)) node.routeDocument = routeByNodeId.get(node.id);
+  }
+  return bundle;
+};
+
+const capabilityNodeEditorPreviewDocument = (form) => {
+  const bundle = capabilityTemplateBundle();
+  if (!bundle) return "";
+  const scopeType = form.elements.nodeType.value;
+  const scopeId = form.elements.id.value;
+  const previewBundle = clone(bundle);
+  let node = capabilityTemplateNode(previewBundle, scopeType, scopeId);
+  if (form.dataset.mode === "create") {
+    node = {
+      id: scopeId,
+      nodeType: scopeType,
+      name: form.elements.name.value || (scopeType === "group" ? "未命名模组" : "未命名模块"),
+      description: form.elements.description.value,
+      triggerRules: "",
+      relationType: form.elements.relationType.value || "parallel",
+      official: false,
+      ...(scopeType === "group" ? { items: [] } : { slots: [] }),
+    };
+    if (scopeType === "group") previewBundle.groups.push(node);
+    else previewBundle.modules.push(node);
+    const parent = capabilityParentNode(previewBundle, ui.capabilityPickerParent);
+    if (parent) parent.items.push({ id: capabilityDraftId("placement"), targetType: scopeType, targetId: scopeId, role: "peer" });
+  } else if (node) {
+    node.name = form.elements.name.value;
+    node.description = form.elements.description.value;
+    node.relationType = form.elements.relationType.value || "parallel";
+  }
+  const compiled = compileCapabilityDraftRouteDocuments(previewBundle);
+  return capabilityTemplateNode(compiled, scopeType, scopeId)?.routeDocument || "";
+};
+
 const capabilityTemplateScope = (sourceBundle = null) => {
   const bundle = sourceBundle ?? capabilityTemplateBundle();
   if (!bundle) return null;
@@ -20949,7 +21002,7 @@ const renderCapabilityTemplateManager = () => {
     ${warning}
     ${lint}
     <header class="capability-template-header" data-capability-node-context-type="${scope.scopeType}" data-capability-node-context-id="${escapeHtml(scope.scopeId)}">
-      ${back}<div><nav>${crumbs}</nav><span>${typeLabel} · ${escapeHtml(capabilityRelationLabel(node.relationType))}关系</span><h4>${escapeHtml(node.name)}</h4><p>${escapeHtml(node.description || "尚未填写具体作用。")}</p><small>${scope.scopeType === "template" ? "面板路由" : scope.scopeType === "group" ? "模组路由" : "模块路由"}：${escapeHtml(node.triggerRules || "尚未填写")}</small></div>
+      ${back}<div><nav>${crumbs}</nav><span>${typeLabel} · ${escapeHtml(capabilityRelationLabel(node.relationType))}关系</span><h4>${escapeHtml(node.name)}</h4><p>${escapeHtml(node.description || "尚未填写具体作用。")}</p><small>${scope.scopeType === "template" ? "面板路由" : scope.scopeType === "group" ? "模组路由" : "模块路由"}：已根据当前结构自动编译</small></div>
     </header>
     ${renderCapabilityRelationBoard(scope, bundle)}
     <footer class="capability-template-footer">
@@ -21137,6 +21190,9 @@ const openCapabilityNodeEditor = ({ scopeType = "module", scopeId = "", create =
   form.elements.derivativeCopy.value = node?.derivativeCopy ? "true" : "false";
   form.elements.changeSummary.value = node?.changeSummary || "";
   document.querySelector("#capabilityPrototypeFields").hidden = !prototypeId;
+  form.elements.routeDocument.value = capabilityNodeEditorPreviewDocument(form)
+    || node?.routeDocument
+    || "保存后将根据当前真实结构自动生成完整路由文档。";
   document.querySelector("#capabilityNodeEditorTitle").textContent = create
     ? scopeType === "group" ? "新建模组" : "新建模块"
     : scopeType === "template" ? "编辑面板" : scopeType === "group" ? "编辑模组" : "编辑模块";
@@ -21153,12 +21209,16 @@ const applyCapabilityNodeEditor = (form) => {
   if (derivativeCopy && [prototypeName, `${prototypeName} 副本`].includes(form.elements.name.value.trim())) {
     throw new Error("可编辑副本必须重新命名后才能保存");
   }
+  const existingNode = create ? null : capabilityTemplateNode(bundle, scopeType, scopeId);
   const common = {
     id: scopeId,
     nodeType: scopeType,
     name: form.elements.name.value.trim(),
     description: form.elements.description.value.trim(),
-    triggerRules: form.elements.triggerRules.value.trim(),
+    // triggerRules remains only as a compatibility field. Route prose is
+    // generated from the normalized structure immediately after this draft.
+    triggerRules: existingNode?.triggerRules || "",
+    routeDocument: "",
     relationType: form.elements.relationType.value,
     official: false,
     prototypeId: form.elements.prototypeId.value.trim(),
@@ -67904,6 +67964,19 @@ elements.capabilityNodeEditorForm.addEventListener("submit", async (event) => {
     submit.disabled = false;
   }
 });
+
+for (const fieldName of ["name", "description", "relationType"]) {
+  elements.capabilityNodeEditorForm.elements[fieldName]?.addEventListener("input", (event) => {
+    const form = event.currentTarget.form;
+    if (form?.elements.routeDocument) form.elements.routeDocument.value = capabilityNodeEditorPreviewDocument(form)
+      || "保存后将根据当前真实结构自动生成完整路由文档。";
+  });
+  elements.capabilityNodeEditorForm.elements[fieldName]?.addEventListener("change", (event) => {
+    const form = event.currentTarget.form;
+    if (form?.elements.routeDocument) form.elements.routeDocument.value = capabilityNodeEditorPreviewDocument(form)
+      || "保存后将根据当前真实结构自动生成完整路由文档。";
+  });
+}
 
 document.querySelector("#closeCapabilityItemPicker").addEventListener("click", () => elements.capabilityItemPickerDialog.close());
 document.querySelector("#capabilityItemPickerSearch").addEventListener("input", (event) => {

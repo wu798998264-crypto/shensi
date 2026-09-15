@@ -4,6 +4,9 @@ import { readFile } from "node:fs/promises";
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 
 assert.match(app, /id="capabilityRouteFieldLabel">模块路由</u);
+assert.match(app, /name="routeDocument" rows="12" readonly/u, "层级编辑器必须显示只读的正式 routeDocument");
+assert.match(app, /name="triggerRules" type="hidden"/u, "triggerRules 只能保留为隐藏兼容字段");
+assert.doesNotMatch(app, /textarea name="triggerRules"/u, "界面不得把 triggerRules 作为路由正文");
 assert.match(app, /scopeType === "template" \? "面板路由" : scopeType === "group" \? "模组路由" : "模块路由"/u);
 assert.match(app, /const saveLabel = "保存并更新路由"/u);
 assert.match(app, /applyCapabilityNodeEditor\(event\.currentTarget\);\s*await saveCapabilityTemplateScope\(\);/u, "节点编辑提交必须同时保存结构并更新路由");

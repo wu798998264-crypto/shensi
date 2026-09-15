@@ -41,6 +41,7 @@ const routeMemberDetail = (child = {}) => {
   ];
   if (child.kind === "skill") {
     details.push(`能力=${list(child.capabilities).length ? list(child.capabilities).map((capability) => limited(capability, 120)).join("、") : "未声明"}`);
+    details.push(`触发条件=${list(child.triggerConditions).length ? list(child.triggerConditions).map((condition) => limited(condition, 180)).join("；") : "由本层任务语义判断"}`);
     if (child.organizationUpperPlacementIds?.length) details.push(`默认上位=${child.organizationUpperPlacementIds.join("、")}`);
   } else {
     details.push(`下级数量=${list(child.childPlacementIds).length}`);
@@ -189,11 +190,12 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
   const lines = [
     `# ${scopedRouteTitle(entry.kind)} · ${limited(entry.name || entry.nodeId)}`,
     "",
+    "## 路由元数据",
+    "",
     `路由版本：${Math.max(0, Number(revision) || 0)}；拓扑哈希：${clean(topologyHash) || "未生成"}`,
     `位置：${entry.pathNames.map((part) => limited(part, 100)).join(" / ")}`,
     `自身关系：${relationLabel(entry.relationType)}；状态=${entry.enabled ? "启用" : "禁用"}`,
-    `具体作用：${limited(node.description || "按当前节点所含能力处理任务", 600)}`,
-    `${scopedRouteTitle(entry.kind)}：${limited(node.triggerRules || "根据任务完整语义选择当前层真正需要的成员", 1_200)}`,
+    `节点职责：${limited(node.description || "按当前节点所含能力处理任务", 600)}`,
     "",
     "## 本层职责与决策",
     "",
@@ -211,8 +213,10 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
     lines.push("", "## 读取顺序", "", "先根据用户任务完整语义选择一个或多个顶层模组/模块；随后使用返回的 placementId 读取对应模组路由或模块路由。面板路由不展开深层成员，也不把面板外 Skill 当作自动候选。", "", "## 无匹配任务", "", "如果当前任务与面板内任何分支都不匹配，或用户只要求事实解释、普通问答、澄清和不涉及面板能力的讨论，直接由 Agent 通用回答，不强行调用 Skill。", "", "## 事实边界", "", "面板结构中的成员、顺序、角色和启用状态是唯一事实来源；本文件中的文字只解释用途，不能改变面板结构。");
   } else if (entry.kind === "group") {
     lines.push("", "## 读取顺序", "", "先依据本模组的关系和成员用途确定实际分支，再读取命中模组或模块的路由文档；不得因成员存在就读取整个模组的所有深层 Skill。", "", "## 事实边界", "", "模组只负责内部组织和分支选择，不改变下级模块的插槽能力；下级模块的具体 Skill 角色以模块路由为准。");
-  } else {
+  } else if (entry.relationType === "organization" || children.some((child) => child.organizationUpperPlacementIds?.length)) {
     lines.push("", "## 读取顺序", "", "先按本模块关系确定主要/次要、上位/下位或并行插槽，再使用具体 placementId 读取 Skill。每个 Skill 的能力边界、触发说明和启用状态必须同时纳入执行计划。", "", "## 上位协作", "", "组织关系默认加载上位；只有 Agent 明确判断当前输入已具备下位所需信息、当前环节不需要上位能力或用户明确限定下位时，才可携带语义理由跳过上位。", "", "## 事实边界", "", "模块路由只描述当前模块的真实插槽，不自动调用面板外 Skill；未出现在当前面板插槽中的 Skill 只有用户明确点名或 @ 引用时才能调用。");
+  } else {
+    lines.push("", "## 读取顺序", "", "先按本模块关系确定主要/次要或并行插槽，再使用具体 placementId 读取 Skill。每个 Skill 的能力边界、触发说明和启用状态必须同时纳入执行计划。", "", "## 事实边界", "", "模块路由只描述当前模块的真实插槽，不自动调用面板外 Skill；未出现在当前面板插槽中的 Skill 只有用户明确点名或 @ 引用时才能调用。");
   }
   return lines.join("\n");
 };
@@ -252,7 +256,7 @@ export const compileManagedRouteBundle = ({ topology = {}, skills = [] } = {}) =
       nodeId: node.id,
       name: node.name || node.id,
       node,
-      guidance: node.triggerRules || node.description || "",
+      guidance: node.description || "",
       parentPlacementId: parent?.placementId || "",
       parentRole,
       parentRelationType: parent?.relationType || "parallel",
@@ -280,7 +284,8 @@ export const compileManagedRouteBundle = ({ topology = {}, skills = [] } = {}) =
           skillId,
           skillName: skill?.name || child.name || skillId,
           name: child.name || skill?.name || skillId,
-          guidance: child.triggerRules || child.description || skill?.description || "",
+          guidance: child.description || skill?.description || "",
+          triggerConditions: [...new Set([...list(child.triggerConditions), ...list(skill?.triggerConditions)])],
           capabilities: list(child.capabilities).length ? [...child.capabilities] : [...list(skill?.capabilities)],
           enabled: ownEnabled && child.disabled !== true && Boolean(skillId) && Boolean(skill),
           parentPlacementId: placementId,

@@ -94,7 +94,8 @@ assert.ok(identityRoute);
 assert.match(identityRoute.text, /## 上位协作/u);
 assert.match(identityRoute.text, /能力=/u);
 assert.match(identityRoute.text, /Skill=真假千金/u);
-assert.match(identityRoute.text, /真假千金路由规则/u);
+assert.doesNotMatch(identityRoute.text, /真假千金路由规则/u, "分层路由正文不得回填 triggerRules 摘要");
+assert.match(identityRoute.text, /触发条件=/u, "模块路由必须说明插槽触发条件");
 
 const identityPlacement = bundle.skillPlacements.find((placement) => placement.skillId === "skill:identity");
 assert.ok(identityPlacement.placementId.includes("placement:fiction>placement:female>placement:identity"));

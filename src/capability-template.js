@@ -52,6 +52,15 @@ const cleanId = (value, fallback) => {
   return /^[a-z0-9][a-z0-9._:-]{2,159}$/i.test(normalized) ? normalized : fallback;
 };
 const cleanText = (value, max = 500) => String(value || "").trim().slice(0, max);
+const cleanRouteDocument = (value) => String(value || "").trim().slice(0, 50_000);
+const withoutGeneratedRouteDocuments = (value) => {
+  if (Array.isArray(value)) return value.map(withoutGeneratedRouteDocuments);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => key !== "routeDocument")
+    .map(([key, child]) => [key, withoutGeneratedRouteDocuments(child)]));
+};
+const stableStructureHash = (value) => stableCapabilityHash(withoutGeneratedRouteDocuments(value));
 const relationType = (value) => RELATION_IDS.has(value) ? value : "parallel";
 const generatedId = (prefix = "node") => `${prefix}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
 const own = (value, key) => Boolean(value && Object.prototype.hasOwnProperty.call(value, key));
@@ -847,6 +856,7 @@ const normalizeNode = (node, nodeType, index) => {
     name: cleanText(node?.name || (nodeType === "module" ? "未命名模块" : "未命名模组"), 100),
     description: cleanText(node?.description, 500),
     triggerRules: cleanText(node?.triggerRules, 800),
+    routeDocument: cleanRouteDocument(node?.routeDocument),
     ...policy,
     relationType: relation,
     official: node?.official === true,
@@ -1773,7 +1783,7 @@ export const capabilityKernelMutationErrors = (input = {}) => {
       errors.push(`内置运行机制不可移除：${canonical.name}`);
       continue;
     }
-    if (stableCapabilityHash(actual) !== stableCapabilityHash(canonical)) errors.push(`内置运行机制不可修改：${canonical.name}`);
+    if (stableStructureHash(actual) !== stableStructureHash(canonical)) errors.push(`内置运行机制不可修改：${canonical.name}`);
   }
   const reachableGroups = reachableCapabilityGroupIds(bundle);
   const memoryParents = ["group:novel", "group:short-drama"].map((id) => bundle.groups.find((group) => group.id === id)).filter((group) => group && reachableGroups.has(group.id));
@@ -2044,8 +2054,8 @@ export const addCapabilityTemplateNode = (input, { nodeType = "module", parentTy
   const bundle = normalizeCapabilityTemplate(input);
   const id = generatedId(nodeType);
   const node = nodeType === "group"
-    ? capabilityGroup({ id, name: "未命名模组", description: "请说明模组作用。", triggerRules: "请说明触发规则。", relation, items: [], official: false })
-    : capabilityModule({ id, name: "未命名模块", description: "请说明模块作用。", triggerRules: "请说明触发规则。", relation, slots: [], official: false });
+    ? capabilityGroup({ id, name: "未命名模组", description: "请说明模组作用。", triggerRules: "", relation, items: [], official: false })
+    : capabilityModule({ id, name: "未命名模块", description: "请说明模块作用。", triggerRules: "", relation, slots: [], official: false });
   if (nodeType === "group") bundle.groups.push(node);
   else bundle.modules.push(node);
   const parent = parentType === "template" ? bundle.template : bundle.groups.find((group) => group.id === parentId);
@@ -2832,7 +2842,7 @@ export const resolveCapabilityTemplateRouting = (inputBundle, {
     ...capabilityStatus.filter((item) => !["template_declared_active", "slot_implementation_invalid_official_fallback"].includes(item.status))
       .map((item) => ({ decision: "unresolved", capabilityIds: [item.capabilityId], slotId: item.slotIds[0] || "", reason: item.status })),
   ].slice(0, 200);
-  const snapshotHash = templateHash || stableCapabilityHash(bundle);
+  const snapshotHash = templateHash || stableStructureHash(bundle);
   const planSeed = {
     template: { schemaVersion: bundle.schemaVersion, revision: Number(templateRevision) || 0, hash: snapshotHash },
     task,
@@ -2841,7 +2851,7 @@ export const resolveCapabilityTemplateRouting = (inputBundle, {
   const compiledCapabilityPlan = deepFreezeCapabilityValue({
     schemaVersion: 1,
     kind: "CompiledCapabilityPlan",
-    id: `capplan:${stableCapabilityHash(planSeed)}`,
+    id: `capplan:${stableStructureHash(planSeed)}`,
     templateSnapshot: { schemaVersion: bundle.schemaVersion, revision: Number(templateRevision) || 0, hash: snapshotHash, immutable: true },
     task,
     trustedCoreCapabilities,
@@ -2891,13 +2901,20 @@ export const resolveCapabilityTemplateRouting = (inputBundle, {
 export const capabilityTemplateTopology = (inputBundle) => {
   const validation = validateCapabilityTemplate(inputBundle);
   const bundle = validation.bundle;
+  const withoutRouteDocument = (node = {}) => {
+    const { routeDocument: _routeDocument, ...rest } = node;
+    return rest;
+  };
   return {
     schemaVersion: CAPABILITY_TEMPLATE_SCHEMA_VERSION,
     valid: validation.valid,
     errors: validation.errors,
-    template: bundle.template,
-    groups: bundle.groups,
-    modules: bundle.modules,
+    // routeDocument is a generated projection, not part of the topology
+    // identity. Excluding it keeps the topology hash stable and prevents a
+    // generated document from recursively changing its own metadata.
+    template: withoutRouteDocument(bundle.template),
+    groups: bundle.groups.map(withoutRouteDocument),
+    modules: bundle.modules.map(withoutRouteDocument),
     fixedSlotIds: unique(bundle.modules.flatMap((module) => module.slots.map((slot) => slot.fixedSlotId))),
   };
 };

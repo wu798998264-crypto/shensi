@@ -16,11 +16,15 @@ try {
 
   const initial = await listManagedSkills({ shensiRoot: join(process.cwd(), "packaging", "bundled", "skill", "神思") });
   assert.match(initial.routeBundle.panel.text, /# 面板路由/u);
+  assert.match(initial.capabilityTemplate.current.template.routeDocument, /## 路由元数据/u, "当前面板必须持久化完整 routeDocument");
+  assert.doesNotMatch(initial.capabilityTemplate.current.template.routeDocument, /可信任务路由读取完整模板/u, "当前面板 routeDocument 不得退化为 triggerRules");
   assert.match(initial.capabilityTemplate.history.template[0].routeDocument, /# 面板路由/u, "初始面板历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.routes.some((route) => route.kind === "group"), "默认面板必须生成模组路由");
   assert.ok(initial.routeBundle.routes.some((route) => route.kind === "module"), "默认面板必须生成模块路由");
   const initialGroup = initial.capabilityTemplate.current.groups[0];
   const initialModule = initial.capabilityTemplate.current.modules[0];
+  assert.match(initialGroup.routeDocument, /# 模组路由/u);
+  assert.match(initialModule.routeDocument, /# 模块路由/u);
   assert.match(initial.capabilityTemplate.history.groups[initialGroup.id][0].routeDocument, /# 模组路由/u, "初始模组历史必须有可恢复的详细路由文档");
   assert.match(initial.capabilityTemplate.history.modules[initialModule.id][0].routeDocument, /# 模块路由/u, "初始模块历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.skillPlacements.length >= 20, "默认面板中启用的 Skill 必须生成真实位置目录");
@@ -45,6 +49,7 @@ try {
   assert.match(saved.routeVersion.routeDocument, /# 面板路由/u);
   assert.doesNotMatch(saved.routeVersion.routeDocument, /## 模块路由/u, "面板历史只能内含顶层面板路由");
   assert.equal(saved.routeVersion.routingAudit.valid, true);
+  assert.equal(saved.capabilityTemplate.current.template.routeDocument, saved.routeVersion.routeDocument, "当前面板字段与联合历史路由必须一致");
   assert.ok(Array.isArray(saved.routeVersion.routeDiff.summary));
   assert.equal(saved.capabilityTemplate.history.template[0].routeRevision, saved.routeRevision);
 
@@ -81,6 +86,11 @@ try {
   assert.equal(moduleSaved.savedVersion.routeRevision, moduleSaved.routeRevision, "模块结构历史必须绑定同次路由版本");
   assert.match(moduleSaved.savedVersion.routeDocument, /# 模块路由/u, "模块历史必须内含对应模块路由");
   assert.doesNotMatch(moduleSaved.savedVersion.routeDocument, /# 面板路由/u, "模块历史不应复制无关面板路由");
+  assert.equal(
+    moduleSaved.capabilityTemplate.current.modules.find((module) => module.id === moduleScope.id)?.routeDocument,
+    moduleSaved.savedVersion.routeDocument,
+    "当前模块字段与模块联合历史路由必须一致",
+  );
   const moduleRestored = await restoreManagedCapabilityTemplateVersion({
     scopeType: "module",
     scopeId: moduleScope.id,

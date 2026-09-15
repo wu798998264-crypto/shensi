@@ -1609,6 +1609,7 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   const routeTopology = compileRouteTopology(registry, { fixedSlots, customSlots });
   const routeSkills = [...builtins, ...user];
   const routeBundle = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills });
+  const routeDocumentsChanged = applyCompiledRouteDocuments(registry.capabilityTemplate.current, routeBundle);
   let routeHistoryChanged = false;
   const routeForHistoryEntry = (entry, scopeType, scopeId) => {
     const historicalBundle = scopeType === "template"
@@ -1644,7 +1645,7 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
   hydrateHistoryBucket(capabilityHistory?.template, "template", registry.capabilityTemplate?.current?.template?.id || "");
   for (const [scopeId, entries] of Object.entries(capabilityHistory?.groups || {})) hydrateHistoryBucket(entries, "group", scopeId);
   for (const [scopeId, entries] of Object.entries(capabilityHistory?.modules || {})) hydrateHistoryBucket(entries, "module", scopeId);
-  if (routeHistoryChanged) await writeRegistry(root, registry);
+  if (routeHistoryChanged || routeDocumentsChanged) await writeRegistry(root, registry);
   return {
     root,
     builtins,
@@ -4341,6 +4342,25 @@ const bumpRouteRevision = (registry, history = {}) => {
   return registry.routeRevision;
 };
 
+const applyCompiledRouteDocuments = (bundle, routeBundle) => {
+  if (!bundle?.template || !routeBundle) return false;
+  const routeByNodeId = new Map();
+  for (const route of routeBundle.routes ?? []) {
+    if (!route?.nodeId || !String(route.text || "").trim() || routeByNodeId.has(route.nodeId)) continue;
+    routeByNodeId.set(route.nodeId, route.text);
+  }
+  const assign = (node, text) => {
+    if (!node || !text || node.routeDocument === text) return false;
+    node.routeDocument = text;
+    return true;
+  };
+  let changed = assign(bundle.template, routeBundle.panel?.text || "");
+  for (const node of [...(bundle.groups ?? []), ...(bundle.modules ?? [])]) {
+    changed = assign(node, routeByNodeId.get(node.id) || "") || changed;
+  }
+  return changed;
+};
+
 const normalizeCustomSlot = (input = {}, previous = null) => {
   const id = normalizedSlotId(input.id || previous?.id || `custom.${randomUUID()}`);
   const workspaceModes = [...new Set((Array.isArray(input.workspaceModes) ? input.workspaceModes : previous?.workspaceModes ?? [])
@@ -4579,6 +4599,11 @@ const appendCapabilityTemplateHistory = (state, { scopeType, scopeId, reason = "
   return record;
 };
 
+const capabilityStructureSnapshot = (node = {}) => {
+  const { routeDocument: _routeDocument, ...rest } = node;
+  return rest;
+};
+
 const capabilityRouteNodeMap = (bundle = {}) => {
   if (!bundle?.template) return new Map();
   const normalized = normalizeCapabilityTemplate(bundle);
@@ -4590,7 +4615,7 @@ const capabilityRouteNodeMap = (bundle = {}) => {
       id: node.id,
       name: node.name || node.id,
       parentId,
-      fingerprint: hashText(JSON.stringify(node)),
+      fingerprint: hashText(JSON.stringify(capabilityStructureSnapshot(node))),
       capabilities: type === "module"
         ? [...new Set((node.slots ?? []).flatMap((slot) => slot.capabilities ?? []))]
         : type === "slot" ? [...new Set(node.capabilities ?? [])] : [],
@@ -4684,6 +4709,9 @@ const appendUnifiedRouteHistory = (registry, {
     customSlots: structuredClone(registry.customSlots ?? []),
     customSlotGroups: structuredClone(registry.customSlotGroups ?? []),
   };
+  const version = bucket.reduce((maximum, entry) => Math.max(maximum, Number(entry.version) || 0), 0) + 1;
+  state.current.template.version = version;
+  state.current.template.updatedAt = Date.now();
   const routeTopology = compileRouteTopology(registry);
   const lint = applyAdaptiveNativeFallbackToLint(lintCapabilityTemplateReachability(state.current, {
     fixedSlots: listFixedSkillSlots(),
@@ -4697,9 +4725,6 @@ const appendUnifiedRouteHistory = (registry, {
     userSkills: registry.skills,
     adaptationActions,
   });
-  const version = bucket.reduce((maximum, entry) => Math.max(maximum, Number(entry.version) || 0), 0) + 1;
-  state.current.template.version = version;
-  state.current.template.updatedAt = Date.now();
   const routeDiff = capabilityRouteDiff({
     previousRecord,
     currentBundle: state.current,
@@ -4707,7 +4732,9 @@ const appendUnifiedRouteHistory = (registry, {
     topologyHash: routeTopology.hash || "",
   });
   const routeSkills = [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)];
-  const routeDocument = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills }).panel.text;
+  const compiledRoutes = compileManagedRouteBundle({ topology: routeTopology, skills: routeSkills });
+  applyCompiledRouteDocuments(state.current, compiledRoutes);
+  const routeDocument = compiledRoutes.panel.text;
   const record = capabilityTemplateHistoryRecord({
     scopeType: "template",
     scopeId: state.current.template.id,
@@ -4937,6 +4964,7 @@ export const saveManagedCapabilityTemplate = async ({ bundle, scopeType = "templ
       topology: currentTopology,
       skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
     }).routes.filter((route) => route.kind === normalized.scopeType && route.nodeId === normalized.scopeId);
+    localRecord.snapshot = structuredClone(capabilityTemplateSnapshotForScope(registry.capabilityTemplate.current, normalized.scopeType, normalized.scopeId));
     Object.assign(localRecord, {
       routeRevision: routeRecord.routeRevision,
       topologyHash: routeRecord.topologyHash,
@@ -5051,6 +5079,7 @@ export const restoreManagedCapabilityTemplateVersion = async ({ scopeType = "tem
       topology: compileRouteTopology(registry),
       skills: [...listBuiltinSkills(), ...managedPersonalSkillCatalog(registry)],
     });
+    localRecord.snapshot = structuredClone(capabilityTemplateSnapshotForScope(registry.capabilityTemplate.current, scopeType, effectiveScopeId));
     Object.assign(localRecord, {
       routeRevision: routeRecord.routeRevision,
       topologyHash: routeRecord.topologyHash,

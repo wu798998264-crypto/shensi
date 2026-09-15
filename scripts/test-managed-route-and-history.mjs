@@ -11,13 +11,13 @@ const topology = {
   revision: 7,
   hash: "a".repeat(64),
   capabilityTemplate: {
-    template: { id: "template:main", name: "测试面板", relationType: "parallel", description: "面板能力", triggerRules: "按任务", items: [{ id: "placement:test", targetType: "module", targetId: "module:test", role: "peer" }] },
+    template: { id: "template:main", name: "测试面板", relationType: "parallel", description: "面板能力", triggerRules: "TRIGGER_RULES_PANEL", items: [{ id: "placement:test", targetType: "module", targetId: "module:test", role: "peer" }] },
     groups: [{ id: "group:org", name: "组织模组", relationType: "organization", description: "组织能力", triggerRules: "命中下位时启用" }],
     modules: [{
-      id: "module:test", name: "测试模块", relationType: "primary-secondary", description: "正文处理", triggerRules: "正式正文",
+      id: "module:test", name: "测试模块", relationType: "primary-secondary", description: "正文处理", triggerRules: "TRIGGER_RULES_MODULE",
       slots: [
-        { id: "slot:primary", name: "主位", role: "primary", skillId: "builtin:primary", description: "主能力", triggerRules: "正文" },
-        { id: "slot:secondary", name: "次位", role: "secondary", skillId: "builtin:secondary", description: "次能力", triggerRules: "改写" },
+        { id: "slot:primary", name: "主位", role: "primary", skillId: "builtin:primary", description: "主能力", triggerRules: "TRIGGER_RULES_PRIMARY", triggerConditions: ["deliverable:novel"] },
+        { id: "slot:secondary", name: "次位", role: "secondary", skillId: "builtin:secondary", description: "次能力", triggerRules: "TRIGGER_RULES_SECONDARY", triggerConditions: ["phase:produce"] },
       ],
     }],
   },
@@ -29,10 +29,14 @@ const skills = [
 ];
 const routeBundle = compileManagedRouteBundle({ topology, skills });
 assert.match(routeBundle.panel.text, /路由版本：7/u);
+assert.match(routeBundle.panel.text, /## 路由元数据/u);
+assert.doesNotMatch(routeBundle.panel.text, /TRIGGER_RULES_PANEL/u, "面板路由不得显示 triggerRules 摘要");
 assert.doesNotMatch(routeBundle.panel.text, /主能力|次能力/u, "面板路由不得展开模块内 Skill");
 const moduleRoute = routeBundle.routes.find((route) => route.nodeId === "module:test");
 assert.match(moduleRoute.text, /\[主要\].*主能力/u);
 assert.match(moduleRoute.text, /\[次要\].*次能力/u);
+assert.doesNotMatch(moduleRoute.text, /TRIGGER_RULES_MODULE|TRIGGER_RULES_PRIMARY|TRIGGER_RULES_SECONDARY/u, "模块路由不得显示 triggerRules 摘要");
+assert.match(moduleRoute.text, /触发条件=/u);
 assert.equal(routeBundle.skillPlacements.some((placement) => placement.skillId === "user:outside"), false, "面板外 Skill 不得进入分层路由");
 assert.deepEqual(filterAgentSkillCatalog({ catalog: skills, routeTopology: topology, request: { messages: [{ role: "user", content: "普通正文任务" }] } }).map((skill) => skill.id), ["builtin:primary", "builtin:secondary"]);
 assert.deepEqual(filterAgentSkillCatalog({ catalog: skills, routeTopology: topology, request: { messages: [{ role: "user", content: "请使用 @outside" }] } }).map((skill) => skill.id), ["builtin:primary", "builtin:secondary", "user:outside"]);
