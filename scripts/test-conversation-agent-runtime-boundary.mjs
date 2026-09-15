@@ -24,17 +24,25 @@ const root = await mkdtemp(join(tmpdir(), "shensi-agent-boundary-"));
 try {
   let workspaceReads = 0;
   let capturedRun = null;
+  const runtimeOrder = [];
   const noPreloadService = createConversationAgentService({
     appRoot: sourceRoot,
     storageRoot: join(root, "no-preload-runs"),
     skillCatalog: async () => [{ id: "builtin:creative-guide", name: "创作指导", description: "按需使用" }],
-    readRoute: async () => "由 Agent 依据语义判断阶段和 Skill，不使用关键词绑定。",
+    readRoute: async () => {
+      runtimeOrder.push("panel_route_read");
+      return {
+        text: "# 面板路由\n\n无匹配任务时直接通用问答，不强行调用 Skill。",
+        routeBundle: { panel: { placementId: "template:test", name: "测试面板", text: "# 面板路由\n\n无匹配任务时直接通用问答，不强行调用 Skill。" }, routes: [], skillPlacements: [] },
+      };
+    },
     readSkill: async () => "未被调用",
     toolsFactory: (options) => createConversationAgentTools({
       ...options,
       load: async () => { workspaceReads += 1; throw new Error("不应预读工作区"); },
     }),
     run: async (options) => {
+      runtimeOrder.push("agent_run");
       capturedRun = options;
       await options.workspaceToolRuntime.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } });
       return { text: "只讨论，不读取空文档。" };
@@ -56,9 +64,11 @@ try {
   }
   const semanticStatus = await noPreloadService.status(started.id);
   assert.equal(semanticStatus.status, "completed");
+  assert.deepEqual(runtimeOrder.slice(0, 2), ["panel_route_read", "agent_run"], "每次 Agent 指令必须先读取当前面板路由，再进入模型执行");
   assert.equal(workspaceReads, 0, "不调用文档工具时不得读取记忆、大纲、设定或其他空文档");
   assert.match(capturedRun.prompt, /不要生成视频/u, "原始语义必须完整交给 Agent，不得先按媒体关键词改写任务");
   assert.ok(capturedRun.contextBlocks.some((block) => block.name === "面板路由与运行规范"));
+  assert.ok(capturedRun.contextBlocks.some((block) => block.text.includes("无匹配任务")), "面板路由必须告诉 Agent 无匹配时直接通用问答");
 
   const handoffs = [];
   let openedHosts = 0;
