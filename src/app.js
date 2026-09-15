@@ -36052,8 +36052,10 @@ const monitorNativeConversation = (runtime, pending) => {
             : event.payload.success === false ? "操作未完成，Agent 正在处理原因" : "Agent 正在继续处理";
         } else if (["document_saved", "media_saved", "media_job"].includes(event.type)) {
           pending.execution.agentResultReferences ??= [];
-          if (!pending.execution.agentResultReferences.some((entry) => entry.sequence === event.sequence)) {
-            pending.execution.agentResultReferences.push({ sequence: event.sequence, type: event.type, ...event.payload });
+          let resultReference = pending.execution.agentResultReferences.find((entry) => entry.sequence === event.sequence);
+          if (!resultReference) {
+            resultReference = { sequence: event.sequence, type: event.type, ...event.payload };
+            pending.execution.agentResultReferences.push(resultReference);
           }
           if (event.type === "media_job" || event.type === "media_saved") {
             const taskKind = event.payload.channel === "video" ? "video_generation" : "image_generation";
@@ -36069,6 +36071,22 @@ const monitorNativeConversation = (runtime, pending) => {
             const target = { documentId: event.payload.documentId, title: event.payload.title };
             const index = targets.findIndex(item => item.documentId === target.documentId);
             if (index < 0) targets.push(target); else targets[index] = target;
+            if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
+              try {
+                const projected = await refreshVerifiedAgentDocuments([event.payload.documentId]);
+                if (!projected) throw new Error("写入回执所属工作区已切换");
+                resultReference.clientProjectionVerified = true;
+                delete resultReference.clientProjectionError;
+                delete pending.execution.refreshError;
+                pending.execution.result = "文档已写入并更新目录，Agent 正在继续处理";
+              } catch (error) {
+                resultReference.clientProjectionVerified = false;
+                resultReference.clientProjectionError = error.message;
+                pending.execution.refreshError = error.message;
+                pending.execution.result = `文档已写入磁盘，但目录同步失败：${error.message}`;
+                showToast(pending.execution.result);
+              }
+            }
           }
           if (event.type === "media_saved") {
             const id = event.payload.messageId || `media-${event.payload.jobId}`;
@@ -38723,6 +38741,13 @@ const refreshVerifiedAgentDocuments = async (ids) => {
     state.histories ||= {};
     if (loaded.state.histories?.[id]) state.histories[id] = clone(loaded.state.histories[id]);
     ui.workspaceDocumentHashes.set(id, documentSaveHashes({ [id]: document }).get(id));
+    const remoteModuleIds = new Set(Object.entries(loaded.state.moduleItems || {})
+      .filter(([, remoteItems]) => remoteItems.some(item => (Array.isArray(item) ? item[0] : item.id) === id))
+      .map(([moduleId]) => moduleId));
+    for (const [moduleId, localItems] of Object.entries(state.moduleItems || {})) {
+      if (remoteModuleIds.has(moduleId)) continue;
+      state.moduleItems[moduleId] = localItems.filter(item => (Array.isArray(item) ? item[0] : item.id) !== id);
+    }
     for (const [moduleId, remoteItems] of Object.entries(loaded.state.moduleItems || {})) {
       const remoteItem = remoteItems.find(item => (Array.isArray(item) ? item[0] : item.id) === id);
       if (!remoteItem) continue;
@@ -61834,7 +61859,8 @@ elements.chatFeed.addEventListener("click", async (event) => {
         : switchProject({ workspacePath: targetWorkspacePath, name: targetWorkspaceName }));
       if (!switched) return;
     }
-    if (!await refreshVerifiedAgentDocuments([landedDocumentId])) return;
+    if ((!state.documents[landedDocumentId] || !documentItem(landedDocumentId)?.item)
+      && !await refreshVerifiedAgentDocuments([landedDocumentId])) return;
     if (!state.documents[landedDocumentId]) {
       showToast(`已切换到目标${targetWorkspaceKind === "notebook" ? "笔记本" : "作品"}，但未找到该文档，请刷新后重试`);
       return;

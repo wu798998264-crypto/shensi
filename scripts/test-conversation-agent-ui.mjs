@@ -97,6 +97,14 @@ try {
     const original = window.fetch.bind(window);
     window.fetch = async (url, init = {}) => {
       const path = String(url);
+      if (path === '/api/workspace/document-state') {
+        const request = JSON.parse(init.body || '{}');
+        const target = window.agentCreatedDocument;
+        if (target && request.documentIds?.includes(target.id)) return Response.json({ok:true,state:{
+          documents:{[target.id]:{title:target.title,moduleId:'manuscript',workspaceView:'novel',markdown:'这是 Agent 已写入并完成磁盘校验的正文。',html:'<p>这是 Agent 已写入并完成磁盘校验的正文。</p>'}},
+          histories:{},moduleItems:{manuscript:[[target.id,target.title,{workspaceView:'novel'}]]},customFolders:[]
+        }});
+      }
       if (path === '/api/conversation-agent/start') {
         const request = JSON.parse(init.body);
         window.nativeAgentStarts.push(request);
@@ -106,7 +114,7 @@ try {
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
           { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: window.nativeAgentStarts.length === 1, allowFreeText: true } },
         ];
-        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentLinkTarget : null, workspacePath: request.workspacePath });
+        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentCreatedDocument : null, workspacePath: request.workspacePath });
         return Response.json({ok:true,id,status:'running'});
       }
       if (path.startsWith('/api/conversation-agent/')) {
@@ -127,11 +135,23 @@ try {
             const landingManifest = {schemaVersion:2,nativeAgentDocumentSave:true,workspaceKind:'project',workspacePath:run.workspacePath,workspaceName:'Agent界面隔离验收',segments:[{documentId:run.linkTarget.id,title:run.linkTarget.title,requestedTitle:run.linkTarget.title,moduleId:'manuscript',receiptVerified:true,navigationTarget:{documentId:run.linkTarget.id,moduleId:'manuscript',workspaceKind:'project',workspacePath:run.workspacePath,workspaceName:'Agent界面隔离验收'}}],batchLandingReceipt:{verified:true,failed:0,results:[result]}};
             run.events.push({sequence:sequence++,type:'document_saved',payload:{documentId:run.linkTarget.id,title:run.linkTarget.title,trustedDocumentSave:true,landingManifest}});
           }
-          run.events.push({sequence,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
-          run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=sequence;
+          if (run.linkTarget) {
+            run.completionAt = Date.now() + 3000;
+            run.pendingCompletionSequence = sequence;
+            run.lastSequence = sequence - 1;
+            run.status = 'running';
+          } else {
+            run.events.push({sequence,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
+            run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=sequence;
+          }
           return Response.json({ok:true,accepted:true});
         }
         if (path.endsWith('/cancel')) { run.status='cancelled'; run.events.push({sequence:run.events.length+1,type:'cancelled',payload:{message:'已取消测试任务'}}); run.lastSequence=run.events.length; return Response.json({ok:true,accepted:true}); }
+        if (run.completionAt && Date.now() >= run.completionAt && !run.completedEmitted) {
+          run.completedEmitted = true;
+          run.events.push({sequence:run.pendingCompletionSequence,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
+          run.status='completed';run.text='已生成三份候选，未覆盖文档。';run.lastSequence=run.pendingCompletionSequence;
+        }
         const after=Number(new URL(path,location.origin).searchParams.get('after')||0);
         return Response.json({ok:true,...run,events:run.events.filter(e=>e.sequence>after)});
       }
@@ -151,8 +171,9 @@ try {
   await waitFor("document.querySelector('[data-document=library-memo]')", "内置资料文档");
   await evaluate("document.querySelector('[data-document=library-memo]').click(); true");
   await waitFor("document.querySelector('[data-document=library-memo].active')", "选中链接验收文档");
-  const agentLinkTarget = await evaluate(`(() => {const row=document.querySelector('[data-document=library-memo]');return {id:row.dataset.document,title:row.querySelector('.document-label').textContent.trim()};})()`);
-  await evaluate(`window.agentLinkTarget=${JSON.stringify(agentLinkTarget)}; true`);
+  const currentDocumentTarget = await evaluate(`(() => {const row=document.querySelector('[data-document=library-memo]');return {id:row.dataset.document,title:row.querySelector('.document-label').textContent.trim()};})()`);
+  const agentLinkTarget = { id: 'agent-created-article', title: 'Agent 新建文章' };
+  await evaluate(`window.agentCreatedDocument=${JSON.stringify(agentLinkTarget)}; true`);
   await evaluate("document.querySelector('#quickModelButton').click(); true");
   await waitFor("document.querySelector('#quickModelPanel')?.hidden === false", "权限快捷面板");
   await evaluate("document.querySelector('#conversationPermissionLabel').click(); true");
@@ -218,7 +239,7 @@ try {
   assert.equal(await evaluate("document.querySelector('#conversationAgentLiveStatus')"), null, '不再存在输入框上方的重复状态栏');
   assert.equal(await evaluate("document.querySelectorAll('[data-native-task-card]').length"),1,'每轮只有一张原生任务卡片');
   assert.equal(await evaluate("window.nativeAgentStarts[0].targetDocumentId"), '', '当前打开文档不得默认绑定为写入目标');
-  assert.equal(await evaluate("window.nativeAgentStarts[0].currentDocument.documentId"), agentLinkTarget.id);
+  assert.equal(await evaluate("window.nativeAgentStarts[0].currentDocument.documentId"), currentDocumentTarget.id);
   assert.match(first.text, /不生成视频，只给三份不同视角的候选故事/);
   assert.match(first.text, /你更希望比较哪些差异/);
   assert.doesNotMatch(first.text, /先选择主笔数量|单主笔生成多稿|多主笔生成候选/);
@@ -258,6 +279,9 @@ try {
   await waitFor("window.nativeAgentAnswers.length === 2", "多选回答");
   assert.equal(await evaluate("window.nativeAgentAnswers[1].answer"), "节奏；视角");
   await waitFor("document.querySelector('[data-open-landed-document]')", "Agent 文档标题链接");
+  await evaluate("document.querySelector('[data-module=manuscript]').click(); true");
+  await waitFor(`${JSON.stringify(agentLinkTarget.id)} in Object.fromEntries([...document.querySelectorAll('[data-document]')].map((item)=>[item.dataset.document,true]))`, "可信写入回执立即进入左侧目录");
+  assert.equal(await evaluate("[...window.nativeAgentMocks.values()][0].status"), "running", "目录和链接必须在 Agent 整体结束前由可信写入回执立即更新");
   assert.equal(await evaluate("document.querySelector('[data-open-landed-document]').textContent.trim()"), agentLinkTarget.title, "链接文字必须与文档显示标题一致");
   await evaluate("document.querySelector('[data-module=memory]').click(); true");
   await waitFor("document.querySelector('[data-document=memory-snapshot]')", "跳转前文档");
