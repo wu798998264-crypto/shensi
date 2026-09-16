@@ -964,7 +964,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     ? semanticDecision.skillCapabilities
     : [];
   const semanticQualityReview = semanticDecision?.taskKind === "quality_review"
-    || semanticCapabilities.includes("effect_reviewer");
+    || semanticCapabilities.some((capability) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"].includes(capability));
   const semanticRoute = semanticMode ? {
     mode: semanticQualityReview && semanticMode === "general" ? "creative" : semanticMode,
     taskKind: String(semanticDecision.taskKind || (semanticQualityReview ? "quality_review" : "task_execution")),

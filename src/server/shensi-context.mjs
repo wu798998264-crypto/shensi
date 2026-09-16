@@ -541,15 +541,23 @@ const guidanceSourceRefs = ({ prompt = "", routingText = "", targetDocumentId = 
   return ["神思-创作引导双启动规则.md", CREATIVE_GUIDE_SOURCE];
 };
 
-const selfCheckSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", stage = "response", fullAudit = false, workspaceKind = "project" }) => {
+const selfCheckSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", stage = "response", fullAudit = false, workspaceKind = "project", skillCapabilities = [] }) => {
   if (!["evaluation", "combined-check", "audit", "audit-final", "theory-support"].includes(stage)) return [];
   const text = `${prompt} ${routingText}`;
   const deliverableType = creativeDeliverableType({ text });
   const scriptTask = deliverableType === "short_drama_script" || isScriptContext(contextDomain);
   const refs = [];
   if (deliverableType === "short_video_script") refs.push(SHORT_VIDEO_GENERAL_SOURCE);
-  if (!scriptTask && activeModule === "manuscript" && !["short_video_script", "public_account"].includes(deliverableType)) {
-    if (fullAudit) refs.push(STRONG_STORY_CHECK_SOURCE, REGULAR_STORY_CHECK_SOURCE);
+  // Review capabilities are semantically routed to the reports module, while
+  // legacy manuscript calls still arrive through manuscript. Both surfaces
+  // must resolve the same concrete novel self-check source.
+  if (!scriptTask && ["manuscript", "reports"].includes(activeModule) && !["short_video_script", "public_account"].includes(deliverableType)) {
+    const requested = new Set(Array.isArray(skillCapabilities) ? skillCapabilities : []);
+    const strongRequested = requested.has("strong_story_reviewer");
+    const regularRequested = requested.has("regular_progress_reviewer");
+    if (fullAudit || (strongRequested && regularRequested)) refs.push(STRONG_STORY_CHECK_SOURCE, REGULAR_STORY_CHECK_SOURCE);
+    else if (strongRequested) refs.push(STRONG_STORY_CHECK_SOURCE);
+    else if (regularRequested) refs.push(REGULAR_STORY_CHECK_SOURCE);
     else refs.push(STRONG_STORY_PATTERN.test(text) ? STRONG_STORY_CHECK_SOURCE : REGULAR_STORY_CHECK_SOURCE);
   }
   if (workspaceKind !== "notebook" && (needsLongStructure({ text, activeModule }) || activeModule === "outline" && /全集|全书|卷纲|整卷|整本/.test(text))) {
@@ -561,7 +569,7 @@ const selfCheckSourceRefs = ({ prompt = "", routingText = "", activeModule = "ma
   return refs;
 };
 
-const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", requestMode = "creative", sourceMode = "", guidanceSelectionMode = "", creativeContextMode = "framework_guided" }) => {
+const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manuscript", contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", requestMode = "creative", sourceMode = "", guidanceSelectionMode = "", creativeContextMode = "framework_guided", skillCapabilities = [] }) => {
   const deliverableType = creativeDeliverableType({ text: `${prompt} ${routingText}`, targetDocumentId });
   const scriptTask = deliverableType === "short_drama_script" || isScriptContext(contextDomain);
   const specialty = specialtySourceRefs({ prompt, routingText, activeModule, contextDomain, targetDocumentId, workspaceKind, stage, sourceMode });
@@ -598,7 +606,7 @@ const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manusc
     if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
     if (scriptTask && !/提示词|视觉资产|图片资产|全景调度|站位/.test(`${prompt} ${routingText} ${targetDocumentId}`)) refs.push(SHORT_DRAMA_FORMAT_SOURCE);
   } else if (["evaluation", "combined-check", "audit", "audit-final", "theory-support", "drama-development-check"].includes(stage)) {
-    refs.push("神思-创作效果验收规则.md", ...specialty, "神思-正文自检共用规则.md", ...selfCheckSourceRefs({ prompt, routingText, activeModule, contextDomain, stage, fullAudit, workspaceKind }));
+    refs.push("神思-创作效果验收规则.md", ...specialty, "神思-正文自检共用规则.md", ...selfCheckSourceRefs({ prompt, routingText, activeModule, contextDomain, stage, fullAudit, workspaceKind, skillCapabilities }));
     if (stage === "combined-check" && workspaceKind !== "notebook") {
       refs.push("神思-记忆核运行卡.md", "神思-结构化管理规则.md");
       if (novelChapterTask) refs.push(LIGHT_INFORMATION_GATE_SOURCE);
@@ -627,9 +635,9 @@ const routeSourceRefs = ({ prompt = "", routingText = "", activeModule = "manusc
   return [...new Set(ordered)];
 };
 
-export const loadShensiContext = async ({ shensiRoot, prompt, routingText = "", activeModule, contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", requestMode = "creative", sourceSnapshot = null, sourceMode = "", guidanceSelectionMode = "", creativeContextMode = "framework_guided" }) => {
+export const loadShensiContext = async ({ shensiRoot, prompt, routingText = "", activeModule, contextDomain = "novel", targetDocumentId = "", stage = "response", fullAudit = false, workspaceKind = "project", requestMode = "creative", sourceSnapshot = null, sourceMode = "", guidanceSelectionMode = "", creativeContextMode = "framework_guided", skillCapabilities = [] }) => {
   const root = resolve(shensiRoot);
-  const requested = routeSourceRefs({ prompt, routingText, activeModule, contextDomain, targetDocumentId, stage, fullAudit, workspaceKind, requestMode, sourceMode, guidanceSelectionMode, creativeContextMode });
+  const requested = routeSourceRefs({ prompt, routingText, activeModule, contextDomain, targetDocumentId, stage, fullAudit, workspaceKind, requestMode, sourceMode, guidanceSelectionMode, creativeContextMode, skillCapabilities });
   const loaded = [];
   const missingRequired = [];
 

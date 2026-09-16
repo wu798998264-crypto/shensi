@@ -2443,6 +2443,10 @@ export const runShensiOrchestration = async ({
       && ["planning", "response", "audit", "creative", "quick-revision", "visual-generation"].includes(stage);
     if (stageWebSearchEnabled) webSearchConsumed = true;
     pullSupplements();
+    const activeSkillRuntime = skillRuntimeOverride ?? userSkillRuntime;
+    const stageCapabilityPlan = activeSkillRuntime?.compiledCapabilityPlan ?? compiledCapabilityPlan;
+    const stageSkillCapabilities = [...new Set((stageCapabilityPlan?.selections ?? [])
+      .flatMap((selection) => Array.isArray(selection.authorizedCapabilities) ? selection.authorizedCapabilities : []))];
     const [stageStart, stageEnd] = STAGE_PROGRESS[stage] ?? [20, 85];
     progressPercent = Math.max(progressPercent, stageStart);
     currentStageLabel = STAGE_PROGRESS_LABELS[stage] ?? "处理当前阶段";
@@ -2476,6 +2480,7 @@ export const runShensiOrchestration = async ({
         guidanceSelectionMode,
         creativeContextMode: stageCreativeContextMode,
         sourceSnapshot,
+        skillCapabilities: stageSkillCapabilities,
       }));
     }
     const ruleContext = await ruleContextCache.get(ruleContextKey);
@@ -2513,7 +2518,6 @@ ${theoryContext.promptText}` : "";
       ? frozenPostwriteProjectContext
       : frozenProjectContext;
     const stageProjectContext = projectContextOverride === null ? defaultStageContext : projectContextOverride;
-    const activeSkillRuntime = skillRuntimeOverride ?? userSkillRuntime;
     const stageSkillContext = skillPromptForStage(activeSkillRuntime, stage);
     const untrustedSkillActive = skillRuntimeHasUntrustedSkillAtStage(activeSkillRuntime, stage);
     const skillMessage = !stageSkillContext ? null : untrustedSkillActive

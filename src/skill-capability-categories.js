@@ -13,7 +13,7 @@ const CAPABILITY_CATEGORY = new Map([
   ...["creative_guidance", "novel_guidance", "short_drama_guidance", "public_account_guidance", "short_fiction_guidance", "short_video_guidance", "prompt_guidance"].map((capability) => [capability, "guidance"]),
   ...["story_planner", "setting_planner"].map((capability) => [capability, "planning"]),
   ...["novel_prose_writer", "original_script_writer", "adaptation_writer", "visual_prompt_writer", "public_account_writer", "short_fiction_writer", "short_video_script_writer", "prompt_writer", "custom_writer", "repair_writer"].map((capability) => [capability, "writer"]),
-  ...["effect_reviewer", "genre_reviewer", "format_extension"].map((capability) => [capability, "review"]),
+  ...["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"].map((capability) => [capability, "review"]),
   ["theory_advisor", "theory"],
   ["memory_advisor", "memory"],
   ...["auxiliary_advisor", "style_reference", "knowledge_reference", "novel_cover_designer"].map((capability) => [capability, "auxiliary"]),
@@ -61,6 +61,8 @@ export const inferSkillCapabilityForCategory = (categoryId = "", text = "") => {
   if (categoryId === "review") {
     if (/格式|模板|规范/.test(source)) return "format_extension";
     if (/题材|类型|品类|genre/.test(source)) return "genre_reviewer";
+    if (/强剧情|强悬念|高潮|开篇|前三章/.test(source)) return "strong_story_reviewer";
+    if (/常规推进|过渡章|关系推进|信息沉淀/.test(source)) return "regular_progress_reviewer";
     return "effect_reviewer";
   }
   if (categoryId === "theory") return "theory_advisor";

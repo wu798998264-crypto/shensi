@@ -63,7 +63,7 @@ export const MODULE_REGISTRY = Object.freeze({
     id: "reports",
     owner: "记录模块",
     defaultTask: "review_artifact",
-    replaceableCapabilities: freezeList(["effect_reviewer"]),
+    replaceableCapabilities: freezeList(["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"]),
     trustedCapabilities: freezeList(["continuity_gate", "format_validation"]),
     ruleSources: freezeList(["神思-创作效果验收规则.md"]),
   }),
@@ -92,7 +92,17 @@ const PROMPT_INTENT = /提示词|分镜提示词|镜头提示词|视觉资产|�
 const REPAIR_INTENT = /返修|重写|改写|修改|润色/;
 const REVIEW_INTENT = /自检|检查|审查|验收|复核|校对|质量评估|质量检查/;
 const REVIEW_NEGATION = /(?:不要|无需|不用|不必|禁止|跳过|取消|先不|暂不).{0,12}(?:自检|检查|审查|验收|复核|校对)/;
+const STRONG_STORY_REVIEW_INTENT = /强剧情自检|强剧情审查|强剧情验收|强悬念|强反转|高潮章节|开篇钩子|前三章|付费点|追读压力/;
+const FULL_REVIEW_INTENT = /满血|全量(?:自检|检查|验收)|全面(?:自检|检查|验收)|完整(?:自检|检查|验收)|最终验收|质量争议/;
 const reviewRequested = (prompt = "") => REVIEW_INTENT.test(String(prompt)) && !REVIEW_NEGATION.test(String(prompt));
+
+export const reviewCapabilitiesForPrompt = ({ prompt = "", fullAudit = false } = {}) => {
+  const source = String(prompt);
+  if (fullAudit || FULL_REVIEW_INTENT.test(source)) return ["strong_story_reviewer", "regular_progress_reviewer"];
+  if (STRONG_STORY_REVIEW_INTENT.test(source)) return ["strong_story_reviewer"];
+  if (/小说自检模块/.test(source)) return ["effect_reviewer"];
+  return ["regular_progress_reviewer"];
+};
 
 export const resolveProjectModule = ({ activeModule = "manuscript", prompt = "" } = {}) => {
   const source = String(prompt);
@@ -111,7 +121,7 @@ const manuscriptCapabilities = ({ prompt = "", contextDomain = "novel", targetDo
   if (["script", "script-adaptation"].includes(contextDomain)) {
     return [scriptWriterCapability({ prompt: text, sourceMode }), ...(reviewRequested(prompt) ? ["effect_reviewer"] : [])];
   }
-  return ["novel_prose_writer", ...(reviewRequested(prompt) ? ["effect_reviewer"] : [])];
+  return ["novel_prose_writer", ...(reviewRequested(prompt) ? reviewCapabilitiesForPrompt({ prompt }) : [])];
 };
 
 export const resolveProjectCapabilityPlan = ({
@@ -138,6 +148,8 @@ export const resolveProjectCapabilityPlan = ({
     ? [scriptWriterCapability({ prompt: `${prompt} ${targetDocumentId}`, sourceMode }), ...(reviewRequested(prompt) ? ["effect_reviewer"] : [])]
     : moduleId === "manuscript"
     ? manuscriptCapabilities({ prompt, contextDomain: effectiveContextDomain, targetDocumentId, sourceMode })
+    : moduleId === "reports" && effectiveContextDomain === "novel"
+      ? reviewRequested(prompt) ? reviewCapabilitiesForPrompt({ prompt }) : ["effect_reviewer"]
     : [...definition.replaceableCapabilities];
   const guidanceCore = requestMode === "creative_guidance" ? ["guidance_control"] : [];
   if (requestMode === "creative_guidance") {
@@ -184,7 +196,7 @@ export const FIXED_SKILL_SLOT_GROUPS = Object.freeze([
   { id: "group:male-web-theory", name: "男频爽文题材", description: "男频爽文为上位理论；命中妖系、图录式等细分题材时共同生效。", parentGroupId: "group:novel-script-theory", order: 20, groupType: "organization", leaderSlotId: "builtin:male-web-theory", allowedCapabilities: ["theory_advisor"] },
   { id: "group:female-web-theory", name: "女频小说题材", description: "女频通用理论为上位；当前已有的女频爽文和真假千金理论为下位专精。", parentGroupId: "group:novel-script-theory", order: 30, groupType: "organization", leaderSlotId: "builtin:female-general-theory", allowedCapabilities: ["theory_advisor"] },
   { id: "group:short-video-theory", name: "短视频赛道", description: "短视频通用理论为上位；账号、系列和细分类型方法为下位。命中下位时二者共同生效；下位仅在同时声明主笔能力时可替代短视频主笔。", parentGroupId: "group:theory-advisors", order: 40, priorityWeight: 200, groupType: "organization", leaderSlotId: "builtin:short-video-general-theory", allowedCapabilities: ["theory_advisor", "short_video_script_writer"], writerSubstitutionCapabilities: ["short_video_script_writer"] },
-  { id: "group:effect-review", name: "自检", description: "按文体执行创作效果检查；硬格式、连续性和数据完整性仍由可信内核门禁裁决。", parentGroupId: "", order: 40, allowedCapabilities: ["effect_reviewer", "genre_reviewer", "format_extension"] },
+  { id: "group:effect-review", name: "自检", description: "按文体执行创作效果检查；小说正文拆分为强剧情与常规推进两类专项自检。", parentGroupId: "", order: 40, allowedCapabilities: ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"] },
 ].map(freezeSlotGroup));
 
 const freezeSlotChainStage = (stage) => Object.freeze({
@@ -214,7 +226,7 @@ export const FIXED_SKILL_SLOT_CHAINS = Object.freeze([
       { id: "guidance", name: "创作引导", description: "确认题材、读者、目标效果和关键取舍。", slotIds: ["builtin:creative-guidance"], customCapabilities: ["novel_guidance"] },
       { id: "planning", name: "规划", description: "完成故事大纲、卷章规划与受正史约束的设定规划。", slotIds: ["builtin:story-planner", "builtin:setting-planner"], customCapabilities: ["story_planner", "setting_planner"] },
       { id: "writer", name: "主笔", description: "依据规划、正史和当前状态生成小说正文；默认主笔之外可按候选任务调用备用主笔。", slotIds: ["builtin:novel-writer"], customCapabilities: ["novel_prose_writer"] },
-      { id: "review", name: "自检", description: "复核剧情效果、节奏、人物、情绪、语言和追读。", slotIds: ["builtin:effect-review"], customCapabilities: ["effect_reviewer"] },
+      { id: "review", name: "自检", description: "按章节任务选择强剧情或常规推进专项自检；满血审计可同时调用。", slotIds: ["builtin:strong-story-review", "builtin:effect-review"], customCapabilities: ["strong_story_reviewer", "regular_progress_reviewer", "effect_reviewer"] },
       { id: "theory", name: "理论顾问", description: "按题材命中通用理论与细分理论，为成稿提供方法校正。", groupIds: ["group:novel-script-theory"] },
       { id: "memory", name: "记忆", description: "在交付后提出状态、读者知识和伏笔更新建议；可信内核负责最终写入。", slotIds: ["builtin:memory-steps"], customCapabilities: ["memory_advisor"], shared: true },
       { id: "experience", name: "经验", description: "写作前只召回相关经验，采用后再沉淀新经验；经验仓读写由可信内核负责。", slotIds: ["builtin:experience-advisor", "builtin:experience-observer"], customCapabilities: ["experience_advisor", "experience_observer"], shared: true },
@@ -260,7 +272,7 @@ export const FIXED_SKILL_SLOT_CHAINS = Object.freeze([
       { id: "guidance", name: "创作引导", description: "确认篇幅、核心冲突、叙事方式、情绪落点和结尾效果。", slotIds: ["builtin:short-fiction-guidance"], customCapabilities: ["short_fiction_guidance"] },
       { id: "planning", name: "规划", description: "单篇结构规划由短篇主笔一体完成，沿用同一主笔插槽。", note: "规划与主笔共用一个原子能力插槽。" },
       { id: "writer", name: "主笔", description: "完成短篇小说的场景、人物、冲突、叙事与收束。", slotIds: ["builtin:short-fiction-writer"], customCapabilities: ["short_fiction_writer"] },
-      { id: "review", name: "自检", description: "使用小说自检复核短篇的效果、节奏、语言与结尾收束。", slotIds: ["builtin:effect-review"], customCapabilities: ["effect_reviewer"] },
+      { id: "review", name: "自检", description: "使用常规推进自检复核短篇的效果、节奏、语言与结尾收束。", slotIds: ["builtin:effect-review"], customCapabilities: ["regular_progress_reviewer", "effect_reviewer"] },
       { id: "theory", name: "理论顾问", description: "提供篇幅压缩、单核冲突、视角、风格和结尾方法。", groupIds: ["group:short-fiction-theory"] },
       { id: "memory", name: "记忆", description: "单篇交付默认不启用跨文档持久记忆。", note: "当前链不配置持久记忆插槽。" },
     ],
@@ -374,7 +386,8 @@ export const FIXED_SKILL_SLOT_CATALOG = Object.freeze([
   { id: "builtin:alternative-popular-science-theory", name: "另类科普", description: "在公众号通用理论之下处理反常识、故事化和假设型科普的选题、证据、因果解释与传播。", category: "题材理论顾问", parentGroupId: "group:public-account-theory", order: 20, workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["public_account"], triggerKeywords: ["另类科普", "反常识科普", "故事化科普", "假设型科普", "逆向科普", "黑暗科普", "微观世界科普", "文明科普", "如果世界改变", "奇怪问题解释世界", "科普公众号", "科普爆款", "科普长文"], replacementCapabilities: ["theory_advisor"] },
   { id: "builtin:short-video-general-theory", name: "短视频通用理论", description: "提供观看问题、状态变化、情绪兑现、因果反转与制作适配的短视频上位理论。", category: "题材理论顾问", parentGroupId: "group:short-video-theory", order: 10, workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["short_video_script"], replacementCapabilities: ["theory_advisor"] },
 
-  { id: "builtin:effect-review", name: "小说自检", description: "检查小说剧情效果、节奏、人物、情绪、语言和追读。", category: "自检", parentGroupId: "group:effect-review", order: 10, workspaceModes: ["project", "notebook"], contextDomains: ["novel"], deliverableTypes: ["novel", "short_fiction"], replacementCapabilities: ["effect_reviewer"] },
+  { id: "builtin:strong-story-review", name: "强剧情自检", description: "检查开局、高潮、强悬念、强反转、商业承诺与追读压力。", category: "自检", parentGroupId: "group:effect-review", order: 10, workspaceModes: ["project", "notebook"], contextDomains: ["novel"], deliverableTypes: ["novel"], replacementCapabilities: ["strong_story_reviewer"], bundledSource: "小说写作技能skill/强剧情自检.md", sourceLabel: "神思内置 · 强剧情自检" },
+  { id: "builtin:effect-review", name: "常规推进自检", description: "检查章节目标、人物行动、信息推进、局部兑现与结尾功能；兼容旧小说自检绑定。", category: "自检", parentGroupId: "group:effect-review", order: 20, workspaceModes: ["project", "notebook"], contextDomains: ["novel"], deliverableTypes: ["novel", "short_fiction"], replacementCapabilities: ["regular_progress_reviewer", "effect_reviewer"], bundledSource: "小说写作技能skill/常规推进自检.md", sourceLabel: "神思内置 · 常规推进自检", legacyNames: ["小说自检"] },
   { id: "builtin:short-drama-review", name: "短剧剧本自检", description: "以精髓锁为核心检查短剧保真、冲突升级、爽点兑现、节奏、对白、集尾钩子和制作可执行性。", category: "自检", parentGroupId: "group:effect-review", order: 20, workspaceModes: CREATIVE_WORKSPACE_MODES, contextDomains: ["script", "script-adaptation"], deliverableTypes: ["short_drama_script"], replacementCapabilities: ["effect_reviewer"], bundledSource: "短剧生产链/短剧精髓保真与爆点增强/SKILL.md", sourceLabel: "用户提供 · 短剧精髓保真与爆点增强" },
   { id: "builtin:short-video-review", name: "短视频剧本自检", description: "检查单条剧情短视频的观看问题、状态变化、情绪兑现、反转依据和制作压缩。", category: "自检", parentGroupId: "group:effect-review", order: 30, workspaceModes: CREATIVE_WORKSPACE_MODES, contextDomains: ["general"], deliverableTypes: ["short_video_script"], replacementCapabilities: ["effect_reviewer"] },
   { id: "builtin:short-drama-script-reconstructor", name: "短剧视频逆推剧本", description: "从用户明确提供的短剧视频、链接或剧集素材中，按可观察证据重构人物、场景、动作、对白、声音与连续性。", category: "辅助能力", parentGroupId: "", order: 10, workspaceModes: CREATIVE_WORKSPACE_MODES, contextDomains: ["script", "script-adaptation"], deliverableTypes: ["short_drama_script"], triggerKeywords: ["短剧逆推", "视频逆推剧本", "逆推剧本", "重构剧本", "还原短剧", "短剧视频分析"], replacementCapabilities: ["auxiliary_advisor"], bundledSource: "短剧生产链/短剧视频逆推剧本/SKILL.md", sourceLabel: "用户提供 · 短剧视频逆推剧本" },

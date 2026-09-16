@@ -16,7 +16,7 @@ import {
   isImageAssetSourceExtractionRequest,
 } from "./image-asset-routing.js";
 
-export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 29;
+export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 30;
 export const CAPABILITY_TEMPLATE_ROUTE_SELECTION_LIMIT = 24;
 
 export const CAPABILITY_KERNEL_NODE_IDS = Object.freeze([
@@ -395,7 +395,26 @@ export const createInitialCapabilityTemplate = () => {
         }),
       ],
     }),
-    singleFixedModule({ id: "module:novel-review", name: "小说自检模块", description: "复核剧情效果、节奏、人物、情绪、语言和追读。", triggerRules: "小说候选生成后或用户明确要求审稿时启用。", fixedId: "builtin:effect-review", skillName: "小说自检" }),
+    capabilityModule({
+      id: "module:novel-review",
+      name: "小说自检模块",
+      description: "按章节任务在强剧情与常规推进两类专项自检之间路由；满血审计可同时启用。",
+      triggerRules: "小说候选生成后或用户明确要求审稿时，按任务语义选择专项自检。",
+      relation: "parallel",
+      slots: [
+        fixedSlot("builtin:strong-story-review", "强剧情自检", {
+          capabilities: ["strong_story_reviewer"],
+          workspaceModes: CREATIVE_WORKSPACE_MODES,
+          deliverableTypes: ["novel"],
+        }),
+        fixedSlot("builtin:effect-review", "常规推进自检", {
+          capabilities: ["regular_progress_reviewer", "effect_reviewer"],
+          workspaceModes: CREATIVE_WORKSPACE_MODES,
+          deliverableTypes: ["novel", "short_fiction"],
+          sourceLegacySlotId: "builtin:effect-review",
+        }),
+      ],
+    }),
     kernelMemoryModule(),
     kernelEngineeringModule(),
     creationExperienceModule(),
@@ -462,7 +481,20 @@ export const createInitialCapabilityTemplate = () => {
     singleFixedModule({ id: "module:short-drama-review", name: "短剧自检模块", description: "以 Essence Lock 精髓锁为核心，检查保真、冲突升级、爽点因果、节奏、对白、集尾钩子与制作可执行性。", triggerRules: "正式短剧候选生成后启用；先建立精髓锁，再分层审稿和增强。", fixedId: "builtin:short-drama-review", skillName: "短剧剧本自检" }),
     singleFixedModule({ id: "module:short-fiction-guidance", name: "短篇小说创作引导模块", description: "确认篇幅、核心冲突、叙事方式与结尾效果。", triggerRules: "短篇小说创作合同尚未完整时启用。", fixedId: "builtin:short-fiction-guidance", skillName: "短篇小说创作引导" }),
     singleFixedModule({ id: "module:short-fiction-writer", name: "短篇小说主笔模块", description: "完成单篇场景、人物、冲突、叙事与收束。", triggerRules: "短篇小说正文生成、续写或改写。", fixedId: "builtin:short-fiction-writer", skillName: "短篇小说主笔" }),
-    singleFixedModule({ id: "module:short-fiction-review", name: "短篇小说自检模块", description: "复核单篇效果、节奏、语言与结尾收束。", triggerRules: "短篇小说候选生成后启用。", fixedId: "builtin:effect-review", skillName: "小说自检", extras: { id: "slot:short-fiction-review" } }),
+    singleFixedModule({
+      id: "module:short-fiction-review",
+      name: "短篇小说自检模块",
+      description: "复核单篇效果、节奏、语言与结尾收束。",
+      triggerRules: "短篇小说候选生成后启用。",
+      fixedId: "builtin:effect-review",
+      skillName: "常规推进自检",
+      extras: {
+        id: "slot:short-fiction-review",
+        capabilities: ["regular_progress_reviewer", "effect_reviewer"],
+        workspaceModes: CREATIVE_WORKSPACE_MODES,
+        deliverableTypes: ["short_fiction"],
+      },
+    }),
     capabilityModule({
       id: "module:short-fiction-theory",
       name: "短篇小说理论模块",
@@ -1618,6 +1650,66 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
         }
       }
     }
+  }
+  if (sourceVersion < 30) {
+    // 小说自检从单一 effect_reviewer 拆为强剧情与常规推进两个可路由
+    // 插槽。旧 effect-review 插槽保留稳定 ID 并承接到常规推进，避免
+    // 已保存的用户绑定、禁用状态和历史引用失效。
+    const canonical = createInitialCapabilityTemplate();
+    const canonicalReview = canonical.modules.find((module) => module.id === "module:novel-review");
+    const review = bundle.modules.find((module) => module.id === "module:novel-review" && module.official === true);
+    if (canonicalReview && review) {
+      const existingSlots = list(review.slots);
+      const findExisting = (canonicalSlot) => existingSlots.find((slot) => (
+        slot?.id === canonicalSlot.id
+        || slot?.skillId === canonicalSlot.skillId
+        || slot?.fixedSlotId === canonicalSlot.fixedSlotId
+        || (canonicalSlot.skillId === "builtin:effect-review" && slot?.skillId === "builtin:novel-review")
+      ));
+      const canonicalSlots = canonicalReview.slots.map((canonicalSlot, index) => {
+        const existing = findExisting(canonicalSlot);
+        return normalizeSlot({
+          ...canonicalSlot,
+          ...(existing || {}),
+          id: canonicalSlot.id,
+          name: canonicalSlot.name,
+          skillId: existing?.skillId || canonicalSlot.skillId,
+          fixedSlotId: canonicalSlot.fixedSlotId,
+          capabilities: unique([...canonicalSlot.capabilities, ...list(existing?.capabilities)]),
+          triggerKeywords: unique([...canonicalSlot.triggerKeywords, ...list(existing?.triggerKeywords)]),
+          triggerConditions: unique([...canonicalSlot.triggerConditions, ...list(existing?.triggerConditions)]),
+          disabled: existing?.disabled === true,
+          official: existing?.official ?? canonicalSlot.official,
+        }, index, canonicalReview.relationType, review.id);
+      });
+      const managedIds = new Set(canonicalReview.slots.flatMap((slot) => [slot.id, slot.skillId, slot.fixedSlotId]));
+      managedIds.add("builtin:novel-review");
+      const extras = existingSlots
+        .filter((slot) => ![slot?.id, slot?.skillId, slot?.fixedSlotId].some((id) => managedIds.has(id)))
+        .map((slot, index) => normalizeSlot(slot, canonicalSlots.length + index, canonicalReview.relationType, review.id));
+      review.name = canonicalReview.name;
+      review.description = canonicalReview.description;
+      review.triggerRules = canonicalReview.triggerRules;
+      review.relationType = canonicalReview.relationType;
+      review.slots = [...canonicalSlots, ...extras].map((slot, index) => ({
+        ...slot,
+        role: capabilityRoleForIndex(canonicalReview.relationType, index),
+      }));
+    }
+
+    const canonicalShortFiction = canonical.modules.find((module) => module.id === "module:short-fiction-review");
+    const shortFiction = bundle.modules.find((module) => module.id === "module:short-fiction-review" && module.official === true);
+    const shortFictionSlot = shortFiction?.slots.find((slot) => slot.fixedSlotId === "builtin:effect-review" || slot.skillId === "builtin:effect-review");
+    const canonicalShortFictionSlot = canonicalShortFiction?.slots.find((slot) => slot.fixedSlotId === "builtin:effect-review" || slot.skillId === "builtin:effect-review");
+    if (shortFictionSlot && canonicalShortFictionSlot) {
+      shortFictionSlot.capabilities = unique([...canonicalShortFictionSlot.capabilities, ...shortFictionSlot.capabilities]);
+      shortFictionSlot.name = canonicalShortFictionSlot.name;
+    }
+
+    // 修复已知的官方提示词模块名称漂移，不改用户自建同名模块。
+    const canonicalPrompt = canonical.modules.find((module) => module.id === "module:prompt-writer");
+    const prompt = bundle.modules.find((module) => module.id === "module:prompt-writer" && module.official === true);
+    if (canonicalPrompt && prompt && ["提示词主笔模块", "提示词模块"].includes(prompt.name)) prompt.name = canonicalPrompt.name;
   }
   if (sourceVersion < 10) {
     const legacyDescriptions = new Map([

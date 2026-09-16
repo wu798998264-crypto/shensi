@@ -20,6 +20,8 @@ const MODULE_BY_CAPABILITY = Object.freeze({
   story_planner: "module:novel-planning",
   setting_planner: "module:novel-planning",
   effect_reviewer: "module:novel-review",
+  strong_story_reviewer: "module:novel-review",
+  regular_progress_reviewer: "module:novel-review",
   genre_reviewer: "module:novel-review",
   repair_writer: "module:novel-review",
   original_script_writer: "module:original-drama-writer",
@@ -30,14 +32,14 @@ const MODULE_BY_CAPABILITY = Object.freeze({
 
 const REGISTERED_BINDING_CAPABILITIES = new Set([
   "auxiliary_advisor", "knowledge_reference", "style_reference", "theory_advisor", "novel_prose_writer",
-  "story_planner", "setting_planner", "effect_reviewer", "genre_reviewer", "repair_writer",
+  "story_planner", "setting_planner", "effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "repair_writer",
   "original_script_writer", "adaptation_writer", "short_drama_guidance", "short_video_script_writer",
 ]);
 
 export const skillTargetModuleForCapabilities = (capabilities = [], source = "") => {
   if (/(?:短剧|短视频|短剧视频|剧本)/i.test(text(source))) {
     for (const capability of Array.isArray(capabilities) ? capabilities : []) {
-      if (["effect_reviewer", "genre_reviewer", "repair_writer"].includes(text(capability))) return "module:short-drama-review";
+      if (["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "repair_writer"].includes(text(capability))) return "module:short-drama-review";
       if (["adaptation_writer"].includes(text(capability))) return "module:adapted-drama-writer";
       if (["original_script_writer"].includes(text(capability))) return "module:original-drama-writer";
       if (["short_drama_guidance"].includes(text(capability))) return "module:short-drama-guidance";

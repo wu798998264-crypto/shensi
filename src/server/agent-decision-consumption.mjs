@@ -138,7 +138,7 @@ export const resolveAgentReadPlan = ({
 export const agentReadPlanFailureMessage = ({ agentDecision = null, unresolvedRequired = [] } = {}) => {
   const missing = Array.isArray(unresolvedRequired) ? unresolvedRequired : [];
   const qualityReview = agentDecision?.taskKind === "quality_review"
-    || (Array.isArray(agentDecision?.skillCapabilities) && agentDecision.skillCapabilities.includes("effect_reviewer"));
+    || (Array.isArray(agentDecision?.skillCapabilities) && agentDecision.skillCapabilities.some((capability) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"].includes(capability)));
   if (!qualityReview) return "没有找到这次需要的内容，暂时无法继续。";
   const proseRange = missing.find((item) => item?.rangeKind === "chapter_prose");
   const requested = explicitDocumentReference(proseRange?.reference || "");

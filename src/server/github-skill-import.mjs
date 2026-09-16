@@ -104,7 +104,7 @@ const capabilityFamily = (capabilities = []) => {
   if (["story_planner", "setting_planner"].some((item) => values.has(item))) return "规划与设定能力";
   if (["novel_prose_writer", "original_script_writer", "adaptation_writer", "public_account_writer", "short_fiction_writer", "short_video_script_writer", "custom_writer"].some((item) => values.has(item))) return "主笔写作能力";
   if (["visual_prompt_writer", "prompt_writer", "article_illustration_planner", "novel_cover_designer"].some((item) => values.has(item))) return "视觉提示词能力";
-  if (["effect_reviewer", "genre_reviewer", "repair_writer", "format_extension"].some((item) => values.has(item))) return "自检与修复能力";
+  if (["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "repair_writer", "format_extension"].some((item) => values.has(item))) return "自检与修复能力";
   if (["memory_advisor", "experience_advisor", "experience_observer"].some((item) => values.has(item))) return "记忆与经验能力";
   return "辅助参考能力";
 };

@@ -110,7 +110,12 @@ const entries = [
     outputContract: "primary_artifact_v1",
   })),
   descriptor({ capabilityId: "theory_advisor", kind: "advisor", phases: CAPABILITY_PHASES, stages: THEORY_STAGES, stackPolicy: "stack", stackKey: "theory_advisor", budgetClass: "advisor", autoEligible: true }),
+  // `effect_reviewer` remains the compatibility capability used by older
+  // saved decisions and user Skills. New routing can select the two explicit
+  // novel review modes without collapsing them into one generic reviewer.
   descriptor({ capabilityId: "effect_reviewer", kind: "reviewer", phases: ["postwrite"], stages: REVIEW_STAGES, stackPolicy: "exclusive", exclusiveKey: "effect_reviewer", budgetClass: "reviewer", inputContract: "artifact_candidate_v1", outputContract: "effect_review_v1" }),
+  descriptor({ capabilityId: "strong_story_reviewer", kind: "reviewer", phases: ["postwrite"], stages: REVIEW_STAGES, stackPolicy: "exclusive", exclusiveKey: "strong_story_reviewer", budgetClass: "reviewer", inputContract: "artifact_candidate_v1", outputContract: "strong_story_review_v1" }),
+  descriptor({ capabilityId: "regular_progress_reviewer", kind: "reviewer", phases: ["postwrite"], stages: REVIEW_STAGES, stackPolicy: "exclusive", exclusiveKey: "regular_progress_reviewer", budgetClass: "reviewer", inputContract: "artifact_candidate_v1", outputContract: "regular_progress_review_v1" }),
   descriptor({ capabilityId: "genre_reviewer", kind: "reviewer", phases: ["postwrite"], stages: REVIEW_STAGES, stackPolicy: "stack", stackKey: "genre_reviewer", budgetClass: "reviewer", inputContract: "artifact_candidate_v1", outputContract: "genre_review_v1", autoEligible: true }),
   descriptor({ capabilityId: "repair_writer", kind: "repairer", phases: ["postwrite"], stages: ["revision"], stackPolicy: "exclusive", exclusiveKey: "repair_writer", budgetClass: "writer", inputContract: "repair_findings_v1", outputContract: "repaired_artifact_v1" }),
   descriptor({ capabilityId: "format_extension", kind: "format_extension", phases: ["postwrite"], stages: REVIEW_STAGES, stackPolicy: "stack", stackKey: "format_extension", budgetClass: "format", inputContract: "artifact_candidate_v1", outputContract: "format_findings_v1", autoEligible: true }),

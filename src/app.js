@@ -20174,6 +20174,8 @@ const SKILL_CAPABILITY_LABELS = {
   theory_advisor: "理论顾问",
   custom_writer: "自定义主笔",
   effect_reviewer: "创意效果主审",
+  strong_story_reviewer: "强剧情自检",
+  regular_progress_reviewer: "常规推进自检",
   genre_reviewer: "题材附加自检",
   repair_writer: "返修主笔",
   format_extension: "附加格式标准",
@@ -21756,7 +21758,7 @@ const skillCompatibleWithCurrentTask = (skill) => {
     if (skill.role === "auxiliary") return true;
     if (state.activeModule === "canon") return capabilities.includes("setting_planner");
     if (state.activeModule === "outline") return capabilities.includes("story_planner");
-    if (state.activeModule === "reports") return capabilities.some((item) => ["effect_reviewer", "genre_reviewer", "format_extension"].includes(item));
+    if (state.activeModule === "reports") return capabilities.some((item) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"].includes(item));
     if (state.activeModule === "memory") return capabilities.includes("memory_advisor");
     if (["library", "index"].includes(state.activeModule)) return capabilities.some((item) => ["knowledge_reference", "auxiliary_advisor", "custom_writer"].includes(item));
     const activeView = activeViewForModule("manuscript");
@@ -65755,7 +65757,7 @@ const buildSkillMarkdown = (form) => {
       : capabilities.includes("memory_advisor") ? "manager"
         : capabilities.some((item) => ["creative_guidance", "novel_guidance", "short_drama_guidance", "public_account_guidance", "short_fiction_guidance", "short_video_guidance", "prompt_guidance"].includes(item)) ? "guidance"
       : capabilities.some((item) => ["story_planner", "setting_planner"].includes(item)) ? "planner"
-        : capabilities.some((item) => ["effect_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "reviewer"
+        : capabilities.some((item) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "reviewer"
           : capabilities.includes("repair_writer") ? "repairer"
             : "primary_writer";
   const prototypeId = String(data.prototypeId || "").trim();

@@ -137,6 +137,8 @@ const skillLabels = (skill = {}) => [
 const capabilityAliases = Object.freeze({
   short_video_script_writer: ["短视频编剧", "短视频剧本", "短视频主笔", "短视频剧本主笔"],
   effect_reviewer: ["自检", "审稿", "审查", "验收", "效果审查"],
+  strong_story_reviewer: ["强剧情自检", "强剧情审查", "强剧情验收"],
+  regular_progress_reviewer: ["常规推进自检", "常规推进审查", "常规推进验收"],
   story_planner: ["故事规划", "大纲规划", "规划主笔", "剧情规划"],
   setting_planner: ["设定规划", "设定主笔"],
   creative_guidance: ["创作引导", "引导模块", "追问"],

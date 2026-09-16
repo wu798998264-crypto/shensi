@@ -21,6 +21,8 @@ const CAPABILITY_ROUTE_METADATA = Object.freeze({
   setting_planner: { requestMode: "creative", activeModule: "canon", contextDomain: "novel" },
   memory_advisor: { requestMode: "creative", activeModule: "memory", contextDomain: "novel" },
   effect_reviewer: { requestMode: "creative", activeModule: "reports", contextDomain: "novel" },
+  strong_story_reviewer: { requestMode: "creative", activeModule: "reports", contextDomain: "novel" },
+  regular_progress_reviewer: { requestMode: "creative", activeModule: "reports", contextDomain: "novel" },
   genre_reviewer: { requestMode: "creative", activeModule: "reports", contextDomain: "novel" },
   repair_writer: { requestMode: "creative", activeModule: "manuscript", contextDomain: "novel" },
   format_extension: { requestMode: "creative", activeModule: "reports", contextDomain: "novel" },

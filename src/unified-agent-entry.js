@@ -7,7 +7,7 @@ const list = (value, max = 8) => (Array.isArray(value) ? value : [])
 const SKILL_CAPABILITY_IDS = new Set([
   "creative_guidance", "novel_guidance", "short_drama_guidance", "prompt_guidance",
   "story_planner", "setting_planner", "novel_prose_writer", "original_script_writer",
-  "adaptation_writer", "visual_prompt_writer", "theory_advisor", "effect_reviewer",
+  "adaptation_writer", "visual_prompt_writer", "theory_advisor", "effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer",
   "genre_reviewer", "repair_writer", "format_extension", "custom_writer",
   "auxiliary_advisor", "style_reference", "knowledge_reference", "memory_advisor",
   "experience_advisor", "experience_observer", "article_illustration_planner",
@@ -190,7 +190,11 @@ export const normalizeUnifiedAgentDecision = (value = null) => {
     : "";
   const operation = normalizedOperation(value.operation, lane);
   const skillCapabilities = lane !== "direct_reply" ? normalizedSkillCapabilities(value.skillCapabilities) : [];
-  if (qualityReview && !skillCapabilities.includes("effect_reviewer")) skillCapabilities.push("effect_reviewer");
+  if (qualityReview && !skillCapabilities.some((capability) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"].includes(capability))) {
+    // Keep the legacy generic reviewer for old model responses; semantic
+    // decisions that choose a concrete mode remain authoritative.
+    skillCapabilities.push("effect_reviewer");
+  }
   return {
     schemaVersion: UNIFIED_AGENT_ENTRY_VERSION,
     lane,
@@ -242,7 +246,7 @@ lane 只能是：
 - guided_dialogue：需要调用创作引导能力逐步探索创作目标的 Agent 任务，不能按普通对话直接返回，也不应一次输出完整方案或正文。填写 deliverableType、所需 skillQueries 和必要 readPlan；reply 只作为路由摘要，最终问题由创作引导 Skill 生成。
 - task_execution：需要读取资料、选择 Skill、调用工具、创建或修改内容、写入文档、检查真实状态，或者需要恢复既有任务。
 
-taskKind 用来表达任务本身是什么。对正文、剧本或文章做质检、自检、审稿、质量检查，或续接上一轮同类检查时，必须填写 quality_review；这类任务必须使用 task_execution，requestMode=creative，deliverableType=report，并在 skillCapabilities 中选择 effect_reviewer。不能因为目标可能不存在、句子很短或沿用上文，就把它降为 direct_reply。
+taskKind 用来表达任务本身是什么。对正文、剧本或文章做质检、自检、审稿、质量检查，或续接上一轮同类检查时，必须填写 quality_review；这类任务必须使用 task_execution，requestMode=creative，deliverableType=report，并在 skillCapabilities 中选择真正匹配的审查能力：强剧情任务用 strong_story_reviewer，常规推进用 regular_progress_reviewer，其他文体或旧配置可用 effect_reviewer。不能因为目标可能不存在、句子很短或沿用上文，就把它降为 direct_reply。
 
 workflow 只在确有专用事务流程时填写：
 - library_archive：用户的完整意图是读取当前作品或笔记本内的资料库来源，把其中有证据的内容拆分、分类并归档到设定或大纲。普通资料问答、引用资料续写正文、只整理一份当前文档、仅查看资料库，均不得选择此 workflow。

@@ -309,7 +309,7 @@ const FIXED_GROUP_IDS = new Set(FIXED_SKILL_SLOT_GROUPS.map((group) => group.id)
 const fixedGroupById = new Map(FIXED_SKILL_SLOT_GROUPS.map((group) => [group.id, group]));
 const GUIDANCE_CAPABILITIES = new Set(["creative_guidance", "novel_guidance", "short_drama_guidance", "public_account_guidance", "short_fiction_guidance", "short_video_guidance", "prompt_guidance"]);
 const PRIMARY_WRITER_SLOT_CAPABILITIES = new Set(["novel_prose_writer", "original_script_writer", "adaptation_writer", "visual_prompt_writer", "public_account_writer", "short_fiction_writer", "short_video_script_writer", "prompt_writer", "custom_writer"]);
-const REVIEW_CAPABILITIES = new Set(["effect_reviewer", "genre_reviewer", "format_extension"]);
+const REVIEW_CAPABILITIES = new Set(["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"]);
 
 const inferredParentGroupId = (slot = {}) => {
   const capabilities = new Set(slot.capabilities ?? []);
@@ -5634,7 +5634,7 @@ export const managedSkillTree = async ({ shensiRoot = "" } = {}) => {
     if (skill.testStatus !== "passed") continue;
     const category = skill.capabilities.some((item) => ["creative_guidance", "novel_guidance", "public_account_guidance", "short_fiction_guidance", "short_video_guidance", "prompt_guidance"].includes(item)) ? "创作引导"
       : skill.capabilities.includes("theory_advisor") ? "理论顾问"
-      : skill.capabilities.some((item) => ["effect_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "自检与审查"
+      : skill.capabilities.some((item) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "自检与审查"
       : skill.capabilities.includes("repair_writer") ? "返修主笔"
       : skill.capabilities[0]?.includes("setting") ? "设定主笔"
       : skill.capabilities.includes("story_planner") ? "故事规划"

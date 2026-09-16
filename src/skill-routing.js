@@ -318,7 +318,10 @@ export const resolveSkillRuntime = ({
     .sort((left, right) => Number(right.relationRole === "upper" || right.organizationRole === "leader") - Number(left.relationRole === "upper" || left.organizationRole === "leader")
       || selectionPriority(right) - selectionPriority(left));
   const theoryAdvisor = theoryAdvisors[0] ?? null;
-  const effectReviewer = firstFor(available, (skill) => supportsRequired(skill, ["effect_reviewer"]));
+  const strongStoryReviewer = firstFor(available, (skill) => supportsRequired(skill, ["strong_story_reviewer"]));
+  const regularProgressReviewer = firstFor(available, (skill) => supportsRequired(skill, ["regular_progress_reviewer"]));
+  const effectReviewer = firstFor(available, (skill) => supportsRequired(skill, ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"]));
+  const effectReviewers = unique([strongStoryReviewer, regularProgressReviewer, effectReviewer]);
   const repairer = firstFor(available, (skill) => supportsRequired(skill, ["repair_writer"]));
   const genreReviewers = available.filter((skill) => supportsSelected(skill, ["genre_reviewer"]));
   const formatExtensions = available.filter((skill) => supportsSelected(skill, ["format_extension"]));
@@ -327,7 +330,7 @@ export const resolveSkillRuntime = ({
   const experienceObservers = available.filter((skill) => supportsSelected(skill, ["experience_observer"]));
   const artifactPlanners = available.filter((skill) => supportsSelected(skill, ["article_illustration_planner"]));
 
-  const exclusive = unique([primary, guidance, planner, effectReviewer, repairer, memoryAdvisor]);
+  const exclusive = unique([primary, guidance, planner, ...effectReviewers, repairer, memoryAdvisor]);
   const stackable = unique([...theoryAdvisors, ...genreReviewers, ...formatExtensions, ...experienceAdvisors, ...experienceObservers, ...artifactPlanners]);
   const slotSkills = {
     routing: null,
@@ -337,6 +340,9 @@ export const resolveSkillRuntime = ({
     theoryAdvice: theoryAdvisor ? authorizedSkill(theoryAdvisor, required, allowed, "auxiliary") : null,
     theoryAdvisors: theoryAdvisors.map((skill) => authorizedSkill(skill, required, allowed, "auxiliary")),
     effectReview: effectReviewer ? authorizedSkill(effectReviewer, required, allowed, "reviewer") : null,
+    strongStoryReview: strongStoryReviewer ? authorizedSkill(strongStoryReviewer, required, allowed, "reviewer", ["strong_story_reviewer"]) : null,
+    regularProgressReview: regularProgressReviewer ? authorizedSkill(regularProgressReviewer, required, allowed, "reviewer", ["regular_progress_reviewer"]) : null,
+    effectReviews: effectReviewers.map((skill) => authorizedSkill(skill, required, allowed, "reviewer")),
     genreReviews: genreReviewers.map((skill) => authorizedSkill(skill, required, allowed, "reviewer", ["genre_reviewer"])),
     repair: repairer ? authorizedSkill(repairer, required, allowed, "repairer") : null,
     formatExtensions: formatExtensions.map((skill) => authorizedSkill(skill, required, allowed, "reviewer", ["format_extension"])),
@@ -493,6 +499,9 @@ export const skillRuntimePublicSummary = (runtime = {}) => ({
     theoryAdvice: publicSkill(runtime.slotSkills?.theoryAdvice),
     theoryAdvisors: (runtime.slotSkills?.theoryAdvisors ?? []).map(publicSkill),
     effectReview: publicSkill(runtime.slotSkills?.effectReview),
+    strongStoryReview: publicSkill(runtime.slotSkills?.strongStoryReview),
+    regularProgressReview: publicSkill(runtime.slotSkills?.regularProgressReview),
+    effectReviews: (runtime.slotSkills?.effectReviews ?? []).map(publicSkill),
     genreReviews: (runtime.slotSkills?.genreReviews ?? []).map(publicSkill),
     repair: publicSkill(runtime.slotSkills?.repair),
     formatExtensions: (runtime.slotSkills?.formatExtensions ?? []).map(publicSkill),
@@ -711,7 +720,16 @@ export const skillPromptForStage = (runtime = {}, stage = "creative") => {
     ));
   }
   if (["evaluation", "combined-check", "audit", "audit-final", "theory-support", "drama-development-check"].includes(stage)) {
-    sections.push(skillSection("用户创意效果主审", slots.effectReview, "只判断创作效果，必须输出证据和可执行返修意见；不能覆盖硬格式、正史和连续性门禁。", stage));
+    const reviewSkills = slots.effectReviews?.length ? slots.effectReviews : [slots.effectReview].filter(Boolean);
+    for (const skill of reviewSkills) {
+      const capabilities = skill.authorizedCapabilities ?? skill.capabilities ?? [];
+      const label = capabilities.includes("strong_story_reviewer")
+        ? "强剧情自检"
+        : capabilities.includes("regular_progress_reviewer")
+          ? "常规推进自检"
+          : "用户创意效果主审";
+      sections.push(skillSection(label, skill, "只判断创作效果，必须输出证据和可执行返修意见；不能覆盖硬格式、正史和连续性门禁。", stage));
+    }
     for (const skill of slots.genreReviews ?? []) sections.push(skillSection("题材附加审查", skill, "只追加题材维度问题，不得取消通用效果检查或系统硬门禁。", stage));
     for (const skill of slots.formatExtensions ?? []) sections.push(skillSection("附加格式标准", skill, "只能增加产物格式要求，不能关闭神思基础格式校验。", stage));
   }

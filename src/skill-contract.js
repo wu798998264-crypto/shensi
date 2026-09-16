@@ -19,6 +19,8 @@ export const PROJECT_SKILL_CAPABILITIES = Object.freeze([
   "visual_prompt_writer",
   "theory_advisor",
   "effect_reviewer",
+  "strong_story_reviewer",
+  "regular_progress_reviewer",
   "genre_reviewer",
   "repair_writer",
   "format_extension",
@@ -46,6 +48,8 @@ export const NOTEBOOK_SKILL_CAPABILITIES = Object.freeze([
   "custom_writer",
   "theory_advisor",
   "effect_reviewer",
+  "strong_story_reviewer",
+  "regular_progress_reviewer",
   "genre_reviewer",
   "repair_writer",
   "format_extension",
@@ -85,7 +89,7 @@ export const REPLACEABLE_SLOT_CAPABILITIES = Object.freeze({
   planning: ["story_planner", "setting_planner"],
   writer: PRIMARY_WRITER_CAPABILITIES,
   theory_advice: ["theory_advisor"],
-  effect_review: ["effect_reviewer"],
+  effect_review: ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer"],
   genre_review: ["genre_reviewer"],
   repair: ["repair_writer"],
   format_extension: ["format_extension"],
@@ -167,6 +171,8 @@ const inferredCapability = (source = "") => {
   if (/短视频/.test(text)) return /引导|追问|需求/.test(text) ? "short_video_guidance" : "short_video_script_writer";
   if (/短篇小说|微小说/.test(text)) return /引导|追问|需求/.test(text) ? "short_fiction_guidance" : "short_fiction_writer";
   if (/提示词|分镜|构图|运镜/.test(text)) return /引导|追问|需求/.test(text) ? "prompt_guidance" : "prompt_writer";
+  if (/强剧情自检|强剧情审查|强剧情验收/.test(text)) return "strong_story_reviewer";
+  if (/常规推进自检|常规推进审查|常规推进验收/.test(text)) return "regular_progress_reviewer";
   if (/自检|审查|验收/.test(text)) return "effect_reviewer";
   if (/理论|顾问|方法论/.test(text)) return "theory_advisor";
   if (/大纲|剧情规划/.test(text)) return "story_planner";
@@ -242,7 +248,7 @@ export const normalizeSkillMetadata = (metadata = {}, { heading = "", legacyId =
   const workspaceModes = normalizedList(metadata.workspace_modes).filter((item) => VALID_MODES.has(item));
   const inferredRole = capabilities.some((item) => PRIMARY_WRITER_CAPABILITIES.includes(item)) ? "primary_writer"
     : capabilities.some((item) => REPLACEABLE_SLOT_CAPABILITIES.guidance.includes(item)) ? "guidance"
-      : capabilities.some((item) => ["effect_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "reviewer"
+      : capabilities.some((item) => ["effect_reviewer", "strong_story_reviewer", "regular_progress_reviewer", "genre_reviewer", "format_extension"].includes(item)) ? "reviewer"
       : capabilities.includes("repair_writer") ? "repairer"
           : capabilities.some((item) => ["memory_advisor", "experience_observer", "article_illustration_planner"].includes(item)) ? "manager"
           : "auxiliary";
