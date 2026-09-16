@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION,
+  createGenerationProfile,
   generationSecrets,
   normalizeGenerationProfiles,
+  VIDEO_PROFILE_CLEANUP_VERSION,
 } from "../src/generation-profiles.js";
+import { getProviderVideoModelOptions, videoGenerationMode } from "../src/model-presets.js";
+import { resolveMediaProviderDriver } from "../src/server/media-provider-drivers.mjs";
 import {
   aggregateCustomApiCapabilityStatus,
   classifyCustomApiCapabilityFailure,
@@ -17,22 +20,22 @@ assert.deepEqual(CUSTOM_API_CAPABILITY_CHANNELS, ["text", "image", "video", "aud
 const shared = normalizeGenerationProfiles({
   textConnections: [{ id: "text-aggregate", adapter: "api", provider: "自定义兼容接口", protocol: "responses", baseUrl: endpoint, model: "gpt-5.6-sol", apiKey: "shared-token" }],
   imageConnections: [{ id: "image-aggregate", adapter: "api", provider: "自定义兼容接口", protocol: "images", baseUrl: `${endpoint}/`, model: "gpt-image-2", apiKey: "" }],
-  videoConnections: [{ id: "video-aggregate", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: endpoint, model: "sora-2", apiKey: "" }],
+  videoConnections: [{ id: "video-compatible", name: "兼容视频服务", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: endpoint, model: "custom-video-model", apiKey: "" }],
   audioConnections: [{ id: "audio-aggregate", adapter: "api", provider: "自定义兼容接口", protocol: "audio", baseUrl: endpoint, model: "gpt-4o-mini-tts", apiKey: "" }],
 });
 assert.equal(shared.imageConnections.find((item) => item.id === "image-aggregate")?.apiKey, "shared-token");
-assert.equal(shared.videoConnections.find((item) => item.id === "video-aggregate")?.apiKey, "shared-token");
+assert.equal(shared.videoConnections.find((item) => item.id === "video-compatible")?.apiKey, "shared-token");
 assert.equal(shared.audioConnections.find((item) => item.id === "audio-aggregate")?.apiKey, "shared-token");
 assert.equal(shared.imageConnections.find((item) => item.id === "image-aggregate")?.credentialSharedFromChannel, "text");
 assert.equal(generationSecrets(shared).text["text-aggregate"], "shared-token");
 assert.equal(generationSecrets(shared).image["image-aggregate"], undefined, "共享凭据不得重复写入图片凭据槽");
-assert.equal(generationSecrets(shared).video["video-aggregate"], undefined, "共享凭据不得重复写入视频凭据槽");
+assert.equal(generationSecrets(shared).video["video-compatible"], undefined, "共享凭据不得重复写入视频凭据槽");
 assert.equal(generationSecrets(shared).audio["audio-aggregate"], undefined, "共享凭据不得重复写入音频凭据槽");
 
 const hydratedFromVault = normalizeGenerationProfiles({
   textConnections: [{ id: "text-vault", adapter: "api", provider: "自定义兼容接口", protocol: "responses", baseUrl: endpoint, model: "gpt-5.6-sol" }],
   imageConnections: [{ id: "image-vault", adapter: "api", provider: "自定义兼容接口", protocol: "images", baseUrl: endpoint, model: "gpt-image-2" }],
-  videoConnections: [{ id: "video-vault", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: endpoint, model: "sora-2" }],
+  videoConnections: [{ id: "video-vault", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: endpoint, model: "custom-video-model" }],
   audioConnections: [{ id: "audio-vault", adapter: "api", provider: "自定义兼容接口", protocol: "audio", baseUrl: endpoint, model: "gpt-4o-mini-tts" }],
 }, { text: { "text-vault": "vault-token" } });
 assert.equal(hydratedFromVault.imageConnections.find((item) => item.id === "image-vault")?.apiKey, "vault-token");
@@ -55,8 +58,29 @@ const isolated = normalizeGenerationProfiles({
 assert.equal(isolated.imageConnections.find((item) => item.id === "image-isolated")?.apiKey, "");
 
 const migrated = normalizeGenerationProfiles({});
-assert.equal(migrated.aggregateCustomMediaProfileVersion, AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION);
-assert.ok(migrated.videoConnections.some((item) => item.id === "video-cockpit-aggregate-api"));
+assert.equal(migrated.videoProfileCleanupVersion, VIDEO_PROFILE_CLEANUP_VERSION);
+assert.equal(migrated.videoConnections.some((item) => item.id === "video-cockpit-aggregate-api"), false);
+assert.equal(migrated.videoConnections.some((item) => /sora/i.test(item.model || "")), false);
+assert.equal(getProviderVideoModelOptions("OpenAI", "api").some((item) => /sora/i.test(item.slug)), false);
+assert.equal(createGenerationProfile("video").model, "seedance2.5");
+
+const retired = normalizeGenerationProfiles({
+  activeVideoConnectionId: "video-cockpit-aggregate-api",
+  textConnections: [{ id: "text-aggregate", name: "聚合api", adapter: "api", provider: "自定义兼容接口", protocol: "responses", baseUrl: endpoint, model: "gpt-6-astra" }],
+  imageConnections: [{ id: "image-cockpit-aggregate-api", name: "聚合api", adapter: "api", provider: "自定义兼容接口", protocol: "images", baseUrl: endpoint, model: "gpt-image-2.5" }],
+  videoConnections: [
+    { id: "video-cockpit-aggregate-api", name: "聚合api", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: endpoint, model: "custom-video-model" },
+    { id: "video-sora", name: "Sora", adapter: "api", provider: "OpenAI", protocol: "videos", baseUrl: "https://api.openai.com/v1", model: "sora-2" },
+    { id: "video-custom", name: "其他兼容视频", adapter: "api", provider: "自定义兼容接口", protocol: "videos", baseUrl: "http://127.0.0.1:7788/v1", model: "custom-video-model" },
+  ],
+});
+assert.ok(retired.textConnections.some((item) => item.id === "text-aggregate"), "文字聚合 API 必须保留");
+assert.ok(retired.imageConnections.some((item) => item.id === "image-cockpit-aggregate-api"), "图片聚合 API 必须保留");
+assert.equal(retired.videoConnections.some((item) => ["video-cockpit-aggregate-api", "video-sora"].includes(item.id)), false);
+assert.ok(retired.videoConnections.some((item) => item.id === "video-custom"), "非 Sora 的自定义视频连接仍应保留");
+assert.notEqual(retired.activeVideoConnectionId, "video-cockpit-aggregate-api");
+assert.equal(videoGenerationMode({ provider: "OpenAI", adapter: "api", model: "sora-2" }), "");
+assert.equal(resolveMediaProviderDriver({ channel: "video", settings: { provider: "自定义兼容接口", adapter: "api", protocol: "videos", model: "custom-video-model" } })?.id, "openai-videos");
 
 assert.deepEqual(
   classifyCustomApiCapabilityFailure({ code: "HTTP_403", message: "image quota exhausted" }),

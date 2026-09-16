@@ -583,7 +583,7 @@ const referenceDataUrl = async (reference, maxBytes = 20 * 1024 * 1024) => {
   return `data:${reference.mimeType || "image/png"};base64,${bytes.toString("base64")}`;
 };
 
-const normalizedCatalogModels = (payload = {}, pattern = /video|sora|seedance|kling|wan|happyhorse/i) => {
+const normalizedCatalogModels = (payload = {}, pattern = /video|seedance|kling|wan|happyhorse/i) => {
   const source = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : [];
   return [...new Set(source.map((item) => String(typeof item === "string" ? item : item?.id || item?.name || "").replace(/^models\//, "")).filter((id) => id && pattern.test(id)))];
 };
@@ -1484,7 +1484,7 @@ export class OpenAIVideosDriver extends MediaProviderDriver {
     if (!settings?.apiKey) return { available: false, reason: "missing_credentials", models: [] };
     const baseUrl = httpBaseUrl(settings.baseUrl, "https://api.openai.com/v1");
     const models = await jsonResponse(await fetch(`${baseUrl}/models`, { headers: openAiHeaders(settings), signal: AbortSignal.timeout(20_000) }));
-    const available = (models.data || []).map((item) => item.id).filter((id) => /sora|video|seedance|veo|kling|wan|hailuo|vidu|runway/i.test(id));
+    const available = (models.data || []).map((item) => item.id).filter((id) => !/sora/i.test(id) && /video|seedance|veo|kling|wan|hailuo|vidu|runway/i.test(id));
     return { available: available.length > 0, models: available, visibilityChecked: true, paidSmokeTest: paid };
   }
 
@@ -1492,7 +1492,10 @@ export class OpenAIVideosDriver extends MediaProviderDriver {
     if (!settings?.apiKey) throw asError("OpenAI 视频任务需要在当前会话重新填写 API Key", "MISSING_CREDENTIALS");
     const baseUrl = httpBaseUrl(settings.baseUrl, "https://api.openai.com/v1");
     const form = new FormData();
-    form.set("model", settings.model || job.request.settings?.model || "sora-2");
+    const model = String(settings.model || job.request.settings?.model || "").trim();
+    if (!model) throw asError("视频配置缺少有效模型", "MISSING_VIDEO_MODEL");
+    if (/sora/i.test(model)) throw asError("Sora 视频模型已停止运营，请选择其他视频配置", "RETIRED_VIDEO_MODEL");
+    form.set("model", model);
     form.set("prompt", providerPrompt(job));
     form.set("seconds", String(job.request.duration || 4));
     form.set("size", videoSize(job.request.aspectRatio || "16:9", job.request.resolution || "720p"));

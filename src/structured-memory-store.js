@@ -1,5 +1,5 @@
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
-import { memoryRecordFactualAssertion, retainVerifiedMemoryUpdateFacts } from "./memory-evidence.js";
+import { memoryRecordFactualAssertion, memoryUpdateAssertions, retainVerifiedMemoryUpdateFacts } from "./memory-evidence.js";
 import { normalizeLedgerEntries, stableLedgerEntryId } from "./information-ledger.js";
 import { mergeStateEntries, normalizeStateEntries } from "./memory-compiler.js";
 import { validateTaskContractForExecution } from "./task-contract.js";
@@ -42,6 +42,7 @@ export const emptyMemoryStore = () => ({
   evidenceIndex: {},
   revisions: {},
   pendingCandidates: [],
+  degradationLog: [],
   conflicts: [],
   migrations: { pending: [], completed: [] },
 });
@@ -51,6 +52,12 @@ const normalizeSource = (source = {}) => ({
   revision: text(source.revision, 160),
   quote: text(source.quote, 1_200),
   claim: text(source.claim, 1_200),
+  sourceRefs: unique((Array.isArray(source.sourceRefs) ? source.sourceRefs : []).map((item) => text(item, 40))),
+  sourceHash: text(source.sourceHash, 80),
+  sourceStart: Number.isInteger(source.sourceStart) ? source.sourceStart : null,
+  sourceEnd: Number.isInteger(source.sourceEnd) ? source.sourceEnd : null,
+  paragraph: Number.isInteger(source.paragraph) ? source.paragraph : null,
+  sentence: Number.isInteger(source.sentence) ? source.sentence : null,
 });
 
 const normalizeRecord = (record = {}, fallbackId = "") => ({
@@ -105,6 +112,7 @@ export const normalizeMemoryStore = (value = null) => {
     evidenceIndex: isObject(source.evidenceIndex) ? clone(source.evidenceIndex) : {},
     revisions: isObject(source.revisions) ? clone(source.revisions) : {},
     pendingCandidates: Array.isArray(source.pendingCandidates) ? clone(source.pendingCandidates).slice(-200) : [],
+    degradationLog: Array.isArray(source.degradationLog) ? clone(source.degradationLog).slice(-500) : [],
     conflicts: Array.isArray(source.conflicts) ? clone(source.conflicts).slice(-200) : [],
     migrations: {
       pending: Array.isArray(source.migrations?.pending) ? clone(source.migrations.pending) : [],
@@ -333,7 +341,37 @@ const evidenceFor = (entry, evidence = [], fallback = "") => {
 
 const sourceFor = ({ documentId, revision, entry, evidence, fallback }) => {
   const item = evidenceFor(entry, evidence, fallback);
-  return normalizeSource({ documentId, revision, claim: item?.claim || memoryRecordFactualAssertion(entry), quote: item?.quote || fallback });
+  return normalizeSource({
+    ...item,
+    documentId,
+    revision,
+    claim: item?.claim || memoryRecordFactualAssertion(entry),
+    quote: item?.quote || fallback,
+  });
+};
+
+const normalizedDeferredCandidates = ({ candidates = [], documentId, sourceRevision, updatedAt }) => (
+  (Array.isArray(candidates) ? candidates : []).slice(0, 100).map((item, index) => ({
+    ...clone(item),
+    id: text(item?.id || `pending-memory-${hashText(`${documentId}\u0000${sourceRevision}\u0000${index}\u0000${item?.content || item?.reason || ""}`)}`, 180),
+    documentId,
+    sourceRevision,
+    status: "deferred",
+    recordedAt: text(item?.recordedAt || item?.createdAt || updatedAt, 80),
+  }))
+);
+
+const appendDegradationEvents = (store, events = []) => {
+  const existingIds = new Set((store.degradationLog || []).map((item) => item?.id).filter(Boolean));
+  const additions = (Array.isArray(events) ? events : []).map((event, index) => {
+    const normalized = {
+      ...clone(event),
+      id: text(event?.id || `memory-degradation-${hashText(canonicalJson(event) || String(index))}`, 180),
+    };
+    return normalized.id && !existingIds.has(normalized.id) ? normalized : null;
+  }).filter(Boolean);
+  additions.forEach((item) => existingIds.add(item.id));
+  store.degradationLog = [...(store.degradationLog || []), ...additions].slice(-500);
 };
 
 const mergeInformationEntity = ({ existing = null, entry, bucket, source, updatedAt }) => {
@@ -375,12 +413,132 @@ export const mergeMemoryCandidate = ({
   const gate = memoryCandidateGate({ documentId, content, memoryUpdate, taskContract, deliverableKind, sourceAccepted });
   if (!gate.eligible) return { ok: false, reason: gate.reason, gate, store: normalizeMemoryStore(store) };
   const sourceRevision = memoryStoreSourceRevision({ documentId, content, revision });
+  const deferred = normalizedDeferredCandidates({
+    candidates: memoryUpdate?.deferredCandidates,
+    documentId,
+    sourceRevision,
+    updatedAt,
+  });
   const normalized = retainVerifiedMemoryUpdateFacts({ memoryUpdate, candidate: content });
-  if (!normalized.ok) return { ok: false, reason: normalized.reason || "candidate_evidence_failed", gate, store: normalizeMemoryStore(store) };
-  const update = normalized.memoryUpdate;
+  const hasVerifiedUpdate = normalized.ok && memoryUpdateAssertions(normalized.memoryUpdate).length > 0;
+  const analysisComplete = memoryUpdate?.analysisComplete === true;
+  if (!hasVerifiedUpdate && !deferred.length && !analysisComplete) return { ok: false, reason: normalized.reason || "candidate_evidence_failed", gate, store: normalizeMemoryStore(store) };
+  const suppliedEvidence = Array.isArray(memoryUpdate?.evidence) ? memoryUpdate.evidence : [];
+  const update = hasVerifiedUpdate ? {
+    ...normalized.memoryUpdate,
+    evidence: (normalized.memoryUpdate.evidence || []).map((item) => ({
+      ...(suppliedEvidence.find((candidate) => (
+        text(candidate?.claim, 1_200) === text(item?.claim, 1_200)
+        && text(candidate?.quote, 1_200) === text(item?.quote, 1_200)
+      )) || {}),
+      ...item,
+    })),
+  } : {
+    chapterSummary: "",
+    stateChanges: [],
+    foreshadowing: [],
+    firstAppearances: [],
+    informationRelease: [],
+    readerKnowledge: [],
+    nextContext: [],
+    pendingCanon: [],
+    evidence: [],
+    evidenceVerified: true,
+  };
   const next = normalizeMemoryStore(store);
   const revisionId = `${documentId}:${sourceRevision}`;
-  if (next.revisions[revisionId]?.status === "active") return { ok: true, changed: false, reason: "idempotent_revision", gate, store: next, revision: sourceRevision, unitDelta: next.unitDeltas[documentId] };
+  const previousDeferred = next.pendingCandidates.filter((item) => item?.documentId === documentId);
+  const nextDeferredIds = new Set(deferred.map((item) => item.id));
+  const upgraded = previousDeferred.filter((item) => !nextDeferredIds.has(item?.id));
+  const pendingUnchanged = previousDeferred.length === deferred.length
+    && previousDeferred.every((item) => nextDeferredIds.has(item?.id));
+  if (next.revisions[revisionId]?.status === "active" && pendingUnchanged) {
+    return {
+      ok: true,
+      changed: false,
+      reason: "idempotent_revision",
+      gate,
+      store: next,
+      revision: sourceRevision,
+      unitDelta: next.unitDeltas[documentId],
+      stagedOnly: false,
+      pendingCount: deferred.length,
+    };
+  }
+  if (!hasVerifiedUpdate && !deferred.length && analysisComplete) {
+    next.pendingCandidates = next.pendingCandidates.filter((item) => item?.documentId !== documentId);
+    appendDegradationEvents(next, upgraded.map((item) => ({
+      pendingCandidateId: item.id,
+      documentId,
+      sourceRevision,
+      stage: "upgrade",
+      outcome: "upgraded_or_removed_after_reanalysis",
+      recordedAt: updatedAt,
+    })));
+    next.revisions[revisionId] = {
+      id: revisionId,
+      documentId,
+      revision: sourceRevision,
+      status: "verified_empty",
+      sourceHash: memoryStoreContentHash(content),
+      evidenceIds: [],
+      pendingCandidateIds: [],
+      updatedAt,
+    };
+    return {
+      ok: true,
+      changed: upgraded.length > 0,
+      reason: "verified_no_memory_change",
+      gate,
+      store: next,
+      revision: sourceRevision,
+      unitDelta: next.unitDeltas[documentId] || null,
+      normalizedUpdate: update,
+      stagedOnly: false,
+      analysisOnly: true,
+      pendingCount: 0,
+    };
+  }
+  if (!hasVerifiedUpdate) {
+    next.pendingCandidates = [
+      ...next.pendingCandidates.filter((item) => item?.documentId !== documentId),
+      ...deferred,
+    ].slice(-200);
+    appendDegradationEvents(next, [
+      ...(memoryUpdate?.degradationEvents || []),
+      ...upgraded.map((item) => ({
+        pendingCandidateId: item.id,
+        documentId,
+        sourceRevision,
+        stage: "upgrade",
+        outcome: "upgraded_or_removed_after_reanalysis",
+        recordedAt: updatedAt,
+      })),
+    ]);
+    next.revisions[revisionId] = {
+      id: revisionId,
+      documentId,
+      revision: sourceRevision,
+      status: "deferred",
+      sourceHash: memoryStoreContentHash(content),
+      evidenceIds: [],
+      pendingCandidateIds: deferred.map((item) => item.id),
+      updatedAt,
+    };
+    return {
+      ok: true,
+      changed: !pendingUnchanged || Boolean(memoryUpdate?.degradationEvents?.length),
+      reason: "deferred_staged",
+      gate,
+      store: next,
+      revision: sourceRevision,
+      unitDelta: next.unitDeltas[documentId] || null,
+      normalizedUpdate: update,
+      stagedOnly: true,
+      analysisOnly: false,
+      pendingCount: deferred.length,
+    };
+  }
   for (const [key, item] of Object.entries(next.revisions)) {
     if (item?.documentId === documentId && item.status === "active") next.revisions[key] = { ...item, status: "superseded" };
   }
@@ -390,6 +548,7 @@ export const mergeMemoryCandidate = ({
     if (!quote) continue;
     const evidenceId = `evidence-${hashText(`${documentId}\u0000${sourceRevision}\u0000${quote}`)}`;
     next.evidenceIndex[evidenceId] = {
+      ...normalizeSource(item),
       id: evidenceId,
       documentId,
       revision: sourceRevision,
@@ -449,9 +608,24 @@ export const mergeMemoryCandidate = ({
     status: "active",
     sourceHash: memoryStoreContentHash(content),
     evidenceIds: Object.keys(next.evidenceIndex).filter((id) => next.evidenceIndex[id]?.documentId === documentId && next.evidenceIndex[id]?.revision === sourceRevision),
+    pendingCandidateIds: deferred.map((item) => item.id),
     updatedAt,
   };
-  next.pendingCandidates = next.pendingCandidates.filter((item) => !(item?.documentId === documentId && item?.sourceRevision === sourceRevision));
+  next.pendingCandidates = [
+    ...next.pendingCandidates.filter((item) => item?.documentId !== documentId),
+    ...deferred,
+  ].slice(-200);
+  appendDegradationEvents(next, [
+    ...(memoryUpdate?.degradationEvents || []),
+    ...upgraded.map((item) => ({
+      pendingCandidateId: item.id,
+      documentId,
+      sourceRevision,
+      stage: "upgrade",
+      outcome: "upgraded_or_removed_after_reanalysis",
+      recordedAt: updatedAt,
+    })),
+  ]);
   return {
     ok: true,
     changed: true,
@@ -461,6 +635,9 @@ export const mergeMemoryCandidate = ({
     revision: sourceRevision,
     unitDelta,
     normalizedUpdate: update,
+    stagedOnly: false,
+    analysisOnly: false,
+    pendingCount: deferred.length,
   };
 };
 
@@ -998,6 +1175,7 @@ export const memoryStoreSummary = (store = null) => {
     evidence: Object.keys(normalized.evidenceIndex).length,
     revisions: Object.keys(normalized.revisions).length,
     pendingCandidates: normalized.pendingCandidates.length,
+    degradationEvents: normalized.degradationLog.length,
     conflicts: normalized.conflicts.length,
   };
 };

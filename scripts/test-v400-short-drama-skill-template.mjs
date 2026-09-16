@@ -20,7 +20,7 @@ const sourcePaths = {
   enhancer: "短剧生产链/短剧精髓保真与爆点增强/SKILL.md",
 };
 
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 29);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
 for (const relativePath of Object.values(sourcePaths)) {
   const content = await readFile(`${bundledRoot}${relativePath}`, "utf8");
   assert.match(content, /^---\s*\nname:/u, `${relativePath} 必须保留 Skill 元数据`);

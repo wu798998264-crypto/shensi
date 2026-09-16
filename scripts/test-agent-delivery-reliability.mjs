@@ -65,15 +65,19 @@ try {
   let stubbornCalls=0;
   const stubborn=createConversationAgentService({appRoot:root,storageRoot:join(root,'failures'),skillCatalog:async()=>[],readRoute:async()=>'',run:async()=>{stubbornCalls++;return {text:'声称完成但没有工具证据'};}});
   const failure=await wait(stubborn,(await stubborn.start({...request,conversationId:'stubborn'})).id);
-  assert.equal(failure.status,'failed');assert.equal(stubbornCalls,3);
+  assert.equal(failure.status,'completed');assert.equal(stubbornCalls,2);
   assert.equal(failure.events.filter(e=>e.type==='document_saved').length,0);
   assert.match(failure.text,/没有工具证据/);
+  assert.ok(failure.events.some(e=>e.type==='delivery_warning'),'验收失败必须作为警告交付，不能覆盖已有结果');
+  assert.match(failure.deliveryWarnings.join('\n'),/没有完成交付方式声明/);
   const events=[];
   const reader=createConversationAgentTools({...base,catalog:[{id:'skill',name:'真实技能'}],readSkill:async()=>({name:'真实技能',text:'实际内容',fullText:true}),emit:(type,payload)=>events.push({type,payload}),load:async()=>({state:{documents:{empty:{title:'空文档',markdown:''},full:{title:'非空文档',markdown:'123456'}}}})});
   await invoke(reader,'documents','read',{documentId:'empty'});
   assert.equal(events.length,0);
   await invoke(reader,'documents','read',{documentId:'full',length:2});
   await invoke(reader,'skills','read',{id:'skill'});
-  assert.equal(events.length,2);assert.equal(events[0].payload.fullText,false);assert.equal(events[1].payload.title,'真实技能');
-  console.log('Delivery repair, bounded failure, verified title/body transaction, full history and actual nonempty read evidence passed');
+  const resourceReads=events.filter(event=>event.type==='resource_read');
+  assert.equal(resourceReads.length,2);assert.equal(resourceReads[0].payload.fullText,false);assert.equal(resourceReads[1].payload.title,'真实技能');
+  assert.ok(events.some(event=>event.type==='route_decision'&&event.payload.skillId==='skill'));
+  console.log('Delivery repair, nonblocking validation warning, verified title/body transaction, full history and actual nonempty read evidence passed');
 } finally { await rm(root,{recursive:true,force:true,maxRetries:5,retryDelay:100}); }

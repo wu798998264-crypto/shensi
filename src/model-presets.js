@@ -91,20 +91,6 @@ export const OPENAI_MODEL_OPTIONS = [
   model("gpt-image-2", "GPT Image 2.0", { capabilities: ["image_generation"] }),
   model("gpt-image-1.5", "GPT Image 1.5", { capabilities: ["image_generation"] }),
   model("gpt-image-1", "GPT Image 1", { capabilities: ["image_generation"] }),
-  model("sora-2", "Sora 2", {
-    capabilities: ["video_generation"],
-    durationSeconds: [4, 8, 12],
-    resolutions: ["720p", "1080p"],
-    aspectRatios: ["16:9", "9:16"],
-    generationModes: ["smart_params"],
-  }),
-  model("sora-2-pro", "Sora 2 Pro", {
-    capabilities: ["video_generation"],
-    durationSeconds: [4, 8, 12],
-    resolutions: ["720p", "1080p"],
-    aspectRatios: ["16:9", "9:16"],
-    generationModes: ["smart_params"],
-  }),
   model("o3-pro", "o3 Pro", { reasoningLevels: ["low", "medium", "high"], defaultReasoningLevel: "high" }),
   model("o3", "o3", { reasoningLevels: ["low", "medium", "high"], defaultReasoningLevel: "medium" }),
   model("o4-mini", "o4 Mini", { reasoningLevels: ["low", "medium", "high"], defaultReasoningLevel: "medium" }),
@@ -583,9 +569,6 @@ export const videoReferencePolicy = (settings = {}, { generationMode = "smart_pa
   );
   const mode = String(generationMode || "smart_params");
 
-  if (provider === "OpenAI" && adapter === "api" && /sora/.test(slug)) {
-    return videoReferencePolicyResult({ image: 1, maxTotal: 1 });
-  }
   if (provider === "即梦" && adapter === "cli" && /seedance2\.5/.test(slug)) {
     if (mode === "first_last_frame") return videoReferencePolicyResult({ image: 2, maxTotal: 2, exactImageCount: 2 });
     if (mode === "smart_edit") return {
@@ -714,7 +697,7 @@ export const videoGenerationMode = (settings = {}, dynamicModels = []) => {
   if (settings.adapter !== "api") return "";
   const option = getModelOption(settings.provider, settings.model, dynamicModels);
   const slug = String(settings.model ?? "").toLowerCase();
-  return option?.capabilities?.includes("video_generation") || /(?:sora|video|veo|kling|hailuo|seedance|wan[-_]?video)/i.test(slug)
+  return !/sora/i.test(slug) && (option?.capabilities?.includes("video_generation") || /(?:video|veo|kling|hailuo|seedance|wan[-_]?video)/i.test(slug))
     ? "videos_api"
     : "";
 };

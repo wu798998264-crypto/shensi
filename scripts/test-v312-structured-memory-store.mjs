@@ -30,7 +30,16 @@ const update = {
   readerKnowledge: [{ id: "information-copper-seal", name: "铜兽印与矿洞有关", detail: sentence }],
   foreshadowing: [{ id: "foreshadow-copper-seal", name: "父亲失踪线索", detail: sentence, state: "planted" }],
   nextContext: ["铜兽印仍需追查"],
-  evidence: [{ claim: sentence, quote: sentence }],
+  evidence: [{
+    claim: sentence,
+    quote: sentence,
+    sourceRefs: ["P001.S001"],
+    sourceHash: "source-hash-1",
+    sourceStart: 0,
+    sourceEnd: sentence.length,
+    paragraph: 1,
+    sentence: 1,
+  }],
   evidenceVerified: true,
 };
 
@@ -47,11 +56,78 @@ assert.equal(Object.keys(merged.store.currentStates.novel).length, 1);
 assert.equal(merged.store.currentStates.novel["state-linyan"].source.documentId, "chapter-1");
 assert.equal(merged.store.currentStates.novel["state-linyan"].source.quote, sentence);
 assert.equal(Object.keys(merged.store.evidenceIndex).length, 1);
+assert.deepEqual(Object.values(merged.store.evidenceIndex)[0].sourceRefs, ["P001.S001"]);
+assert.equal(Object.values(merged.store.evidenceIndex)[0].sourceStart, 0);
+assert.equal(merged.store.currentStates.novel["state-linyan"].source.sourceHash, "source-hash-1");
 assert.equal(Object.keys(merged.store.revisions).length, 1);
 
 const idempotent = mergeMemoryCandidate({ store: merged.store, documentId: "chapter-1", content: sentence, memoryUpdate: update, taskContract: contract, sourceAccepted: true });
 assert.equal(idempotent.ok, true);
 assert.equal(idempotent.changed, false, "同一正文版本重试必须幂等");
+
+const deferredUpdate = {
+  evidenceVerified: true,
+  deferredCandidates: [{
+    id: "pending-memory-test",
+    repairKey: "state-1",
+    type: "state_change",
+    name: "林砚",
+    content: "林砚确认铜兽印发烫。",
+    status: "deferred",
+    failureStage: "evidence_validation",
+    reason: "来源编号未能完整证明主体",
+  }],
+  degradationEvents: [{
+    pendingCandidateId: "pending-memory-test",
+    stage: "evidence_validation",
+    reason: "来源编号未能完整证明主体",
+    outcome: "deferred_to_unit_memory",
+    recordedAt: "2026-08-25T00:00:01.000Z",
+  }],
+};
+const deferredOnly = mergeMemoryCandidate({
+  store: emptyMemoryStore(),
+  documentId: "chapter-1",
+  content: sentence,
+  memoryUpdate: deferredUpdate,
+  taskContract: contract,
+  sourceAccepted: true,
+  updatedAt: "2026-08-25T00:00:01.000Z",
+});
+assert.equal(deferredOnly.ok, true, deferredOnly.reason);
+assert.equal(deferredOnly.stagedOnly, true, "无法验证的单项只能进入章节级暂存");
+assert.equal(deferredOnly.store.pendingCandidates.length, 1);
+assert.equal(deferredOnly.store.degradationLog.length, 1);
+assert.equal(Object.keys(deferredOnly.store.currentStates.novel || {}).length, 0, "暂存项不得污染全局人物状态");
+assert.equal(Object.keys(deferredOnly.store.informationEntities).length, 0, "暂存项不得污染全局信息账本");
+assert.equal(Object.keys(deferredOnly.store.foreshadowing).length, 0, "暂存项不得污染全局伏笔");
+
+const emptyReanalysis = mergeMemoryCandidate({
+  store: deferredOnly.store,
+  documentId: "chapter-1",
+  content: sentence,
+  memoryUpdate: { evidenceVerified: true, analysisComplete: true, deferredCandidates: [], degradationEvents: [] },
+  taskContract: contract,
+  sourceAccepted: true,
+  updatedAt: "2026-08-25T00:00:01.500Z",
+});
+assert.equal(emptyReanalysis.ok, true, emptyReanalysis.reason);
+assert.equal(emptyReanalysis.analysisOnly, true, "合法空结果应被视为完成分析，而不是失败");
+assert.equal(emptyReanalysis.store.pendingCandidates.length, 0, "空结果确认无长期变化时应清理旧暂存项");
+
+const upgraded = mergeMemoryCandidate({
+  store: deferredOnly.store,
+  documentId: "chapter-1",
+  content: sentence,
+  memoryUpdate: update,
+  taskContract: contract,
+  sourceAccepted: true,
+  updatedAt: "2026-08-25T00:00:02.000Z",
+});
+assert.equal(upgraded.ok, true, upgraded.reason);
+assert.equal(upgraded.stagedOnly, false);
+assert.equal(upgraded.store.pendingCandidates.length, 0, "后续验证成功后必须自动移除对应暂存项");
+assert.equal(upgraded.store.degradationLog.some((item) => item.outcome === "upgraded_or_removed_after_reanalysis"), true);
 
 const markdown = projectMemoryStoreMarkdown({ store: merged.store, documentId: "memory-release" });
 assert.match(markdown, /# 信息释放表/u);

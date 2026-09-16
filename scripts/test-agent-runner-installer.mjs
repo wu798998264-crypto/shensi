@@ -13,6 +13,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const calls = [];
 for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
   calls.length = 0;
+  const spec = AGENT_RUNNER_INSTALL_SPECS[runnerId];
+  if (spec.installKind === "manual") {
+    await assert.rejects(
+      installAgentRunnerFromOfficialSource({ runnerId }),
+      (error) => error.code === "AGENT_RUNNER_MANUAL_SETUP_REQUIRED",
+    );
+    continue;
+  }
   await installAgentRunnerFromOfficialSource({
     runnerId,
     nodeExecutable: "C:\\runtime\\node.exe",
@@ -20,12 +28,27 @@ for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
       winget: "C:\\Windows\\winget.exe",
       npmCli: "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
       npmPrefix: "C:\\Users\\Test\\AppData\\Roaming\\npm",
+      powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     }),
     runProcess: async (request) => { calls.push(request); return { exitCode: 0, stdout: "ok", stderr: "" }; },
   });
-  assert.equal(calls.length, 1, `${runnerId} 必须只有一个白名单安装动作`);
-  assert.equal(calls[0].executable, "C:\\runtime\\node.exe");
-  assert.ok(calls[0].args.includes(AGENT_RUNNER_INSTALL_SPECS[runnerId].npmPackage));
+  const expectedCallCount = runnerId === "opencode" ? 2 : 1;
+  assert.equal(calls.length, expectedCallCount, `${runnerId} 必须只有白名单安装动作`);
+  if (runnerId === "opencode") {
+    assert.equal(calls[0].executable, "C:\\Windows\\winget.exe");
+    assert.ok(calls[0].args.includes("OpenJS.NodeJS.LTS"));
+    assert.equal(calls[1].executable, "C:\\runtime\\node.exe");
+    assert.ok(calls[1].args.includes(spec.npmPackage));
+  } else if (spec.installKind === "npm") {
+    assert.equal(calls[0].executable, "C:\\runtime\\node.exe");
+    assert.ok(calls[0].args.includes(spec.npmPackage));
+  } else if (spec.installKind === "powershell") {
+    assert.equal(calls[0].executable, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    assert.ok(calls[0].args.includes(spec.installScript));
+  } else {
+    assert.equal(calls[0].executable, "C:\\Windows\\winget.exe");
+    assert.ok(calls[0].args.includes(spec.wingetId));
+  }
   assert.equal(calls[0].shell, undefined, "安装器不得启用 shell 或拼接用户命令");
 }
 

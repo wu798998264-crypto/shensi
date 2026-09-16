@@ -17,6 +17,8 @@ assert.match(loadConversation, /openPendingMaterialUpdateChoiceForConversation/u
 
 const landingFlow = sourceWindow("const materialUpdateSourceDocumentIds =", "const handleGenerationAttemptAction =");
 assert.match(landingFlow, /kind: "material_update_prompt"/u);
+assert.match(landingFlow, /sourceRevisions: materialUpdateSourceRevisions/u,
+  "资料更新提示必须绑定刚落盘正文的版本");
 assert.match(landingFlow, /bindMaterialUpdatePromptToMessage/u);
 assert.match(landingFlow, /openMaterialUpdateChoice/u);
 
@@ -31,9 +33,9 @@ assert.doesNotMatch(formalLanding, /applyCandidateMemoryUpdate|scheduleManualNar
 
 const choiceRenderer = sourceWindow("const renderConversationChoicePanel =", "const openChatAgentGuidanceChoice =");
 assert.match(choiceRenderer, /pending\.kind === "material_update_prompt"/u);
-assert.match(choiceRenderer, /更新资料/u);
-assert.match(choiceRenderer, /暂不更新/u);
-assert.match(choiceRenderer, /记忆、大纲和设定/u);
+assert.match(choiceRenderer, /确认更新/u);
+assert.match(choiceRenderer, /取消/u);
+assert.match(choiceRenderer, /大纲、设定、记忆或资料库/u);
 
 const choiceOpeners = sourceWindow("const openChatAgentGuidanceChoice =", "const openFreshStartChoice =");
 assert.match(choiceOpeners, /function openMaterialUpdateChoice/u);
@@ -47,6 +49,10 @@ const choiceHandler = sourceWindow(
   "elements.memoryReviewButton.addEventListener",
 );
 assert.match(choiceHandler, /runConfirmedPostLandingMaterialsUpdate/u);
+assert.match(choiceHandler, /"cancelled"/u,
+  "取消必须终结本轮提示，不能作为稍后重复弹出的 deferred 状态");
+assert.match(choiceHandler, /sourceRevisions: pending\.sourceRevisions/u,
+  "确认更新必须携带落盘时绑定的正文版本");
 assert.match(choiceHandler, /updatePromptStatuses\("running"\)/u);
 assert.match(choiceHandler, /materialUpdateRunPromptStatus\(completed\)/u,
   "切换工作区造成的暂缓必须恢复为 pending，不能误记为永久失败");
@@ -68,6 +74,18 @@ assert.match(materialUpdateRun, /workspaceState,[\s\S]*taskContextSnapshot,[\s\S
 assert.match(materialUpdateRun, /deferForWorkspaceSwitch/u);
 assert.match(materialUpdateRun, /return null/u,
   "切换作品时应保留待处理状态，而不是报告失败");
+assert.match(materialUpdateRun, /assertSourceRevisionsCurrent/u,
+  "资料检查和正式执行前必须重新验证来源正文版本");
+assert.match(materialUpdateRun, /const memoryChanges = plan\.changes\.filter/u,
+  "只有差异计划明确命中记忆时才能运行结构化记忆同步");
+assert.match(materialUpdateRun, /materialUpdateModuleId\(item\.targetDocumentId\) !== "memory"/u,
+  "结构化记忆目标不得混入普通文档生成写入");
+assert.match(materialUpdateRun, /captureMaterialUpdateMemoryRollback/u,
+  "记忆同步前必须捕获定向补偿快照");
+assert.match(materialUpdateRun, /rollbackMaterialMemoryTransaction/u,
+  "记忆同步或后续资料写入失败时必须执行补偿回滚");
+assert.match(materialUpdateRun, /if \(completed\) memoryTransactionCommitted = true/u,
+  "只有全部资料目标成功后才能提交记忆事务");
 
 const pinnedAgent = sourceWindow("const savePinnedAgentLandingMetadata =", "const synchronizeBackgroundGenerationIntoActiveWorkspace =");
 assert.match(pinnedAgent, /markMaterialUpdatePending/u);

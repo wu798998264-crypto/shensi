@@ -765,6 +765,16 @@ const restoreNutstoreCredentialSession = async () => {
   return { restored: true, account: value.account };
 };
 
+const restoreTextGenerationCredentialSession = async () => {
+  const { records = {} } = await credentialVault.readChannel("text");
+  const credentials = Object.fromEntries(Object.entries(records)
+    .map(([profileId, secret]) => [String(profileId || "").trim(), String(secret || "").trim()])
+    .filter(([profileId, secret]) => profileId && secret));
+  if (!Object.keys(credentials).length) return { restored: false };
+  const result = await postBackendJson("/api/generation/runtime/text-credentials", { credentials });
+  return { restored: true, connectionCount: Number(result.connectionCount) || Object.keys(credentials).length };
+};
+
 const backendHealthMatches = (payload, child, nonce) => {
   const expectedPid = Number(child?.pid || 0);
   const expectedProof = startupNonceProof(nonce, expectedPid);
@@ -891,6 +901,12 @@ const startBackend = async () => {
   if (!sessionToken) throw new Error("本地核心未返回桌面会话令牌。");
   if (child.exitCode != null) throw new Error(`本地核心在页面加载前退出（代码 ${child.exitCode}）。${backendErrorTail}`);
   backendReadyProcess = child;
+  await restoreTextGenerationCredentialSession().then((result) => {
+    writeDiagnosticLog(`text credential session restored=${result.restored === true} connectionCount=${Number(result.connectionCount) || 0}`);
+  }).catch((error) => {
+    console.error("[shensi-text-credential-restore]", String(error?.message || error));
+    writeDiagnosticLog(`text credential session restore failed: ${error?.message || error}`);
+  });
   await restoreNutstoreCredentialSession().catch((error) => {
     console.error("[shensi-nutstore-credential-restore]", String(error?.message || error));
   });

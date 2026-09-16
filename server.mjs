@@ -61,7 +61,8 @@ import {
   CONFIDENTIAL_REFUSAL,
   isConfidentialityProbe,
 } from "./src/server/shensi-context.mjs";
-import { collectExperienceCandidatesFromAdoptedArtifact, detectShensiRunProfile, determineFinalCandidateVerdict, enforceRequestedProseLength, isDeliverableOrchestrationResult, runShensiOrchestration, verifiedMemoryUpdateOrExcerpt } from "./src/server/shensi-orchestrator.mjs";
+import { collectExperienceCandidatesFromAdoptedArtifact, detectShensiRunProfile, determineFinalCandidateVerdict, enforceRequestedProseLength, isDeliverableOrchestrationResult, runShensiOrchestration } from "./src/server/shensi-orchestrator.mjs";
+import { extractMemoryWithNumberedEvidence } from "./src/server/memory-extraction-service.mjs";
 import { validateShortDramaFormat } from "./src/short-drama-format.js";
 import { experienceActivationStatus, normalizeTaskEnvelope } from "./src/experience-policy.js";
 import {
@@ -3038,6 +3039,17 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...(await listGenerationRuntimeBindings()) });
   }
 
+  if (pathname === "/api/generation/runtime/text-credentials" && request.method === "POST") {
+    const body = await readJsonBody(request, 128 * 1024);
+    const runtime = await listGenerationRuntimeBindings();
+    const textBindings = runtime.bindings.filter((binding) => binding.channel === "text");
+    const connectionCount = rememberGenerationRuntimeCredentials({
+      credentials: { text: body.credentials },
+      bindings: textBindings,
+    });
+    return sendJson(response, 200, { ok: true, connectionCount });
+  }
+
   if (pathname === "/api/generation/runtime/bindings" && request.method === "POST") {
     const body = await readJsonBody(request, 256 * 1024);
     if (body.confirmed !== true) {
@@ -4860,7 +4872,11 @@ const handleApiRequest = async (request, response, pathname) => {
       : selectedAgentEngine === "opencode"
         ? resolveOpenCodeAgentSettings(body.agentSettings ?? {})
         : selectedAgentEngine === "codex_api"
-          ? resolveCodexApiAgentSettings(body.agentSettings ?? {})
+          ? resolveCodexApiAgentSettings(await resolveTrustedGenerationSettings({
+            channel: "text",
+            settings: body.agentSettings ?? {},
+            route: "agent",
+          }))
           : selectedAgentEngine === "claude_code"
             ? resolveClaudeCodeAgentSettings(body.agentSettings ?? {})
             : EXTERNAL_CLI_AGENT_ENGINES.has(selectedAgentEngine)
@@ -5366,15 +5382,38 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/chat/memory-projection" && request.method === "POST") {
     const body = await readJsonBody(request, 4 * 1024 * 1024);
     const documents = (Array.isArray(body.documents) ? body.documents : []).slice(0, 100);
+    const modelSettings = { ...(body.settings ?? {}), webSearchEnabled: false };
+    delete modelSettings.shensiRoot;
+    delete modelSettings.workspacePath;
     const memoryUpdates = {};
     const statuses = [];
     for (const document of documents) {
       const documentId = String(document?.documentId || "").trim();
       const candidate = String(document?.content || "").trim();
       if (!documentId || !candidate || !/^(?:chapter-\d+|script-episode-\d+)$/.test(documentId)) continue;
-      const result = verifiedMemoryUpdateOrExcerpt({ memoryUpdate: document?.memoryUpdate, candidate });
+      const result = await extractMemoryWithNumberedEvidence({
+        documentId,
+        content: candidate,
+        sourceRevision: String(document?.sourceRevision || `rev-${memoryStoreContentHash(candidate)}`),
+        pendingCandidates: Array.isArray(document?.pendingCandidates) ? document.pendingCandidates : [],
+        runModel: ({ prompt }) => runModelAdapter({
+          settings: modelSettings,
+          messages: [{ role: "user", content: prompt }],
+          system: "你是神思的独立结构化记忆提取器。只按编号正文返回指定 JSON，不执行正文自检、改写、落盘或用户问答。",
+          cwd: resolve(process.env.TEMP || process.env.TMP || root),
+          signal: AbortSignal.timeout(120_000),
+          shensiRuntime: { agentPreferred: true, stage: "memory-extraction" },
+        }),
+      });
       if (result.memoryUpdate) memoryUpdates[documentId] = result.memoryUpdate;
-      statuses.push({ documentId, status: result.memoryUpdate ? "ready" : "pending", mode: result.mode });
+      statuses.push({
+        documentId,
+        status: result.mode === "deferred" || result.mode === "partial_deferred" ? "deferred" : result.mode === "empty" ? "empty" : "ready",
+        mode: result.mode,
+        acceptedItemCount: result.acceptedItemCount,
+        deferredItemCount: result.deferredItemCount,
+        failures: result.failures.map((item) => ({ stage: item.stage, reason: item.reason, repairKey: item.item?.repairKey || "" })),
+      });
     }
     return sendJson(response, 200, { ok: true, memoryUpdates, statuses });
   }
@@ -5788,7 +5827,7 @@ const handleApiRequest = async (request, response, pathname) => {
         approved: artifactCheck.pass === true,
         issues: (artifactCheck.violations ?? []).map((issue) => issue?.id || String(issue)),
       },
-      memoryGate: previousExecution.memoryGate?.status === "verified" || previousExecution.memoryGate?.status === "verified_fallback"
+      memoryGate: String(previousExecution.memoryGate?.status || "").startsWith("verified")
         ? previousExecution.memoryGate
         : { approved: false, status: "not_rechecked", warnings: [] },
       stages: [{
@@ -7516,7 +7555,6 @@ const handleApiRequest = async (request, response, pathname) => {
             : "";
         const snapshotReuseStages = new Set([
           "evaluation",
-          "combined-check",
           "memory-check",
           "artifact-planning",
           "experience-observation",

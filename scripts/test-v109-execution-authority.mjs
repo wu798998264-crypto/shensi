@@ -34,7 +34,8 @@ const reviewedPlan = resolveProjectCapabilityPlan({
   contextDomain: "novel",
   targetDocumentId: "chapter-2",
 });
-assert.equal(reviewedPlan.capabilities.includes("effect_reviewer"), true);
+assert.equal(reviewedPlan.capabilities.includes("regular_progress_reviewer"), true);
+assert.equal(reviewedPlan.capabilities.includes("effect_reviewer"), false);
 
 assert.equal(folderDeleteAllowed({ node: { type: "folder" }, moduleId: "reports", viewId: "default", workspaceKind: "project" }), true);
 assert.equal(folderDeleteAllowed({ node: { type: "folder", authorCockpitFixed: true }, moduleId: "reports", viewId: "default", workspaceKind: "project" }), false);

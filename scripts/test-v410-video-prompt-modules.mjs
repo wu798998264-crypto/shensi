@@ -15,7 +15,7 @@ import { validateShensiBundlePaths } from "../src/server/bundled-shensi.mjs";
 
 const root = fileURLToPath(new URL("../packaging/bundled/skill/神思/", import.meta.url));
 const manifestPath = fileURLToPath(new URL("../packaging/bundled/shensi-bundle-manifest.json", import.meta.url));
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 29);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
 
 const template = createInitialCapabilityTemplate();
 const prompt = template.modules.find((module) => module.id === "module:prompt-writer");

@@ -4,15 +4,26 @@ import { readFile } from "node:fs/promises";
 import {
   compileManagedMaterialMutation,
   materialUpdateExecutionInstruction,
+  materialUpdateSourceRevisionConflicts,
+  materialUpdateSourceRevisions,
   parseMaterialUpdatePlan,
   unintendedMaterialDocumentChanges,
 } from "../src/material-update-plan.js";
 import { applyDocumentPatchPlan } from "../src/document-patch-engine.js";
 
 const documents = {
+  "chapter-8": { title: "第八章", html: "<p>天衡印第一次在他掌心亮起。</p>" },
   "canon-items": { title: "物品与道具", markdown: "## 旧剑\n\n### 功能\n破甲。" },
   "canon-world": { title: "世界观与基础规则", markdown: "## 灵力\n\n### 当前规则\n不可逆。" },
+  "library-memo": { title: "备忘录", markdown: "## 已知线索\n\n旧线索。" },
 };
+
+const sourceRevisions = materialUpdateSourceRevisions({ documents, sourceDocumentIds: ["chapter-8"] });
+assert.equal(materialUpdateSourceRevisionConflicts({ documents, sourceRevisions }).length, 0);
+assert.deepEqual(materialUpdateSourceRevisionConflicts({
+  documents: { ...documents, "chapter-8": { ...documents["chapter-8"], html: "<p>正文已经变化。</p>" } },
+  sourceRevisions,
+}), ["chapter-8"], "来源正文变化后旧资料计划必须失效");
 
 const plan = parseMaterialUpdatePlan(JSON.stringify({
   schema: "shensi.material-update-plan.v1",
@@ -30,11 +41,31 @@ const plan = parseMaterialUpdatePlan(JSON.stringify({
     changeType: "patch",
     evidence: [],
   }],
-}), { documents, sourceDocumentIds: ["chapter-8"] });
+}), { documents, sourceDocumentIds: ["chapter-8"], sourceRevisions });
 
 assert.equal(plan.changes.length, 2, "没有正文证据的变化必须被丢弃");
+assert.equal(plan.sourceRevisions["chapter-8"], sourceRevisions["chapter-8"], "资料计划必须绑定来源正文版本");
 assert.equal(plan.changes[1].changeType, "create", "缺失资料文档必须转为首次创建");
 assert.match(materialUpdateExecutionInstruction(plan), /insert：只返回需要新增的二级标题记录/u);
+
+const scopedPlan = parseMaterialUpdatePlan(JSON.stringify({
+  changes: [{
+    targetDocumentId: "memory-release",
+    changeType: "patch",
+    evidence: [{ sourceDocumentId: "chapter-8", quote: "天衡印第一次在他掌心亮起。" }],
+  }, {
+    targetDocumentId: "library-memo",
+    changeType: "append",
+    evidence: [{ sourceDocumentId: "chapter-8", quote: "天衡印第一次在他掌心亮起。" }],
+  }],
+}), {
+  documents,
+  sourceDocumentIds: ["chapter-8"],
+  sourceRevisions,
+  allowedTargetDocumentIds: ["memory-release", "library-memo"],
+});
+assert.equal(scopedPlan.changes[0].changeType, "snapshot", "结构化记忆必须由可信记忆仓更新");
+assert.equal(scopedPlan.changes[1].changeType, "append", "作品备忘录可以按证据追加");
 
 const current = [
   "# 物品与道具",

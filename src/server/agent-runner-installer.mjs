@@ -85,6 +85,8 @@ const knownRunnerLaunchCandidates = ({ runnerId, environment = process.env, home
   const directories = pathDirectories(environment);
   const localAppData = clean(environment.LOCALAPPDATA) || join(homeDirectory, "AppData", "Local");
   const roamingAppData = clean(environment.APPDATA) || join(homeDirectory, "AppData", "Roaming");
+  const programFiles = clean(environment.ProgramFiles) || "C:\\Program Files";
+  const programFilesX86 = clean(environment["ProgramFiles(x86)"]) || "C:\\Program Files (x86)";
   if (runnerId === "trae_work") return [
     ...directories.flatMap((directory) => [join(directory, "traecli.exe"), join(directory, "traecli")]),
     join(homeDirectory, ".trae", "bin", "traecli.exe"),
@@ -96,6 +98,11 @@ const knownRunnerLaunchCandidates = ({ runnerId, environment = process.env, home
       { executable: join(directory, "codebuddy.exe"), prefixArgs: [] },
       { executable: process.execPath, prefixArgs: [join(directory, "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy")] },
     ]),
+    ...[
+      join(localAppData, "Programs", "WorkBuddy", "resources", "app.asar.unpacked", "cli", "bin", "codebuddy"),
+      join(programFiles, "WorkBuddy", "resources", "app.asar.unpacked", "cli", "bin", "codebuddy"),
+      join(programFilesX86, "WorkBuddy", "resources", "app.asar.unpacked", "cli", "bin", "codebuddy"),
+    ].map((script) => ({ executable: process.execPath, prefixArgs: [script] })),
     { executable: process.execPath, prefixArgs: [join(roamingAppData, "npm", "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy")] },
   ];
   return [];

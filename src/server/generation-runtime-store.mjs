@@ -443,6 +443,21 @@ const requestedProfile = (settings = {}, channel, route = "") => {
   };
 };
 
+const projectTrustedTextRuntimeToSelectedProfile = (settings = {}, profileId = "") => {
+  if (!Array.isArray(settings.textConnections) || !profileId) return settings;
+  const runtimeFields = Object.fromEntries([
+    "adapter", "provider", "protocol", "baseUrl", "apiKey", "cliPath", "cliArgs", "agentEngine",
+  ].filter((field) => Object.hasOwn(settings, field)).map((field) => [field, settings[field]]));
+  return {
+    ...settings,
+    textConnections: settings.textConnections.map((profile) => (
+      text(profile?.id || profile?.connectionId, 120) === profileId
+        ? { ...profile, ...runtimeFields }
+        : profile
+    )),
+  };
+};
+
 const isCustomApiProfile = (value = {}) => value.adapter === "api"
   && getProviderPreset(value.provider).custom === true
   && Boolean(text(value.baseUrl, 2_048));
@@ -708,7 +723,7 @@ export const resolveTrustedGenerationSettings = async ({
     if (chatProjection && binding.chatAdapter !== "api") {
       throw runtimeError("此 OpenCode 连接尚未完成 API Chat 双处理器授权，请重新运行真实连接测试", "LOCAL_RUNTIME_BINDING_REQUIRED", 409);
     }
-    return withoutDreaminaIdentity({
+    const resolved = withoutDreaminaIdentity({
       ...candidate,
       ...(bindingCredential ? { apiKey: bindingCredential } : {}),
       id: requested.profileId,
@@ -730,6 +745,9 @@ export const resolveTrustedGenerationSettings = async ({
       cliArgs: chatProjection ? "" : binding.cliArgs,
       dreaminaCliProfile: binding.dreaminaCliProfile,
     });
+    return channel === "text"
+      ? projectTrustedTextRuntimeToSelectedProfile(resolved, requested.profileId)
+      : resolved;
   }
 
   // The renderer may have just rehydrated a DPAPI-backed API credential and

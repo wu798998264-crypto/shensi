@@ -13,6 +13,9 @@ const runIdFor = (request) => {
 };
 const terminal = (status) => ["completed", "failed", "cancelled", "interrupted"].includes(status);
 const safeRequest = (value) => JSON.parse(JSON.stringify(value, (key, entry) => /api.?key|password|secret|access.?token|refresh.?token/iu.test(key) ? undefined : entry));
+const redactedErrorMessage = (error, apiKey = "") => String(error?.message || error || "未知错误")
+  .replaceAll(String(apiKey || "\0"), "[REDACTED]")
+  .replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
 const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
 const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
@@ -208,24 +211,53 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
       const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
+      const deliveryReviewWarnings = [];
       // Reconcile conversation-only delivery against the original user request,
       // not the writer's self-declared mode. This stays semantic, never keyword-routed.
       if (tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
         await event(entry, "progress", { message: "正在核对成果归档" });
         const previousText = result.text;
-        const checked = await run({ ...runOptions, deliveryReview: true, prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
-        result = { ...checked, text: checked.text || previousText };
+        try {
+          const checked = await run({ ...runOptions, deliveryReview: true,
+            onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
+            prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。选择面板能力分支后必须真实调用 skills.read；只读取面板、模组或模块路由不等于读取 Skill。确实无需 Skill 的通用问答，重新调用 interaction.delivery，声明 routingMode=general 并给出基于完整任务语义的 routingReason。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
+          result = { ...checked, text: checked.text || previousText };
+        } catch (error) {
+          deliveryReviewWarnings.push(`交付复核未完成：${redactedErrorMessage(error, request.settings.apiKey)}`);
+          result = { ...result, text: previousText };
+        }
       }
-      for (let attempt = 0; attempt < 2 && tools.deliveryStatus; attempt++) {
+      for (let attempt = 0; attempt < 1 && tools.deliveryStatus; attempt++) {
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;
         await event(entry, "progress", { message: "Agent 正在核对并完成交付" });
-        result = await run({ ...runOptions, prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: result.text, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。调用 interaction.delivery 声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存或已生成。" }) });
+        const previousText = result.text;
+        try {
+          const repaired = await run({ ...runOptions,
+            onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
+            prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: previousText, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。若 routing.complete=false，先根据面板路由选择真实分支，读取对应模组/模块路由并调用 skills.read；只读路由不能代替读取 Skill。确实无需 Skill 的通用问答，应调用 interaction.delivery 声明 routingMode=general，并提供基于完整任务语义的 routingReason。随后声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存、已生成或已读取 Skill。" }) });
+          result = { ...repaired, text: repaired.text || previousText };
+        } catch (error) {
+          deliveryReviewWarnings.push(`交付补救未完成：${redactedErrorMessage(error, request.settings.apiKey)}`);
+          result = { ...result, text: previousText };
+          break;
+        }
       }
       const finalDelivery = tools.deliveryStatus?.();
-      if (finalDelivery && (!finalDelivery.declared || finalDelivery.missing.length || finalDelivery.failed.length)) {
-        record.text = result.text || "";
-        throw new Error("交付尚未验收完成，成果已保留；未宣称保存成功。缺少目标：" + [...finalDelivery.missing, ...finalDelivery.failed].join("、"));
+      const deliveryWarnings = [...new Set([
+        ...deliveryReviewWarnings,
+        ...(!finalDelivery?.declared ? ["本轮没有完成交付方式声明"] : []),
+        ...(finalDelivery?.warnings || []),
+        ...(finalDelivery?.missing || []).map((item) => `未完成：${item}`),
+        ...(finalDelivery?.failed || []).map((item) => `执行失败：${item}`),
+      ])];
+      if (deliveryWarnings.length) {
+        record.deliveryWarnings = deliveryWarnings;
+        await event(entry, "delivery_warning", {
+          message: "结果已保留并正常交付；以下验收项未完成，不影响查看本次结果。",
+          warnings: deliveryWarnings,
+          delivery: finalDelivery,
+        });
       }
       record.text = result.text || "";
       await flushText();
@@ -233,10 +265,10 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (controller.signal.aborted) throw new Error("任务已取消");
       record.status = "completed";
       record.pendingSupplements = entry.supplements.splice(0);
-      await event(entry, "completed", { text: record.text, runtime: record.runtime, candidates: record.candidates || [] });
+      await event(entry, "completed", { text: record.text, runtime: record.runtime, candidates: record.candidates || [], warnings: record.deliveryWarnings || [] });
     } catch (error) {
       record.status = controller.signal.aborted ? "cancelled" : "failed";
-      record.error = String(error.message || error).replaceAll(String(request.settings.apiKey || "\0"), "[REDACTED]").replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
+      record.error = redactedErrorMessage(error, request.settings.apiKey);
       await event(entry, record.status, { message: record.error }).catch(() => {});
     } finally {
       clearTimeout(textTimer);
@@ -275,7 +307,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (!entry) throw Object.assign(new Error("任务不存在"), { statusCode: 404 });
       const { record } = entry;
       await entry.saving;
-      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", pendingSupplements: record.pendingSupplements || [], permissionContract: record.permissionContract || null };
+      return { id, conversationId: record.conversationId, workspacePath: record.workspacePath, status: record.status, events: record.events.filter((item) => item.sequence > Number(after)).slice(0, 100), lastSequence: record.events.length, question: [...entry.pending.values()][0]?.decision || null, text: record.text, error: record.error || "", deliveryWarnings: record.deliveryWarnings || [], pendingSupplements: record.pendingSupplements || [], permissionContract: record.permissionContract || null };
     },
     async answer(id, decisionId, answer) {
       const entry = await get(id);

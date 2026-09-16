@@ -12,6 +12,7 @@ import { validateManagedDocumentFormat } from "../src/managed-document-format.js
 
 const contract = {
   protocol: "shensi_task_contract_v1",
+  semanticSource: "agent",
   taskType: "writing",
   operation: "batch",
   persistence: "commit",

@@ -13,7 +13,7 @@ import { loadOfficialSkill } from "../src/server/skill-store.mjs";
 import { loadTypeTheoryContext } from "../src/server/shensi-context.mjs";
 
 const shensiRoot = fileURLToPath(new URL("../packaging/bundled/skill/神思/", import.meta.url));
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 29);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
 
 const template = createInitialCapabilityTemplate();
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");

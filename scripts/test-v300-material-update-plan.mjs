@@ -13,11 +13,13 @@ assert.equal(projection.canon.requiresExplicitAuthorization, true);
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const materialUpdatePlan = await readFile(new URL("../src/material-update-plan.js", import.meta.url), "utf8");
-assert.doesNotMatch(app, /kind:\s*"post_landing_materials"/u, "正式写入后不得用资料更新选择框打断当前工作流");
+assert.match(app, /kind:\s*"material_update_prompt"/u, "正式内容落盘并完成磁盘复核后必须生成作品资料更新提示");
 assert.doesNotMatch(app, /手动保存历史版本[\s\S]{0,650}(?:offer|runConfirmed)PostLandingMaterialsUpdate/u,
   "手动保存历史版本只保存版本，不得隐式启动资料更新");
-assert.doesNotMatch(app, /queueMicrotask\(\(\)\s*=>\s*offerPostLandingMaterialsUpdate/u,
-  "候选正式落盘后不得自动弹出资料更新流程");
+assert.match(app, /conversationChoiceButton\(\{ label: "确认更新", type: "material_update_prompt"/u,
+  "作品资料更新必须由用户明确确认后执行");
+assert.match(app, /conversationChoiceButton\(\{ label: "取消", type: "material_update_prompt"/u,
+  "用户必须可以取消本轮作品资料更新");
 assert.match(app, /explicitPostLandingMaterialsUpdateRequested/u, "用户仍可用明确指令主动更新作品资料");
 assert.match(app, /runExplicitPostLandingMaterialsUpdate/u, "明确指令必须进入资料差异检查流程");
 assert.match(app, /runConfirmedPostLandingMaterialsUpdate/u, "资料更新仍必须沿用已确认的安全增量链");

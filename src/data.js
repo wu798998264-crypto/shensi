@@ -1,5 +1,5 @@
 import { WORKSPACE_MODULES } from "./module-registry.js";
-import { OPENAI_IMAGE_CLI_ALIAS, OPENAI_IMAGE_CLI_ARGS } from "./media-cli-presets.js";
+import { DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, OPENAI_IMAGE_CLI_ALIAS, OPENAI_IMAGE_CLI_ARGS } from "./media-cli-presets.js";
 import { applyStructureCreationLanguage, normalizeStructureLanguage } from "./structure-language.js";
 import { STRUCTURE_WORKSPACE_VERSION } from "./structure-schema.js";
 import { canonicalEpisodeTitle, episodeHeadingParts, parseEpisodeHeading } from "./episode-document.js";
@@ -260,15 +260,15 @@ export const createInitialState = () => ({
     imageTimeoutMs: "660000",
     imageCliPath: OPENAI_IMAGE_CLI_ALIAS,
     imageCliArgs: OPENAI_IMAGE_CLI_ARGS,
-    videoProvider: "OpenAI",
-    videoAdapter: "api",
+    videoProvider: "即梦",
+    videoAdapter: "cli",
     videoProtocol: "videos",
-    videoBaseUrl: "https://api.openai.com/v1",
-    videoModel: "sora-2",
+    videoBaseUrl: "",
+    videoModel: "seedance2.5",
     videoApiKey: "",
-    videoTimeoutMs: "900000",
-    videoCliPath: "",
-    videoCliArgs: "",
+    videoTimeoutMs: "1800000",
+    videoCliPath: DREAMINA_VIDEO_CLI_ALIAS,
+    videoCliArgs: DREAMINA_VIDEO_CLI_ARGS,
     cliPath: "",
     cliArgs: "",
     skillOverrides: {},

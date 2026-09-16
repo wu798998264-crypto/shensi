@@ -34,7 +34,7 @@ assert.match(inspectionRouting, /workspaceState, taskContextSnapshot/u,
 assert.match(inspectionRouting, /workspaceKind: taskContextSnapshot\.workspaceKind, workspacePath: taskContextSnapshot\.workspacePath/u,
   "原生 Agent 请求必须显式锁定发送时工作区");
 
-const memorySync = await sourceWindow("const memorySyncRuntimeKey =", 95);
+const memorySync = await sourceWindow("const memorySyncRuntimeKey =", 125);
 assert.match(memorySync, /state === syncWorkspaceState/u,
   "记忆同步异步返回后必须确认仍是同一个工作区对象");
 assert.match(memorySync, /memorySyncPromises\.has\(runtimeKey\)/u);
@@ -42,7 +42,7 @@ assert.match(memorySync, /memorySyncLastRunAt\.set\(runtimeKey/u);
 assert.match(memorySync, /memorySyncTimers\.set\(runtimeKey/u,
   "不同作品中的同名章节不得共用同步计时器或 Promise");
 
-const materialRun = await sourceWindow("const runConfirmedPostLandingMaterialsUpdate =", 140);
+const materialRun = await sourceWindow("const runConfirmedPostLandingMaterialsUpdate =", 220);
 assert.match(materialRun, /workspaceState = pending\.workspaceState \|\| state/u);
 assert.match(materialRun, /materialUpdateWorkspaceStillActive/u);
 assert.match(materialRun, /persistMaterialUpdateConversation/u,

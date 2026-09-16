@@ -2258,7 +2258,7 @@ const EN_UI = new Map(Object.entries({
   "文字、图片和视频连接分开管理；每类都可以同时保存多套厂商配置。": "Manage text, image, and video connections separately. Each type can store multiple provider configurations.",
   "原生接口并非 OpenAI 兼容格式的厂商，需要填写该厂商或中转服务提供的兼容 Base URL，并以连接测试结果为准。": "For providers whose native API is not OpenAI-compatible, enter a compatible base URL supplied by that provider or a gateway and rely on the connection test.",
   "即梦视频 CLI 已内置异步提交、查询与下载适配；可灵和阿里云原生接口仍需要专用适配器或兼容网关。": "Dreamina video CLI now includes asynchronous submission, polling, and download support. Kling and Alibaba native APIs still require dedicated adapters or a compatible gateway.",
-  "内置 Sora 2 / Sora 2 Pro，也可保存兼容视频 API 或 CLI 连接。": "Includes Sora 2 and Sora 2 Pro, and supports compatible video API or CLI connections.",
+  "可保存当前可用的视频 API 或 CLI 连接。": "Save currently available video API or CLI connections.",
   "配置 API 或 CLI。模型不支持的推理强度和速度选项会自动隐藏或禁用。": "Configure an API or CLI. Unsupported reasoning and speed options are hidden or disabled.",
   "可同时保存多个 API 或 CLI 连接，并在生成时选择。": "Save multiple API or CLI connections and choose one when generating.",
   "控制输出的随机性。数值越低越稳定、可控，数值越高表达越多样、发散；部分推理模型可能忽略此参数。": "Controls output randomness. Lower values are more stable; higher values are more varied. Some reasoning models may ignore it.",

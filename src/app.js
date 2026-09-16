@@ -20,7 +20,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.5";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.6";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.1.5-hierarchical-routing";
+} from "./generation-profiles.js?v=6.1.6-delivery-routing";
 import { assetHistoryEntryIsSuppressed, hideHistoricalAssets, normalizeAssetHistoryTombstones, unhideHistoricalAssets } from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
@@ -191,7 +191,8 @@ import { buildUnifiedCreativeTask } from "./creative-task.js";
 import { evaluateTaskContract } from "./task-contract.js?v=5.4.11-authoritative-normalization";
 import { resolveTaskContractRetryContext } from "./task-contract-retry.js";
 import { compileCreativeMutationPlan, creativeMutationOutputContract } from "./creative-mutation-plan.js?v=5.4.11-target-domain-lock";
-import { compileManagedMaterialMutation, isMaterialUpdateDocumentId, materialDocumentRevisions, materialUpdateDocumentTitle, materialUpdateExecutionInstruction, materialUpdateInspectionInstruction, materialUpdateModuleId, parseMaterialUpdatePlan, unintendedMaterialDocumentChanges } from "./material-update-plan.js?v=5.2.2";
+import { compileManagedMaterialMutation, isMaterialUpdateDocumentId, materialDocumentRevisions, materialUpdateDocumentTitle, materialUpdateExecutionInstruction, materialUpdateInspectionInstruction, materialUpdateModuleId, materialUpdateSourceRevisionConflicts, materialUpdateSourceRevisions, parseMaterialUpdatePlan, unintendedMaterialDocumentChanges } from "./material-update-plan.js?v=5.2.2";
+import { captureMaterialUpdateMemoryRollback, restoreMaterialUpdateMemoryRollback } from "./material-update-memory-transaction.js";
 import { compilePostCommitProjection } from "./post-commit-projection.js";
 import { authorizeFormalMutation } from "./formal-mutation-permission.js";
 import { formalDocumentContentPolicy } from "./formal-content-policy.js";
@@ -1531,6 +1532,7 @@ let ui = {
   memorySyncTimers: new Map(),
   memorySyncPromises: new Map(),
   memorySyncLastRunAt: new Map(),
+  memorySyncDeferredRetries: new Map(),
   workspaceStateCache: new Map(),
   workspacePrefetches: new Map(),
   workspacePrefetchTimer: null,
@@ -5687,7 +5689,7 @@ const hydrateWorkspace = async () => {
 
 const isTextGenerationModel = (slug = "") => !/(embedding|moderation|transcri|tts|realtime|audio|image|sora|veo|banana|ocr|video)/i.test(slug);
 const isImageGenerationModel = (slug = "") => /(?:image|imagen|cogview|nano[-_ ]?banana)/i.test(slug);
-const isVideoGenerationModel = (slug = "") => /(?:video|sora|veo|seedance|kling|wan|hailuo|vidu|runway)/i.test(slug);
+const isVideoGenerationModel = (slug = "") => !/sora/i.test(slug) && /(?:video|veo|seedance|kling|wan|hailuo|vidu|runway)/i.test(slug);
 const isAudioGenerationModel = (slug = "") => /(?:audio|tts|text[-_ ]?to[-_ ]?speech|speech|voice|music|suno|eleven)/i.test(slug);
 const textCapabilityProfileSignature = (profile = {}) => JSON.stringify([
   mediaCapabilityProfileSignature("text", profile),
@@ -18972,6 +18974,7 @@ const renderExecutionProcess = (message) => {
     .map((item) => item.title || item.documentId)
     .filter(Boolean)
     .join("、");
+  const deliveryWarnings = Array.isArray(execution.deliveryWarnings) ? execution.deliveryWarnings.filter(Boolean) : [];
   return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}"${nativeAgentExecution ? ` data-native-task-card="${escapeHtml(message.id)}"` : ""} ${expanded ? "open" : ""}>
     <summary><span class="execution-progress-ring" style="--execution-progress:${progress * 3.6}deg" role="progressbar" aria-label="任务处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span>${escapeHtml(progressLabel)}</span></span><span>${escapeHtml(uiText(processTitle))}${!agentExecution && stepProgress ? ` · ${escapeHtml(stepProgress)}` : ""}</span><span class="execution-time"${timerData}>${timeText}</span></summary>
     ${pending && execution.requestId ? `<button class="execution-stop" type="button" data-cancel-run="${escapeHtml(execution.requestId)}" title="${cancelling ? "正在终止任务" : "终止任务"}" ${cancelling ? "disabled" : ""}>${icon("\uE71A", cancelling ? "正在终止任务" : "终止任务")}</button>` : ""}
@@ -18987,6 +18990,7 @@ const renderExecutionProcess = (message) => {
       <div><dt>${escapeHtml(uiText("当前阶段"))}</dt><dd>${escapeHtml(taskLifecycleSummary)}</dd></div>
       ${intentSummary ? `<div><dt>本轮任务</dt><dd>${escapeHtml(intentSummary)}</dd></div>` : ""}
       <div><dt>目标文档</dt><dd>${escapeHtml(nativeAgentExecution ? nativeTargetText || "尚未确定写入目标" : execution.targetLabel || "当前绑定文档")}</dd></div>
+      ${deliveryWarnings.length ? `<div><dt>验收提示</dt><dd>${escapeHtml(`结果已正常显示；${deliveryWarnings.join("；")}`)}</dd></div>` : ""}
       ${nativeAgentExecution ? "" : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
       ${contextCoverageText ? `<div><dt>创作依据</dt><dd>${escapeHtml(contextCoverageText)}</dd></div>` : ""}
       ${contextDependencySummary ? `<div><dt>资料缺口</dt><dd>${escapeHtml(contextDependencySummary)}</dd></div>` : ""}
@@ -27901,14 +27905,35 @@ const applyCandidateMemoryUpdate = (memoryUpdate, targetDocumentId, {
     }
     return 0;
   }
-  if (merged.changed === false) {
+  state.memoryStore = merged.store;
+  if (merged.analysisOnly) {
     if (documentState) {
       documentState.memorySyncStatus = "synced";
       documentState.memorySyncPendingReason = "";
+      documentState.memorySyncPhase = "complete";
+      documentState.memorySyncedAt = nowTime();
+      changedDocumentIds?.add?.(targetDocumentId);
+    }
+    return 1;
+  }
+  if (merged.stagedOnly) {
+    if (documentState) {
+      documentState.memorySyncStatus = "deferred";
+      documentState.memorySyncPendingReason = `有 ${merged.pendingCount || 0} 条记忆尚未通过证据校验，已暂存到当前正文单元并等待自动重析`;
+      documentState.memorySyncPhase = "deferred";
+      changedDocumentIds?.add?.(targetDocumentId);
+    }
+    return 1;
+  }
+  if (merged.changed === false) {
+    if (documentState) {
+      documentState.memorySyncStatus = merged.pendingCount ? "deferred" : "synced";
+      documentState.memorySyncPendingReason = merged.pendingCount
+        ? `仍有 ${merged.pendingCount} 条章节记忆等待自动重析`
+        : "";
     }
     return 0;
   }
-  state.memoryStore = merged.store;
   const scriptDomain = isScriptDomain(documentContextDomain(targetDocumentId));
   const viewId = scriptDomain ? "script" : "novel";
   const ids = memoryProjectionDocumentIds({ script: scriptDomain });
@@ -27988,9 +28013,13 @@ const applyCandidateMemoryUpdate = (memoryUpdate, targetDocumentId, {
     state.memoryStore.conflicts = [...(state.memoryStore.conflicts || []), ...conflicts.map((item) => ({ ...item, sourceDocumentId: targetDocumentId, detectedAt: new Date().toISOString() }))].slice(-200);
   }
   if (documentState) {
-    documentState.memorySyncStatus = conflicts.length ? "stale" : "synced";
-    documentState.memorySyncPendingReason = conflicts.length ? "记忆展示文档存在人工修改冲突，已保留人工版本" : "";
-    documentState.memorySyncedAt = conflicts.length ? documentState.memorySyncedAt : nowTime();
+    documentState.memorySyncStatus = conflicts.length ? "stale" : merged.pendingCount ? "deferred" : "synced";
+    documentState.memorySyncPendingReason = conflicts.length
+      ? "记忆展示文档存在人工修改冲突，已保留人工版本"
+      : merged.pendingCount
+        ? `已写入通过校验的记忆，另有 ${merged.pendingCount} 条章节记忆等待自动重析`
+        : "";
+    documentState.memorySyncedAt = conflicts.length || merged.pendingCount ? documentState.memorySyncedAt : nowTime();
   }
   if (updated) recordActivity({ type: "edit", label: `同步${targetLabel({ documentId: targetDocumentId })}的结构化记忆投影`, documentId: targetDocumentId });
   return updated;
@@ -28127,10 +28156,15 @@ const requestVerifiedMemoryProjection = async ({ documents = [], suppliedUpdates
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      settings: generationSettingsForAgentEngine(state.settings, {
+        agentConnectionId: state.settings.activeTextAgentConnectionId,
+      }),
       documents: narrativeDocuments.map(({ documentId, content }) => ({
         documentId,
         content,
+        sourceRevision: contentRevision(content),
         memoryUpdate: suppliedUpdates?.[documentId] ?? null,
+        pendingCandidates: (state.memoryStore?.pendingCandidates || []).filter((item) => item?.documentId === documentId),
       })),
     }),
   });
@@ -28179,8 +28213,12 @@ const runManualNarrativeMemorySync = async ({ documentId, expectedRevision, work
       if (!update || (!appliedMemoryChanges && documentState.memorySyncStatus !== "synced")) {
         throw new Error("未形成可验证的记忆增量");
       }
-      delete documentState.memorySyncPendingReason;
-      documentState.memorySyncPhase = "complete";
+      if (documentState.memorySyncStatus === "deferred") {
+        documentState.memorySyncPhase = "deferred";
+      } else {
+        delete documentState.memorySyncPendingReason;
+        documentState.memorySyncPhase = "complete";
+      }
       const immediateProjection = refreshImmediateCommitProjections({
         directDocumentIds: [documentId],
         derivedDocumentIds: [...changedDocumentIds],
@@ -28195,6 +28233,14 @@ const runManualNarrativeMemorySync = async ({ documentId, expectedRevision, work
       });
       if (!syncStillCurrent()) return false;
       ui.memorySyncLastRunAt.set(runtimeKey, Date.now());
+      if (documentState.memorySyncStatus === "deferred") {
+        const previousRetry = ui.memorySyncDeferredRetries.get(runtimeKey);
+        const retryCount = previousRetry?.revision === expectedRevision ? previousRetry.count + 1 : 1;
+        ui.memorySyncDeferredRetries.set(runtimeKey, { revision: expectedRevision, count: retryCount });
+        if (retryCount < 3) scheduleManualNarrativeMemorySync(documentId);
+      } else {
+        ui.memorySyncDeferredRetries.delete(runtimeKey);
+      }
       renderCompilationDecisionSummary();
       return true;
     } catch (error) {
@@ -28454,7 +28500,7 @@ const acceptInlineEdit = (inlineEditId) => {
     queueMicrotask(() => openMaterialUpdateChoice(materialUpdateMessage.materialUpdatePrompt));
   }
   showToast(materialDocumentIds.length
-    ? `已确认${inlineEditModeLabel(mutationMode)}并保存原版本；记忆、大纲和设定等待“更新资料”`
+    ? `已确认${inlineEditModeLabel(mutationMode)}并保存原版本；大纲、设定、记忆和资料库等待“更新作品资料”`
     : `已确认${inlineEditModeLabel(mutationMode)}，原版本已自动保存`);
   return true;
 };
@@ -32480,7 +32526,7 @@ const materialUpdateSourceDocumentIds = (documentIds = []) => [...new Set(
     .filter((documentId) => /^(?:chapter-\d+|script-episode-\d+)$/u.test(documentId)),
 )];
 
-const markMaterialUpdatePending = ({ documentIds = [], workspaceState = state, reason = "正文已落盘，等待用户选择“更新资料”" } = {}) => {
+const markMaterialUpdatePending = ({ documentIds = [], workspaceState = state, reason = "正文已落盘，等待用户选择“更新作品资料”" } = {}) => {
   const ids = materialUpdateSourceDocumentIds(documentIds);
   const documents = workspaceState?.documents ?? {};
   for (const documentId of ids) {
@@ -32508,6 +32554,10 @@ const materialUpdatePromptFor = ({ documentIds = [], executionSurface = "agent",
   return {
     kind: "material_update_prompt",
     sourceDocumentIds,
+    sourceRevisions: materialUpdateSourceRevisions({
+      documents: workspaceState?.documents ?? {},
+      sourceDocumentIds,
+    }),
     executionSurface: executionSurface === "agent" ? "agent" : "chat",
     workspaceKind: workspaceState?.workspaceKind === "notebook" ? "notebook" : "project",
     workspacePath: String(workspaceState?.settings?.workspacePath || ""),
@@ -33572,6 +33622,17 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
     const materialMutationPlans = new Map();
     const materialBeforeRevisions = materialExecutionPlan ? materialDocumentRevisions(state.documents) : null;
     if (materialExecutionPlan) {
+      const sourceRevisionConflicts = materialUpdateSourceRevisionConflicts({
+        documents: state.documents,
+        sourceRevisions: materialExecutionPlan.sourceRevisions ?? {},
+      });
+      if (sourceRevisionConflicts.length) {
+        return {
+          content: `资料更新来源正文已经变化：${sourceRevisionConflicts.map((documentId) => state.documents[documentId]?.title || documentId).join("、")}。旧计划已停止，未修改任何资料文档。`,
+          commitFailed: true,
+          engineExecution: { status: "failed", landingStatus: "failed", result: "资料更新来源版本已过期", errorCode: "MATERIAL_UPDATE_SOURCE_REVISION_CHANGED" },
+        };
+      }
       const plannedIds = materialExecutionPlan.changes.filter((item) => item.changeType !== "snapshot").map((item) => item.targetDocumentId);
       const resolvedIds = resolvedDocuments.map((item) => item.documentId);
       if (JSON.stringify([...new Set(resolvedIds)].sort()) !== JSON.stringify([...new Set(plannedIds)].sort())) {
@@ -34187,7 +34248,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
     const lastDocumentId = resolvedDocuments.at(-1).documentId;
     const allChapterDocuments = resolvedDocuments.every(({ documentId }) => /^chapter-\d+$/.test(documentId));
     //正文落盘与资料更新是两个独立事务。这里仅标记记忆资料过期，
-    //由落盘后的“更新资料”项目在用户选择后执行记忆、大纲和设定差异更新。
+    //由落盘后的“更新作品资料”项目在用户选择后执行大纲、设定、记忆和资料库差异更新。
     const memoryPendingDocumentIds = markMaterialUpdatePending({
       documentIds: directWriteDocuments.map(({ documentId }) => documentId),
       workspaceState: state,
@@ -34359,7 +34420,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         title: state.documents[documentId]?.title || documentId,
       })),
       content: memoryPendingDocumentIds.length
-        ? `任务完成：${resolvedDocuments.length}/${resolvedDocuments.length}。正式交付物已分别落盘并通过 TaskContract 与磁盘复核；新建：${createdCount}，修改：${replacedCount}，历史版本：已保存。${folderStatusText}${titleStatusText}以下正文的记忆、大纲和设定资料等待你选择“更新资料”：${memoryPendingDocumentIds.map((documentId) => state.documents[documentId]?.title || documentId).join("、")}。`
+        ? `任务完成：${resolvedDocuments.length}/${resolvedDocuments.length}。正式交付物已分别落盘并通过 TaskContract 与磁盘复核；新建：${createdCount}，修改：${replacedCount}，历史版本：已保存。${folderStatusText}${titleStatusText}以下正文等待你选择是否更新大纲、设定、记忆和资料库：${memoryPendingDocumentIds.map((documentId) => state.documents[documentId]?.title || documentId).join("、")}。`
         : resolvedDocuments.length > 1
           ? `任务完成：${resolvedDocuments.length}/${resolvedDocuments.length}。已将 ${resolvedDocuments.length} 个${allChapterDocuments ? "章节" : "内容单元"}分别落盘到独立文档；新建：${createdCount}，修改：${replacedCount}，历史版本：已保存，直接写入和派生文档磁盘复核：全部通过。${folderStatusText}${titleStatusText}${memoryUpdateCount ? "本轮记忆板块与当前状态已经同步。" : ""}${trustedActionText ? `${trustedActionText}。` : ""}`
           : `任务完成：1/1。${createdCount ? `已自动建立${state.documents[lastDocumentId].title}` : `已落盘到${state.documents[lastDocumentId].title}`}；新建：${createdCount}，修改：${replacedCount}，历史版本：已保存，直接写入和派生文档磁盘复核：全部通过。${folderStatusText}${titleStatusText}${memoryUpdateCount ? "本轮记忆板块与当前状态已经同步。" : ""}${trustedActionText ? `${trustedActionText}。` : ""}`,
@@ -36026,8 +36087,10 @@ const monitorNativeConversation = (runtime, pending) => {
           pending.execution.deliveryTargets = event.payload.targets || [];
           const routedTask = agentTaskRouteFromDelivery(event.payload);
           if (routedTask) pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), ...routedTask };
+        } else if (event.type === "delivery_warning") {
+          pending.execution.deliveryWarnings = event.payload.warnings || [];
+          pending.execution.result = event.payload.message || "结果已交付，部分验收项未完成";
         } else if (event.type === "progress") {
-          pending.streamText = "";
           pending.execution.result = event.payload.message;
         } else if (event.type === "text_delta") {
           pending.streamText = (pending.streamText || "") + event.payload.text;
@@ -36096,8 +36159,15 @@ const monitorNativeConversation = (runtime, pending) => {
               time: nowTime(), [event.payload.channel === "video" ? "videos" : "images"]: [event.payload.attachment] });
           }
           await persistNativeConversation(runtime);
-        } else if (event.type === "completed") pending.content = event.payload.text;
-        else if (["failed", "cancelled"].includes(event.type)) pending.content = event.payload.message;
+        } else if (event.type === "completed") {
+          pending.content = event.payload.text;
+          pending.execution.deliveryWarnings = event.payload.warnings || pending.execution.deliveryWarnings || [];
+        } else if (["failed", "cancelled"].includes(event.type)) {
+          if ((pending.streamText || "").trim()) {
+            pending.content = pending.streamText;
+            pending.execution.deliveryWarnings = [...new Set([...(pending.execution.deliveryWarnings || []), event.payload.message].filter(Boolean))];
+          } else pending.content = event.payload.message;
+        }
         if (event.type === "text_delta" && conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
           const card = document.querySelector(`[data-native-task-card="${CSS.escape(pending.id)}"]`);
           const stream = card?.closest('.assistant-message')?.querySelector('[data-stream-text]');
@@ -36107,8 +36177,11 @@ const monitorNativeConversation = (runtime, pending) => {
       }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
       pending.content ||= result.text || result.error || "Agent 已完成任务。";
       pending.pending = false;
-      Object.assign(pending.execution, { status: result.status === "completed" ? "complete" : result.status,
-        nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: result.status === "completed" ? "Agent 执行完成" : result.error || result.status });
+      const deliveryWarnings = result.deliveryWarnings || pending.execution.deliveryWarnings || [];
+      Object.assign(pending.execution, { status: result.status === "completed" ? deliveryWarnings.length ? "soft_warning" : "complete" : result.status,
+        deliveryWarnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: result.status === "completed"
+          ? deliveryWarnings.length ? "结果已交付；部分验收项未完成" : "Agent 执行完成"
+          : result.error || result.status });
       conversation.agentQuestion = null;
       conversation.nativeAgentRun = null;
       if (pending.nativeInlineEdit && result.status === "completed") {
@@ -37160,15 +37233,15 @@ const renderConversationChoicePanel = () => {
       .map((documentId) => state.documents[documentId]?.title || materialUpdateDocumentTitle(documentId))
       .filter(Boolean);
     const question = titles.length === 1
-      ? `“${titles[0]}”已落盘，是否现在更新资料？`
-      : `${titles.length || pending.documentIds?.length || 0} 个正文文档已落盘，是否现在更新资料？`;
+      ? `“${titles[0]}”已落盘，是否更新作品资料？`
+      : `${titles.length || pending.documentIds?.length || 0} 个正式文档已落盘，是否更新作品资料？`;
     elements.conversationChoiceQuestion.textContent = question;
     appendConversationChoiceQuestion(pending, question);
     elements.conversationChoiceOptions.innerHTML = [
-      conversationChoiceButton({ label: "更新资料", type: "material_update_prompt", value: "update", detail: "同步记忆、大纲和设定" }),
-      conversationChoiceButton({ label: "暂不更新", type: "material_update_prompt", value: "defer" }),
+      conversationChoiceButton({ label: "确认更新", type: "material_update_prompt", value: "update", detail: "仅同步实际变化的大纲、设定、记忆或资料库" }),
+      conversationChoiceButton({ label: "取消", type: "material_update_prompt", value: "cancel" }),
     ].join("");
-    elements.conversationChoiceHint.textContent = "这是落盘后的独立项目，只根据正文证据增量更新记忆、大纲和设定，不会修改正文。";
+    elements.conversationChoiceHint.textContent = "确认后由 Agent 先检查差异；没有有效变化时不会写入或创建历史版本。";
   } else if (pending.kind === "fresh_start") {
     const question = pending.question || "当前没有可读的必读资料，是否从零开始？";
     elements.conversationChoiceQuestion.textContent = question;
@@ -37651,11 +37724,18 @@ function openMaterialUpdateChoice(prompt = null) {
   const documentIds = materialUpdateSourceDocumentIds(records.flatMap(({ prompt: item }) => item.sourceDocumentIds ?? item.documentIds ?? []))
     .filter((documentId) => Boolean(state.documents[documentId]));
   if (!documentIds.length) return false;
+  const sourceRevisions = {};
+  for (const { prompt: item } of records) {
+    for (const [documentId, revision] of Object.entries(item.sourceRevisions ?? {})) {
+      if (documentIds.includes(documentId) && revision) sourceRevisions[documentId] = revision;
+    }
+  }
   pendingConversationChoice = {
     kind: "material_update_prompt",
     conversationId,
     messageId: currentRecord.message.id,
     documentIds,
+    sourceRevisions,
     executionSurface: records.some(({ prompt: item }) => item.executionSurface === "agent") ? "agent" : "chat",
     promptMessageIds: records.map(({ message }) => message.id),
   };
@@ -38148,7 +38228,8 @@ const materialUpdateTargetCatalog = (sourceDocumentIds = [], workspaceState = st
   const ids = [
     ...["characters", "relations", "world", "locations", "factions", "events", "items", "glossary"].map((suffix) => `${prefix}${suffix}`),
     scriptDomain ? "script-outline-series" : "outline-series",
-    scriptDomain ? "script-memory-snapshot" : "memory-snapshot",
+    ...memoryProjectionDocumentIds({ script: scriptDomain }),
+    ...(workspaceState?.workspaceKind === "project" ? [LIBRARY_MEMO_DOCUMENT_ID] : []),
   ];
   for (const sourceDocumentId of sources) {
     const chapter = Number(String(sourceDocumentId).match(/^chapter-(\d+)$/u)?.[1] || 0);
@@ -38209,6 +38290,74 @@ const materialUpdateWorkspaceStillActive = ({ workspaceState = state, taskContex
 
 const materialUpdateRunPromptStatus = (result) => result === true ? "complete" : result === null ? "pending" : "failed";
 
+const materialUpdateMemoryRollbackScope = (sourceDocumentIds = []) => {
+  const domains = new Set((sourceDocumentIds ?? []).map((documentId) => (
+    /^script-episode-\d+$/u.test(String(documentId || "")) ? "script" : "novel"
+  )));
+  const projectionDocumentIds = [...domains].flatMap((domain) => memoryProjectionDocumentIds({ script: domain === "script" }));
+  return {
+    managedDocumentIds: [...new Set([
+      ...projectionDocumentIds,
+      "index-pending",
+      "index-update-log",
+      "report-compile",
+    ])],
+    viewKeys: [...domains].map((domain) => `memory:${domain}`),
+  };
+};
+
+const persistMaterialUpdateMemoryRollback = async ({ snapshot, workspaceScope } = {}) => {
+  if (!snapshot || !workspaceScope?.workspacePath) throw new Error("资料同步记忆回滚缺少工作区信息");
+  const restoreInto = (targetState) => withSynchronousWorkspaceState(targetState, () => (
+    restoreMaterialUpdateMemoryRollback({ state: targetState, snapshot })
+  ));
+  if (workspaceTargetIsActive(workspaceScope.workspaceKind, workspaceScope.workspacePath)) {
+    const restored = restoreInto(state);
+    ui.projectCompilationStatusCache = null;
+    persist({ documentIds: restored.documentIds.filter((documentId) => state.documents[documentId]) });
+    await saveWorkspace({
+      throwOnError: true,
+      forceFullState: true,
+      operationDocumentIds: restored.documentIds,
+    });
+    return restored;
+  }
+  const receipt = await enqueueInactiveWorkspaceGenerationWrite({
+    key: workspaceCacheKey(workspaceScope.workspaceKind, workspaceScope.workspacePath),
+    loadLatest: () => fetchWorkspacePayload(workspaceScope.workspacePath),
+    merge: (loaded) => {
+      const targetState = loaded?.state ? clone(loaded.state) : null;
+      if (!targetState) throw new Error("资料同步所属工作区已经不存在，无法完成记忆回滚");
+      const restored = restoreInto(targetState);
+      return { workspaceState: targetState, restored };
+    },
+    save: async ({ workspaceState: targetState, restored }, loaded) => {
+      const request = await workspaceSaveRequest({
+        workspacePath: workspaceScope.workspacePath,
+        expectedStateStamp: loaded?.stateStamp || "",
+        state: backgroundWorkspaceStateForSave(targetState),
+      });
+      const response = await fetch("/api/workspace/save", {
+        method: "POST",
+        headers: request.headers,
+        body: request.body,
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
+      if (payload.savedAt) targetState.savedAt = payload.savedAt;
+      cacheWorkspaceState({
+        workspaceKind: workspaceScope.workspaceKind,
+        workspacePath: workspaceScope.workspacePath,
+        workspaceState: targetState,
+        stateStamp: payload.stateStamp || loaded?.stateStamp || "",
+        prepared: true,
+      });
+      return { workspaceState: targetState, restored };
+    },
+  });
+  return receipt.restored;
+};
+
 const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
   const workspaceState = pending.workspaceState || state;
   const conversationId = String(pending.conversationId || workspaceState.activeConversationId || state.activeConversationId || "");
@@ -38222,6 +38371,14 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
     conversation,
     taskContextSnapshot,
   });
+  let memoryRollbackSnapshot = null;
+  let memoryTransactionCommitted = false;
+  const rollbackMaterialMemoryTransaction = async () => {
+    if (!memoryRollbackSnapshot || memoryTransactionCommitted) return false;
+    await persistMaterialUpdateMemoryRollback({ snapshot: memoryRollbackSnapshot, workspaceScope });
+    memoryRollbackSnapshot = null;
+    return true;
+  };
   const sourceDocumentIds = [...new Set((Array.isArray(pending.documentIds) ? pending.documentIds : [pending.documentIds])
     .map(String)
     .filter((documentId) => workspaceState?.documents?.[documentId]))];
@@ -38229,6 +38386,20 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
     if (workspaceStillActive()) showToast("刚刚写入的来源文档已经不存在，未执行资料更新");
     return false;
   }
+  const boundSourceRevisions = Object.keys(pending.sourceRevisions ?? {}).length
+    ? Object.fromEntries(sourceDocumentIds.map((documentId) => [documentId, pending.sourceRevisions?.[documentId]]).filter(([, revision]) => Boolean(revision)))
+    : materialUpdateSourceRevisions({ documents: workspaceState.documents, sourceDocumentIds });
+  const assertSourceRevisionsCurrent = () => {
+    const conflicts = materialUpdateSourceRevisionConflicts({
+      documents: workspaceState.documents,
+      sourceRevisions: boundSourceRevisions,
+    });
+    if (!conflicts.length) return;
+    const error = new Error(`来源正文已经发生变化，旧的资料更新授权已失效：${conflicts.map((documentId) => workspaceState.documents[documentId]?.title || documentId).join("、")}。请重新确认是否更新作品资料。`);
+    error.code = "MATERIAL_UPDATE_SOURCE_REVISION_CHANGED";
+    throw error;
+  };
+  assertSourceRevisionsCurrent();
   const deferForWorkspaceSwitch = async (message = null) => {
     markMaterialUpdatePending({
       documentIds: sourceDocumentIds,
@@ -38236,7 +38407,7 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
       reason: "资料更新期间切换了作品或笔记本，已保留为待处理项目",
     });
     if (message) {
-      const notice = "资料更新期间切换了作品或笔记本，本次已暂缓；切回原工作区后可继续“更新资料”，正文保持不变。";
+      const notice = "作品资料更新期间切换了作品或笔记本，本次已暂缓；切回原工作区后可继续“更新作品资料”，正文保持不变。";
       if (!String(message.content || "").includes(notice)) message.content = [message.content, notice].filter(Boolean).join(" ");
       message.execution = { ...(message.execution ?? {}), result: "资料更新已暂缓，等待返回原工作区" };
     }
@@ -38270,6 +38441,7 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
       plan = parseMaterialUpdatePlan(inspectionMessage.content || inspectionMessage.candidate || "", {
         documents: workspaceState.documents,
         sourceDocumentIds,
+        sourceRevisions: boundSourceRevisions,
         allowedTargetDocumentIds: targetDocuments.map((item) => item.documentId),
       });
     } catch (error) {
@@ -38283,7 +38455,20 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
     inspectionMessage.execution = { ...(inspectionMessage.execution ?? {}), result: plan.changes.length ? "资料差异已确认，准备按目标增量更新" : "没有资料差异，未写入" };
     await persistMaterialState();
     if (!workspaceStillActive()) return deferForWorkspaceSwitch(inspectionMessage);
-    const memorySourceDocumentIds = sourceDocumentIds.filter((id) => /^(?:chapter-\d+|script-episode-\d+)$/u.test(id));
+    assertSourceRevisionsCurrent();
+    const memoryChanges = plan.changes.filter((item) => materialUpdateModuleId(item.targetDocumentId) === "memory");
+    const memorySourceDocumentIds = memoryChanges.length
+      ? sourceDocumentIds.filter((id) => /^(?:chapter-\d+|script-episode-\d+)$/u.test(id))
+      : [];
+    if (memoryChanges.length && memorySourceDocumentIds.length) {
+      const rollbackScope = materialUpdateMemoryRollbackScope(memorySourceDocumentIds);
+      memoryRollbackSnapshot = captureMaterialUpdateMemoryRollback({
+        state: workspaceState,
+        sourceDocumentIds: memorySourceDocumentIds,
+        managedDocumentIds: rollbackScope.managedDocumentIds,
+        viewKeys: rollbackScope.viewKeys,
+      });
+    }
     const syncResults = [];
     const memoryWorkspaceKey = workspaceCacheKey(workspaceScope.workspaceKind, workspaceScope.workspacePath);
     for (const documentId of memorySourceDocumentIds) {
@@ -38292,21 +38477,44 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
       ui.memorySyncTimers.delete(runtimeKey);
       const expectedRevision = contentRevision(documentTextFromHtml(workspaceState.documents[documentId]?.html || ""));
       syncResults.push(await runManualNarrativeMemorySync({ documentId, expectedRevision, workspaceKey: memoryWorkspaceKey }));
-      if (!workspaceStillActive()) return deferForWorkspaceSwitch(inspectionMessage);
+      if (!workspaceStillActive()) {
+        await rollbackMaterialMemoryTransaction();
+        return deferForWorkspaceSwitch(inspectionMessage);
+      }
     }
-    const snapshotSynchronized = syncResults.length === memorySourceDocumentIds.length && syncResults.every(Boolean);
+    const snapshotSynchronized = !memoryChanges.length
+      || (memorySourceDocumentIds.length > 0
+        && syncResults.length === memorySourceDocumentIds.length
+        && syncResults.every(Boolean));
     if (!snapshotSynchronized) {
-      inspectionMessage.content = `${inspectionMessage.content} 记忆更新未形成完整的可验证增量，正文保持不变；大纲和设定仍按已确认差异继续处理。`;
+      await rollbackMaterialMemoryTransaction();
+      inspectionMessage.content = `${inspectionMessage.content} 结构化记忆没有形成完整的可验证更新；本轮记忆变化已撤销，其他作品资料也没有继续修改。`;
+      inspectionMessage.execution = { ...(inspectionMessage.execution ?? {}), status: "failed", result: "结构化记忆更新失败，资料事务已停止" };
       await persistMaterialState();
+      return false;
     }
 
-    const formalChanges = plan.changes.filter((item) => item.changeType !== "snapshot");
+    if (!memoryChanges.length) {
+      for (const documentId of sourceDocumentIds) {
+        const documentState = workspaceState.documents[documentId];
+        if (!documentState) continue;
+        documentState.memorySyncStatus = "synced";
+        documentState.memorySyncPhase = "complete";
+        documentState.memorySyncPendingReason = "";
+        documentState.materialUpdateCheckedRevision = boundSourceRevisions[documentId] || "";
+        documentState.materialUpdateCheckedAt = nowTime();
+      }
+    }
+
+    const formalChanges = plan.changes.filter((item) => materialUpdateModuleId(item.targetDocumentId) !== "memory");
     if (!formalChanges.length) {
-      if (snapshotSynchronized) inspectionMessage.content = `${inspectionMessage.content} 状态快照已通过结构化记忆仓合并并投影；未变化状态保持原值。`;
+      if (memoryChanges.length) inspectionMessage.content = `${inspectionMessage.content} 结构化记忆已按正文证据精确合并并投影；未变化字段保持原值。`;
+      memoryTransactionCommitted = true;
       await persistMaterialState();
-      return snapshotSynchronized;
+      return true;
     }
     if (!workspaceStillActive()) return deferForWorkspaceSwitch(inspectionMessage);
+    assertSourceRevisionsCurrent();
     const executionPlan = { ...plan, changes: formalChanges };
     const executionMessage = await sendMessage(materialUpdateExecutionInstruction(executionPlan), {
       materialUpdateExecutionPlan: executionPlan,
@@ -38317,9 +38525,27 @@ const runConfirmedPostLandingMaterialsUpdate = async (pending = {}) => {
       taskContextSnapshot,
       dispatchToken,
     });
-    if (!executionMessage && !workspaceStillActive()) return deferForWorkspaceSwitch(inspectionMessage);
-    return snapshotSynchronized && Boolean(executionMessage)
+    if (!executionMessage && !workspaceStillActive()) {
+      await rollbackMaterialMemoryTransaction();
+      return deferForWorkspaceSwitch(inspectionMessage);
+    }
+    const completed = snapshotSynchronized && Boolean(executionMessage)
       && !["failed", "cancelled", "paused", "retry_required"].includes(String(executionMessage.execution?.status || ""));
+    if (completed) memoryTransactionCommitted = true;
+    else await rollbackMaterialMemoryTransaction();
+    return completed;
+  } catch (error) {
+    if (memoryRollbackSnapshot && !memoryTransactionCommitted) {
+      try {
+        await rollbackMaterialMemoryTransaction();
+      } catch (rollbackError) {
+        const combined = new Error(`${error?.message || "作品资料更新失败"}；结构化记忆补偿回滚也失败：${rollbackError?.message || "未知错误"}`);
+        combined.code = "MATERIAL_UPDATE_MEMORY_ROLLBACK_FAILED";
+        combined.cause = error;
+        throw combined;
+      }
+    }
+    throw error;
   } finally {
     ui.conversationDispatchGate.release(conversationId, dispatchToken);
     if (workspaceStillActive()) {
@@ -38369,6 +38595,7 @@ const runExplicitPostLandingMaterialsUpdate = async ({ executionSurface = "chat"
   });
   const completed = await runConfirmedPostLandingMaterialsUpdate({
     documentIds,
+    sourceRevisions: materialUpdateSourceRevisions({ documents: materialWorkspaceState.documents, sourceDocumentIds: documentIds }),
     executionSurface,
     workspaceState: materialWorkspaceState,
     conversationId: materialConversation?.id || state.activeConversationId,
@@ -44147,8 +44374,8 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
         else delete message.materialUpdatePrompt.error;
       }
     };
-    updatePromptStatuses(value === "update" ? "requested" : "deferred");
-    appendConversationChoiceInstruction(value === "update" ? "更新资料" : "暂不更新资料");
+    updatePromptStatuses(value === "update" ? "requested" : "cancelled");
+    appendConversationChoiceInstruction(value === "update" ? "确认更新作品资料" : "取消更新作品资料");
     closeConversationChoicePanel({ focus: false });
     const persistChoiceState = () => persistMaterialUpdateConversation({
       workspaceState: materialWorkspaceState,
@@ -44162,6 +44389,7 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
       await persistChoiceState();
       const completed = await runConfirmedPostLandingMaterialsUpdate({
         documentIds: pending.documentIds,
+        sourceRevisions: pending.sourceRevisions,
         executionSurface: pending.executionSurface,
         workspaceState: materialWorkspaceState,
         conversationId: materialConversation?.id || pending.conversationId,
@@ -57600,7 +57828,6 @@ const requestedConversationMediaConnectionCandidates = (channel, prompt) => {
     modelPickerDisplayName(profile.model || ""),
     profile.provider === "OpenAI" && channel === "image" ? "GPT" : "",
     profile.provider === "OpenAI" && channel === "image" ? "OpenAI" : "",
-    /sora/i.test(String(profile.model || "")) ? "Sora" : "",
   ].map((value) => String(value || "").trim()).filter((value) => value.length >= 2);
   return profiles.filter((profile) => capabilityAliases(profile)
     .some((alias) => compact.includes(alias.toLowerCase().replace(/[\s·•_\-—]+/g, ""))));

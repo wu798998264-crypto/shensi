@@ -46,7 +46,7 @@ try {
     run: async (options) => {
       runtimeOrder.push("agent_run");
       capturedRun = options;
-      await options.workspaceToolRuntime.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } });
+      await options.workspaceToolRuntime.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", taskType: "general_qa", routingMode: "general", routingReason: "本轮只讨论词语含义，不需要面板专项能力", documentIds: [] } });
       return { text: "只讨论，不读取空文档。" };
     },
   });
@@ -87,8 +87,8 @@ try {
       return { url: `http://127.0.0.1:${41000 + openedHosts}/mcp`, headers: { Authorization: "Bearer test" }, tools, close: async () => { closedHosts += 1; } };
     },
     externalRunners: {
-      openCode: async (options) => { handoffs.push({ engine: "opencode", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } }); return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" }; },
-      claudeCode: async (options) => { handoffs.push({ engine: "claude_code", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", documentIds: [] } }); return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" }; },
+      openCode: async (options) => { handoffs.push({ engine: "opencode", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", taskType: "general_qa", routingMode: "general", routingReason: "测试外置 Agent 完整接管协议，不需要面板专项能力", documentIds: [] } }); return { text: "OpenCode 完整接管完成", executionRuntime: "opencode_agent" }; },
+      claudeCode: async (options) => { handoffs.push({ engine: "claude_code", options }); await options.nativeHost.tools.invoke({ namespace: "interaction", tool: "delivery", arguments: { mode: "conversation", taskType: "general_qa", routingMode: "general", routingReason: "测试外置 Agent 完整接管协议，不需要面板专项能力", documentIds: [] } }); return { text: "Claude Code 完整接管完成", executionRuntime: "claude_code_agent" }; },
     },
   });
   const runExternal = async (agentEngine, conversationId) => {

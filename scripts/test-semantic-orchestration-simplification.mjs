@@ -222,8 +222,8 @@ assert.match(app, /pendingConversationChoice\.kind\s*!==\s*"media_connection"[\s
   "新对话必须清空非媒体选择状态且不改动媒体配置链路");
 assert.doesNotMatch(app, /手动保存历史版本[\s\S]{0,650}offerPostLandingMaterialsUpdate/u,
   "手动保存版本后不得自动弹出资料更新选择");
-assert.doesNotMatch(app, /queueMicrotask\(\(\)\s*=>\s*offerPostLandingMaterialsUpdate\(message\)\)/u,
-  "正式候选落盘后不得自动弹出资料更新选择");
+assert.match(app, /if \(landed && message\.materialUpdatePrompt[\s\S]{0,180}openMaterialUpdateChoice/u,
+  "正式候选落盘并完成复核后必须显示作品资料更新选择");
 assert.match(app, /只分析当前内容/u, "续写歧义框必须提供非续写退出路径");
 assert.match(app, /取消本次任务/u, "续写歧义框必须允许直接取消");
 assert.match(app, /章节增量覆盖/u, "记忆指标必须说明只统计章节增量");

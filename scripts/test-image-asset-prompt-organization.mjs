@@ -20,7 +20,7 @@ const relevantIds = new Set([
   "builtin:panorama-prompt-writer",
 ]);
 
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 29);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
 const template = createInitialCapabilityTemplate();
 const promptModule = template.modules.find((module) => module.id === "module:prompt-writer");
 const panoramaModule = template.modules.find((module) => module.id === "module:prompt-panorama-writer");

@@ -62,7 +62,7 @@ const resolveCatalogSkill = (catalog = [], args = {}) => {
   throw new Error("未知 Skill ID 或名称，请先查看目录");
 };
 
-export const conversationAgentInstructions = `你是神思的完整 Agent，直接负责用户当前任务。每次新指令开始时，宿主已经先读取当前生效的面板路由；必须以这份面板路由判断任务类型、顶层模组/模块分支，以及是否属于无需 Skill 的通用问答。命中面板分支后，再按需读取对应模组路由、模块路由与 Skill；不得跳过面板路由，也不得把面板路由当成已经读取了下级路由。不要把关键词、空白记忆、大纲或设定板块当作必须先完成的手续。skills.list 只会返回当前面板内已启用的 Skill，以及用户在本轮明确点名或 @ 引用的面板外 Skill；不得把 Skill 库中的其他项目当作自动候选。创作引导阶段只使用对应创作指导 Skill；其他阶段根据需要加载。经验与记忆检查能力保留，但不是每轮任务的先决条件。
+export const conversationAgentInstructions = `你是神思的完整 Agent，直接负责用户当前任务。每次新指令开始时，宿主已经先读取当前生效的面板路由；必须以这份面板路由判断任务类型、顶层模组/模块分支，以及是否属于无需 Skill 的通用问答。命中面板分支后，再按需读取对应模组路由、模块路由与 Skill；不得跳过面板路由，不得把面板路由当成已经读取了下级路由，也不得把模组或模块路由当成已经读取了 Skill 正文。凡是选择了面板中的能力分支，结束前必须至少完成一次对应 placementId 的 skills.read；确实无需任何 Skill 的通用问答，必须在 interaction.delivery 中声明 routingMode=general 并写明本轮语义理由。不要把关键词、空白记忆、大纲或设定板块当作必须先完成的手续。skills.list 只会返回当前面板内已启用的 Skill，以及用户在本轮明确点名或 @ 引用的面板外 Skill；不得把 Skill 库中的其他项目当作自动候选。创作引导阶段只使用对应创作指导 Skill；其他阶段根据需要加载。经验与记忆检查能力保留，但不是每轮任务的先决条件。
 面板路由只负责顶层选择；进入分支后用 routes.read 依次读取对应模组路由与模块路由，再用 placementId 加载具体 Skill。同一 Skill 可能出现在多个位置，必须按当前分支选择真实位置。并行成员按需独立或协作；主次关系的主要与次要是分工，不是组织继承；组织关系命中下位时默认同时加载上位。若用户已提供下位所需完整输入、上位环节已经完成，或用户明确只限定下位，可在 skills.read 中选择 skip 并写明本轮语义理由；不得按关键词或固定例句跳过。路由文本只解释用途，面板结构中的关系、顺序、角色与启用状态才是事实来源。
 报告归属：用户要求制作自检、质检、审稿报告时，读取对应自检Skill及所需正文，报告保存到reports编译报告集合的具体文档。禁止修改被检查正文不等于禁止保存报告；明确只在对话交付时遵循用户要求。report-compile是自动重建的项目总览，不能存放自检报告。正文资料不足时报告必须标明实际范围和缺口，不冒充完整检查。创作引导只存在于对话和对应 Skill 中，不创建独立的“创作引导”文档；形成正式设定、大纲、正文或报告时，写入与内容类型匹配的正式目标。
 currentDocument 只是用户说“当前文档”时的指代，不是默认写入目标。根据完整任务语义确定交付：生成正式文章并交付到作品时自行选择对应位置保存；只讨论、只看方案或多候选不擅自覆盖。结束前必须调用 interaction.delivery 声明真实 taskType 及 conversation、documents 或 media 交付方式；文档交付给出真实目标ID，并逐一用 documents.write 完成，问题回答后继续原任务。不要把口头承诺、正文链接当作写入凭证。完整文章覆盖时应提供文章标题，同步替换未命名等占位标题；追加与局部替换不默认改名。
@@ -79,6 +79,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     return loaded.state || (workspaceKind === "notebook" ? createBlankNotebookState({ workspacePath }) : createBlankProjectState({ workspacePath }));
   };
   const seenWrites = new Map(), readSkillResults = new Map(), readRouteIds = new Set();
+  const readSkillPlacementIds = new Set(), readStandaloneSkillIds = new Set();
   const expectedMediaCounts = mediaRequirementsFromDispatch(mediaDispatch);
   const completedMediaCounts = new Map(), failedMedia = new Map();
   let delivery = null;
@@ -112,6 +113,9 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       readSkillResults.set(selected.id, result);
       if (text(result?.text).trim()) await emit("resource_read", { kind: "skill", id: selected.id, title: result.name || selected.name || selected.id, fullText: result.fullText === true, characters: result.text.length, version: result.contentHash || result.version });
     }
+    if (!text(result?.text).trim()) throw new Error(`Skill“${result?.name || selected.name || selected.id}”没有可读取的正文`);
+    if (result?.fullText !== true) throw new Error(`Skill“${result?.name || selected.name || selected.id}”未完成全文读取，不能作为本轮能力依据`);
+    readSkillPlacementIds.add(placement.placementId);
     return { placementId: placement.placementId, role: placement.parentRole, id: selected.id, name: result?.name || selected.name || selected.id, text: result?.text || "", fullText: result?.fullText === true, version: result?.contentHash || result?.version || "" };
   };
   const namespace = (name, tools) => ({ type: "namespace", name, description: `当前任务的 ${name} 工具`, tools });
@@ -159,9 +163,11 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
       tool("open", "使用神思内置只读浏览器读取公开 HTTPS 页面。普通页面隐藏读取；遇到登录或人工验证时会在界面顶部请求用户确认。浏览器不执行网页业务操作。", { url: str("公开 HTTPS 页面地址"), maxPages: integer("最多读取同源页面数", 1), maxCharacters: integer("返回字符上限", 4_000) }, ["url"]),
     ]),
     namespace("interaction", [
-      tool("delivery", "声明本轮真实任务类型和交付方式。实际图片/视频必须选择media并调用media.generate；不能用文字声称已生成。文档任务须列出全部目标并完成写入；仅讨论才选择conversation。", {
+      tool("delivery", "声明本轮真实任务类型、路由方式和交付方式。使用面板能力时必须先真实读取对应 Skill；确实无需 Skill 的通用问答声明 general 并说明语义理由。实际图片/视频必须选择media并调用media.generate；不能用文字声称已生成。文档任务须列出全部目标并完成写入；仅讨论才选择conversation。", {
         mode: { type: "string", enum: ["conversation", "documents", "media"] },
         taskType: { type: "string", enum: DELIVERY_TASK_TYPES },
+        routingMode: { type: "string", enum: ["skills", "general"] },
+        routingReason: str("routingMode=general 时必填：说明为什么本轮不需要面板 Skill；必须基于完整任务语义"),
         documentIds: { type: "array", items: str("真实目标文档ID") },
         mediaChannels: { type: "array", items: { type: "string", enum: ["image", "video"] } },
       }, ["mode", "documentIds"]),
@@ -186,7 +192,32 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
     if (signal?.aborted) throw Object.assign(new Error("任务已取消"), { name: "AbortError" });
     if (!dynamicTools.some((entry) => entry.name === namespace && entry.tools.some((tool) => tool.name === name))) throw new Error("当前任务未提供此工具");
     if (namespace === "routes") {
-      if (name === "read") return { routes: await readRouteBranch(args.placementId) };
+      if (name === "read") {
+        const routes = await readRouteBranch(args.placementId);
+        const route = routesByPlacement.get(text(args.placementId).trim());
+        const directPlacements = route?.kind === "module"
+          ? skillPlacements.filter((placement) => placement.enabled !== false && placement.modulePlacementId === route.placementId)
+          : [];
+        const autoLoadedSkills = [];
+        // A module with one enabled Skill has no remaining semantic choice.
+        // Load it while the route is read, before the Agent writes the result.
+        if (directPlacements.length === 1) {
+          const placement = directPlacements[0];
+          const upperPlacements = (placement.organizationUpperPlacementIds || [])
+            .map((id) => skillPlacementsById.get(id))
+            .filter((candidate) => candidate?.enabled !== false);
+          await emit("route_decision", {
+            placementId: placement.placementId,
+            skillId: placement.skillId,
+            upperParticipation: "auto",
+            upperPlacementIds: upperPlacements.map((candidate) => candidate.placementId),
+            source: "single_enabled_skill_in_module",
+          });
+          for (const upper of upperPlacements) autoLoadedSkills.push(await readPlacedSkill(upper));
+          autoLoadedSkills.push(await readPlacedSkill(placement));
+        }
+        return { routes, autoLoadedSkills };
+      }
     }
     if (namespace === "skills") {
       if (name === "list") return catalog.filter((skill) => !args.query || text([skill.name, skill.description, skill.capabilities, ...(skill.placements || []).flatMap((placement) => placement.pathNames || [])]).toLowerCase().includes(text(args.query).toLowerCase()));
@@ -207,6 +238,10 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
             readSkillResults.set(selected.id, result);
             if (text(result?.text).trim()) await emit("resource_read", { kind: "skill", id: selected.id, title: result.name || selected.name || selected.id, fullText: result.fullText === true, characters: result.text.length, version: result.contentHash || result.version });
           }
+          if (!text(result?.text).trim()) throw new Error(`Skill“${result?.name || selected.name || selected.id}”没有可读取的正文`);
+          if (result?.fullText !== true) throw new Error(`Skill“${result?.name || selected.name || selected.id}”未完成全文读取，不能作为本轮能力依据`);
+          readStandaloneSkillIds.add(selected.id);
+          await emit("route_decision", { skillId: selected.id, explicit: true, source: "explicit_or_unplaced_skill" });
           return result;
         }
         const routeContext = [];
@@ -255,7 +290,23 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
         ].filter((channel) => ["image", "video"].includes(channel)))];
         if (args.mode === "media" && !mediaChannels.length) throw new Error("媒体交付必须声明图片或视频类型");
         if (args.mode !== "media" && ["image_generation", "video_generation", "multi_step"].includes(taskType)) throw new Error("图片或视频任务必须使用 media 交付方式");
-        delivery = { mode: args.mode, taskType: taskType || (mediaChannels.length === 1 ? `${mediaChannels[0]}_generation` : "multi_step"), documentIds: [...new Set(args.documentIds.map(String))], mediaChannels };
+        const requestedRoutingMode = ["skills", "general"].includes(args.routingMode) ? args.routingMode : "";
+        // Once a concrete module/group route has been read, this run has
+        // entered a panel capability branch.  It must finish by loading the
+        // selected Skill; a later delivery review cannot relabel the same
+        // routed task as general QA to bypass the Skill-read requirement.
+        const branchRouteRead = readRouteIds.size > 0;
+        const routingReason = text(args.routingReason).trim();
+        if (requestedRoutingMode === "general" && !routingReason) throw new Error("通用 Agent 处理必须说明本轮为什么不需要面板 Skill");
+        if (requestedRoutingMode === "general" && branchRouteRead) throw new Error("本轮已经读取面板能力分支，必须真实读取对应 Skill 后以 skills 方式交付；不能改报为通用问答");
+        delivery = {
+          mode: args.mode,
+          taskType: taskType || (mediaChannels.length === 1 ? `${mediaChannels[0]}_generation` : "multi_step"),
+          routingMode: requestedRoutingMode,
+          routingReason,
+          documentIds: [...new Set(args.documentIds.map(String))],
+          mediaChannels,
+        };
         const state = args.mode === "documents" ? await readState() : null;
         await emit("delivery", { ...delivery, targets: delivery.documentIds.map(id => ({ documentId: id, title: state?.documents?.[id]?.title || "待新建文档" })) });
         return delivery;
@@ -433,11 +484,36 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
         const missingCount = Math.max(0, count - (completedMediaCounts.get(channel) || 0));
         return missingCount ? [`${channel === "video" ? "视频" : "图片"}生成 × ${missingCount}`] : [];
       });
+      const actualSkillPlacementIds = [...readSkillPlacementIds];
+      const actualStandaloneSkillIds = [...readStandaloneSkillIds];
+      const actualSkillRead = actualSkillPlacementIds.length > 0 || actualStandaloneSkillIds.length > 0;
+      const routingRequired = skillPlacements.some((placement) => placement.enabled !== false) || catalog.length > 0;
+      const branchRouteRead = readRouteIds.size > 0;
+      const declaredGeneral = delivery?.routingMode === "general" && Boolean(delivery.routingReason) && !branchRouteRead;
+      const routingComplete = !routingRequired || actualSkillRead || declaredGeneral;
+      const routingMode = actualSkillRead ? "skills" : declaredGeneral ? "general" : delivery?.routingMode || "";
       return {
         declared: Boolean(delivery),
         mode: delivery?.mode,
         taskType: delivery?.taskType || "",
-        missing: [...(delivery?.documentIds || []).filter(id => !savedIds.has(id)), ...missingMedia],
+        routing: {
+          required: routingRequired,
+          complete: routingComplete,
+          mode: routingMode,
+          reason: delivery?.routingReason || "",
+          readRoutePlacementIds: [...readRouteIds],
+          skillPlacementIds: actualSkillPlacementIds,
+          standaloneSkillIds: actualStandaloneSkillIds,
+        },
+        warnings: [
+          ...(routingComplete ? [] : [branchRouteRead
+            ? "本轮已读取能力分支，但没有真实读取对应 Skill"
+            : "本轮尚未真实读取所选 Skill；若属于通用问答，应声明无需 Skill 的语义理由"]),
+        ],
+        missing: [
+          ...(delivery?.documentIds || []).filter(id => !savedIds.has(id)),
+          ...missingMedia,
+        ],
         failed: [...failedWrites, ...[...failedMedia].map(([channel, message]) => `${channel === "video" ? "视频" : "图片"}生成：${message}`)],
       };
     },

@@ -59,7 +59,7 @@ export const CLI_REMARK_MIGRATION_VERSION = 2;
 export const TEXT_CODEX_CLI_PROFILE_VERSION = 1;
 export const PROVIDER_MODEL_ISOLATION_VERSION = 1;
 export const AGGREGATE_IMAGE_API_PROFILE_VERSION = 1;
-export const AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION = 1;
+export const VIDEO_PROFILE_CLEANUP_VERSION = 1;
 export const TEXT_PROFILE_CLEANUP_VERSION = 3;
 
 const PROFILE_KEYS = {
@@ -110,16 +110,16 @@ const DEFAULTS = {
   },
   video: {
     id: "video-default",
-    name: "OpenAI 视频",
-    adapter: "api",
-    provider: "OpenAI",
+    name: "即梦视频 CLI",
+    adapter: "cli",
+    provider: "即梦",
     protocol: "videos",
-    baseUrl: "https://api.openai.com/v1",
-    model: "sora-2",
-    timeoutMs: "900000",
+    baseUrl: "",
+    model: "seedance2.5",
+    timeoutMs: "1800000",
     apiKey: "",
-    cliPath: "",
-    cliArgs: "",
+    cliPath: DREAMINA_VIDEO_CLI_ALIAS,
+    cliArgs: DREAMINA_VIDEO_CLI_ARGS,
   },
   audio: {
     id: "audio-libtv-jimeng",
@@ -318,21 +318,6 @@ const BUILT_IN_AGGREGATE_IMAGE_API = {
   cliArgs: "",
 };
 
-const BUILT_IN_AGGREGATE_VIDEO_API = {
-  id: "video-cockpit-aggregate-api",
-  name: "聚合api",
-  remarkName: "聚合api",
-  adapter: "api",
-  provider: "自定义兼容接口",
-  protocol: "videos",
-  baseUrl: "http://127.0.0.1:5317/v1",
-  model: "sora-2",
-  timeoutMs: "1800000",
-  apiKey: "",
-  cliPath: "",
-  cliArgs: "",
-};
-
 const stringValue = (value, fallback = "") => typeof value === "string" ? value : fallback;
 
 const withoutNonDreaminaIdentity = (profile = {}) => {
@@ -495,21 +480,6 @@ const ensureBuiltInAggregateImageApiProfile = (profiles, secrets = {}) => {
   return [
     ...profiles,
     normalizedProfile("image", BUILT_IN_AGGREGATE_IMAGE_API, profiles.length, secrets),
-  ];
-};
-
-const ensureBuiltInAggregateVideoApiProfile = (profiles, secrets = {}) => {
-  const comparableBaseUrl = (value) => String(value || "").trim().replace(/\/+$/, "").toLocaleLowerCase();
-  const expectedBaseUrl = comparableBaseUrl(BUILT_IN_AGGREGATE_VIDEO_API.baseUrl);
-  const alreadyConfigured = profiles.some((profile) => profile.id === BUILT_IN_AGGREGATE_VIDEO_API.id
-    || (profile.adapter === "api"
-      && profile.provider === BUILT_IN_AGGREGATE_VIDEO_API.provider
-      && comparableBaseUrl(profile.baseUrl) === expectedBaseUrl
-      && String(profile.model || "").trim().toLocaleLowerCase() === BUILT_IN_AGGREGATE_VIDEO_API.model));
-  if (alreadyConfigured) return profiles;
-  return [
-    ...profiles,
-    normalizedProfile("video", BUILT_IN_AGGREGATE_VIDEO_API, profiles.length, secrets),
   ];
 };
 
@@ -1041,6 +1011,19 @@ const migratePreferredDreaminaVideoModel = (profile) => profile.adapter === "cli
   ? { ...profile, model: "seedance2.5" }
   : profile;
 
+const retiredUnsupportedVideoProfile = (profile = {}) => {
+  const provider = String(profile.provider || "").trim();
+  const model = String(profile.model || "").trim();
+  const label = `${profile.name || ""} ${profile.remarkName || ""}`.trim();
+  const endpoint = String(profile.baseUrl || "").trim().replace(/\/+$/u, "").toLocaleLowerCase();
+  const dreaminaCli = profile.adapter === "cli" && provider === "即梦";
+  if (profile.id === "video-cockpit-aggregate-api") return true;
+  if (!dreaminaCli && /sora/iu.test(model)) return true;
+  return provider === "自定义兼容接口"
+    && endpoint === "http://127.0.0.1:5317/v1"
+    && /聚合\s*api/iu.test(label);
+};
+
 const migrateRequestedCliRemarks = (profiles, channel, activeId = "") => profiles.map((profile) => {
   const activeOrBuiltIn = profile.id === activeId || profile.id === `${channel}-default`;
   if (channel === "text" && activeOrBuiltIn && profile.adapter === "cli" && profile.provider === "OpenAI") {
@@ -1212,16 +1195,16 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.image ?? {});
     }
     if (channel === "video") {
+      const retiredIds = new Set(profiles.filter(retiredUnsupportedVideoProfile).map((profile) => profile.id));
+      profiles = profiles.filter((profile) => !retiredIds.has(profile.id));
+      if (retiredIds.has(String(requestedProfileId || ""))) requestedProfileId = "";
       profiles = ensureBuiltInDreaminaVideoProfile(profiles, secrets.video ?? {});
       profiles = ensureNamedDreaminaCliProfiles(profiles, "video", secrets.video ?? {});
-      if ((Number(settings.aggregateCustomMediaProfileVersion) || 0) < AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION) {
-        profiles = ensureBuiltInAggregateVideoApiProfile(profiles, secrets.video ?? {});
-      }
       if ((Number(settings.videoCliDefaultVersion) || 0) < VIDEO_CLI_DEFAULT_VERSION) {
         profiles = profiles.map(migratePreferredDreaminaVideoModel);
       }
       next.videoCliDefaultVersion = VIDEO_CLI_DEFAULT_VERSION;
-      next.aggregateCustomMediaProfileVersion = AGGREGATE_CUSTOM_MEDIA_PROFILE_VERSION;
+      next.videoProfileCleanupVersion = VIDEO_PROFILE_CLEANUP_VERSION;
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.video ?? {});
     }
     if (channel === "audio") {
@@ -1289,7 +1272,7 @@ const profileModelOptions = (profile, channel) => {
 
 const MODEL_FAMILY_LABELS = {
   image: { OpenAI: "GPT Image", Grok: "Grok Imagine", Gemini: "Nano Banana", "智谱 GLM": "CogView", "即梦": "Seedream" },
-  video: { OpenAI: "Sora", "即梦": "Seedance", "阿里云百炼": "HappyHorse" },
+  video: { "即梦": "Seedance", "阿里云百炼": "HappyHorse" },
   audio: { Sumo: "Sumo", "即梦": "Seed Audio" },
 };
 
