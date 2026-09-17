@@ -148,9 +148,8 @@ export const prepareRelatedDocumentRestore = ({
   displayEntry = null,
   sourceEntries = [],
   directEntries = [],
-  preservedCurrent = null,
 } = {}) => {
-  if (!documentId || !displayEntry?.relatedDocumentOnly || !preservedCurrent) return null;
+  if (!documentId || !displayEntry?.relatedDocumentOnly) return null;
   const sourceScope = displayEntry.relatedHistorySourceScope;
   const sourceVersionId = String(displayEntry.relatedHistorySourceVersionId || "");
   const sourceVersion = (Array.isArray(sourceEntries) ? sourceEntries : [])
@@ -161,6 +160,6 @@ export const prepareRelatedDocumentRestore = ({
   return {
     sourceVersion: clone(sourceVersion),
     selected: { ...clone(displayEntry), document: sourceDocument, html: sourceDocument.html ?? "", markdown: sourceDocument.markdown ?? "" },
-    entries: [clone(preservedCurrent), ...clone(Array.isArray(directEntries) ? directEntries : [])],
+    entries: clone(Array.isArray(directEntries) ? directEntries : []),
   };
 };

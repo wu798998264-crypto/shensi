@@ -143,7 +143,7 @@ assert.ok(batchRepairFollowup);
 assert.equal(batchRepairFollowup.batchRequest.count, 5);
 assert.deepEqual(batchRepairFollowup.batchRequest.documentIds, ["chapter-1", "chapter-2", "chapter-3", "chapter-4", "chapter-5"]);
 assert.match(batchRepairFollowup.expandedPrompt, /一次批量落盘事务/u);
-assert.match(batchRepairFollowup.expandedPrompt, /每章都要保存修改前历史版本/u);
+assert.match(batchRepairFollowup.expandedPrompt, /每章写入成功后的完整结果都要成为最新历史版本/u);
 const batchRepairRoute = buildAdaptiveTaskRoute({
   text: batchRepairFollowup.expandedPrompt,
   sourceMessageId: "user-batch-repair",

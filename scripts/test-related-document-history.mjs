@@ -89,7 +89,6 @@ const rebuilt = resolveHistoryDiffInput({
 assert.equal(rebuilt.hasDiff, true, "跨层级相邻完整快照必须能重建差异");
 assert.equal(rebuilt.source, "parent-snapshot");
 
-const preservedCurrent = { id: "current-backup", scopeType: "document", scopeId: documentId, document: { title: "第一章", html: "<p>当前正文</p>" } };
 const sourceEntries = [{
   id: timeline[0].relatedHistorySourceVersionId,
   scopeType: timeline[0].relatedHistorySourceScope.type,
@@ -101,13 +100,12 @@ const restorePlan = prepareRelatedDocumentRestore({
   displayEntry: timeline[0],
   sourceEntries,
   directEntries: [{ id: "direct-existing" }],
-  preservedCurrent,
 });
 assert.ok(restorePlan, "来源仍一致时必须生成单篇恢复计划");
-assert.deepEqual(restorePlan.entries.map((entry) => entry.id), ["current-backup", "direct-existing"], "恢复备份只能写入单篇历史，不得复制上层历史实体");
+assert.deepEqual(restorePlan.entries.map((entry) => entry.id), ["direct-existing"], "恢复计划不再预存被覆盖前的可见版本");
 assert.equal(restorePlan.selected.document.html, final.html);
-assert.equal(prepareRelatedDocumentRestore({ documentId, displayEntry: timeline[0], sourceEntries: [], directEntries: [], preservedCurrent }), null, "关联来源消失时必须停止恢复");
-assert.equal(prepareRelatedDocumentRestore({ documentId, displayEntry: timeline[0], sourceEntries: [{ ...sourceEntries[0], state: { documents: { [documentId]: initial } } }], directEntries: [], preservedCurrent }), null, "来源正文变化时必须停止恢复而不是使用过期预览");
+assert.equal(prepareRelatedDocumentRestore({ documentId, displayEntry: timeline[0], sourceEntries: [], directEntries: [] }), null, "关联来源消失时必须停止恢复");
+assert.equal(prepareRelatedDocumentRestore({ documentId, displayEntry: timeline[0], sourceEntries: [{ ...sourceEntries[0], state: { documents: { [documentId]: initial } } }], directEntries: [] }), null, "来源正文变化时必须停止恢复而不是使用过期预览");
 
 const restoredDocuments = { [documentId]: structuredClone(restorePlan.selected.document), "chapter-2": { title: "第二章", html: "<p>保持不变</p>" } };
 assert.equal(restoredDocuments["chapter-2"].html, "<p>保持不变</p>", "单篇恢复不得影响同一上层快照中的其他文档");

@@ -34,7 +34,8 @@ try {
   const after = await loadWorkspaceState({ appRoot: temporary, requestedPath: workspacePath });
   assert.match(after.state.documents["report-novel"].markdown, /本测试报告完整/u);
   assert.equal(after.state.documents["chapter-1"].html, baseline.state.documents["chapter-1"].html);
-  assert.ok(after.state.histories["report-novel"].some((version) => JSON.stringify(version).includes("修改前报告")));
+  assert.equal(after.state.histories["report-novel"].length, 1);
+  assert.ok(after.state.histories["report-novel"].some((version) => JSON.stringify(version).includes("本测试报告完整")));
   const outcome = classifyFormalWriteFailure({ submissionStarted: true, diskCommitted: true, error: { code: "LANDING_RECEIPT_MISSING" } });
   const pending = formalWritePendingReply({ outcome, receipt, documentIds: ["report-novel"] });
   assert.equal(pending.commitFailed, true);

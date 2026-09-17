@@ -8,7 +8,7 @@ import {
 } from "../src/document-write-transaction.js";
 import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
 import { bindFormalWriteCandidate } from "../src/formal-write-authorization.js";
-import { documentVersionHash, verifyDocumentVersionSnapshot } from "../src/version-integrity.js";
+import { documentVersionHash } from "../src/version-integrity.js";
 import { generatedLandingHistoryPlan } from "../src/generated-landing-history.js";
 
 const authorizationFor = async ({ instruction, sourceMessageId, target, candidate, action }) => {
@@ -49,7 +49,7 @@ const blankTransaction = await beginDocumentWriteTransaction({
   sourceMessageId: "user-create-8",
   sourceInstruction: "生成第八章并落盘",
 });
-assert.equal(blankTransaction.snapshot, null, "空白文档不能生成普通正文历史版本");
+assert.equal(blankTransaction.snapshot, undefined, "事务预检不再生成可见的写入前历史版本");
 assert.equal(blankTransaction.baseline.kind, "blank_document_baseline");
 assert.equal(blankTransaction.baseline.documentId, "chapter-8");
 assert.deepEqual(generatedLandingHistoryPlan({
@@ -83,9 +83,9 @@ const transaction = await beginDocumentWriteTransaction({
   sourceMessageId: "user-append",
   sourceInstruction: "续写当前章节",
 });
-assert.equal(transaction.snapshot.document.html, original.html, "写入前历史正文必须与原文逐字一致");
-assert.equal(transaction.snapshot.document.title, original.title);
-assert.equal((await verifyDocumentVersionSnapshot(transaction.snapshot)).ok, true);
+assert.equal(transaction.beforeDocument.html, original.html, "事务回滚副本必须保留原文");
+assert.equal(transaction.beforeDocument.title, original.title);
+assert.equal(transaction.snapshot, undefined, "事务预检不应把旧正文写入历史");
 
 const appended = { ...original, html: `${original.html}<p>${candidate}</p>`, revision: "revision-7" };
 assert.equal((await commitDocumentWriteTransaction({ transaction, nextDocument: appended })).verified, true);

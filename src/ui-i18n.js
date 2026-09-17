@@ -1662,7 +1662,7 @@ const EN_UI = new Map(Object.entries({
   "参考来源": "Sources",
   "候选稿": "Draft",
   "软件操作计划": "Workspace operation plan",
-  "修改前自动备份": "Automatic backup before changes",
+  "执行成功后创建当前结果版本": "Create a version of the result after success",
   "等待确认": "Waiting for confirmation",
   "正在执行": "Running",
   "已执行": "Completed",

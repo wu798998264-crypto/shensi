@@ -50,6 +50,7 @@ import { bindFormalWriteCandidate, createFormalWriteAuthorization, rebaseFormalW
 import { buildCandidateBasisSeed } from "./src/candidate-provenance.js";
 import { formalDocumentWriteRevisionFromState } from "./src/document-write-revision.js";
 import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, creativeDeliverableType, hasSubstantiveInlineCreativeSource, isBookDeconstructionRequest, isCreativeContinuationResponse, resolveRequestedMode } from "./src/request-routing.js";
+import { SHENSI_AGENT_DISPATCH_PROTOCOL } from "./src/agent-dispatch-contract.js";
 import { isGenerationAndLandingRequest, isLandingRequest } from "./src/chapter-target.js";
 import { looksLikeWorkspaceOperation } from "./src/workspace-operations.js";
 import { sanitizeDeletedContentWorkspaceRequest } from "./src/deleted-content-access.js";
@@ -4449,29 +4450,41 @@ const handleApiRequest = async (request, response, pathname) => {
     if (!taskPacket || taskPacket.executionSurface !== "agent") throw new Error("Agent 请求缺少有效的共用任务合同");
     const workspaceKind = body.workspaceKind === "notebook" ? "notebook" : "project";
     const routingText = String(body.routingText || body.prompt || "");
-    let taskRoute = buildAdaptiveTaskRoute({
-      text: routingText,
-      authorizationInstruction: String(body.authorizationInstruction || body.prompt || routingText),
-      contextualWriteAction: String(body.contextualWriteAction || ""),
-      sourceMessageId: String(body.sourceMessageId || taskPacket.sourceMessageId || body.requestId || ""),
-      workspaceOperation: body.workspaceOperation === true,
-      landing: body.landing === true,
-      targetDocumentId: String(body.targetDocumentId || "").slice(0, 160),
-      targetRevision: String(body.targetRevision || "").slice(0, 200),
-      targetDocumentIds: Array.isArray(body.targetDocumentIds) ? body.targetDocumentIds : [body.targetDocumentId].filter(Boolean),
-      expectedRevisions: body.expectedRevisions && typeof body.expectedRevisions === "object" ? body.expectedRevisions : {},
-      taskContract: body.taskContract && typeof body.taskContract === "object" ? body.taskContract : null,
-      contextDomain: String(body.contextDomain || "").slice(0, 80),
-      targetModuleId: String(body.targetModuleId || "").slice(0, 80),
-      hasResources: body.hasResources === true,
-      continuesCreativeThread: body.continuesCreativeThread === true,
-      preparedCreativeContext: body.preparedCreativeContext === true,
-      workspaceKind,
-      longForm: body.longForm === true,
-      unattended: body.unattended === true,
-      formalPublish: body.formalPublish === true,
-      batch: body.batch === true,
-    }, { executionSurface: "agent" });
+    const suppliedTaskRoute = body.taskRoute
+      && typeof body.taskRoute === "object"
+      && body.taskRoute.dispatchProtocol === SHENSI_AGENT_DISPATCH_PROTOCOL
+      ? body.taskRoute
+      : null;
+    let taskRoute = suppliedTaskRoute
+      ? {
+        ...suppliedTaskRoute,
+        executionSurface: "agent",
+        routeSource: "client_structured_task_route",
+        ...(body.routeReason && !suppliedTaskRoute.reason ? { reason: String(body.routeReason).slice(0, 2_000) } : {}),
+      }
+      : buildAdaptiveTaskRoute({
+        text: routingText,
+        authorizationInstruction: String(body.authorizationInstruction || body.prompt || routingText),
+        contextualWriteAction: String(body.contextualWriteAction || ""),
+        sourceMessageId: String(body.sourceMessageId || taskPacket.sourceMessageId || body.requestId || ""),
+        workspaceOperation: body.workspaceOperation === true,
+        landing: body.landing === true,
+        targetDocumentId: String(body.targetDocumentId || "").slice(0, 160),
+        targetRevision: String(body.targetRevision || "").slice(0, 200),
+        targetDocumentIds: Array.isArray(body.targetDocumentIds) ? body.targetDocumentIds : [body.targetDocumentId].filter(Boolean),
+        expectedRevisions: body.expectedRevisions && typeof body.expectedRevisions === "object" ? body.expectedRevisions : {},
+        taskContract: body.taskContract && typeof body.taskContract === "object" ? body.taskContract : null,
+        contextDomain: String(body.contextDomain || "").slice(0, 80),
+        targetModuleId: String(body.targetModuleId || "").slice(0, 80),
+        hasResources: body.hasResources === true,
+        continuesCreativeThread: body.continuesCreativeThread === true,
+        preparedCreativeContext: body.preparedCreativeContext === true,
+        workspaceKind,
+        longForm: body.longForm === true,
+        unattended: body.unattended === true,
+        formalPublish: body.formalPublish === true,
+        batch: body.batch === true,
+      }, { executionSurface: "agent" });
     if (authorizedSelfRepair) {
       taskRoute = {
         ...taskRoute,
@@ -4504,8 +4517,8 @@ const handleApiRequest = async (request, response, pathname) => {
       });
     }
     const explicitAgentSkillSelections = Array.isArray(body.selectedSkills) ? body.selectedSkills : [];
-    const agentActiveModule = String(body.activeModule || body.targetModuleId || "manuscript");
-    const agentContextDomain = String(body.contextDomain || "novel");
+    const agentActiveModule = String(body.activeModule || body.targetModuleId || body.targetModule || taskRoute.targetModule || taskRoute.activeModule || "manuscript");
+    const agentContextDomain = String(body.contextDomain || taskRoute.contextDomain || "novel");
     const agentTargetDocumentId = String(body.targetDocumentId || "");
     const agentSourceMode = ["original", "adaptation"].includes(body.sourceMode) ? body.sourceMode : "";
     const agentSemanticCapabilities = Array.isArray(body.agentDecision?.skillCapabilities)
@@ -4513,12 +4526,13 @@ const handleApiRequest = async (request, response, pathname) => {
       : Array.isArray(body.skillCapabilities) ? body.skillCapabilities : [];
     const agentSemanticAuthority = Array.isArray(body.agentDecision?.skillCapabilities)
       || Array.isArray(body.skillCapabilities);
-    const agentDeliverableType = creativeDeliverableType({ text: agentSemanticAuthority ? "" : routingText, targetDocumentId: agentTargetDocumentId });
+    const agentDeliverableType = String(body.deliverableType || taskRoute.deliverableType || "")
+      || creativeDeliverableType({ text: agentSemanticAuthority ? "" : routingText, targetDocumentId: agentTargetDocumentId });
     const configuredAgentSkillSelections = configuredFixedSkillSelections(body.settings || {}, agentSemanticAuthority ? "" : routingText);
     const requiredAgentSkillCapabilities = new Set(resolveRequiredCapabilities({
       workspaceMode: workspaceKind,
       activeModule: agentActiveModule,
-      prompt: agentSemanticAuthority ? "" : routingText,
+      prompt: agentSemanticAuthority || suppliedTaskRoute ? "" : routingText,
       requestMode: taskRoute.recommendedMode || taskRoute.mode || "general",
       contextDomain: agentContextDomain,
       targetDocumentId: agentTargetDocumentId,
@@ -4528,7 +4542,7 @@ const handleApiRequest = async (request, response, pathname) => {
       semanticCapabilitiesAuthoritative: agentSemanticAuthority,
     }));
     const managedAgentSkillRouting = await resolveManagedCustomSlotRouting({
-      text: agentSemanticAuthority ? "" : routingText,
+      text: agentSemanticAuthority || suppliedTaskRoute ? "" : routingText,
       workspaceMode: workspaceKind,
       activeModule: agentActiveModule,
       contextDomain: agentContextDomain,
@@ -4551,7 +4565,7 @@ const handleApiRequest = async (request, response, pathname) => {
       groups: FIXED_SKILL_SLOT_GROUPS,
       requiredCapabilities: requiredAgentSkillCapabilities,
       activeOrganizationGroupIds: triggeredAgentSkillSelections.map((selection) => selection.organizationGroupId).filter(Boolean),
-      task: { workspaceMode: workspaceKind, contextDomain: agentContextDomain, deliverableType: agentDeliverableType, prompt: agentSemanticAuthority ? "" : routingText },
+      task: { workspaceMode: workspaceKind, contextDomain: agentContextDomain, deliverableType: agentDeliverableType, prompt: agentSemanticAuthority || suppliedTaskRoute ? "" : routingText },
       semanticCapabilitiesAuthoritative: agentSemanticAuthority,
     }).filter((selection) => !agentTemplateFixedSlotIds.has(selection.slotId))
       .map((selection) => ({ ...selection, routePriority: Number(agentRouteSlotById.get(selection.slotId)?.routePriority) || 0 }));
@@ -8116,7 +8130,10 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, state: {
       documents: Object.fromEntries(ids.filter(id => state.documents?.[id]).map(id => [id, state.documents[id]])),
       histories: Object.fromEntries(ids.filter(id => state.histories?.[id]).map(id => [id, state.histories[id]])),
-      moduleItems: Object.fromEntries(Object.entries(state.moduleItems || {}).map(([module, items]) => [module, items.filter(item => selected.has(item[0]))])),
+      moduleItems: Object.fromEntries(Object.entries(state.moduleItems || {}).map(([module, items]) => [module, (Array.isArray(items) ? items : []).filter((item) => {
+        const documentId = Array.isArray(item) ? item[0] : item?.id || item?.documentId;
+        return selected.has(String(documentId || ""));
+      })])),
       customFolders: state.customFolders || [],
     } });
   }

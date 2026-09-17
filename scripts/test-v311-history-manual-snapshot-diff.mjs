@@ -123,6 +123,8 @@ assert.match(appSource, /explicitBefore: completeSnapshotText/u);
 assert.match(appSource, /hasExplicitAfter: Object\.prototype\.hasOwnProperty\.call\(version, "afterContent"\)/u);
 assert.match(appSource, /parentBefore: historyVersionDiffText/u);
 assert.match(appSource, /snapshotAfter: completeSnapshotText/u);
+assert.match(appSource, /snapshotDocument\(documentId, "用户点击版本保存", \{ force: true/u, "手动保存相同内容也必须强制创建版本");
+assert.match(appSource, /const applyWorkspaceHistoryUpdates = \(workspaceState, updates\) =>/u, "后台工作区必须合并服务端生成的历史回执");
 assert.match(appSource, /single-history-preview\$\{diffInput\.hasDiff \? " has-history-diff" : ""\}/u, "单篇历史预览必须按是否存在差异标题栏选择布局");
 assert.match(appSource, /完整版本与修改标注/u);
 assert.match(appSource, /<i class="added">新增<\/i><i class="deleted">删除<\/i><i class="modified">修改<\/i>/u);

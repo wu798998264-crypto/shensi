@@ -26,6 +26,7 @@ const region = async (start, end) => {
 };
 
 const snippets = await Promise.all([
+  region("const nextUniqueDocumentName =", "const createDocument ="),
   region("const createDocument =", "const createFolder ="),
   region("const createFolder =", "const renameFolder ="),
   region("const renderDirectoryTree =", "const renderDocumentList ="),
@@ -74,6 +75,9 @@ for (const moduleId of ["index", "reports"]) {
   });
   vm.runInContext(snippets.join("\n"), context);
   const docId = vm.runInContext('createDocument("我的文档", { options: { workspaceView: "default", rootPlacement: true } })', context);
+  const duplicateDocId = vm.runInContext('createDocument("我的文档", { options: { workspaceView: "default", rootPlacement: true } })', context);
+  assert.equal(state.documents[duplicateDocId].title, "我的文档 2", "same-scope document titles receive a numeric suffix");
+  assert.equal(state.moduleItems[moduleId].find(([id]) => id === duplicateDocId)?.[1], "我的文档 2", "directory label follows the unique document title");
   const boardId = vm.runInContext('createDocument("我的白板", { options: { workspaceView: "default", rootPlacement: true } }, { kind: "whiteboard" })', context);
   assert.equal(await vm.runInContext('createFolder("我的文件夹")', context), true);
   const folderId = state.customFolders[0].id;

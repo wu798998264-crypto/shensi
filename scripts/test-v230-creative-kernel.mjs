@@ -517,8 +517,8 @@ try {
   });
   let loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
   assert.equal(loaded.state.documents["chapter-1"].title, "新标题");
-  assert.equal(loaded.state.histories["chapter-1"]?.length || 0, 1, "覆盖已有占位文档前必须保存完整历史版本");
-  assert.equal(loaded.state.histories["chapter-1"][0].markdown, "旧标题", "首次覆盖前的历史快照必须保留占位正文");
+  assert.equal(loaded.state.histories["chapter-1"]?.length || 0, 1, "首次正式写入必须创建完整历史版本");
+  assert.equal(loaded.state.histories["chapter-1"][0].markdown, firstTransactionCandidate, "首次写入结果必须成为初始历史版本");
   const patchTransactionCandidate = "林雪";
   const patchTransactionAuthorization = {
     ...bindFormalWriteCandidate(createFormalWriteAuthorization({
@@ -540,8 +540,8 @@ try {
   assert.match(loaded.state.documents["chapter-1"].markdown, /林雪/u);
   assert.equal(loaded.state.documents["chapter-1"].title, "雨巷");
   assert.equal(loaded.state.histories["chapter-1"].length, 2);
-  assert.match(loaded.state.histories["chapter-1"][0].content, /林夏/u);
-  assert.equal(loaded.state.histories["chapter-1"][1].markdown, "旧标题", "历史版本必须按写入前状态完整保留");
+  assert.match(loaded.state.histories["chapter-1"][0].content, /林雪/u, "局部修改后的结果必须成为最新历史版本");
+  assert.match(loaded.state.histories["chapter-1"][1].markdown, /林夏/u, "上一个已提交版本必须继续保留");
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
 }

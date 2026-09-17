@@ -1,4 +1,4 @@
-import { constants as fsConstants, createReadStream, createWriteStream, existsSync, readFileSync, realpathSync } from "node:fs";
+import { constants as fsConstants, createReadStream, createWriteStream, existsSync, readFileSync, realpathSync, readdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { copyFile, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, stat, statfs, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -26,8 +26,8 @@ import { classifyStructuredDocument } from "../structure-placement.js";
 import { episodeHeadingParts, episodeMarkdownFileName } from "../episode-document.js";
 import { freeDocumentTitle, sequencedDocumentKind, sequencedDocumentLabel } from "../document-title-policy.js";
 import { verifyCommittedWorkspaceDocuments } from "./document-transaction-service.mjs";
-import { prepareFullPrewriteHistory, verifyFullPrewriteHistory } from "./document-prewrite-history.mjs";
-import { addDocumentHierarchyPrewriteHistory } from "./document-hierarchy-prewrite-history.mjs";
+import { prepareCommittedDocumentHistory, verifyCommittedDocumentHistory } from "./document-write-history.mjs";
+import { addDocumentHierarchyWriteHistory } from "./document-hierarchy-write-history.mjs";
 import { isStructuredMemoryDocumentId, memoryProjectionMarkdownToHtml } from "../structured-memory-store.js";
 
 const normalizeForCompare = (value) => {
@@ -3444,12 +3444,41 @@ const ffprobePrefixArgs = () => {
   }
 };
 
+const windowsFfmpegCandidates = (executableName) => {
+  if (process.platform !== "win32") return [];
+  const candidates = [];
+  const localAppData = String(process.env.LOCALAPPDATA || "").trim();
+  const packageRoot = localAppData ? join(localAppData, "Microsoft", "WinGet", "Packages") : "";
+  if (packageRoot) {
+    try {
+      const packageDirs = readdirSync(packageRoot, { withFileTypes: true })
+        .filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && /ffmpeg/i.test(entry.name))
+        .map((entry) => join(packageRoot, entry.name));
+      for (const packageDir of packageDirs) {
+        candidates.push(join(packageDir, "bin", executableName));
+        for (const child of readdirSync(packageDir, { withFileTypes: true })) {
+          if (child.isDirectory()) candidates.push(join(packageDir, child.name, "bin", executableName));
+        }
+      }
+    } catch {
+      // A missing or inaccessible package directory falls through to PATH.
+    }
+    candidates.push(join(localAppData, "Microsoft", "WinGet", "Links", executableName));
+  }
+  candidates.push(
+    join(String(process.env.ProgramData || "C:\\ProgramData"), "chocolatey", "bin", executableName),
+    join(String(process.env.ProgramFiles || "C:\\Program Files"), "ffmpeg", "bin", executableName),
+  );
+  return candidates;
+};
+
 const bundledFfprobePath = (appRoot = process.cwd()) => {
   const executableName = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
   const candidates = [
     join(dirname(dirname(process.execPath)), "resources", "ffmpeg", executableName),
     join(dirname(process.execPath), "resources", "ffmpeg", executableName),
     join(resolve(appRoot), "resources", "ffmpeg", executableName),
+    ...windowsFfmpegCandidates(executableName),
   ];
   return candidates.find((candidate) => existsSync(candidate)) || "";
 };
@@ -3468,6 +3497,7 @@ const bundledFfmpegPath = (appRoot = process.cwd()) => {
     join(dirname(dirname(process.execPath)), "resources", "ffmpeg", executableName),
     join(dirname(process.execPath), "resources", "ffmpeg", executableName),
     join(resolve(appRoot), "resources", "ffmpeg", executableName),
+    ...windowsFfmpegCandidates(executableName),
   ];
   return candidates.find((candidate) => existsSync(candidate)) || "";
 };
@@ -4852,6 +4882,17 @@ const hydrateCurrentDocumentsFromWorkspace = async ({ workspaceRoot, documents =
 const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocumentIds = null, transactionRollback = false }) => {
   const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
   const safeState = scrubConfidentialMetadata(state ?? {});
+  safeState.moduleItems = Object.fromEntries(Object.entries(safeState.moduleItems ?? {}).map(([moduleId, items]) => [
+    moduleId,
+    (Array.isArray(items) ? items : []).map((item) => {
+      if (Array.isArray(item)) return item;
+      if (Array.isArray(item?.value)) return item.value;
+      const documentId = String(item?.id || item?.documentId || "").trim();
+      if (!documentId) return null;
+      const options = item?.options && typeof item.options === "object" ? item.options : {};
+      return [documentId, String(item?.label || item?.title || item?.name || safeState.documents?.[documentId]?.title || documentId), options];
+    }).filter(Boolean),
+  ]));
   for (const [documentId, documentState] of Object.entries(safeState.documents ?? {})) {
     if (!sequencedDocumentKind(documentId) || !documentState) continue;
     const importedStateUnchangedBeforeTitleNormalization = Boolean(
@@ -5419,7 +5460,7 @@ const workspaceStateConflict = (message = "作品已在另一个窗口或任务�
   statusCode: 409,
 });
 
-export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expectedStateStamp = "", workspaceLockToken = "", operationDocumentIds = null, operationVerification = null }) => {
+export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expectedStateStamp = "", workspaceLockToken = "", operationDocumentIds = null, operationVerification = null, historyOperations = [], historySource = "" }) => {
   const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
   return enqueueWorkspaceWrite(workspaceRoot, async () => {
     // A stale window may queue a save with the pre-rename path. Resolve the
@@ -5435,6 +5476,8 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
         workspaceLockToken,
         operationDocumentIds,
         operationVerification,
+        historyOperations,
+        historySource,
       });
     }
     return withWorkspaceFileLock(workspaceRoot, async () => {
@@ -5474,31 +5517,53 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
     const transactionId = `tx-${new Date().toISOString().replace(/[-:.TZ]/g, "")}-${randomUUID()}`;
     const transactionRoot = join(resolveWorkspaceInternalRoot(workspaceRoot), "transactions", transactionId);
     const journalPath = join(transactionRoot, "journal.json");
-    const desiredState = transactionStatePayload(requestedState);
+    let desiredState = transactionStatePayload(requestedState);
     const rollbackState = await readWorkspaceStateForRollback(workspaceRoot);
     const previousManifest = await readJsonIfExists(join(resolveWorkspaceInternalRoot(workspaceRoot), "manifest.json"));
     const changedDocumentIds = Object.entries(desiredState.documents || {}).filter(([id, document]) => {
-      if (!rollbackState?.documents?.[id] || document?.kind === "canvas" || document?.documentKind === "whiteboard" || (dirtyDocumentIds && !dirtyDocumentIds.has(id))) return false;
+      if (!rollbackState || document?.kind === "canvas" || document?.documentKind === "whiteboard" || (dirtyDocumentIds && !dirtyDocumentIds.has(id))) return false;
       const previous = previousManifest?.manifest?.[id];
-      return previous && hashText(serializedWorkspaceDocument({ id, documentState: document, workspaceKind: desiredState.workspaceKind })) !== previous.hash;
+      const nextHash = hashText(serializedWorkspaceDocument({ id, documentState: document, workspaceKind: desiredState.workspaceKind }));
+      return !previous || nextHash !== previous.hash;
     }).map(([id]) => id);
-    // Every save lane, including manual UI saves, receives the same hierarchy
-    // before-image policy as the Agent document transaction. The existing
-    // document-level prewrite receipts remain the hard write gate below.
-    if (changedDocumentIds.length) {
-      addDocumentHierarchyPrewriteHistory({
-        beforeState: rollbackState,
-        nextState: desiredState,
-        operations: changedDocumentIds.map((documentId) => ({ targetDocumentId: documentId })),
-        reason: "保存修改前的层级历史快照",
-      });
+    const normalizedHistoryOperations = changedDocumentIds.map((documentId) => (
+      historyOperations.find((operation) => String(operation?.targetDocumentId || operation?.documentId || "") === documentId)
+      || { targetDocumentId: documentId, type: "write" }
+    ));
+    const committedHistory = await prepareCommittedDocumentHistory({
+      currentState: rollbackState,
+      nextState: requestedState,
+      changedDocumentIds,
+      transactionId,
+      operations: normalizedHistoryOperations,
+      source: historySource,
+    });
+    for (const operation of normalizedHistoryOperations) {
+      const operationId = String(operation?.operationId || "");
+      const documentId = String(operation?.targetDocumentId || operation?.documentId || "");
+      const versionId = committedHistory.find((receipt) => receipt.documentId === documentId)?.versionId || "";
+      if (operationId && versionId && requestedState.documentTransactionLog?.[operationId]) {
+        requestedState.documentTransactionLog[operationId].versionId = versionId;
+      }
     }
-    const prewriteHistory = await prepareFullPrewriteHistory({ currentState: rollbackState, nextState: desiredState, changedDocumentIds, transactionId });
-    if (rollbackState && prewriteHistory.length) {
-      // Preserve these before-images even if the write must roll back.
-      rollbackState.histories ??= {};
-      for (const { documentId } of prewriteHistory) rollbackState.histories[documentId] = desiredState.histories[documentId];
-    }
+    const hierarchyHistory = changedDocumentIds.length > 1
+      ? addDocumentHierarchyWriteHistory({
+        state: requestedState,
+        previousState: rollbackState,
+        documentIds: changedDocumentIds,
+        operations: normalizedHistoryOperations,
+        reason: "文档与当前层级同步写入后的完整版本",
+      })
+      : null;
+    desiredState = transactionStatePayload(requestedState);
+    const historyUpdates = {
+      histories: Object.fromEntries(committedHistory.map(({ documentId }) => [documentId, desiredState.histories?.[documentId] || []])),
+      ...(hierarchyHistory?.type === "view" ? { viewHistories: { [hierarchyHistory.id]: desiredState.viewHistories?.[hierarchyHistory.id] || [] } } : {}),
+      ...(hierarchyHistory?.type === "volume" ? { volumeHistories: { [hierarchyHistory.id]: desiredState.volumeHistories?.[hierarchyHistory.id] || [] } } : {}),
+      ...(hierarchyHistory?.type === "module" ? { moduleHistories: { [hierarchyHistory.id]: desiredState.moduleHistories?.[hierarchyHistory.id] || [] } } : {}),
+      ...(hierarchyHistory?.type === "project" ? { projectHistories: desiredState.projectHistories || [] } : {}),
+      clearedCurrentDocumentIds: committedHistory.map(({ documentId }) => documentId),
+    };
     const verifiedResult = async (result) => {
       const committedAt = new Date().toISOString();
       const batchLandingReceipt = await verifyCommittedWorkspaceDocuments({
@@ -5512,7 +5577,11 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
         operationVerification,
         committedAt,
       });
-      return { ...result, batchLandingReceipt, prewriteHistory, verificationStatus: "passed", verifiedAt: committedAt };
+      if (committedHistory.length) {
+        const savedHistory = await loadIsolatedHistoryState(join(resolveWorkspaceInternalRoot(workspaceRoot), "history-isolated"));
+        await verifyCommittedDocumentHistory({ histories: savedHistory?.histories, receipts: committedHistory });
+      }
+      return { ...result, batchLandingReceipt, committedHistory, hierarchyHistory, historyUpdates, verificationStatus: "passed", verifiedAt: committedAt };
     };
     await validateWorkspaceSavePreconditions({ workspaceRoot, state: desiredState, dirtyDocumentIds });
     await mkdir(transactionRoot, { recursive: true });
@@ -5532,14 +5601,6 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
       snapshotFormat: "gzip-json",
     };
     await atomicWrite(journalPath, JSON.stringify(journal, null, 2));
-    if (prewriteHistory.length) {
-      const historyRoot = join(resolveWorkspaceInternalRoot(workspaceRoot), "history-isolated");
-      maybeInjectWorkspaceTestFault("before-prewrite-history");
-      await saveIsolatedHistoryState({ historyRoot, isolatedState: rollbackState });
-      const savedHistory = await loadIsolatedHistoryState(historyRoot);
-      await verifyFullPrewriteHistory({ histories: savedHistory?.histories, receipts: prewriteHistory });
-      maybeInjectWorkspaceTestFault("after-prewrite-history");
-    }
     await atomicWrite(journalPath, JSON.stringify({ ...journal, status: "applying", applyingAt: new Date().toISOString() }, null, 2));
     maybeInjectWorkspaceTestFault("after-journal-applying");
     try {

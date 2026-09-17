@@ -260,6 +260,13 @@ try {
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='保留悬念，重点比较视角';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentAnswers.length === 1", "自由回答");
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "候选分支保留");
+  const choiceResultOrder = await evaluate(`(() => {
+    const nodes=[...document.querySelectorAll('#chatFeed [data-message]')];
+    const answer=nodes.findIndex((item)=>item.textContent.includes('保留悬念，重点比较视角'));
+    const task=nodes.findIndex((item)=>item.querySelector('[data-native-task-card]'));
+    return {answer,task};
+  })()`);
+  assert.ok(choiceResultOrder.answer >= 0 && choiceResultOrder.task > choiceResultOrder.answer, "选择确认后任务卡和结果必须位于用户答案之后");
   const integratedTaskCard = await evaluate(`(() => {
     const card = document.querySelector('[data-native-task-card]');
     return { text: card?.textContent || '', legacyCardCount: document.querySelectorAll('.native-agent-task-card').length, readoutCount: card?.querySelectorAll('.native-agent-reads').length || 0 };

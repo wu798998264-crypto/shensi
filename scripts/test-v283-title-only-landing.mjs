@@ -95,11 +95,12 @@ const receipt = await commitDocumentWriteTransaction({
   nextDocument: { ...before, title: "影渠" },
 });
 assert.equal(receipt.verified, true);
-assert.equal(transaction.snapshot.document.html, before.html, "改标题前的完整正文必须进入历史快照");
+assert.equal(transaction.snapshot, undefined, "改标题预检不应生成写入前可见历史快照");
+assert.equal(transaction.beforeDocument.html, before.html, "事务回滚副本必须保留原正文");
 assert.equal(transaction.beforeBody, before.html);
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(appSource, /forceDocumentVersions:\s*titleOnlyWrite/u, "单独落盘标题必须强制保存独立历史版本，不能因正文相同而去重");
-assert.match(appSource, /documentReason:\s*titleOnlyWrite\s*\?[\s\S]{0,180}标题落盘前的完整文档/u);
+assert.match(appSource, /神思标题写入后的完整文档/u);
 
 console.log("Title-only formal landing tests passed");

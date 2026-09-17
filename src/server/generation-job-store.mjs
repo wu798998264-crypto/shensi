@@ -346,12 +346,7 @@ export const publicGenerationJob = (job) => {
   delete safe.replacementReservationOwnerPid;
   delete safe.replacementSourceReservationId;
   const serverMedia = safe.mode === "server" && ["image", "video"].includes(safe.channel);
-  const providerTerminalFailure = safe.status === "failed"
-    && safe.providerStatus === "failed"
-    && Boolean(safe.providerTaskId)
-    && !safe.billingRisk;
   const terminal = ["complete", "cancelled", "superseded"].includes(safe.status)
-    || providerTerminalFailure
     || Boolean(safe.supersededBy);
   const replacementPending = Boolean(job?.replacementReservationId);
   const dreaminaCliMedia = ["image", "video"].includes(safe.channel)
@@ -379,10 +374,10 @@ export const publicGenerationJob = (job) => {
   safe.availableActions = serverMedia ? {
     stop: !terminal && !replacementPending && !safe.userStopped && safe.desiredAction !== "cancel",
     cancel: !terminal && !replacementPending && !safe.userStopped && safe.desiredAction !== "cancel",
-    resumeOriginal: !terminal && !replacementPending && safe.desiredAction !== "cancel" && Boolean(safe.providerTaskId) && (MEDIA_RESUMABLE_STATUSES.has(safe.status) || safe.status === "cancel_requested"),
+    resumeOriginal: !terminal && !replacementPending && safe.desiredAction !== "cancel" && Boolean(safe.providerTaskId) && !(safe.status === "failed" && safe.providerStatus === "failed") && (MEDIA_RESUMABLE_STATUSES.has(safe.status) || safe.status === "cancel_requested"),
     continueCancel: false,
     safeResubmit: safeNoTaskResubmit,
-    confirmedResubmit: !safe.userStopped && !safeNoTaskResubmit && !automaticRecoveryInProgress && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && MEDIA_RESUMABLE_STATUSES.has(safe.status),
+    confirmedResubmit: !safe.userStopped && !safeNoTaskResubmit && !automaticRecoveryInProgress && !terminal && !replacementPending && safe.desiredAction !== "cancel" && (!safe.providerTaskId || (safe.status === "failed" && safe.providerStatus === "failed")) && Boolean(safe.idempotencyKey) && MEDIA_RESUMABLE_STATUSES.has(safe.status),
     replaceLegacy: !safe.userStopped && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && !safe.idempotencyKey && MEDIA_RESUMABLE_STATUSES.has(safe.status),
     autoReconcileProviderTask: !safe.userStopped && dreaminaCliMedia && !terminal && !replacementPending && safe.desiredAction !== "cancel" && !safe.providerTaskId && Boolean(safe.idempotencyKey) && safe.billingRisk === "submission_outcome_unknown" && MEDIA_RESUMABLE_STATUSES.has(safe.status),
     dismissUncertain: !terminal && !replacementPending && mediaGenerationJobCanBeDismissed(safe),
@@ -433,9 +428,13 @@ const normalizedTarget = (target = {}) => ({
 });
 
 const assertGenerationTarget = (target) => {
-  if (!target.workspacePath || !target.documentId) throw new Error("生成任务缺少目标工作区或文档");
+  // Conversation media is an asset of the conversation and is backed up to
+  // the workspace's all-assets directory. It does not require a document
+  // target; document/whiteboard jobs retain their stricter target checks.
+  if (!target.workspacePath) throw new Error("生成任务缺少目标工作区");
   if (target.targetType === "capability-smoke") return;
   if (target.targetType === "document-artifact") {
+    if (!target.documentId) throw new Error("正文配图任务缺少目标文档");
     if (!target.anchorId || !target.artifactId) throw new Error("生成任务缺少正文锚点或配图编号");
     return;
   }
@@ -444,9 +443,11 @@ const assertGenerationTarget = (target) => {
     return;
   }
   if (target.targetType === "composite-long-video-segment") {
+    if (!target.documentId) throw new Error("超长视频分段任务缺少目标文档");
     if (!target.nodeId || !target.artifactId) throw new Error("超长视频分段任务缺少目标卡片或生成清单编号");
     return;
   }
+  if (!target.documentId) throw new Error("生成任务缺少目标文档");
   if (!target.nodeId) throw new Error("生成任务缺少目标白板卡片");
 };
 
@@ -1411,7 +1412,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
   if (job.desiredAction === "cancel" || job.status === "cancel_requested") {
     throw jobTransitionError("此任务已经受理取消，正在等待厂商确认，不能恢复生成", "MEDIA_JOB_CANCEL_PENDING");
   }
-  if (job.providerTaskId) {
+  if (job.providerTaskId && !(job.status === "failed" && job.providerStatus === "failed")) {
     return {
       status: job.providerStatus === "completed" || job.status === "waiting_storage" ? "downloading" : "polling",
       desiredAction: "run",
@@ -1419,6 +1420,25 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
       resumeRequestId: String(requestId || ""),
       resumedAt: new Date().toISOString(),
       explicitRetryAt: "",
+      error: "",
+      retryAllowed: true,
+    };
+  }
+  if (job.status === "failed" && job.providerStatus === "failed") {
+    if (!allowNewSubmission) {
+      throw jobTransitionError("厂商已明确返回失败；重新提交前需要用户确认，不会伪装成原任务续接", "NEW_SUBMISSION_CONFIRMATION_REQUIRED");
+    }
+    return {
+      status: "queued",
+      providerStatus: "queued",
+      submissionState: "not_submitted",
+      desiredAction: "run",
+      resumeKind: "confirmed_new_submission",
+      resumeRequestId: String(requestId || ""),
+      explicitRetryAt: new Date().toISOString(),
+      resubmitConfirmedAt: new Date().toISOString(),
+      resubmitConfirmationRequired: false,
+      previousProviderTaskId: String(job.providerTaskId || ""),
       error: "",
       retryAllowed: true,
     };

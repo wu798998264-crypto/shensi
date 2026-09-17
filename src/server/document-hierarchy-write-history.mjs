@@ -15,26 +15,12 @@ const locatedDocument = (state, documentId) => {
   const moduleId = clean(document?.moduleId || located?.[0] || "library");
   const item = list(located?.[1]).find(([id]) => id === documentId) || [];
   const options = item?.[2] || {};
-  const viewId = documentWorkspaceView({ moduleId, item, documentState: document || {} });
   return {
     documentId,
     moduleId,
-    viewId,
+    viewId: documentWorkspaceView({ moduleId, item, documentState: document || {} }),
     volumeId: clean(options.customFolderId || (moduleId === "manuscript" ? options.folderId : "")) || null,
     structural: !document,
-  };
-};
-
-const targetForOperation = (state, operation = {}) => {
-  const documentId = clean(operation.targetDocumentId);
-  if (state.documents?.[documentId]) return locatedDocument(state, documentId);
-  const moduleId = clean(operation.targetDirectoryId) || "library";
-  return {
-    documentId,
-    moduleId,
-    viewId: documentWorkspaceView({ moduleId, item: [], documentState: { moduleId } }),
-    volumeId: null,
-    structural: true,
   };
 };
 
@@ -73,50 +59,40 @@ const projectSnapshotState = (state) => ({
 });
 
 const snapshotCollection = (state, scope) => {
-  if (scope.type === "project") {
-    state.projectHistories ||= [];
-    return state.projectHistories;
-  }
-  if (scope.type === "module") {
-    state.moduleHistories ||= {};
-    state.moduleHistories[scope.id] ||= [];
-    return state.moduleHistories[scope.id];
-  }
-  if (scope.type === "view") {
-    state.viewHistories ||= {};
-    state.viewHistories[scope.id] ||= [];
-    return state.viewHistories[scope.id];
-  }
-  state.volumeHistories ||= {};
-  state.volumeHistories[scope.id] ||= [];
-  return state.volumeHistories[scope.id];
+  if (scope.type === "project") return (state.projectHistories ||= []);
+  if (scope.type === "module") return (state.moduleHistories ||= {}, state.moduleHistories[scope.id] ||= []);
+  if (scope.type === "view") return (state.viewHistories ||= {}, state.viewHistories[scope.id] ||= []);
+  return (state.volumeHistories ||= {}, state.volumeHistories[scope.id] ||= []);
 };
 
-export const addDocumentHierarchyPrewriteHistory = ({ beforeState, nextState, operations = [], reason = "Agent 正式写入前" } = {}) => {
-  if (!beforeState || !nextState) return null;
-  const targets = list(operations).map((operation) => targetForOperation(beforeState, operation));
+export const addDocumentHierarchyWriteHistory = ({ state, previousState = null, documentIds = [], operations = [], reason = "文档写入后的层级版本" } = {}) => {
+  if (!state) return null;
+  const targets = [...new Set(list(documentIds).map(String))]
+    .filter((documentId) => state.documents?.[documentId])
+    .map((documentId) => locatedDocument(state, documentId));
   const scope = resolveHistoryTaskScope(targets);
   if (!scope || scope.type === "document") return scope;
-  const collection = snapshotCollection(nextState, scope);
+
+  const collection = snapshotCollection(state, scope);
   const now = new Date().toISOString();
-  const scopeItems = scope.type === "project" ? [] : itemsForScope(beforeState, scope);
+  const scopeItems = scope.type === "project" ? [] : itemsForScope(state, scope);
   const documents = scope.type === "project"
-    ? clone(beforeState.documents || {})
-    : Object.fromEntries(scopeItems.filter(([id]) => beforeState.documents?.[id]).map(([id]) => [id, clone(beforeState.documents[id])]));
-  const label = scope.type === "project" ? beforeState.projectName || "作品"
+    ? clone(state.documents || {})
+    : Object.fromEntries(scopeItems.filter(([id]) => state.documents?.[id]).map(([id]) => [id, clone(state.documents[id])]));
+  const label = scope.type === "project" ? state.projectName || "作品"
     : scope.type === "module" ? scope.id
       : scope.type === "view" ? scope.viewId || scope.id
-        : list(beforeState.customFolders).find((folder) => folder.id === scope.id)?.label || scope.id;
+        : list(state.customFolders).find((folder) => folder.id === scope.id)?.label || scope.id;
   const entry = stampHistoryEntryIntegrity({
-    id: `prewrite-${scope.type}-${randomUUID()}`,
+    id: `write-${scope.type}-${randomUUID()}`,
     title: historyVersionTitle({ documents, fallbackLabel: label, reason, operations }),
     version: `${scope.type === "project" ? "作品" : scope.type === "module" ? "模块" : scope.type === "view" ? "分类" : "卷"}快照 ${collection.length + 1}`,
     time: now,
     createdAt: now,
     documents,
-    ...(scope.type === "project" ? { state: projectSnapshotState(beforeState) } : {
+    ...(scope.type === "project" ? { state: projectSnapshotState(state) } : {
       moduleItems: { [scope.moduleId || scope.id]: clone(scopeItems) },
-      customFolders: clone(list(beforeState.customFolders).filter((folder) => {
+      customFolders: clone(list(state.customFolders).filter((folder) => {
         if (scope.type === "module") return folder.moduleId === scope.id;
         if (scope.type === "view") return folder.moduleId === scope.moduleId && folder.viewId === scope.viewId;
         return folder.id === scope.id || folder.parentFolderId === scope.id;
@@ -126,10 +102,21 @@ export const addDocumentHierarchyPrewriteHistory = ({ beforeState, nextState, op
     scopeId: scope.id,
     moduleId: scope.moduleId,
     viewId: scope.viewId,
-    transactionType: "document_prewrite",
+    transactionType: "document_write",
+    committedWriteSnapshot: true,
   }, { reason, operations, source: "agent", parentVersionId: collection[0]?.id || "" });
   const integrity = verifyHistoryEntryIntegrity(entry);
-  if (!integrity.ok) throw Object.assign(new Error(integrity.reason || "文档层级历史版本校验失败"), { code: integrity.code || "DOCUMENT_HIERARCHY_HISTORY_UNVERIFIED" });
+  if (!integrity.ok) throw Object.assign(new Error(integrity.reason || "文档层级写入版本校验失败"), { code: integrity.code || "DOCUMENT_HIERARCHY_HISTORY_UNVERIFIED" });
+  const previousIds = new Set(previousState ? snapshotCollection(previousState, scope).map((version) => String(version?.id || "")) : []);
+  const requested = collection.find((version) => !previousIds.has(String(version?.id || ""))
+    && version?.scopeType === entry.scopeType
+    && version?.scopeId === entry.scopeId
+    && version?.contentHash === entry.contentHash);
+  if (requested) {
+    requested.committedWriteSnapshot = true;
+    requested.transactionType = "document_write";
+    return { ...scope, versionId: requested.id };
+  }
   collection.unshift(entry);
   return { ...scope, versionId: entry.id };
 };

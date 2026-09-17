@@ -5,7 +5,7 @@ import {
   commitDocumentWriteTransaction,
   rollbackDocumentWriteTransaction,
 } from "../src/document-write-transaction.js";
-import { documentVersionHash, verifyDocumentVersionSnapshot } from "../src/version-integrity.js";
+import { documentVersionHash } from "../src/version-integrity.js";
 import { automaticLandingDecision } from "../src/automatic-landing-policy.js";
 import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
 import { bindFormalWriteCandidate, createFormalWriteAuthorization } from "../src/formal-write-authorization.js";
@@ -52,7 +52,8 @@ const transaction = await beginDocumentWriteTransaction({
   sourceInstruction: appendInstruction,
   expectedDocumentHash: await documentVersionHash(original),
 });
-assert.equal((await verifyDocumentVersionSnapshot(transaction.snapshot)).ok, true);
+assert.equal(transaction.snapshot, undefined, "写入前不再创建可见历史快照");
+assert.equal(transaction.beforeDocument.markdown, original.markdown);
 assert.deepEqual(rollbackDocumentWriteTransaction(transaction), original);
 
 const appended = { ...original, html: `${original.html}<p>续写第二段。</p>` };

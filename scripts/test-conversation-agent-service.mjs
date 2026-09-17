@@ -27,10 +27,11 @@ try {
   doc = await call('read', { documentId: 'agent-note' });
   await call('write', { operation: 'replace', documentId: 'agent-note', content: '完整覆盖后的正文。', expectedRevision: doc.revision, operationId: 'replace-one' });
   const saved = await loadWorkspaceState({ appRoot: root, requestedPath: workspacePath });
-  assert.equal(saved.state.histories['agent-note'].length, 3);
-  assert.match(saved.state.histories['agent-note'][0].content, /局部修订/u, '覆盖前必须保存完整正文');
-  assert.match(saved.state.histories['agent-note'][1].content, /真实初稿[\s\S]*追加的新段落/u, '局部替换前必须保存完整正文');
-  assert.equal(saved.state.histories['agent-note'][2].content, '这是一段真实初稿。', '续写/追加前必须保存完整正文');
+  assert.equal(saved.state.histories['agent-note'].length, 4);
+  assert.equal(saved.state.histories['agent-note'][0].content, '完整覆盖后的正文。', '全文写入结果必须成为最新历史版本');
+  assert.match(saved.state.histories['agent-note'][1].content, /局部修订[\s\S]*追加的新段落/u, '局部替换写入结果必须成为历史版本');
+  assert.match(saved.state.histories['agent-note'][2].content, /真实初稿[\s\S]*追加的新段落/u, '续写写入结果必须成为历史版本');
+  assert.equal(saved.state.histories['agent-note'][3].content, '这是一段真实初稿。', '新建写入结果必须成为初始历史版本');
   assert.equal(saved.state.documents['agent-note'].markdown, '完整覆盖后的正文。');
 
   const skillReads = [];

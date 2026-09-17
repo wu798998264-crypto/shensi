@@ -7,15 +7,13 @@ export const historyMetadata = (entry = {}) => Object.fromEntries(
   Object.entries(entry).filter(([key]) => !PAYLOAD_KEYS.has(key)),
 );
 
-export const prepareHistoryRestore = ({ entries = [], selectedId, preservedCurrent }) => {
+export const prepareHistoryRestore = ({ entries = [], selectedId }) => {
   const index = entries.findIndex((entry) => entry.id === selectedId);
-  if (index < 0 || !preservedCurrent) return null;
+  if (index < 0) return null;
   const selected = structuredClone(entries[index]);
-  const preserved = structuredClone(preservedCurrent);
   return {
-    entries: [preserved, ...structuredClone(entries)],
+    entries: structuredClone(entries),
     selected,
-    preserved,
     index,
   };
 };

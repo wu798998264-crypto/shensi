@@ -74,6 +74,11 @@ const MEDIA_RECOVERY_BLOCKING_STATUSES = new Set([
   "failed",
 ]);
 
+const mediaFailureOutcomeIsUncertain = (job = {}) => {
+  if (String(job?.status || "") !== "failed") return false;
+  return String(job?.billingRisk || "") === "submission_outcome_unknown";
+};
+
 export const mediaGenerationResultSuppressed = (job = {}) => {
   const current = job && typeof job === "object" ? job : {};
   return Boolean(
@@ -144,6 +149,11 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   // provider credential lock.
   if (status === "complete") return false;
   if (!MEDIA_RECOVERY_BLOCKING_STATUSES.has(status)) return false;
+  // A definitive provider failure may remain visible on its originating card
+  // with a retry action, but it is terminal for the provider lock and must not
+  // pollute the blocking queue. Only an unknown submission outcome remains a
+  // recovery concern.
+  if (status === "failed" && !mediaFailureOutcomeIsUncertain(job)) return false;
   if (whiteboardTarget && whiteboardMediaJobHoldsCard(job)) return true;
   return job.availableActions?.dismissUncertain === true;
 };

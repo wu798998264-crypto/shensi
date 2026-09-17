@@ -18,6 +18,31 @@ const redactedErrorMessage = (error, apiKey = "") => String(error?.message || er
   .replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
 const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
+// Models occasionally restate the same decision with different wording after
+// receiving an answer. Keep this guard scoped to one Agent run: it is only a
+// continuation aid and never participates in task routing or skill selection.
+const choiceQuestionTokens = (value = "") => {
+  const text = String(value || "")
+    .toLocaleLowerCase()
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .replace(/(?:请选择|请你|希望|想要|应采取|作为|唯一|主线|方向|态度|哪一种|哪个|哪些|什么|这篇|文章|本轮|本次|三个|两个|不混写)/gu, "");
+  const tokens = new Set();
+  for (let index = 0; index < text.length - 1; index += 1) tokens.add(text.slice(index, index + 2));
+  return tokens;
+};
+
+export const choiceQuestionSimilarity = (left = {}, right = {}) => {
+  const leftKey = String(left?.metadata?.dedupeKey || "").trim();
+  const rightKey = String(right?.metadata?.dedupeKey || "").trim();
+  if (leftKey && rightKey) return leftKey === rightKey ? 1 : 0;
+  const leftTokens = choiceQuestionTokens(left.question);
+  const rightTokens = choiceQuestionTokens(right.question);
+  if (!leftTokens.size || !rightTokens.size) return 0;
+  let overlap = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) overlap += 1;
+  return overlap / Math.min(leftTokens.size, rightTokens.size);
+};
+
 const normalizedChoiceDecision = ({ id, question, options = [], multiple = false, presentation = "", metadata = null } = {}) => {
   const prompt = String(question || "").trim();
   if (!prompt) throw new Error("问题不能为空");
@@ -141,7 +166,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     }
     const recoveredInterruptedRun = !terminal(record.status);
     if (recoveredInterruptedRun) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
-    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
+    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [] };
     runs.set(id, entry);
     if (recoveredInterruptedRun) await persist(entry);
     return entry;
@@ -183,12 +208,33 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
             }
           : normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
         if (!decision.question) throw new Error("问题不能为空");
+        const prior = kind === "agent_permission"
+          ? null
+          : (entry.choiceAnswers || []).find((item) => choiceQuestionSimilarity(item.decision, decision) >= 0.58);
+        if (prior) {
+          await event(entry, "answer_reused", {
+            decisionId: decision.id,
+            sourceDecisionId: prior.decision.id,
+            answer: prior.answer,
+            reason: "同一运行内已回答过语义相同的选择问题",
+          });
+          return {
+            answer: prior.answer,
+            instruction: prior.answer,
+            userInstruction: prior.answer,
+            continueOriginalTask: true,
+          };
+        }
         const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));
         void answer.catch(() => {});
         record.status = "waiting_input";
         await event(entry, "question", decision);
         const value = await answer;
         record.status = "running";
+        if (kind !== "agent_permission") {
+          entry.choiceAnswers ??= [];
+          entry.choiceAnswers.push({ decision, answer: value });
+        }
         await event(entry, "answer", { decisionId: decision.id, answer: value });
         return {
           answer: value,
@@ -227,7 +273,11 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           result = { ...result, text: previousText };
         }
       }
-      for (let attempt = 0; attempt < 1 && tools.deliveryStatus; attempt++) {
+      // Give the Agent a bounded pair of delivery-repair attempts. The first
+      // pass can correct a missing declaration; the second can complete a
+      // failed media/document tool call. A hard cap prevents silent infinite
+      // retries while still allowing the normal correction loop to finish.
+      for (let attempt = 0; attempt < 2 && tools.deliveryStatus; attempt++) {
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;
         await event(entry, "progress", { message: "Agent 正在核对并完成交付" });
@@ -251,10 +301,16 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         ...(finalDelivery?.missing || []).map((item) => `未完成：${item}`),
         ...(finalDelivery?.failed || []).map((item) => `执行失败：${item}`),
       ])];
+      const deliveryFailures = [...new Set([
+        ...(finalDelivery?.missing || []).map((item) => `未完成：${item}`),
+        ...(finalDelivery?.failed || []).map((item) => `执行失败：${item}`),
+      ])];
       if (deliveryWarnings.length) {
         record.deliveryWarnings = deliveryWarnings;
         await event(entry, "delivery_warning", {
-          message: "结果已保留并正常交付；以下验收项未完成，不影响查看本次结果。",
+          message: deliveryFailures.length
+            ? "结果正文已保留，但本轮交付未完成；请根据真实错误处理后重试。"
+            : "结果已保留并正常交付；以下验收项存在提示，不影响查看本次结果。",
           warnings: deliveryWarnings,
           delivery: finalDelivery,
         });
@@ -263,9 +319,21 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       await flushText();
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");
-      record.status = "completed";
+      if (deliveryFailures.length) {
+        record.status = "failed";
+        record.error = deliveryFailures.join("；");
+        await event(entry, "failed", {
+          message: record.error,
+          warnings: record.deliveryWarnings || [],
+          delivery: finalDelivery,
+        });
+      } else {
+        record.status = "completed";
+      }
       record.pendingSupplements = entry.supplements.splice(0);
-      await event(entry, "completed", { text: record.text, runtime: record.runtime, candidates: record.candidates || [], warnings: record.deliveryWarnings || [] });
+      if (record.status === "completed") {
+        await event(entry, "completed", { text: record.text, runtime: record.runtime, candidates: record.candidates || [], warnings: record.deliveryWarnings || [] });
+      }
     } catch (error) {
       record.status = controller.signal.aborted ? "cancelled" : "failed";
       record.error = redactedErrorMessage(error, request.settings.apiKey);
@@ -296,7 +364,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       try { existing = await get(id); } catch (error) { lanes.delete(key); throw error; }
       if (existing) { lanes.delete(key); return { id, status: existing.record.status, reused: true }; }
       const permissionContract = permissionContractFor(request.settings.agentPermissionMode, { runner: request.settings.agentEngine, taskId: id });
-      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", permissionContract, request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map() };
+      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", permissionContract, request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [] };
       lanes.set(key, id); runs.set(id, entry);
       try { await persist(entry); } catch (error) { lanes.delete(key); runs.delete(id); throw error; }
       entry.task = execute(entry, request);

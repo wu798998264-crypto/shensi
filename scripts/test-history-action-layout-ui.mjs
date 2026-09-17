@@ -90,7 +90,7 @@ try {
     const fixture = document.createElement('article');
     fixture.className = 'history-item';
     fixture.style.cssText = 'position:fixed;left:20px;top:20px;width:272px;z-index:999999;background:var(--surface,#fff);border:1px solid var(--border,#ddd)';
-    fixture.innerHTML = '<strong>修改前完整版本</strong><div><span>v1 · 2026-09-15</span><span class="history-actions"><button type="button">设为当前</button><button class="icon-button bare tiny" type="button">✎</button><button class="icon-button bare tiny" type="button">□</button><button class="icon-button bare tiny" type="button">×</button></span></div>';
+    fixture.innerHTML = '<strong>写入结果完整版本</strong><div><span>v1 · 2026-09-15</span><span class="history-actions"><button type="button">设为当前</button><button class="icon-button bare tiny" type="button">✎</button><button class="icon-button bare tiny" type="button">□</button><button class="icon-button bare tiny" type="button">×</button></span></div>';
     document.body.append(fixture);
     const row = fixture.querySelector(':scope > div');
     const actions = fixture.querySelector('.history-actions');

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import { compileManagedRouteBundle, filterAgentSkillCatalog } from "../src/managed-route-document.js";
 import { createBlankNotebookState } from "../src/data.js";
+import { addDocumentHierarchyWriteHistory } from "../src/server/document-hierarchy-write-history.mjs";
 import { loadWorkspaceState, saveWorkspaceState } from "../src/server/workspace.mjs";
 
 const topology = {
@@ -56,13 +57,23 @@ try {
   next.documents.noteA.html = "<p>新稿A</p>";
   next.documents.noteB.markdown = "新稿B";
   next.documents.noteB.html = "<p>新稿B</p>";
+  const clientHierarchy = addDocumentHierarchyWriteHistory({
+    state: next,
+    previousState: loaded.state,
+    documentIds: ["noteA", "noteB"],
+    operations: [{ targetDocumentId: "noteA", type: "replace" }, { targetDocumentId: "noteB", type: "replace" }],
+  });
   const saved = await saveWorkspaceState({ ...options, state: next, expectedStateStamp: loaded.stateStamp });
-  assert.equal(saved.prewriteHistory.length, 2);
+  assert.equal(saved.committedHistory.length, 2);
   const after = (await loadWorkspaceState(options)).state;
-  assert.ok(after.histories.noteA?.[0]?.fullPrewriteSnapshot);
-  assert.ok(after.histories.noteB?.[0]?.fullPrewriteSnapshot);
-  assert.ok(after.viewHistories?.["library:default"]?.length || after.moduleHistories?.library?.length || after.projectHistories?.length, "多目标保存必须留下层级快照");
+  assert.equal(after.histories.noteA?.[0]?.committedWriteSnapshot, true);
+  assert.equal(after.histories.noteB?.[0]?.committedWriteSnapshot, true);
+  assert.equal(after.histories.noteA?.[0]?.document?.markdown, "新稿A");
+  assert.equal(after.histories.noteB?.[0]?.document?.markdown, "新稿B");
+  const hierarchyEntries = after.viewHistories?.["library:default"] || after.moduleHistories?.library || after.projectHistories || [];
+  assert.equal(hierarchyEntries.length, 1, "同一批写入的前端与服务端层级版本必须合并为一条");
+  assert.equal(hierarchyEntries[0].id, clientHierarchy.versionId);
 } finally {
   await rm(root, { recursive: true, force: true });
 }
-console.log("Managed route document, panel boundary and hierarchy prewrite history tests passed");
+console.log("Managed route document, panel boundary and hierarchy committed history tests passed");

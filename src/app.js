@@ -27,7 +27,6 @@ import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isA
 import { historyMetadata, prepareHistoryRestore } from "./history-exchange.js";
 import { historyVersionTitle } from "./history-title.js";
 import { resolveHistoryTaskScope, workspaceWideHistoryIntent } from "./history-task-scope.js";
-import { agentHistoryTargetsForFiles } from "./agent-history-scope.js";
 import { attachmentPreviewCanPan, attachmentPreviewTransform, clampAttachmentPreviewPan } from "./attachment-preview-pan.js";
 import { createEditedImageDownstream, createImageCardEditor } from "./image-card-editor.js";
 import {
@@ -208,7 +207,7 @@ import { formalDocumentWriteRevision, formalDocumentWriteRevisionFromState } fro
 import { liveWriteTargetDecision } from "./live-write-target-policy.js";
 import { supplementRequestsLatestDocument } from "./supplement-policy.js";
 import { manualMemorySyncDelay, memorySyncRevisionIsCurrent } from "./memory-sync-scheduler.js";
-import { createBlankDocumentBaseline, documentContentState, hasSubstantiveVersionContent } from "./version-store.js";
+import { documentContentState, hasSubstantiveVersionContent } from "./version-store.js";
 import { historyOperationLabel, historySourceLabel, normalizeHistoryEntryIntegrity, stampHistoryEntryIntegrity, updateHistoryEntryMetadata, verifyHistoryEntryIntegrity } from "./version-integrity.js";
 import { resolveWorkspaceLandingScope } from "./workspace-scope-policy.js";
 import { creativeGuidanceDepthPrompt } from "./pending-decision-policy.js";
@@ -217,7 +216,6 @@ import { noteToolbarControlFullyVisible, noteToolbarControlKey, noteToolbarDupli
 import { stripInternalAssistantProtocol } from "./assistant-visible-content.js";
 import { modelPickerDisplayName } from "./public-model-catalog.js?v=5.4.10-performance";
 import { classifyPublicTextCapabilityFailure, describePublicTextCapabilityFailure, publicTextFailureIsRequestSpecific } from "./public-text-capability-evidence.js";
-import { generatedLandingHistoryDocumentIds } from "./generated-landing-history.js";
 import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFragment, proseParagraphs, stripMatchingLeadingHeadingHtml } from "./prose-format.js";
 import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfileFromExecution } from "./agent-runtime-profile.js";
 import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
@@ -1652,7 +1650,6 @@ let ui = {
     pendingMessageId: "",
     trace: [],
     diff: "",
-    historySnapshotTurns: new Set(),
     documentDirectory: "",
     documentPath: "",
     documentDirectoryKey: "",
@@ -2171,6 +2168,7 @@ const archiveInlineSourceMaterialInPinnedWorkspace = async ({ workspaceState, wo
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) targetState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(targetState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind,
         workspacePath,
@@ -3118,6 +3116,22 @@ const ensureStateSchema = () => {
   );
   state.pendingInlineEdits = (state.pendingInlineEdits ?? []).filter((record) => record?.id && record?.documentId && state.documents[record.documentId]);
   state.moduleItems ??= clone(MODULE_ITEMS);
+  // Directory entries historically used [id, label, options].  Agent and
+  // workspace transactions may return object-shaped entries; normalize them
+  // once at the state boundary so every renderer and navigator shares one
+  // representation and no document disappears after reload.
+  state.moduleItems = Object.fromEntries(Object.entries(state.moduleItems).map(([moduleId, items]) => [
+    moduleId,
+    (Array.isArray(items) ? items : []).map((item) => {
+      if (Array.isArray(item)) return item;
+      if (Array.isArray(item?.value)) return item.value;
+      const id = String(item?.id || item?.documentId || "").trim();
+      if (!id) return null;
+      const options = item?.options && typeof item.options === "object" ? item.options : {};
+      const label = String(item?.label || item?.title || item?.name || state.documents?.[id]?.title || id);
+      return [id, label, options];
+    }).filter(Boolean),
+  ]));
   if (purgeObsoleteWorkspaceCompatibility(state).changed) ui.structureMigrationPending = true;
   state.authorCockpitReportOrder = Array.isArray(state.authorCockpitReportOrder) ? [...new Set(state.authorCockpitReportOrder.filter(Boolean))] : [];
   state.directoryOrders = state.directoryOrders && typeof state.directoryOrders === "object" && !Array.isArray(state.directoryOrders)
@@ -3489,16 +3503,18 @@ const activeViewForModule = (moduleId) => state.moduleViews?.[moduleId] ?? MODUL
 const itemWorkspaceView = (moduleId, item) => documentWorkspaceView({
   moduleId,
   item,
-  documentState: state.documents?.[item?.[0]] ?? {},
+  documentState: state.documents?.[Array.isArray(item) ? item[0] : item?.id || item?.documentId] ?? {},
 });
 const itemsForModuleView = (moduleId, viewId = activeViewForModule(moduleId)) => itemsForModule(moduleId).filter((item) => itemWorkspaceView(moduleId, item) === viewId);
-const documentItem = (documentId) => Object.entries(state.moduleItems ?? {}).flatMap(([moduleId, items]) => items.map((item) => ({ moduleId, item }))).find(({ item }) => item[0] === documentId) ?? null;
+const documentItem = (documentId) => Object.entries(state.moduleItems ?? {})
+  .flatMap(([moduleId, items]) => (items || []).map((item) => ({ moduleId, item })))
+  .find(({ item }) => String(Array.isArray(item) ? item[0] : item?.id || item?.documentId || "") === String(documentId)) ?? null;
 const documentContextDomain = (documentId) => normalizeContextDomain(state.documents[documentId]?.contextDomain ?? documentItem(documentId)?.item?.[2]?.contextDomain ?? "novel");
 const documentSourceMode = (documentId) => {
   const value = state.documents[documentId]?.sourceMode ?? documentItem(documentId)?.item?.[2]?.sourceMode ?? "";
   return ["original", "adaptation"].includes(value) ? value : "";
 };
-const moduleForDocument = (documentId) => MODULES.find((module) => itemsForModule(module.id).some(([id]) => id === documentId))?.id ?? "manuscript";
+const moduleForDocument = (documentId) => MODULES.find((module) => itemsForModule(module.id).some((item) => String(Array.isArray(item) ? item[0] : item?.id || item?.documentId || "") === String(documentId)))?.id ?? "manuscript";
 const rememberModuleDocument = (documentId, { moduleId = moduleForDocument(documentId), viewId = "" } = {}) => {
   if (!documentId || !state.documents[documentId]) return;
   const presentationId = presentationModuleId(moduleId);
@@ -4253,6 +4269,22 @@ const cacheWorkspaceState = ({ workspaceKind, workspacePath, workspaceState, sta
   }
 };
 
+const applyWorkspaceHistoryUpdates = (workspaceState, updates) => {
+  if (!workspaceState || !updates || typeof updates !== "object") return workspaceState;
+  workspaceState.histories ??= {};
+  for (const [documentId, entries] of Object.entries(updates.histories ?? {})) {
+    workspaceState.histories[documentId] = clone(entries);
+  }
+  workspaceState.viewHistories = { ...(workspaceState.viewHistories ?? {}), ...clone(updates.viewHistories ?? {}) };
+  workspaceState.volumeHistories = { ...(workspaceState.volumeHistories ?? {}), ...clone(updates.volumeHistories ?? {}) };
+  workspaceState.moduleHistories = { ...(workspaceState.moduleHistories ?? {}), ...clone(updates.moduleHistories ?? {}) };
+  if (Array.isArray(updates.projectHistories)) workspaceState.projectHistories = clone(updates.projectHistories);
+  for (const documentId of updates.clearedCurrentDocumentIds ?? []) {
+    if (workspaceState.currentVersionMeta?.documents) delete workspaceState.currentVersionMeta.documents[documentId];
+  }
+  return workspaceState;
+};
+
 const cancelWorkspaceBaselinePreparation = ({ preserveUnavailable = false } = {}) => {
   const task = ui.workspaceBaselineTask;
   if (task) {
@@ -4902,6 +4934,7 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
       }
       if (workspaceIdentity() === identity && payload.savedAt) state.savedAt = payload.savedAt;
       if (workspaceIdentity() === identity) ui.lastWorkspaceLandingReceipt = clone(payload.batchLandingReceipt ?? null);
+      if (workspaceIdentity() === identity) applyWorkspaceHistoryUpdates(state, payload.historyUpdates);
       if (workspaceIdentity() === identity && payload.stateStamp) {
         ui.activeWorkspaceStamp = payload.stateStamp;
         const cached = ui.workspaceStateCache.get(identity);
@@ -13510,8 +13543,13 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
   if (current.status === "queued" && !providerTaskId && current.submissionState === "not_submitted") {
     const retryAt = Date.parse(current.nextPollAt || "");
     const retryIn = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
-    const prefix = capacityLimited ? uiText("即梦并发名额已满") : uiText("本地排队，尚未提交厂商");
-    return `${prefix} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    if (capacityLimited) return `${uiText("即梦并发名额已满")} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    const updatedAt = Date.parse(current.updatedAt || current.createdAt || "");
+    const submissionAge = Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : 0;
+    const submissionError = mediaGenerationErrorText(current);
+    if (submissionError && submissionAge >= 3_000) return `${uiText("提交失败")} · ${submissionError}${taskLabel}`;
+    if (retryIn > 0 && submissionAge >= 3_000) return `${uiText("提交暂未完成")} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    return `${uiText("正在提交")} · ${uiText("未收费")}${taskLabel}`;
   }
   if (current.status === "cancel_requested" && /不支持取消/i.test(String(current.error || ""))) return `${uiText("取消请求无法送达厂商，任务仍在跟踪")} · ${billingLabel}${taskLabel}`;
   const queuePosition = Number.isFinite(Number(current.providerQueuePosition)) && current.providerQueuePosition !== null
@@ -13526,7 +13564,7 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
   }
   const labels = {
     connecting: "正在连接生成服务",
-    queued: providerAccepted ? "已提交厂商，等待生成" : "本地排队，尚未提交厂商",
+    queued: providerAccepted ? "已提交厂商，等待生成" : "正在提交",
     submitting: providerAccepted ? "正在生成" : "正在连接生成服务",
     running: "正在生成",
     polling: "正在生成",
@@ -15238,7 +15276,12 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
   }
   const activeCandidate = ui.whiteboardCandidates.get(candidateKey);
   if (activeCandidate && activeCandidate.jobId !== job.id) return;
-  if (!whiteboardMediaJobHoldsCard(job)) {
+  // A terminal/attention result must remain visible on its originating card
+  // so the user can see the real error and any recovery action. Card display
+  // is deliberately independent from the provider-lock decision: definitive
+  // failures and credential/preflight failures do not hold the Dreamina slot.
+  const visibleAttentionState = ["failed", "waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"].includes(String(job.status || ""));
+  if (!whiteboardMediaJobHoldsCard(job) && !visibleAttentionState) {
     stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
     renderWhiteboardCandidateLocation({
       workspacePath: target.workspacePath,
@@ -16017,6 +16060,7 @@ const saveStandaloneNotebookDeliverable = async ({ candidate = "", target = null
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind: "notebook",
         workspacePath: entry.workspacePath,
@@ -16373,6 +16417,7 @@ const savePinnedConversationCompletion = async ({
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind,
         workspacePath: targetPath,
@@ -16574,6 +16619,7 @@ const savePinnedAgentLandingMetadata = async ({ runtime, pending, conversation, 
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind: scope.workspaceKind,
         workspacePath: scope.workspacePath,
@@ -19194,7 +19240,7 @@ const renderWorkspaceOperationPlan = (message) => {
       }).length;
       return `预计 ${count} 个文档进入回收站`;
     }
-    if (operation.type === "history.restore") return "当前版本会与所选备份交换，不新增版本";
+    if (operation.type === "history.restore") return "恢复结果写入后会自动创建为新的最新版本";
     if (operation.type === "history.delete") return "历史版本将移入回收站并保留30天";
     if (operation.type === "trash.restore") return "恢复到原结构位置；冲突时停止执行";
     if (["project.create", "notebook.create"].includes(operation.type)) {
@@ -19206,7 +19252,7 @@ const renderWorkspaceOperationPlan = (message) => {
   };
   return `<section class="workspace-operation-plan ${escapeHtml(plan.status)}">
     <header><strong>软件操作计划</strong><span>${escapeHtml(statusLabel)}</span></header>
-    <p class="workspace-operation-backup">${icon("\uE81C")}<span>修改前自动备份：${escapeHtml(backupScopeLabel(plan.backupScope))}</span></p>
+    <p class="workspace-operation-backup">${icon("\uE81C")}<span>执行成功后创建当前结果版本：${escapeHtml(backupScopeLabel(plan.backupScope))}</span></p>
     ${plan.confirmation?.reason ? `<p class="workspace-operation-confirmation" role="status">${escapeHtml(plan.confirmation.reason)}</p>` : ""}
     <ol>${plan.operations.map((operation) => `<li><span>${escapeHtml(workspaceOperationLabel(operation, (id) => state.documents[id]?.title ?? id))}</span>${impactText(operation) ? `<small>${escapeHtml(impactText(operation))}</small>` : ""}</li>`).join("")}</ol>
     ${plan.error ? `<p class="workspace-operation-error">${escapeHtml(plan.error)}</p>` : ""}
@@ -22735,52 +22781,6 @@ const setHistoryData = (scope, entries) => {
   else state.projectHistories = entries;
 };
 
-const currentHistoryEntry = (scope) => {
-  const stored = storedCurrentVersionMetadata(scope);
-  const metadata = {
-    id: uid(`${scope.type}-restore-backup`),
-    title: stored?.title ? `${stored.title}（切换前）` : "切换前的当前编辑版本",
-    version: `切换前备份 ${historyData(scope).length + 1}`,
-    time: `今天 ${nowTime()}`,
-  };
-  if (scope.type === "document") return stampHistoryEntryIntegrity({
-    ...metadata,
-    html: state.documents[scope.id]?.html ?? "",
-    document: clone(state.documents[scope.id] ?? {}),
-    continuityDelta: clone(state.documents[scope.id]?.continuityDelta ?? null),
-    scopeType: "document",
-    scopeId: scope.id,
-  }, { source: "restore", operationType: "restore", parentVersionId: historyData(scope)[0]?.id || "" });
-  if (scope.type === "view") {
-    const { moduleId, viewId, key } = viewScopeDetails(scope);
-    return stampHistoryEntryIntegrity({ ...metadata, documents: viewDocuments(moduleId, viewId), moduleItems: { [moduleId]: clone(viewItems(moduleId, viewId)) }, customFolders: clone(state.customFolders.filter((folder) => folder.moduleId === moduleId && folder.viewId === viewId)), scopeType: "view", scopeId: key, moduleId, viewId }, { source: "restore", operationType: "restore", parentVersionId: historyData(scope)[0]?.id || "" });
-  }
-  if (scope.type === "volume") {
-    const { moduleId, viewId, record } = volumeScopeDetails(scope);
-    return stampHistoryEntryIntegrity({
-      ...metadata,
-      documents: volumeDocuments(scope),
-      moduleItems: { [moduleId]: clone(volumeItems(scope)) },
-      customFolders: record ? [clone(record)] : [],
-      scopeType: "volume",
-      scopeId: scope.id,
-      moduleId,
-      viewId,
-      label: volumeLabel(scope),
-    }, { source: "restore", operationType: "restore", parentVersionId: historyData(scope)[0]?.id || "" });
-  }
-  if (scope.type === "module") return stampHistoryEntryIntegrity({ ...metadata, documents: moduleDocuments(scope.id), moduleItems: { [scope.id]: clone(itemsForModule(scope.id)) }, customFolders: clone(state.customFolders.filter((folder) => folder.moduleId === scope.id)), scopeType: "module", scopeId: scope.id }, { source: "restore", operationType: "restore", parentVersionId: historyData(scope)[0]?.id || "" });
-  return stampHistoryEntryIntegrity({
-    ...metadata,
-    documents: clone(state.documents),
-    state: captureProjectVersion(),
-    scopeType: "project",
-    scopeId: "project",
-    workspaceKind: state.workspaceKind === "notebook" ? "notebook" : "project",
-    workspaceName: state.projectName,
-  }, { source: "restore", operationType: "restore", parentVersionId: historyData(scope)[0]?.id || "" });
-};
-
 const renderHistory = () => {
   const scope = ui.historyScope;
   if (!scope) {
@@ -22803,7 +22803,7 @@ const renderHistory = () => {
   elements.historyPanel.hidden = false;
   elements.historyPanel.innerHTML = `
     <header><strong>${escapeHtml(historyTitle(scope))}</strong><span class="history-header-actions"><button class="icon-button bare small" type="button" data-reveal-history-scope title="打开对应文件夹">${icon("\uE8B7", "打开对应文件夹")}</button><button class="icon-button bare small" id="closeHistory" type="button" title="关闭">${icon("\uE711", "关闭")}</button></span></header>
-    <div class="current-version"><strong>${escapeHtml(current.title)}</strong><span class="current-label">当前</span><small>${escapeHtml(current.version)} · ${escapeHtml(current.time)}；切换前会自动保存当前版本，可随时退回</small></div>
+    <div class="current-version"><strong>${escapeHtml(current.title)}</strong><span class="current-label">当前</span><small>${escapeHtml(current.version)} · ${escapeHtml(current.time)}；设为当前后会把恢复结果创建为新历史版本</small></div>
     <div class="history-list">
       ${groupedVersions.map(({ group, versions: groupVersions }) => `<section class="history-source-group"><h4>${icon(group === "神思历史" ? "\uE81C" : "\uE8B7")}<span>${escapeHtml(group)}</span><small>${groupVersions.length.toLocaleString("zh-CN")}</small></h4>${groupVersions.map((version) => `<article class="history-item" data-preview-version="${escapeHtml(version.id)}" tabindex="0" title="预览此版本">
         <strong>${escapeHtml(version.name || version.title)}</strong>
@@ -25205,9 +25205,9 @@ const snapshotTaskHistoryScope = (targets, reason, { operations = [] } = {}) => 
   snapshotResolvedHistoryScope(resolvedTaskHistoryScope(targets, reason), reason, { operations })
 );
 
-const snapshotAiWriteHistory = (targets, reason, {
+const snapshotCommittedAiWriteHistory = (targets, reason, {
   operations = [],
-  documentReason = "AI 修改内容落盘前的完整文档",
+  documentReason = "AI 生成并写入后的完整文档",
   forceDocumentVersions = false,
 } = {}) => {
   const normalizedTargets = (Array.isArray(targets) ? targets : []).filter(Boolean);
@@ -25230,25 +25230,7 @@ const snapshotDocument = (documentId, reason, { force = false, operations = [], 
     title: documentState.title ?? "",
     placeholder: documentState.placeholder ?? "",
   });
-  if (!substantive) {
-    if (force) {
-      state.documentTransactionLog ??= {};
-      const baselineId = uid("blank-baseline");
-      state.documentTransactionLog[baselineId] = createBlankDocumentBaseline({
-        resourceId: documentId,
-        transactionId: baselineId,
-        title: documentState.title ?? "",
-        structure: {
-          moduleId: documentState.moduleId ?? moduleForDocument(documentId),
-          workspaceView: documentState.workspaceView ?? "",
-          contextDomain: documentState.contextDomain ?? "",
-        },
-        revision: currentDocumentRevision(documentId),
-      });
-      return state.documentTransactionLog[baselineId];
-    }
-    return null;
-  }
+  if (!substantive && !force) return null;
   state.histories[documentId] ??= [];
   const scope = { type: "document", id: documentId };
   const current = storedCurrentVersionMetadata(scope);
@@ -25323,7 +25305,7 @@ const saveCurrentDocumentVersion = (documentId = state.activeDocument) => {
   }
   if (elements.editor.dataset.document === documentId) documentState.html = serializableEditorHtml();
   const beforeCount = state.histories[documentId]?.length ?? 0;
-  snapshotDocument(documentId, "用户点击版本保存");
+  snapshotDocument(documentId, "用户点击版本保存", { force: true, operations: [{ type: "history.save_document", documentId }] });
   const created = (state.histories[documentId]?.length ?? 0) > beforeCount;
   if (created) {
     recordActivity({ type: "history", label: `手动保存${documentState.title}的当前版本`, documentId });
@@ -25333,9 +25315,7 @@ const saveCurrentDocumentVersion = (documentId = state.activeDocument) => {
   rebuildProjectCompilationStatus();
   showToast(created
     ? "已保存为历史版本，索引状态已刷新"
-    : hasSubstantiveVersionContent(documentState.html ?? documentState.markdown ?? "", { title: documentState.title ?? "", placeholder: documentState.placeholder ?? "" })
-      ? "内容没有变化，未重复创建版本"
-      : "当前没有可保存的正文版本");
+    : "历史版本创建失败");
 };
 
 const LAZY_COCKPIT_DOCUMENTS = Object.freeze({
@@ -25410,7 +25390,6 @@ const restoreVersion = async (versionId, scope = ui.historyScope) => {
       displayEntry: displayVersion,
       sourceEntries: sourceScope ? historyData(sourceScope) : [],
       directEntries: historyData(scope),
-      preservedCurrent: currentHistoryEntry(scope),
     });
     integrityVersion = preparedRestore?.sourceVersion ?? null;
     if (!preparedRestore || !integrityVersion) {
@@ -25421,7 +25400,6 @@ const restoreVersion = async (versionId, scope = ui.historyScope) => {
     preparedRestore = prepareHistoryRestore({
       entries: historyData(scope),
       selectedId: versionId,
-      preservedCurrent: currentHistoryEntry(scope),
     });
   }
   if (!preparedRestore) return false;
@@ -25532,8 +25510,8 @@ const restoreVersion = async (versionId, scope = ui.historyScope) => {
   try {
     await saveWorkspace({ throwOnError: true });
     showToast(version.relatedDocumentOnly
-      ? "已仅恢复当前文档；原板块或项目的其他内容保持不变，切换前版本已自动保存"
-      : "已将历史版本设为当前；切换前的当前版本已自动保存，可随时退回");
+      ? "已仅恢复当前文档；原板块或项目的其他内容保持不变，恢复结果已创建为新版本"
+      : "已将历史版本设为当前；恢复结果已创建为新版本");
     return true;
   } catch (error) {
     Object.assign(state, rollbackState);
@@ -27935,14 +27913,9 @@ const applyCandidateMemoryUpdate = (memoryUpdate, targetDocumentId, {
     return 0;
   }
   const scriptDomain = isScriptDomain(documentContextDomain(targetDocumentId));
-  const viewId = scriptDomain ? "script" : "novel";
   const ids = memoryProjectionDocumentIds({ script: scriptDomain });
   const createdMemoryDocumentIds = ensureRuntimeMemoryDocuments({ state, documentIds: ids, updatedAt: nowTime() });
   createdMemoryDocumentIds.forEach((documentId) => changedDocumentIds?.add?.(documentId));
-  if (snapshot) {
-    snapshotView("memory", viewId, `${targetLabel({ documentId: targetDocumentId })}采用前的${scriptDomain ? "剧本" : "小说"}记忆`);
-    ids.filter((documentId) => state.documents[documentId]).forEach((documentId) => snapshotDocument(documentId, `${targetLabel({ documentId: targetDocumentId })}采用前的记忆文档`));
-  }
   const heading = `${targetLabel({ documentId: targetDocumentId })} · ${nowTime()}`;
   let updated = 0;
   const chapterSummary = String(merged.normalizedUpdate?.chapterSummary ?? memoryUpdate.chapterSummary ?? "").trim();
@@ -28091,7 +28064,6 @@ const applyFormalMemoryDeliveryBatch = ({
       conflicts.push({ documentId, reason: "作者或外部同步已修改记忆展示文档" });
       continue;
     }
-    if (!requestedIds.has(documentId)) snapshotDocument(documentId, "正式记忆交付刷新派生投影前");
     const formatCheck = validateManagedDocumentFormat({
       documentId,
       moduleId: "memory",
@@ -28447,12 +28419,6 @@ const acceptInlineEdit = (inlineEditId) => {
     candidate: replacementText,
     startOffset: patchResult.startOffset,
   }).map((change) => ({ ...change, editId: inlineEditId }));
-  snapshotDocument(record.documentId, inlineInstruction, {
-    force: true,
-    changeSet: historyChangeSet,
-    afterContent: afterText,
-    operations: [{ type: "document.replace_text", documentId: record.documentId }],
-  });
   recordActiveDocumentEditMutation({
     beforeHtml,
     afterHtml,
@@ -28478,6 +28444,12 @@ const acceptInlineEdit = (inlineEditId) => {
     appliedAt: patchResult.receipt.appliedAt,
   };
   markCurrentDocumentVersion(record.documentId, inlineInstruction, {
+    operations: [{ type: "document.replace_text", documentId: record.documentId }],
+  });
+  snapshotDocument(record.documentId, inlineInstruction, {
+    force: true,
+    changeSet: historyChangeSet,
+    afterContent: afterText,
     operations: [{ type: "document.replace_text", documentId: record.documentId }],
   });
   const materialDocumentIds = markMaterialUpdatePending({ documentIds: [record.documentId] });
@@ -33666,10 +33638,6 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
     }
 
     const rollbackState = clone(state);
-    const rollbackHistoryIdsBefore = Object.fromEntries(resolvedDocuments.map(({ documentId }) => [
-      documentId,
-      new Set((state.histories?.[documentId] ?? []).map((entry) => entry.id)),
-    ]));
     const rollbackBeforeItems = Object.fromEntries(resolvedDocuments.map(({ documentId }) => [
       documentId,
       clone(documentItem(documentId)?.item ?? null),
@@ -33687,61 +33655,17 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
       clone(storedCurrentVersionMetadata({ type: "document", id: documentId }) ?? null),
     ]));
     const formalRollbackAdditions = [];
-    const generatedLandingHistoryIds = generatedLandingHistoryDocumentIds({
-      landings: resolvedDocuments,
-      existingDocumentIds: Object.keys(state.documents),
-    });
-    if (continuationRequested && !continuationTarget && state.documents[boundContinuationDocumentId]
-      && !generatedLandingHistoryIds.includes(boundContinuationDocumentId)) generatedLandingHistoryIds.push(boundContinuationDocumentId);
-    const missingDocuments = resolvedDocuments.filter(({ documentId }) => !state.documents[documentId]);
     const referenceDocumentId = candidateTarget?.documentId || requestTarget?.documentId || taskAnchorDocumentId || legacyConversationDocumentId;
     const referenceVolume = volumeScopeForDocument(referenceDocumentId);
-    const candidateHistoryTargets = resolvedDocuments.map(({ documentId, target }) => state.documents[documentId]
-      ? historyTargetForDocument(documentId)
-      : target?.explicitArtifact
-        ? historyTargetForDocument(documentId, {
-          moduleId: target.moduleId,
-          viewId: target.viewId,
-          structural: true,
-        })
-      : historyTargetForDocument(documentId, {
-        moduleId: "manuscript",
-        viewId: "novel",
-        volumeId: referenceVolume?.id ?? "manuscript-volume:第001卷-未命名",
-        structural: true,
-      }));
     let createdCount = 0;
     let replacedCount = 0;
     const aiWritingMetricChanges = [];
     const landedDocumentProofs = [];
     const folderPreparations = new Map();
     const projectionDocumentIds = new Set();
+    const historyAnnotations = new Map();
     let memoryUpdateCount = 0;
     try {
-      const instructedHistoryTarget = historyTargetForBackupScope(inferCommandBackupScope(candidateInstruction, workspaceOperationInventory()));
-      const generatedLandingOperations = generatedLandingHistoryIds
-        .map((documentId) => ({ type: titleOnlyWrite ? "document.rename" : "generated-content-landing", documentId }));
-      snapshotAiWriteHistory([
-        instructedHistoryTarget,
-        ...candidateHistoryTargets,
-        ...generatedLandingHistoryIds.map((documentId) => historyTargetForDocument(documentId)),
-      ].filter(Boolean), candidateInstruction, {
-        operations: generatedLandingOperations,
-        documentReason: titleOnlyWrite
-          ? "神思标题落盘前的完整文档"
-          : "神思生成新内容落盘前的完整文档",
-        forceDocumentVersions: titleOnlyWrite,
-      });
-      const rollbackHistoryEntries = Object.fromEntries(resolvedDocuments.map(({ documentId }) => {
-        const entries = state.histories?.[documentId] ?? [];
-        const createdEntry = entries.find((entry) => !rollbackHistoryIdsBefore[documentId]?.has(entry.id)) ?? null;
-        const reusableEntry = createdEntry || entries.find((entry) => formalDocumentWriteRevision({
-          documentId,
-          document: entry.document || (entry.html != null ? { ...state.documents[documentId], html: entry.html } : null),
-          item: rollbackBeforeItems[documentId],
-        }) === rollbackBeforeRevisions[documentId]) || null;
-        return [documentId, { entry: reusableEntry, consume: Boolean(createdEntry) }];
-      }));
       // Folder structure is a host-owned part of the landing transaction.
       // Resolve and materialize every planned volume before any document body
       // is created or replaced so a failed folder step rolls back the batch.
@@ -33914,7 +33838,6 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         writeAuthorization,
         sourceMessageId: writeAuthorizationSourceMessage.id,
         sourceInstruction: writeAuthorizationSourceMessage.modelContent || writeAuthorizationSourceMessage.content,
-        parentVersionId: state.histories?.[document.documentId]?.[0]?.id || "",
       });
       let localPatchResult = null;
       if (titleOnlyWrite) {
@@ -34018,14 +33941,10 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         transactionId: writeTransaction.id || writeTransaction.transactionId || candidateTarget?.generationAttemptRequestId || "",
         beforeRevision: rollbackBeforeRevisions[document.documentId],
         afterRevision: currentDocumentRevision(document.documentId),
-        historyEntryId: rollbackHistoryEntries[document.documentId]?.entry?.id || "",
-        consumeHistoryEntry: rollbackHistoryEntries[document.documentId]?.consume === true,
+        historyEntryId: "",
+        consumeHistoryEntry: false,
         created: createdDocument,
-        // Existing versioned documents point at the real history entity instead
-        // of duplicating the same full body in workspace state. A compact
-        // fallback is kept only when the previous document had no substantive
-        // history entry (for example an existing blank document).
-        beforeDocument: rollbackHistoryEntries[document.documentId]?.entry?.id ? null : clone(beforeWriteDocument),
+        beforeDocument: clone(beforeWriteDocument),
         beforeItem: clone(rollbackBeforeItems[document.documentId]),
         beforeCurrentVersion: clone(rollbackBeforeCurrentVersions[document.documentId]),
         committedAt: Date.now(),
@@ -34070,7 +33989,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         }),
         writeReceipt,
       });
-      if (localPatchResult) annotateLatestDocumentHistory(document.documentId, {
+      if (localPatchResult) historyAnnotations.set(document.documentId, {
         changeSet: materialMutation
           ? localPatchResult.changeSet.map((change) => ({ ...change, before: stripHtml(change.before), after: stripHtml(change.after) }))
           : localPatchResult.changeSet,
@@ -34118,10 +34037,10 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
             transactionId: candidateTarget?.generationAttemptRequestId || uid("formal-memory-projection"),
             beforeRevision: rollbackBeforeRevisions[document.documentId],
             afterRevision: currentDocumentRevision(document.documentId),
-            historyEntryId: rollbackHistoryEntries[document.documentId]?.entry?.id || "",
-            consumeHistoryEntry: rollbackHistoryEntries[document.documentId]?.consume === true,
+            historyEntryId: "",
+            consumeHistoryEntry: false,
             created: createdDocument,
-            beforeDocument: rollbackHistoryEntries[document.documentId]?.entry?.id ? null : clone(rollbackState.documents[document.documentId] ?? null),
+            beforeDocument: clone(rollbackState.documents[document.documentId] ?? null),
             beforeItem: clone(rollbackBeforeItems[document.documentId]),
             beforeCurrentVersion: clone(rollbackBeforeCurrentVersions[document.documentId]),
             committedAt: Date.now(),
@@ -34152,6 +34071,20 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         });
         if (unintended.length) throw Object.assign(new Error(`计划外资料发生变化：${unintended.map((documentId) => state.documents[documentId]?.title || documentId).join("、")}`), { code: "MATERIAL_UPDATE_CONSERVATION_FAILED" });
       }
+      const generatedLandingOperations = resolvedDocuments
+        .map(({ documentId }) => ({ type: titleOnlyWrite ? "document.rename" : "generated-content-landing", documentId }));
+      const instructedHistoryTarget = historyTargetForBackupScope(inferCommandBackupScope(candidateInstruction, workspaceOperationInventory()));
+      snapshotCommittedAiWriteHistory([
+        instructedHistoryTarget,
+        ...resolvedDocuments.map(({ documentId }) => historyTargetForDocument(documentId)),
+      ].filter(Boolean), candidateInstruction, {
+        operations: generatedLandingOperations,
+        documentReason: titleOnlyWrite
+          ? "神思标题写入后的完整文档"
+          : "神思正式内容写入后的完整文档",
+        forceDocumentVersions: titleOnlyWrite,
+      });
+      for (const [documentId, annotation] of historyAnnotations) annotateLatestDocumentHistory(documentId, annotation);
     } catch (error) {
       state = rollbackState;
       ensureStateSchema();
@@ -35185,6 +35118,7 @@ const saveLongFormCheckpoint = async (job, { documentIds = [] } = {}) => {
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind: scope.workspaceKind,
         workspacePath: scope.workspacePath,
@@ -35275,6 +35209,7 @@ const savePinnedLongFormLandingMetadata = async ({ job, reply, target, landing }
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind: scope.workspaceKind,
         workspacePath: scope.workspacePath,
@@ -36227,7 +36162,17 @@ const answerNativeConversationQuestion = async (question, answer) => {
   const pending = runtime.messages.find((message) => message.execution?.nativeAgentRunId === question.runId && !message.execution.nativeAgentTerminal);
   if (pending) Object.assign(pending.execution, { status: "running", result: "正在提交答案，Agent 将继续处理" });
   if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
+  // The task card is created immediately after the original instruction so
+  // the user sees instant feedback. Once a question is answered, move that
+  // same card behind the question and answer instead of leaving later Agent
+  // output above the user's choice. This preserves one run and one card.
+  const pendingIndex = pending ? runtime.messages.indexOf(pending) : -1;
+  if (pendingIndex >= 0) runtime.messages.splice(pendingIndex, 1);
   if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: String(answer), time: nowTime(), conversationChoiceInstruction: true });
+  if (pending && !runtime.messages.includes(pending)) {
+    const answerIndex = runtime.messages.findIndex((message) => message.id === id);
+    runtime.messages.splice(answerIndex >= 0 ? answerIndex + 1 : runtime.messages.length, 0, pending);
+  }
   clearActiveComposerDraft();
   await persistNativeConversation(runtime);
   renderNativeConversation(runtime, true);
@@ -36986,7 +36931,6 @@ const saveCreativeContractObservation = async (proposal = null) => {
   const nextNotes = mergeCreativeContractObservation(current.specialNotes, proposal);
   if (nextNotes === current.specialNotes) return true;
   const rollbackState = clone(state);
-  snapshotDocument(CREATIVE_CONTRACT_DOCUMENT_ID, "写作问题写入创作合同");
   state.documents[CREATIVE_CONTRACT_DOCUMENT_ID] = creativeContractDocumentPatch(documentState, { specialNotes: nextNotes });
   state.documents[CREATIVE_CONTRACT_DOCUMENT_ID].updatedAt = nowTime();
   markCurrentDocumentVersion(CREATIVE_CONTRACT_DOCUMENT_ID, "写作问题写入创作合同", {
@@ -37359,7 +37303,7 @@ const renderConversationChoicePanel = () => {
       conversationChoiceButton({ label: "确认退回", type: "formal_write_rollback", value: "confirm" }),
       conversationChoiceButton({ label: "取消", type: "formal_write_rollback", value: "cancel" }),
     ].join("");
-    elements.conversationChoiceHint.textContent = "确认后恢复写入前状态；这是唯一不新增历史版本的恢复操作。";
+    elements.conversationChoiceHint.textContent = "确认后恢复上一个写入状态，恢复结果会同步创建为新历史版本。";
   } else if (pending.kind === "landing_resolution") {
     const selectedTarget = pending.targets.find((item) => item.documentId === pending.selectedTargetId) || null;
     const writeConfirmation = pending.reason === "write_confirmation";
@@ -37987,16 +37931,15 @@ const performFormalWriteRollback = async (pending) => {
     } else {
       clearCurrentVersionMetadata({ type: "document", id: documentId });
     }
-    if (checkpoint.consumeHistoryEntry && checkpoint.historyEntryId) {
-      state.histories[documentId] = (state.histories[documentId] ?? [])
-        .filter((entry) => entry.id !== checkpoint.historyEntryId);
-    }
     state.formalWriteRollbackCheckpoints = normalizeFormalWriteRollbackCheckpoints(
       state.formalWriteRollbackCheckpoints.filter((item) => item.id !== checkpoint.id),
     );
     if (currentDocumentRevision(documentId) !== checkpoint.beforeRevision) {
-      throw new Error("写入前版本校验失败");
+      throw new Error("恢复目标版本校验失败");
     }
+    markCurrentDocumentVersion(documentId, "恢复上一个写入状态", {
+      operations: [{ type: "history.restore", documentId }],
+    });
     rollbackSubmissionStarted = true;
     await saveWorkspace({ throwOnError: true, forceFullState: true, operationDocumentIds: [documentId] });
     rollbackDiskCommitted = true;
@@ -38010,7 +37953,7 @@ const performFormalWriteRollback = async (pending) => {
     renderAll();
     appendConversationChoiceMessage({
       role: "assistant",
-      content: `已将“${state.documents[documentId]?.title || documentId}”恢复到最近一次正式写入前的状态；本次退回没有新增历史版本。`,
+      content: `已将“${state.documents[documentId]?.title || documentId}”恢复到上一个正式写入状态，恢复结果已创建为新历史版本。`,
     });
     return true;
   } catch (error) {
@@ -38345,6 +38288,7 @@ const persistMaterialUpdateMemoryRollback = async ({ snapshot, workspaceScope } 
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) targetState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(targetState, payload.historyUpdates);
       cacheWorkspaceState({
         workspaceKind: workspaceScope.workspaceKind,
         workspacePath: workspaceScope.workspacePath,
@@ -38946,14 +38890,18 @@ const rollbackToMessage = async (messageId) => {
   return true;
 };
 
-const refreshVerifiedAgentDocuments = async (ids) => {
+const verifiedDocumentRefreshQueues = new Map();
+
+const refreshVerifiedAgentDocumentsNow = async (ids) => {
   const sourceState = state;
   const workspacePath = state.settings.workspacePath;
+  const documentIds = [...new Set((Array.isArray(ids) ? ids : [ids]).map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!documentIds.length) return false;
   // Only conflicting target edits require a flush; unrelated navigation and
   // conversations must not block opening a verified result.
-  if (ui.workspaceDocumentChangesUnknown || ids.some(id => ui.workspaceDirtyDocumentIds.has(id))) await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+  if (ui.workspaceDocumentChangesUnknown || documentIds.some(id => ui.workspaceDirtyDocumentIds.has(id))) await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
   const response = await fetchWorkspaceRequest('/api/workspace/document-state', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({workspacePath, documentIds: ids}),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({workspacePath, documentIds}),
   }, 15000);
   const loaded = await response.json();
   if (!response.ok || !loaded.ok) throw new Error(loaded.message || '目标文档读取失败');
@@ -38962,7 +38910,7 @@ const refreshVerifiedAgentDocuments = async (ids) => {
   for (const folder of loaded.state?.customFolders || []) {
     if (!state.customFolders.some(item => item.id === folder.id)) state.customFolders.push(clone(folder));
   }
-  for (const id of ids) {
+  for (const id of documentIds) {
     if (ui.workspaceDirtyDocumentIds.has(id) || ui.workspaceDocumentChangesUnknown) throw new Error("目标存在尚未保存的手动编辑，请保存后再打开最新内容");
     const document = loaded.state?.documents?.[id];
     if (!document) throw new Error(`目标文档不存在：${id}`);
@@ -38971,25 +38919,56 @@ const refreshVerifiedAgentDocuments = async (ids) => {
     if (loaded.state.histories?.[id]) state.histories[id] = clone(loaded.state.histories[id]);
     ui.workspaceDocumentHashes.set(id, documentSaveHashes({ [id]: document }).get(id));
     const remoteModuleIds = new Set(Object.entries(loaded.state.moduleItems || {})
-      .filter(([, remoteItems]) => remoteItems.some(item => (Array.isArray(item) ? item[0] : item.id) === id))
+      .filter(([, remoteItems]) => (remoteItems || []).some(item => String(Array.isArray(item) ? item[0] : item?.id || item?.documentId || "") === id))
       .map(([moduleId]) => moduleId));
     for (const [moduleId, localItems] of Object.entries(state.moduleItems || {})) {
       if (remoteModuleIds.has(moduleId)) continue;
       state.moduleItems[moduleId] = localItems.filter(item => (Array.isArray(item) ? item[0] : item.id) !== id);
     }
     for (const [moduleId, remoteItems] of Object.entries(loaded.state.moduleItems || {})) {
-      const remoteItem = remoteItems.find(item => (Array.isArray(item) ? item[0] : item.id) === id);
+      const remoteItem = remoteItems.find(item => String(Array.isArray(item) ? item[0] : item?.id || item?.documentId || "") === id);
       if (!remoteItem) continue;
       state.moduleItems[moduleId] ||= [];
       const index = state.moduleItems[moduleId].findIndex(item => (Array.isArray(item) ? item[0] : item.id) === id);
       if (index < 0) state.moduleItems[moduleId].push(clone(remoteItem));
       else state.moduleItems[moduleId][index] = clone(remoteItem);
     }
+    // A valid transaction always writes a directory item, but older state
+    // files and interrupted projections may contain the document without its
+    // index row. Rebuild that single row from the document's authoritative
+    // module/view metadata so the sidebar and verified link stay usable.
+    const located = Object.values(state.moduleItems || {}).some((items) => (
+      (items || []).some((item) => (Array.isArray(item) ? item[0] : item?.id || item?.documentId) === id)
+    ));
+    if (!located) {
+      const moduleId = String(document.moduleId || "manuscript");
+      state.moduleItems[moduleId] ||= [];
+      state.moduleItems[moduleId].push([id, document.title || id, {
+        ...(document.workspaceView ? { workspaceView: document.workspaceView } : {}),
+        ...(document.contextDomain ? { contextDomain: document.contextDomain } : {}),
+      }]);
+    }
   }
   ui.documentListRenderKey = "";
   elements.editor.dataset.document = "";
   renderAll();
+  // Persist the repaired directory projection instead of leaving it only in
+  // the live renderer. This is what makes a newly landed Agent document stay
+  // visible after a workspace switch or application restart.
+  await saveWorkspace({ throwOnError: true, forceFullState: true, operationDocumentIds: documentIds });
   return true;
+};
+
+const refreshVerifiedAgentDocuments = async (ids) => {
+  const key = workspaceIdentity();
+  const previous = verifiedDocumentRefreshQueues.get(key) || Promise.resolve(false);
+  const current = previous.catch(() => false).then(() => refreshVerifiedAgentDocumentsNow(ids));
+  verifiedDocumentRefreshQueues.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (verifiedDocumentRefreshQueues.get(key) === current) verifiedDocumentRefreshQueues.delete(key);
+  }
 };
 
 const selectDocument = (documentId) => {
@@ -40629,12 +40608,10 @@ const refreshImmediateCommitProjections = ({
   });
   const changedDocumentIds = new Set();
   const compileDocument = state.documents["report-compile"] || ensureLazyCockpitDocument("report-compile");
-  if (compileDocument) snapshotDocument("report-compile", "本轮创作事务刷新项目总览前");
   if (rebuildProjectCompilationStatus()) changedDocumentIds.add("report-compile");
 
   const updateLog = state.documents["index-update-log"] || ensureLazyCockpitDocument("index-update-log");
   if (updateLog) {
-    snapshotDocument("index-update-log", "追加本轮创作事务记录前");
     const committedTitles = directIds.map((documentId) => state.documents[documentId]?.title || documentId);
     const derivedIds = [...new Set([...derivedDocumentIds, ...changedDocumentIds])]
       .filter((documentId) => !directIds.includes(documentId) && documentId !== "index-update-log");
@@ -40719,6 +40696,36 @@ const nextQuickCreateName = (kind, { moduleId = state.activeModule, viewId = act
   return `${base} ${index}`;
 };
 
+// Keep sibling document labels unique when a caller supplies an explicit title.
+// Chapter/episode numbering has its own collision rules and is handled separately.
+const nextUniqueDocumentName = (name, { moduleId = state.activeModule, viewId = activeViewForModule(moduleId), treeOptions = {} } = {}) => {
+  const base = String(name ?? "").replace(/[\r\n]+/gu, " ").replace(/\s+/gu, " ").trim();
+  if (!base) return base;
+  const scopeKey = (options = {}, documentState = {}) => String(
+    options.customFolderId
+      ?? documentState.customFolderId
+      ?? options.folderId
+      ?? documentState.folderId
+      ?? (options.rootPlacement === true || documentState.rootPlacement === true ? "__root__" : ""),
+  );
+  const targetScope = scopeKey(treeOptions);
+  const labels = itemsForModuleView(moduleId, viewId)
+    .map((item) => {
+      const documentId = Array.isArray(item) ? item[0] : item?.id || item?.documentId;
+      const options = Array.isArray(item) ? item[2] || {} : item?.options || {};
+      const documentState = state.documents?.[documentId] || {};
+      if (scopeKey(options, documentState) !== targetScope) return "";
+      return String(documentState.title || (Array.isArray(item) ? item[1] : item?.label || item?.title || "")).trim();
+    })
+    .filter(Boolean)
+    .map((label) => label.toLocaleLowerCase());
+  const taken = new Set(labels);
+  if (!taken.has(base.toLocaleLowerCase())) return base;
+  let index = 2;
+  while (taken.has(`${base} ${index}`.toLocaleLowerCase())) index += 1;
+  return `${base} ${index}`;
+};
+
 const createDocument = (name, placement = null, { kind = "document", systemGeneratedTitle = false } = {}) => {
   if (state.temporaryNotebook || state.readOnly) {
     showToast("临时笔记本只用于预览；请先将外部 Markdown 移动到正式笔记本");
@@ -40786,6 +40793,15 @@ const createDocument = (name, placement = null, { kind = "document", systemGener
       : treeOptions.treeGroup === "volumes"
         ? `outline-volume-${nextStructuredNumber(/^outline-volume-(\d+)$/)}`
         : `outline-chapter-${nextStructuredNumber(/^outline-chapter-(\d+)$/)}`;
+  }
+  if (!novelChapterSpec) {
+    const uniqueName = nextUniqueDocumentName(documentTitle, { moduleId, viewId, treeOptions });
+    documentTitle = uniqueName;
+    label = kind === "whiteboard"
+      ? uniqueName
+      : moduleId === "manuscript" && viewId === "script"
+        ? sequencedDocumentLabel({ documentId: id, title: uniqueName, language: creationLanguage })
+        : uniqueName;
   }
   state.moduleItems[moduleId] ??= [];
   if (novelChapterSpec) {
@@ -41251,7 +41267,6 @@ const renameDocument = (documentId, nextName, { createHistory = true, sequenceNu
   }
   if (nextLabel === documentState.title && (!sequenceKind || requestedSequenceNumber === currentSequenceNumber)) return false;
   if (createHistory) {
-    snapshotDocument(documentId, `文档“${documentState.title}”重命名前的内容版本`);
     const volumeScope = volumeScopeForDocument(documentId);
     if (volumeScope) snapshotVolume(volumeScope, `${documentState.title}重命名前的分卷结构`);
     else snapshotStructure(moduleId, viewId, `${documentState.title}重命名前的分类结构`);
@@ -41270,6 +41285,9 @@ const renameDocument = (documentId, nextName, { createHistory = true, sequenceNu
       ? sequencedDocumentLabel({ documentId, title: nextLabel, language: documentState.titleLanguage || state.structureLanguage || "zh-CN", documentState })
       : nextLabel;
   }
+  markCurrentDocumentVersion(documentId, `文档重命名为“${nextLabel}”`, {
+    operations: [{ type: "document.rename", documentId }],
+  });
   if (state.workspaceKind === "notebook") state.moduleItems[moduleId] = sortNotebookChapterItems(state.moduleItems[moduleId], state.documents);
   rebuildProjectCompilationStatus();
   recordActivity({
@@ -41888,7 +41906,7 @@ const deleteDirectorySelection = async (context) => {
   }
 };
 
-const snapshotWorkspaceOperationPlan = (plan) => {
+const snapshotCompletedWorkspaceOperationPlan = (plan) => {
   const targets = [];
   const instructedTarget = historyTargetForBackupScope(plan.backupScope);
   if (instructedTarget) targets.push(instructedTarget);
@@ -41940,9 +41958,9 @@ const snapshotWorkspaceOperationPlan = (plan) => {
       }));
     }
   }
-  snapshotAiWriteHistory(targets, plan.intent || plan.summary || "内容修改", {
+  snapshotCommittedAiWriteHistory(targets, plan.intent || plan.summary || "内容修改", {
     operations: plan.operations,
-    documentReason: "神思生成或修改内容落盘前的完整文档",
+    documentReason: "神思生成或修改内容写入后的完整文档",
   });
 };
 
@@ -42089,11 +42107,11 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
       ui.operationApplying = false;
       return true;
     }
-    snapshotWorkspaceOperationPlan(plan);
     prepareWorkspaceOperationFolders(plan);
     let changed = 0;
     let movedToTrash = false;
     const processedAtomicTextDocuments = new Set();
+    const operationHistoryAnnotations = new Map();
     for (const operation of plan.operations) {
       if (operation.type === "folder.ensure") {
         if (operation.created) changed += 1;
@@ -42147,7 +42165,7 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
           patchResult = replaceDocumentText(operation.documentId, operation.find, operation.replace, operation.replaceAll);
           changed += 1;
         }
-        annotateLatestDocumentHistory(operation.documentId, {
+        operationHistoryAnnotations.set(operation.documentId, {
           changeSet: patchResult.changeSet,
           afterContent: patchResult.content,
         });
@@ -42257,6 +42275,8 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
         operations: plan.operations.filter((operation) => operation.documentId === documentId),
       });
     }
+    snapshotCompletedWorkspaceOperationPlan(plan);
+    for (const [documentId, annotation] of operationHistoryAnnotations) annotateLatestDocumentHistory(documentId, annotation);
     ensureDocumentTreeMetadata(state);
     rebuildProjectCompilationStatus();
     updateTrashIndexDocument();
@@ -42266,7 +42286,7 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
     }
     plan.status = "applied";
     plan.appliedAt = nowTime();
-    message.content = `已执行 ${changed} 项文档与结构变更。修改前版本已自动保存${movedToTrash ? "，删除内容已进入回收站" : ""}。`;
+    message.content = `已执行 ${changed} 项文档与结构变更。新版本已与写入结果同步保存${movedToTrash ? "，删除内容已进入回收站" : ""}。`;
     message.execution = { ...(message.execution ?? {}), status: "complete", strength: "operation", result: `已执行 ${changed} 项软件操作` };
     elements.editor.dataset.document = "";
     recordActivity({ type: "edit", label: `通过对话执行 ${changed} 项工作区操作`, documentId: state.activeDocument, scope: { type: "project", id: "project" } });
@@ -42297,7 +42317,7 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
       persist();
     }
     renderAll();
-    showToast("操作已执行，修改前版本已保存");
+    showToast("操作已执行，新版本已同步保存");
     ui.operationApplying = false;
     return true;
   } catch (error) {
@@ -45023,7 +45043,6 @@ elements.compilationDecisionSummary.addEventListener("change", async (event) => 
   const current = normalizeCreativeContract(documentState);
   if (current[field] === input.value.trim()) return;
   const rollbackState = clone(state);
-  snapshotDocument(CREATIVE_CONTRACT_DOCUMENT_ID, `手动修改创作合同 / ${field === "bannedTerms" ? "项目禁用词" : "特别注意事项"}`);
   state.documents[CREATIVE_CONTRACT_DOCUMENT_ID] = creativeContractDocumentPatch(documentState, { [field]: input.value });
   state.documents[CREATIVE_CONTRACT_DOCUMENT_ID].updatedAt = nowTime();
   markCurrentDocumentVersion(CREATIVE_CONTRACT_DOCUMENT_ID, "手动修改创作合同", {
@@ -59049,6 +59068,7 @@ const refreshAgentTaskWorkspaceDocuments = async ({
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw workspaceSaveError(response, payload);
       if (payload.savedAt) workspaceState.savedAt = payload.savedAt;
+      applyWorkspaceHistoryUpdates(workspaceState, payload.historyUpdates);
       const stateStamp = payload.stateStamp || loaded?.stateStamp || "";
       cacheWorkspaceState({
         ...scope,
@@ -59363,7 +59383,6 @@ const finalizeCodexAgentExecution = (pending, payload = {}, { status = "complete
     agentUndoAvailable: payload.mutation?.undoAvailable === true,
     targetLabel: payload.projectMode === "self_repair" ? "神思软件目录" : pending.execution?.targetLabel || "本地项目",
   };
-  if (agentTurnId) ui.codexAgent.historySnapshotTurns.delete(agentTurnId);
 };
 
 const adoptCodexAgentCandidatePreview = (pending, text = "", conversation = conversationById(pending?.execution?.conversationId) ?? activeConversation()) => {
@@ -60948,6 +60967,15 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
             || (target.documentId ? documentMutationOutputInstruction(routingSeedPrompt) : ""),
         ].filter(Boolean).join("\n\n"),
         routingText: routingPrompt,
+        taskRoute: clone(taskRoute),
+        deliverableType: taskRoute.deliverableType || "",
+        targetModule: target.moduleId || "",
+        activeModule: target.moduleId || "",
+        selectedModulePlacementId: taskRoute.selectedModulePlacementId || taskRoute.targetModulePlacementId || "",
+        selectedSkillPlacementIds: (activeReferenceScope.skillReferences ?? []).map((selection) => selection?.placementId || selection?.slotId || "").filter(Boolean),
+        relationType: taskRoute.relationType || "",
+        relationRole: taskRoute.relationRole || "",
+        routeReason: taskRoute.reason || "",
         workspaceOperation: agentWorkspaceOperationRequested,
         selfRepairAuthorization,
         landing: agentGenerationAndLandingRequested || agentLandingOnlyRequested,
@@ -61777,36 +61805,6 @@ const resolveCodexAgentApproval = async ({ id = "", decision = "", button = null
   if (!id || !decision) return;
   if (button) button.disabled = true;
   try {
-    if (decision !== "deny") {
-      const pending = codexAgentPendingMessage();
-      const approval = (pending?.execution?.agentApprovals ?? ui.codexAgent.status?.pendingApprovals ?? [])
-        .find((item) => item.id === id);
-      const turnId = String(approval?.turnId || pending?.execution?.agentTurnId || "");
-      if (approval?.category === "file_change" && turnId && !ui.codexAgent.historySnapshotTurns.has(turnId)) {
-        const targets = agentHistoryTargetsForFiles({
-          files: approval.files,
-          workspacePath: state.settings.workspacePath,
-          agentCwd: ui.codexAgent.status?.selectedProject?.cwd || approval.cwd,
-          documents: state.documents,
-          moduleItems: state.moduleItems,
-        });
-        if (targets.length) {
-          const sourceInstruction = String((pending?.execution?.sourceMessageId
-            ? (conversationById(pending.execution.conversationId)?.messages ?? state.messages)
-              .find((message) => message.id === pending.execution.sourceMessageId && message.role === "user")?.content
-            : "") || "").trim();
-          const historyReason = sourceInstruction || `Agent 批量修改前（${approval.files?.length || targets.length} 个文件）`;
-          const scope = snapshotAiWriteHistory(targets, historyReason, {
-            operations: targets.map((target) => ({ type: "agent-file-change", documentId: target.documentId, turnId })),
-            documentReason: "Agent 生成或修改内容落盘前的完整文档",
-          });
-          await saveWorkspace({ throwOnError: true, forceFullState: true });
-          ui.codexAgent.historySnapshotTurns.add(turnId);
-          updatePendingCodexExecution({ agentHistoryScope: scope });
-          appendCodexTrace("历史版本已创建", scope?.type === "document" ? `文档：${state.documents[scope.id]?.title || scope.id}` : `范围：${scope?.type || "project"}`);
-        }
-      }
-    }
     const response = await fetch("/api/codex-agent/approvals/resolve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -64191,23 +64189,26 @@ const adoptWorkflowEmission = async (index, button) => {
     showToast("审阅结果为空，未写入文档");
     return;
   }
-  if (!window.confirm(uiText(`确认把已审阅的 Workflow 草稿追加到“${documentState.title || "当前文档"}”？写入前会保存历史版本。`))) return;
+  if (!window.confirm(uiText(`确认把已审阅的 Workflow 草稿追加到“${documentState.title || "当前文档"}”？写入成功后会同步创建新历史版本。`))) return;
   const documentId = state.activeDocument;
   const rollbackDocument = clone(documentState);
   const rollbackHistory = clone(state.histories?.[documentId] ?? []);
   if (button) button.disabled = true;
   try {
-    snapshotDocument(documentId, "采用 Workflow 草稿前", { force: true, operations: [{ type: "workflow-adoption", workflowId: ui.automation.workflowResult?.plan?.manifest?.id || "desktop-offline-workflow" }] });
     const addition = proseToHtml(reviewedText) || `<p>${escapeHtml(reviewedText)}</p>`;
     documentState.html = sanitizeDocumentHtml(`${documentState.html || ""}${addition}`);
     documentState.markdown = htmlToMarkdown(documentState.html);
     documentState.updatedAt = nowTime();
+    markCurrentDocumentVersion(documentId, "采用 Workflow 草稿后的当前版本", {
+      operations: [{ type: "workflow-adoption", documentId, workflowId: ui.automation.workflowResult?.plan?.manifest?.id || "desktop-offline-workflow" }],
+    });
+    snapshotDocument(documentId, "采用 Workflow 草稿后的当前版本", { force: true, operations: [{ type: "workflow-adoption", workflowId: ui.automation.workflowResult?.plan?.manifest?.id || "desktop-offline-workflow" }] });
     persist();
     await saveWorkspace({ throwOnError: true });
     renderEditor();
     recordActivity({ type: "edit", label: `采用 Workflow 草稿到${documentState.title || "当前文档"}`, documentId });
     if (button) button.textContent = "已采用";
-    showToast("已采用审阅后的草稿，写入前版本已保存");
+    showToast("已采用审阅后的草稿，新版本已同步保存");
   } catch (error) {
     state.documents[documentId] = rollbackDocument;
     state.histories[documentId] = rollbackHistory;

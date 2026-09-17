@@ -138,7 +138,7 @@ try {
   const loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
   assert.match(loaded.state.documents[documentId].markdown, /生成期间新增的一段，必须保留/u);
   assert.match(loaded.state.documents[documentId].markdown, /基于用户最新正文生成的续写/u);
-  assert.equal(loaded.state.histories[documentId][0].content, userEdited.markdown);
+  assert.equal(loaded.state.histories[documentId][0].content, loaded.state.documents[documentId].markdown, "写入后的最新正文必须成为最新历史版本");
   const beforeRenameContent = loaded.state.documents[documentId].markdown;
   const beforeRenameHistoryCount = loaded.state.histories[documentId].length;
   const beforeRenameRevision = formalDocumentWriteRevision({
@@ -180,7 +180,7 @@ try {
   assert.equal(renamed.state.documents[documentId].title, "雨渠回声");
   assert.equal(renamed.state.documents[documentId].markdown, beforeRenameContent, "标题落盘不得改正文");
   assert.equal(renamed.state.histories[documentId].length, beforeRenameHistoryCount + 1, "标题落盘必须新增历史版本");
-  assert.equal(renamed.state.histories[documentId][0].content, beforeRenameContent, "标题历史必须保存改名前完整正文");
+  assert.equal(renamed.state.histories[documentId][0].content, beforeRenameContent, "标题写入后的完整正文必须成为最新历史版本");
   assert.equal(renamed.state.histories[documentId][0].operation, "rename");
 } finally {
   await rm(tempRoot, { recursive: true, force: true });
@@ -189,13 +189,13 @@ try {
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
 assert.match(appSource, /landFormalCandidateInPinnedWorkspace/u, "目标工作区不在前台时必须走后台原子事务");
-assert.match(appSource, /resolvedWorkspaceActive[\s\S]{0,700}landFormalCandidateInPinnedWorkspace/u);
+assert.match(appSource, /if \(workspaceTargetIsActive\(scope\.workspaceKind, scope\.workspacePath\)\)[\s\S]{0,1200}landFormalCandidateInPinnedWorkspace/u);
 assert.match(appSource, /withActiveWorkspaceFormalLandingLock/u, "活动工作区提交期间切换必须等待原子落盘完成");
 assert.match(appSource, /正在完成当前文档的原子落盘，完成后自动切换作品/u);
-assert.match(appSource, /const turnContextDocuments = clone\(taskWorkspaceSourceState\.documents\)/u, "目标结构判断必须固定在任务发起时的工作区");
+assert.match(appSource, /const taskWorkspaceSourceState = existingRuntime\?\.workspaceState \|\| submittedWorkspaceState \|\| state/u, "目标结构判断必须固定在任务发起时的工作区");
 assert.match(appSource, /savePinnedConversationCompletion[\s\S]*candidateState/u, "切换工作区后原对话与候选状态必须一并保存");
-assert.match(appSource, /const resolvedLandingWorkspacePath = creativeTask\?\.target\?\.workspacePath/u, "最终落点必须采用任务路由解析后的工作区，而不是机械绑定发送时路径");
-assert.match(appSource, /const replyBaseAuthorization = rawReply\?\.writeAuthorization/u, "服务端基于最新版重绑的授权不得被客户端旧 revision 覆盖");
+assert.match(appSource, /workspaceScope\?\.workspacePath \|\| creativeTask\?\.target\?\.workspacePath/u, "最终落点必须采用任务路由解析后的工作区，而不是机械绑定发送时路径");
+assert.match(appSource, /const responseWriteAuthorization = engineExecution\?\.writeAuthorization \?\? payload\.creativeTask\?\.writeAuthorization \?\? null/u, "服务端基于最新版重绑的授权必须优先于其他候选授权");
 assert.match(serverSource, /generation_restarted_from_latest_document/u, "生成期间修改正文后必须由服务端按最新版重跑");
 assert.match(serverSource, /latestDocumentReloaded:\s*true/u);
 

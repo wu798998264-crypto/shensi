@@ -66,6 +66,16 @@ const blockingJob = {
   availableActions: { autoReconcileProviderTask: true, dismissUncertain: true },
 };
 assert.equal(mediaRecoveryJobBlocksOperation(blockingJob), true, "仍锁定卡片且提交结果未知的任务必须显示");
+assert.equal(mediaRecoveryJobBlocksOperation({
+  ...blockingJob,
+  billingRisk: "",
+  availableActions: { confirmedResubmit: true },
+}), false, "厂商明确失败但保留重新生成入口的任务不得进入待处理阻塞列表");
+assert.equal(mediaRecoveryJobBlocksOperation({
+  ...blockingJob,
+  billingRisk: "",
+  availableActions: { dismissUncertain: true },
+}), false, "明确失败不得因陈旧的处理动作重新进入待处理");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "running" }), false, "正常生成中的任务不属于待处理阻塞项目");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, billingRisk: "", availableActions: {} }), false, "没有卡片锁或收费不确定性的历史失败不得污染待处理页面");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, resultSuppressed: true }), false, "用户已处理并放弃的任务必须立即隐藏");

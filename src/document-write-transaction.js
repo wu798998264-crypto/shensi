@@ -1,9 +1,5 @@
 import { hasSubstantiveVersionContent } from "./version-store.js";
-import {
-  createDocumentVersionSnapshot,
-  documentVersionHash,
-  verifyDocumentVersionSnapshot,
-} from "./version-integrity.js?v=3.0.10-sync-document-hash";
+import { documentVersionHash } from "./version-integrity.js?v=3.0.10-sync-document-hash";
 import { validateFormalWriteAuthorization } from "./formal-write-authorization.js";
 
 const OPERATIONS = new Set(["create", "replace", "partial-replace", "continuation", "rename", "restore"]);
@@ -33,7 +29,6 @@ export const beginDocumentWriteTransaction = async ({
   authorizationCandidate = candidateContent,
   expectedDocumentHash = "",
   expectedRevision = "",
-  parentVersionId = "",
   writeAuthorization = null,
   sourceMessageId = "",
   sourceInstruction = "",
@@ -71,23 +66,6 @@ export const beginDocumentWriteTransaction = async ({
     title: documentState?.title ?? "",
     placeholder: documentState?.placeholder ?? "",
   });
-  const snapshot = substantiveBefore || (documentState && documentState.kind !== "canvas" && documentState.documentKind !== "whiteboard")
-    ? await createDocumentVersionSnapshot({
-        documentId: id,
-        documentState,
-        parentVersionId,
-        source,
-        operation: type,
-        transactionId,
-      })
-    : null;
-  if (snapshot) {
-    const verification = await verifyDocumentVersionSnapshot(snapshot);
-    if (!verification.ok) fail(verification.reason, verification.code);
-    if (snapshot.documentHash !== beforeHash || body(snapshot.document) !== body(documentState)) {
-      fail("历史快照与写入前正文不一致", "DOCUMENT_TRANSACTION_SNAPSHOT_MISMATCH");
-    }
-  }
   const baseline = documentState && !substantiveBefore ? {
     kind: "blank_document_baseline",
     documentId: id,
@@ -110,7 +88,6 @@ export const beginDocumentWriteTransaction = async ({
     beforeHash,
     beforeBody: body(beforeDocument),
     beforeDocument,
-    snapshot,
     baseline,
     writeAuthorization: clone(writeAuthorization),
     candidateHash: await documentVersionHash({ candidateContent: String(candidateContent) }),
@@ -154,7 +131,6 @@ export const commitDocumentWriteTransaction = async ({ transaction, nextDocument
     source: transaction.source,
     beforeHash: transaction.beforeHash,
     afterHash,
-    snapshotHash: transaction.snapshot?.snapshotHash || "",
     baselineKind: transaction.baseline?.kind || "",
     verified: true,
     status: "committed",

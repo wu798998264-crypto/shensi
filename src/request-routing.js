@@ -408,7 +408,7 @@ export const contextualCreativeRepairFollowup = ({ text = "", previousUserText =
   const count = range.endChapter - range.startChapter + 1;
   const documentIds = Array.from({ length: count }, (_, index) => `chapter-${range.startChapter + index}`);
   return {
-    expandedPrompt: `${prompt}。按照上一轮自检结论，逐章修复现有第${range.startChapter}章至第${range.endChapter}章的正文。必须返回 ${count} 份完整修订后正文，由神思执行一次批量落盘事务；不得直接编辑 Markdown 文件。每章都要保存修改前历史版本，任一章缺失、revision 冲突或批量回执不完整时不得宣称修改完成。`,
+    expandedPrompt: `${prompt}。按照上一轮自检结论，逐章修复现有第${range.startChapter}章至第${range.endChapter}章的正文。必须返回 ${count} 份完整修订后正文，由神思执行一次批量落盘事务；不得直接编辑 Markdown 文件。每章写入成功后的完整结果都要成为最新历史版本，任一章缺失、revision 冲突或批量回执不完整时不得宣称修改完成。`,
     batchRequest: {
       startChapter: range.startChapter,
       endChapter: range.endChapter,

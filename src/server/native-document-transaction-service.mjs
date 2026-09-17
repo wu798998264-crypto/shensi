@@ -5,12 +5,11 @@ import { applyDocumentPatchPlan } from "../document-patch-engine.js";
 import { createBlankNotebookState, createBlankProjectState } from "../data.js";
 import { contentRevision } from "../workspace-operations.js";
 import { formalDocumentWriteRevisionFromState } from "../document-write-revision.js";
-import { createBlankDocumentBaseline, createResourceVersion, hasSubstantiveVersionContent } from "../version-store.js";
+import { createBlankDocumentBaseline, hasSubstantiveVersionContent } from "../version-store.js";
 import { validateFormalWriteAuthorization } from "../formal-write-authorization.js";
 import { preserveProtectedDocumentMedia } from "../protected-document-media.js";
 import { managedDocumentFormatMetadata, validateManagedDocumentFormat } from "../managed-document-format.js";
 import { loadWorkspaceState, saveWorkspaceState, workspaceKindForPath } from "./workspace.mjs";
-import { addDocumentHierarchyPrewriteHistory } from "./document-hierarchy-prewrite-history.mjs";
 import { applyWorkspaceDocumentLocationInState, ensureWorkspaceFolderInState, refreshWorkspaceFolderMetadata } from "./native-workspace-structure-service.mjs";
 
 const clone = (value) => structuredClone(value);
@@ -139,48 +138,6 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
   }
   let versionId = "";
   let blankBaseline = null;
-  const textDocument = existing && existing.kind !== "canvas" && existing.documentKind !== "whiteboard";
-  if (existing && (textDocument || hasSubstantiveVersionContent(previousContent, { title: existing.title || "", placeholder: existing.placeholder || "" }))) {
-    state.histories ??= {};
-    state.histories[documentId] ??= [];
-    const parentVersionId = state.histories[documentId][0]?.versionId || state.histories[documentId][0]?.id || "";
-    const resourceVersion = createResourceVersion({
-      versionId: `version-${randomUUID()}`,
-      resourceId: documentId,
-      resourceType: existing.kind === "canvas" ? "whiteboard" : "document",
-      parentVersionId,
-      source: task?.executionSurface === "agent" ? "agent" : "chat",
-      operation: type,
-      content: previousContent,
-      title: existing.title || "",
-      structure: {
-        moduleId: existing.moduleId || "",
-        workspaceView: existing.workspaceView || "",
-        contextDomain: existing.contextDomain || "",
-      },
-      attachmentRefs: existing.attachments?.map((attachment) => attachment.relativePath) ?? [],
-      transactionId,
-      beforeRevision: patchResult?.beforeRevision || contentRevision(previousContent),
-      afterRevision: patchResult?.afterRevision || contentRevision(nextContent),
-      changeSet: patchResult?.changeSet || [],
-      changedCharacterCount: patchResult?.changedCharacterCount || 0,
-    });
-    versionId = resourceVersion.versionId;
-    state.histories[documentId].unshift({
-      ...resourceVersion,
-      id: resourceVersion.versionId,
-      title: `${existing.title || documentId} · 覆盖前版本`,
-      version: `v${state.histories[documentId].length + 1}`,
-      time: resourceVersion.createdAt,
-      html: existing.html || basicHtml(previousContent),
-      ...(textDocument ? { document: clone(existing) } : {}),
-      afterContent: nextContent,
-      changeSet: patchResult?.changeSet || [],
-    });
-    if (resourceVersion.contentHash !== contentRevision(previousContent)) {
-      throw Object.assign(new Error(`目标 ${documentId} 的历史快照正文哈希不一致`), { code: "DOCUMENT_HISTORY_HASH_MISMATCH" });
-    }
-  }
   if (existing && !hasSubstantiveVersionContent(previousContent, {
     title: existing.title || "", placeholder: existing.placeholder || "",
   })) {
@@ -340,8 +297,6 @@ export const executeDocumentTransaction = async ({
     const loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
     const before = clone(loaded.state ?? initialTransactionWorkspaceState({ appRoot, workspacePath, task }));
     const next = clone(before);
-    const structuralOperations = requested.filter((operation) => clean(operation.folderId || operation.folderLabel || operation.parentFolderId || operation.viewId || operation.targetDirectoryId));
-    if (structuralOperations.length) addDocumentHierarchyPrewriteHistory({ beforeState: before, nextState: next, operations: structuralOperations, reason: "文档与目录原子写入前的层级历史快照" });
     const applied = requested.map((operation) => {
       let placement = null;
       if (clean(operation.folderLabel || operation.name) && !clean(operation.folderId)) placement = ensureWorkspaceFolderInState(next, {
@@ -377,7 +332,11 @@ export const executeDocumentTransaction = async ({
       state: next,
       expectedStateStamp: loaded.stateStamp,
       operationDocumentIds: applied.map((item) => item.documentId),
+      historyOperations: requested,
+      historySource: task?.executionSurface === "agent" ? "agent" : "chat",
     });
+    const versionByDocument = new Map((committed.committedHistory ?? []).map((receipt) => [receipt.documentId, receipt.versionId]));
+    for (const item of applied) item.versionId = versionByDocument.get(item.documentId) || "";
     const results = applied.map((item) => receiptForOperation(committed.batchLandingReceipt, item));
     if (results.some((item) => !item?.verified)) throw new Error("原子事务存在未验证的操作");
     return { ...committed.batchLandingReceipt, batchId, requestId: clean(requestId), status: "completed", succeeded: results.length, failed: 0, results, retryOperations: [] };
@@ -388,7 +347,8 @@ export const executeDocumentTransaction = async ({
   for (const operation of requested) {
     try {
       const loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
-      const next = clone(loaded.state ?? initialTransactionWorkspaceState({ appRoot, workspacePath, task }));
+      const before = clone(loaded.state ?? initialTransactionWorkspaceState({ appRoot, workspacePath, task }));
+      const next = clone(before);
       const applied = applyOperation({ state: next, task, operation, expectedRevisions, transactionId: batchId, writeAuthorization: task.writeAuthorization });
       const committed = await saveWorkspaceState({
         appRoot,
@@ -396,7 +356,10 @@ export const executeDocumentTransaction = async ({
         state: next,
         expectedStateStamp: loaded.stateStamp,
         operationDocumentIds: [applied.documentId],
+        historyOperations: [operation],
+        historySource: task?.executionSurface === "agent" ? "agent" : "chat",
       });
+      applied.versionId = committed.committedHistory?.find((receipt) => receipt.documentId === applied.documentId)?.versionId || "";
       const receipt = receiptForOperation(committed.batchLandingReceipt, applied);
       if (!receipt?.verified) throw new Error("分项事务磁盘复核失败");
       results.push(receipt);

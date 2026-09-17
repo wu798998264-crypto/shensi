@@ -70,6 +70,7 @@ assert.match(appSource, /data-history-version-note=/u, "历史列表必须提供
 assert.match(appSource, /await updateHistoryVersionMetadata\(action\.scope, action\.versionId, \{ name: value \}\)/u, "版本重命名必须等待磁盘事务完成");
 assert.match(appSource, /previousVersion[\s\S]{0,900}历史版本\$\{metadataKind\}保存失败/u, "版本重命名磁盘失败时必须恢复旧元数据");
 assert.match(appSource, /verifyHistoryEntryIntegrity\(version\)/u, "恢复前必须校验目标版本");
-assert.match(appSource, /preservedCurrent: currentHistoryEntry\(scope\)/u, "恢复前必须完整保存当前版本");
+assert.doesNotMatch(appSource, /const currentHistoryEntry|preservedCurrent:\s*currentHistoryEntry/u, "恢复流程不得再创建写入前可见备份");
+assert.match(appSource, /恢复结果已创建为新版本/u, "恢复结果必须作为新的最新版本保存");
 
 console.log("Shensi v2.82 history integrity baseline tests passed");
