@@ -471,7 +471,7 @@ export const createUpdateManager = ({
     if (comparison < 0 && compareVersions(currentVersion, releaseManifest.rollbackCompatibleFrom) < 0) throw new Error("当前版本不在该安装包声明的回滚兼容范围内");
     const operation = comparison < 0 ? "downgrade" : comparison === 0 ? "repair" : "upgrade";
     const dataPreparation = await prepareUserData({ targetVersion: requestedCandidate.version, operation, releaseManifest });
-    const installerArgs = Array.isArray(requestedCandidate.config.installerArgs) ? requestedCandidate.config.installerArgs.map(String) : ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"];
+    const installerArgs = Array.isArray(requestedCandidate.config.installerArgs) ? requestedCandidate.config.installerArgs.map(String) : ["/S"];
     try {
       await markInstallerState({ transactionId: dataPreparation.transactionId, phase: "installer_launch_pending" });
       const launch = await launchInstallerImpl({ installerPath, installerArgs, appRoot, dataPreparation });

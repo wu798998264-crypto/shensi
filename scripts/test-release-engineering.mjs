@@ -7,6 +7,7 @@ const installer = await readFile(new URL("../packaging/windows/desktop-app/insta
 const desktop = await readFile(new URL("../packaging/windows/desktop-app/main.mjs", import.meta.url), "utf8");
 const appData = await readFile(new URL("../src/server/app-data.mjs", import.meta.url), "utf8");
 const updateConfig = JSON.parse(await readFile(new URL("../update-config.json", import.meta.url), "utf8"));
+const updateManager = await readFile(new URL("../src/server/update-manager.mjs", import.meta.url), "utf8");
 const updatePreparation = await readFile(new URL("./windows/prepare-github-release.mjs", import.meta.url), "utf8");
 
 assert.match(packageScript, /yyyyMMddHHmmssfff/u, "every installer must get a unique timestamp build id");
@@ -21,6 +22,9 @@ assert.match(desktop, /requestSingleInstanceLock/u, "packaged app must enforce o
 assert.match(desktop, /await loadApplicationPage\(\);\s*showMainWindow\(\)/u, "normal startup must show the main window");
 assert.ok(packageJson.build?.files?.includes("update-config.json"), "packaged application must include its pinned update source");
 assert.equal(updateConfig.repository, "wu798998264-crypto/shensi");
+assert.deepEqual(updateConfig.installerArgs, ["/S"], "NSIS 自动更新必须使用不会等待隐藏向导的静默参数");
+assert.match(updateManager, /:\s*\["\/S"\]/u, "更新管理器的 NSIS 参数兜底必须保持静默安装");
+assert.doesNotMatch(updateManager, /VERYSILENT|SUPPRESSMSGBOXES|NORESTART/u, "不得继续使用 Inno Setup 安装参数启动 NSIS 安装包");
 assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater must pin the release manifest public key");
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
 assert.match(updatePreparation, /uploadPerformed:\s*false/u, "release preparation must remain local until the user explicitly requests upload");
