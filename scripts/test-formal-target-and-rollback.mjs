@@ -66,7 +66,7 @@ const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(app, /kind === "formal_target_correction"/u);
 assert.match(app, /kind === "formal_write_rollback"/u);
 assert.match(app, /forcedFormalTarget/u);
-assert.match(app, /这是唯一不新增历史版本的恢复操作/u);
+assert.match(app, /确认后恢复上一个写入状态，恢复结果会同步创建为新历史版本/u);
 assert.match(app, /conversationChoicePanel/u);
 assert.match(app, /lastQuestionText: String\(message \|\| ""\)\.trim\(\)/u);
 assert.doesNotMatch(app, /formalTargetCorrectionDialog|formalWriteRollbackDialog/u);

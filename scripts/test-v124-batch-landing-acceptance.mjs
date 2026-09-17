@@ -100,7 +100,12 @@ try {
   assert.equal(mixed.succeeded, 2);
   const afterMixed = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
   assert.match(afterMixed.state.documents[existingId].markdown, /用户最新版基础上的局部补充/u);
-  assert.equal(afterMixed.state.histories[existingId][0].content, existingContent);
+  assert.equal(
+    afterMixed.state.histories[existingId][0].content,
+    afterMixed.state.documents[existingId].markdown,
+    "局部补充落盘后必须把最新正文保存为最新历史版本",
+  );
+  assert.equal(afterMixed.state.histories[existingId][1].content, existingContent, "局部补充前的历史版本必须继续保留");
   assert.ok(mixed.results.find((item) => item.targetDocumentId === existingId)?.versionId);
 
   const conflictBasis = afterMixed.state.documents[existingId].markdown;

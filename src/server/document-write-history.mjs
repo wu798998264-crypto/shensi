@@ -10,6 +10,13 @@ const operationForDocument = (operations, documentId) => entries(operations).fin
   String(operation?.targetDocumentId || operation?.documentId || "") === documentId
 )) || null;
 
+const operationChangeSet = (state, operation) => {
+  const operationId = String(operation?.operationId || "");
+  const recorded = operationId ? state?.documentTransactionLog?.[operationId]?.changeSet : null;
+  if (Array.isArray(recorded)) return clone(recorded);
+  return Array.isArray(operation?.changeSet) ? clone(operation.changeSet) : [];
+};
+
 const currentVersionMetadata = (state, documentId) => state?.currentVersionMeta?.documents?.[documentId] || null;
 
 const clearCurrentVersionMetadata = (state, documentId) => {
@@ -68,6 +75,7 @@ export const prepareCommittedDocumentHistory = async ({
     const metadata = currentVersionMetadata(nextState, documentId);
     const operation = operationForDocument(operations, documentId);
     const operationType = String(operation?.type || operation?.operation || existing?.operation || "replace");
+    const changeSet = Array.isArray(existing?.changeSet) ? clone(existing.changeSet) : operationChangeSet(nextState, operation);
     const id = entryId(existing) || String(metadata?.id || "") || `version-${randomUUID()}`;
     const createdAt = existing?.createdAt || new Date().toISOString();
     const version = stampHistoryEntryIntegrity({
@@ -86,6 +94,7 @@ export const prepareCommittedDocumentHistory = async ({
       markdown: String(committedDocument.markdown ?? committedDocument.text ?? ""),
       content: String(committedDocument.markdown ?? committedDocument.text ?? committedDocument.html ?? ""),
       operation: operationType,
+      changeSet,
       committedWriteSnapshot: true,
       writeTransactionId: transactionId,
       documentHash,

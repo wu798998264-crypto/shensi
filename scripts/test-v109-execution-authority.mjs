@@ -231,7 +231,13 @@ try {
   const targetAfterFolderMove = await loadWorkspaceState({ appRoot, requestedPath: targetPath });
   const movedDocumentId = movedFolder.transferred[0].targetDocumentId;
   assert.match(targetAfterFolderMove.state.documents[movedDocumentId].html, /跨工作区文件夹正文/u);
-  assert.equal(targetAfterFolderMove.state.histories[movedDocumentId].length, 1);
+  assert.equal(targetAfterFolderMove.state.histories[movedDocumentId].length, 2, "跨工作区移动必须保留来源历史，并为目标落盘结果创建最新版本");
+  assert.equal(targetAfterFolderMove.state.histories[movedDocumentId][1].id, "folder-version", "来源历史版本不得在移动时丢失");
+  assert.equal(
+    targetAfterFolderMove.state.histories[movedDocumentId][0].document.html,
+    targetAfterFolderMove.state.documents[movedDocumentId].html,
+    "移动后的最新历史版本必须与目标正文一致",
+  );
   assert.match(targetAfterFolderMove.state.documents[movedDocumentId].customFolderPath, /待移动目录(?: \(2\))?\/子目录/u);
   const sourceAfterFolderMove = await loadWorkspaceState({ appRoot, requestedPath: sourcePath });
   assert.equal(Boolean(sourceAfterFolderMove.state.documents["folder-document"]), false);
