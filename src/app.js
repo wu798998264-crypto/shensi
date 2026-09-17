@@ -20,7 +20,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.6";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.7";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -110,7 +110,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.1.6-delivery-routing";
+} from "./generation-profiles.js?v=6.1.7-committed-history";
 import { assetHistoryEntryIsSuppressed, hideHistoricalAssets, normalizeAssetHistoryTombstones, unhideHistoricalAssets } from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
