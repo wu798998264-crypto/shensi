@@ -89,12 +89,12 @@
     "release:check": "npm run verify"
   },
   "devDependencies": {
+    "@ffmpeg-installer/ffmpeg": "1.1.0",
+    "@ffprobe-installer/ffprobe": "2.1.2",
     "electron": "42.4.0",
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
-    "@ffmpeg-installer/ffmpeg": "1.1.0",
-    "@ffprobe-installer/ffprobe": "2.1.2",
     "@openai/codex": "0.146.0",
     "undici": "7.29.0"
   },
