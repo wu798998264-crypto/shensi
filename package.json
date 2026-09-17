@@ -1,6 +1,6 @@
 {
   "name": "shensi-creative-engine",
-  "version": "6.1.7",
+  "version": "6.1.8",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
@@ -93,6 +93,8 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "1.1.0",
+    "@ffprobe-installer/ffprobe": "2.1.2",
     "@openai/codex": "0.146.0",
     "undici": "7.29.0"
   },
@@ -110,6 +112,18 @@
       {
         "from": "packaging/windows/desktop-app/node.exe",
         "to": "node.exe"
+      },
+      {
+        "from": "node_modules/@ffmpeg-installer/win32-x64/ffmpeg.exe",
+        "to": "ffmpeg/ffmpeg.exe"
+      },
+      {
+        "from": "node_modules/@ffprobe-installer/win32-x64/ffprobe.exe",
+        "to": "ffmpeg/ffprobe.exe"
+      },
+      {
+        "from": "packaging/windows/ffmpeg-NOTICE.txt",
+        "to": "ffmpeg/NOTICE.txt"
       },
       {
         "from": "scripts/windows/dreamina-profile-runner.ps1",

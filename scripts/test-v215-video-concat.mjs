@@ -8,6 +8,13 @@ import { fileURLToPath } from "node:url";
 import { concatWorkspaceVideos } from "../src/server/workspace.mjs";
 
 const appRoot = fileURLToPath(new URL("..", import.meta.url));
+const ffmpegExecutable = process.platform === "win32"
+  ? join(appRoot, "node_modules", "@ffmpeg-installer", "win32-x64", "ffmpeg.exe")
+  : "ffmpeg";
+if (process.platform === "win32") {
+  process.env.SHENSI_FFMPEG_PATH = ffmpegExecutable;
+  process.env.SHENSI_FFPROBE_PATH = join(appRoot, "node_modules", "@ffprobe-installer", "win32-x64", "ffprobe.exe");
+}
 const runtimeRoot = join(appRoot, "runtime");
 await mkdir(runtimeRoot, { recursive: true });
 const workspaceRoot = await mkdtemp(join(runtimeRoot, "qa-composite-video-"));
@@ -15,7 +22,7 @@ const attachmentRoot = join(workspaceRoot, "attachments", "qa");
 await mkdir(attachmentRoot, { recursive: true });
 
 const renderClip = (output, color) => {
-  const result = spawnSync("ffmpeg", [
+  const result = spawnSync(ffmpegExecutable, [
     "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", `color=c=${color}:s=320x180:d=0.6:r=24`,
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", output,
   ], { windowsHide: true, encoding: "utf8" });

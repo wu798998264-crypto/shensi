@@ -5,7 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { saveWorkspaceAttachmentFromPath } from "../src/server/workspace.mjs";
+const ffmpegExecutable = process.platform === "win32"
+  ? join(process.cwd(), "node_modules", "@ffmpeg-installer", "win32-x64", "ffmpeg.exe")
+  : "ffmpeg";
+const ffprobeExecutable = process.platform === "win32"
+  ? join(process.cwd(), "node_modules", "@ffprobe-installer", "win32-x64", "ffprobe.exe")
+  : "ffprobe";
+if (process.platform === "win32") process.env.SHENSI_FFPROBE_PATH = ffprobeExecutable;
+const { saveWorkspaceAttachmentFromPath } = await import("../src/server/workspace.mjs");
 
 const workerSource = await readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8");
 const videoCliSource = await readFile(new URL("../src/cli/dreamina-video-cli.mjs", import.meta.url), "utf8");
@@ -23,7 +30,7 @@ await Promise.all([
 ]);
 
 const renderClip = (output) => {
-  const result = spawnSync("ffmpeg", [
+  const result = spawnSync(ffmpegExecutable, [
     "-hide_banner", "-loglevel", "error",
     "-f", "lavfi", "-i", "color=c=navy:s=320x180:d=2:r=24",
     "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", output,

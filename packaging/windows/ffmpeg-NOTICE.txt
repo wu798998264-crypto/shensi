@@ -1,0 +1,19 @@
+FFmpeg and FFprobe runtime notice
+
+This Windows package includes separate FFmpeg and FFprobe command-line
+executables used for video integrity validation, thumbnails, reference-frame
+extraction, and video concatenation.
+
+FFmpeg build: @ffmpeg-installer/win32-x64 4.1.0
+Source revision: 20181217-f22fcd4
+License: GNU General Public License version 3
+Source and license: https://ffmpeg.org/download.html
+
+FFprobe build: @ffprobe-installer/win32-x64 5.1.0
+Source revision: 20230213-2296078
+License: GNU General Public License version 3
+Source and license: https://ffmpeg.org/download.html
+
+The executables are independent programs invoked as child processes. Shensi
+does not modify them. The package metadata and exact download integrity hashes
+are recorded in package-lock.json.

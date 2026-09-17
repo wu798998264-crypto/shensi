@@ -3478,6 +3478,7 @@ const bundledFfprobePath = (appRoot = process.cwd()) => {
     join(dirname(dirname(process.execPath)), "resources", "ffmpeg", executableName),
     join(dirname(process.execPath), "resources", "ffmpeg", executableName),
     join(resolve(appRoot), "resources", "ffmpeg", executableName),
+    join(resolve(appRoot), "node_modules", "@ffprobe-installer", "win32-x64", executableName),
     ...windowsFfmpegCandidates(executableName),
   ];
   return candidates.find((candidate) => existsSync(candidate)) || "";
@@ -3497,6 +3498,7 @@ const bundledFfmpegPath = (appRoot = process.cwd()) => {
     join(dirname(dirname(process.execPath)), "resources", "ffmpeg", executableName),
     join(dirname(process.execPath), "resources", "ffmpeg", executableName),
     join(resolve(appRoot), "resources", "ffmpeg", executableName),
+    join(resolve(appRoot), "node_modules", "@ffmpeg-installer", "win32-x64", executableName),
     ...windowsFfmpegCandidates(executableName),
   ];
   return candidates.find((candidate) => existsSync(candidate)) || "";

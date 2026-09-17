@@ -60,6 +60,9 @@ const availableLoopbackPort = () => new Promise((resolvePort, rejectPort) => {
 });
 const debugPort = Number(process.env.SHENSI_E2E_DEBUG_PORT) || await availableLoopbackPort();
 const electronExecutable = join(root, "node_modules", "electron", "dist", "electron.exe");
+const ffmpegExecutable = process.platform === "win32"
+  ? join(root, "node_modules", "@ffmpeg-installer", "win32-x64", "ffmpeg.exe")
+  : "ffmpeg";
 const desktopEntry = join(root, "packaging", "windows", "desktop-app");
 const installedExecutable = String(process.env.SHENSI_E2E_INSTALLED_EXE || "").trim();
 
@@ -147,7 +150,7 @@ await mkdir(userDataRoot, { recursive: true });
 await mkdir(dirname(evidencePath), { recursive: true });
 await writeFile(externalMarkdownPath, "# 临时笔记只读验收\n\n这是一篇用于验证转存编辑流程的外部 Markdown。\n", "utf8");
 const standaloneVideoPath = join(runtimeRoot, "standalone-video.mp4");
-const standaloneVideoRender = spawnSync("ffmpeg", [
+const standaloneVideoRender = spawnSync(ffmpegExecutable, [
   "-hide_banner", "-loglevel", "error",
   "-f", "lavfi", "-i", "color=c=navy:s=160x90:d=0.5:r=12",
   "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", standaloneVideoPath,

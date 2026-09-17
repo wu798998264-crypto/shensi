@@ -60,6 +60,15 @@ const appRoot = installed
   : developmentRoot;
 const serverEntry = join(appRoot, "server.mjs");
 const preloadPath = join(here, "preload.cjs");
+const packagedMediaExecutable = (name) => {
+  const packagedPath = join(process.resourcesPath, "ffmpeg", name);
+  if (existsSync(packagedPath)) return packagedPath;
+  const developmentPackage = name === "ffprobe.exe" ? "@ffprobe-installer" : "@ffmpeg-installer";
+  const developmentPath = join(developmentRoot, "node_modules", developmentPackage, "win32-x64", name);
+  return existsSync(developmentPath) ? developmentPath : "";
+};
+const bundledFfmpegPath = process.platform === "win32" ? packagedMediaExecutable("ffmpeg.exe") : "";
+const bundledFfprobePath = process.platform === "win32" ? packagedMediaExecutable("ffprobe.exe") : "";
 // Keep the in-product brand mark untouched. The desktop shell uses the
 // transparent, rounded Windows icon so the taskbar never shows a sharp tile.
 const logoPath = join(appRoot, "public", "assets", "shensi-app-icon.png");
@@ -882,6 +891,12 @@ const startBackend = async () => {
       SHENSI_MACHINE_DATA_ROOT: serverMachineDataRoot,
       SHENSI_BROWSER_BRIDGE_URL: browserBridge.url,
       SHENSI_BROWSER_BRIDGE_TOKEN: browserBridge.token,
+      ...(String(process.env.SHENSI_FFMPEG_PATH || "").trim() || !bundledFfmpegPath
+        ? {}
+        : { SHENSI_FFMPEG_PATH: bundledFfmpegPath }),
+      ...(String(process.env.SHENSI_FFPROBE_PATH || "").trim() || !bundledFfprobePath
+        ? {}
+        : { SHENSI_FFPROBE_PATH: bundledFfprobePath }),
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],

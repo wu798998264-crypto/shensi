@@ -62,6 +62,8 @@ const dreaminaExecutable = async () => {
   return process.platform === "win32" ? "dreamina.exe" : "dreamina";
 };
 
+const ffmpegExecutable = () => String(process.env.SHENSI_FFMPEG_PATH || "ffmpeg").trim() || "ffmpeg";
+
 const dreaminaCommandTimeoutMs = (args = []) => {
   const configured = Number(process.env.SHENSI_DREAMINA_COMMAND_TIMEOUT_MS);
   if (Number.isFinite(configured) && configured > 0) return Math.max(1_000, configured);

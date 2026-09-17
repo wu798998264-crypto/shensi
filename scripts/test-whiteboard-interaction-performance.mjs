@@ -13,6 +13,9 @@ const reportSuffix = String(process.env.SHENSI_PERFORMANCE_REPORT_SUFFIX || "").
 const reportPath = join(root, "artifacts", `whiteboard-interaction-performance${reportSuffix ? `-${reportSuffix}` : ""}.json`);
 const screenshotPrefix = String(process.env.SHENSI_PERFORMANCE_SCREENSHOT_PREFIX || "").trim().replace(/[^a-z0-9_-]+/giu, "-");
 const electronExecutable = join(root, "node_modules", "electron", "dist", "electron.exe");
+const ffmpegExecutable = process.platform === "win32"
+  ? join(root, "node_modules", "@ffmpeg-installer", "win32-x64", "ffmpeg.exe")
+  : "ffmpeg";
 const desktopEntry = join(root, "packaging", "windows", "desktop-app");
 const installedExecutable = String(process.env.SHENSI_TEST_INSTALLED_EXE || "").trim();
 const debugPort = Math.max(1024, Number(process.env.SHENSI_PERFORMANCE_DEBUG_PORT) || 9359);
@@ -222,7 +225,7 @@ try {
   const performancePosterPath = join(performanceMediaDirectory, "whiteboard-performance-video.jpg");
   await mkdir(performanceMediaDirectory, { recursive: true });
   const runFixtureCommand = (args) => new Promise((resolveFixture, rejectFixture) => {
-    const fixture = spawn(String(process.env.SHENSI_TEST_FFMPEG || "ffmpeg"), args, {
+    const fixture = spawn(String(process.env.SHENSI_TEST_FFMPEG || ffmpegExecutable), args, {
       cwd: root,
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
