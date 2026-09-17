@@ -4,6 +4,11 @@ Import-Module (Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsof
 $installer = (Resolve-Path -LiteralPath $InstallerPath).Path
 $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot '..\..\package.json') | ConvertFrom-Json
 $signing = $metadata.build.win.signtoolOptions
+$existingSignature = Get-AuthenticodeSignature -LiteralPath $installer
+if ($existingSignature.Status -eq 'Valid' -and $existingSignature.TimeStamperCertificate) {
+    Write-Output 'Existing installer signature and trusted timestamp verified'
+    exit 0
+}
 $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
 $tool = Get-ChildItem -LiteralPath $sdkRoot -Directory | Sort-Object Name -Descending | ForEach-Object {
     $candidate = Join-Path $_.FullName 'x64\signtool.exe'

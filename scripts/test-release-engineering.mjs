@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const packageScript = await readFile(new URL("./windows/package-windows.ps1", import.meta.url), "utf8");
+const finalSigning = await readFile(new URL("./windows/sign-final-installer.ps1", import.meta.url), "utf8");
 const installer = await readFile(new URL("../packaging/windows/desktop-app/installer-custom.nsh", import.meta.url), "utf8");
 const desktop = await readFile(new URL("../packaging/windows/desktop-app/main.mjs", import.meta.url), "utf8");
 const appData = await readFile(new URL("../src/server/app-data.mjs", import.meta.url), "utf8");
@@ -12,6 +13,7 @@ const updatePreparation = await readFile(new URL("./windows/prepare-github-relea
 
 assert.match(packageScript, /yyyyMMddHHmmssfff/u, "every installer must get a unique timestamp build id");
 assert.match(packageScript, /sameVersionInstaller[\s\S]{0,500}Increment package\.json version/u, "a semantic version must not be packaged twice");
+assert.match(finalSigning, /existingSignature\.Status -eq 'Valid'[\s\S]{0,180}TimeStamperCertificate[\s\S]{0,180}exit 0/u, "final signing must preserve an existing valid timestamp instead of requiring a second timestamp request");
 assert.match(packageJson.build?.artifactName || "", /Shensi-Setup-\$\{version\}-\$\{env\.SHENSI_BUILD_ID\}-\$\{arch\}/u);
 assert.match(installer, /NSD_CreateCheckbox[\s\S]{0,100}创建桌面快捷方式/u, "assisted install must let the user choose a desktop shortcut");
 assert.match(installer, /ShensiCreateDesktopShortcut == \$\{BST_CHECKED\}[\s\S]{0,250}CreateShortCut/u, "desktop shortcut must follow the checkbox state");
