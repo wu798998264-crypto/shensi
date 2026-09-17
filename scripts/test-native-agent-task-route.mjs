@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import {
   agentTaskRouteFromDelivery,
   agentTaskRouteFromMediaDispatch,
+  nativeAgentLifecycleStageLabel,
   nativeAgentTaskWayLabel,
+  nativeAgentTerminalPresentation,
 } from "../src/conversation-agent-task-route.js";
 
 assert.equal(nativeAgentTaskWayLabel({ execution: { strength: "native_agent" } }), "Agent 执行", "缺少真实分类时不得回退成创作引导");
@@ -24,6 +26,28 @@ assert.equal(agentTaskRouteFromDelivery({ mode: "conversation", documentIds: [] 
 assert.equal(agentTaskRouteFromDelivery({ mode: "conversation", documentIds: [], taskType: "general_qa" }).taskKind, "general_qa");
 assert.equal(agentTaskRouteFromDelivery({ mode: "documents", documentIds: ["doc-1"], taskType: "quality_review" }).taskKind, "quality_review");
 assert.equal(agentTaskRouteFromDelivery({ mode: "media", documentIds: [], mediaChannels: ["video"] }).taskKind, "video_generation");
+
+const failed = nativeAgentTerminalPresentation({
+  status: "failed",
+  partialText: "我将先读取短篇小说分支。",
+  error: 'unexpected status 502: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}',
+  pendingWarnings: ["先前验收提示"],
+  resultWarnings: [],
+});
+assert.equal(failed.status, "failed");
+assert.match(failed.content, /我将先读取短篇小说分支。[\s\S]*任务失败：[\s\S]*usage_limit_reached/u, "预告文字之后必须追加真实失败原因");
+assert.match(failed.result, /^任务失败：[\s\S]*usage_limit_reached/u);
+assert.deepEqual(failed.warnings, ["先前验收提示"], "空的终态警告数组不得清除已记录提示");
+assert.equal(nativeAgentLifecycleStageLabel({ status: "failed" }), "任务失败");
+
+const completedWithWarning = nativeAgentTerminalPresentation({
+  status: "completed",
+  text: "正式结果",
+  pendingWarnings: ["已显示结果，但一项验收未完成"],
+  resultWarnings: [],
+});
+assert.equal(completedWithWarning.status, "soft_warning");
+assert.equal(completedWithWarning.content, "正式结果");
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");

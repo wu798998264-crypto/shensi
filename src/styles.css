@@ -10824,6 +10824,26 @@ textarea.whiteboard-find-textarea-source::selection {
   overflow-wrap: anywhere;
 }
 
+.execution-native-terminal-error {
+  display: grid;
+  gap: 4px;
+  margin-top: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 7%, var(--surface));
+  color: var(--text);
+}
+
+.execution-native-terminal-error strong {
+  color: var(--danger);
+}
+
+.execution-native-terminal-error span {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .execution-current-state dd {
   display: flex;
   align-items: flex-start;

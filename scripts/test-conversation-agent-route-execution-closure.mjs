@@ -11,7 +11,7 @@ import { saveWorkspaceState } from "../src/server/workspace.mjs";
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(appSource, /event\.type === "delivery_warning"/u, "界面必须单独接收验收提示");
 assert.match(appSource, /pending\.content = event\.payload\.text/u, "完成事件必须优先显示最终结果正文");
-assert.match(appSource, /deliveryWarnings\.length \? "soft_warning" : "complete"/u, "有验收提示时使用非阻断警告状态");
+assert.match(appSource, /nativeAgentTerminalPresentation\(\{[\s\S]{0,360}resultWarnings:\s*result\.deliveryWarnings/u, "原生 Agent 终态必须统一保留验收提示与失败原因");
 assert.match(appSource, /结果已正常显示/u, "任务卡必须说明结果没有被验收提示屏蔽");
 assert.doesNotMatch(appSource, /event\.type === "progress"\) \{\s*pending\.streamText = ""/u, "交付复核进度不得清空已经生成的正文");
 

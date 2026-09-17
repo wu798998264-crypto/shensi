@@ -1,5 +1,55 @@
 const text = (value) => String(value ?? "").trim();
 
+const uniqueText = (values = []) => [...new Set((Array.isArray(values) ? values : [])
+  .map(text)
+  .filter(Boolean))];
+
+const terminalIssueLabel = (status = "") => ({
+  failed: "任务失败",
+  interrupted: "任务已中断",
+  cancelled: "任务已取消",
+  canceled: "任务已取消",
+}[text(status).toLowerCase()] || "任务未完成");
+
+export const nativeAgentTerminalPresentation = ({
+  status = "",
+  text: finalText = "",
+  error = "",
+  partialText = "",
+  pendingWarnings = [],
+  resultWarnings = [],
+} = {}) => {
+  const normalizedStatus = text(status).toLowerCase();
+  const warnings = uniqueText([...pendingWarnings, ...resultWarnings]);
+  const partial = text(partialText);
+  if (normalizedStatus === "completed") {
+    return {
+      status: warnings.length ? "soft_warning" : "complete",
+      content: text(finalText) || partial || "Agent 已完成任务。",
+      error: "",
+      result: warnings.length ? "结果已交付；部分验收项未完成" : "Agent 执行完成",
+      warnings,
+    };
+  }
+  const issue = text(error) || text(finalText) || "Agent 未返回具体失败原因";
+  const label = terminalIssueLabel(normalizedStatus);
+  const issueLine = `${label}：${issue}`;
+  return {
+    status: normalizedStatus || "failed",
+    content: partial && !partial.includes(issue) ? `${partial}\n\n${issueLine}` : partial || issueLine,
+    error: issue,
+    result: issueLine,
+    warnings,
+  };
+};
+
+export const nativeAgentLifecycleStageLabel = ({ status = "", fallback = "任务结束" } = {}) => ({
+  failed: "任务失败",
+  interrupted: "任务已中断",
+  cancelled: "任务已取消",
+  canceled: "任务已取消",
+}[text(status).toLowerCase()] || fallback);
+
 export const CONVERSATION_AGENT_TASK_LABELS = Object.freeze({
   creative_guidance: "创作引导",
   formal_creation: "正式创作",

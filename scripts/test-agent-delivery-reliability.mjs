@@ -43,7 +43,8 @@ try {
   const loaded=await loadWorkspaceState({appRoot:root,requestedPath:workspacePath});
   assert.equal(loaded.state.documents.article.title,'新的文章标题');
   assert.match(loaded.state.documents.article.markdown,/新文章完整/);
-  assert.match(loaded.state.histories.article[0].content,/完整保留的旧文章/);
+  assert.match(loaded.state.histories.article[0].content,/新文章完整/,"正式写入完成时必须把新结果创建为最新历史版本");
+  assert.ok(loaded.state.histories.article.some((version)=>/完整保留的旧文章/.test(version.content)),"被替换的旧正文仍须可从更早历史版本找回");
   const writer = createConversationAgentTools({...base,requestId:'all-write-modes',instruction:'追加、局部修订、重命名并保存报告'});
   let current = await invoke(writer,'documents','read',{documentId:'article'});
   const append = {operation:'append',documentId:'article',content:'\n\n这是追加的结尾。',expectedRevision:current.revision,operationId:'append'};
@@ -65,7 +66,7 @@ try {
   let stubbornCalls=0;
   const stubborn=createConversationAgentService({appRoot:root,storageRoot:join(root,'failures'),skillCatalog:async()=>[],readRoute:async()=>'',run:async()=>{stubbornCalls++;return {text:'声称完成但没有工具证据'};}});
   const failure=await wait(stubborn,(await stubborn.start({...request,conversationId:'stubborn'})).id);
-  assert.equal(failure.status,'completed');assert.equal(stubbornCalls,2);
+  assert.equal(failure.status,'completed');assert.equal(stubbornCalls,3,'无工具交付会经历一次正文修复和一次只读交付复核，不得无限重试');
   assert.equal(failure.events.filter(e=>e.type==='document_saved').length,0);
   assert.match(failure.text,/没有工具证据/);
   assert.ok(failure.events.some(e=>e.type==='delivery_warning'),'验收失败必须作为警告交付，不能覆盖已有结果');

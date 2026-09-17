@@ -109,6 +109,17 @@ try {
         const request = JSON.parse(init.body);
         window.nativeAgentStarts.push(request);
         const id = 'agent-00000000-0000-0000-0000-' + String(window.nativeAgentStarts.length).padStart(12, '0');
+        const instruction = String(request.messages?.at(-1)?.content || '');
+        if (instruction.includes('失败呈现验收')) {
+          const error = 'unexpected status 502 Bad Gateway: {"error":{"type":"usage_limit_reached","message":"The usage limit has been reached"}}';
+          const events = [
+            { sequence: 1, type: 'started', payload: { model: 'mock' } },
+            { sequence: 2, type: 'text_delta', payload: { text: '我将先读取短篇小说分支。' } },
+            { sequence: 3, type: 'failed', payload: { message: error } },
+          ];
+          window.nativeAgentMocks.set(id, { id, status: 'failed', events, lastSequence: 3, text: '我将先读取短篇小说分支。', error, deliveryWarnings: [] });
+          return Response.json({ok:true,id,status:'running'});
+        }
         const questionId = 'question-' + window.nativeAgentStarts.length;
         const events = [
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
@@ -309,6 +320,17 @@ try {
   assert.equal(await evaluate("window.nativeAgentAnswers[2].answer"), '节奏');
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "最后一问后完成成果交付");
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
+  await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='失败呈现验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
+  await waitFor("window.nativeAgentStarts.length === 4 && document.querySelector('[data-native-task-card][data-status=failed]')", "原生 Agent 失败终态");
+  const failurePresentation = await evaluate(`(() => {
+    const card=document.querySelector('[data-native-task-card][data-status=failed]');
+    const message=card?.closest('[data-message]');
+    return {card:card?.innerText||'',message:message?.innerText||'',alert:card?.querySelector('[role=alert]')?.innerText||''};
+  })()`);
+  assert.match(failurePresentation.card, /任务失败[\s\S]*usage_limit_reached/u, "任务卡必须显示真实失败原因");
+  assert.match(failurePresentation.message, /我将先读取短篇小说分支。[\s\S]*任务失败：[\s\S]*The usage limit has been reached/u, "预告文字不得掩盖后续失败");
+  assert.match(failurePresentation.alert, /任务失败[\s\S]*usage_limit_reached/u, "失败必须使用可访问的显式警报呈现");
+  await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   const emptyId = await evaluate(`(() => { const key=Object.keys(localStorage).find(key=>key.startsWith('shensi-manual-conversations-v1:')); return JSON.parse(localStorage.getItem(key)).activeId; })()`);
   assert.ok(emptyId);
   await cdp('Page.reload', {});
@@ -317,7 +339,7 @@ try {
   await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
   assert.equal(await evaluate(`document.querySelector('[data-conversation="${emptyId}"]').closest('.conversation-task-row').classList.contains('active')`), true, '恢复原活动对话');
   assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
-  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click","native Agent failure reason remains visible"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
   throw error;

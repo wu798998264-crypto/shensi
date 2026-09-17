@@ -118,7 +118,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentTaskWayLabel } from "./conversation-agent-task-route.js?v=1.0.0";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.1.8-terminal-errors";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -18871,7 +18871,9 @@ const renderExecutionProcess = (message) => {
       specialist: execution.specialist || null,
     });
   const taskLifecycleSummary = [
-    taskLifecycleStageLabel(taskLifecycle.stage),
+    nativeAgentExecution
+      ? nativeAgentLifecycleStageLabel({ status: execution.status, fallback: taskLifecycleStageLabel(taskLifecycle.stage) })
+      : taskLifecycleStageLabel(taskLifecycle.stage),
     taskLifecycle.provider,
     taskLifecycle.agent,
     taskLifecycle.model,
@@ -19021,6 +19023,9 @@ const renderExecutionProcess = (message) => {
     .filter(Boolean)
     .join("、");
   const deliveryWarnings = Array.isArray(execution.deliveryWarnings) ? execution.deliveryWarnings.filter(Boolean) : [];
+  const nativeTerminalIssue = nativeAgentExecution && ["failed", "interrupted", "cancelled", "canceled"].includes(String(execution.status || "").toLowerCase())
+    ? String(execution.error || execution.result || "Agent 未返回具体失败原因").replace(/^(?:任务失败|任务已中断|任务已取消)：\s*/u, "")
+    : "";
   return `<details class="execution-process" data-status="${escapeHtml(execution.status || "complete")}" data-disclosure-state="${disclosureState}"${nativeAgentExecution ? ` data-native-task-card="${escapeHtml(message.id)}"` : ""} ${expanded ? "open" : ""}>
     <summary><span class="execution-progress-ring" style="--execution-progress:${progress * 3.6}deg" role="progressbar" aria-label="任务处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span>${escapeHtml(progressLabel)}</span></span><span>${escapeHtml(uiText(processTitle))}${!agentExecution && stepProgress ? ` · ${escapeHtml(stepProgress)}` : ""}</span><span class="execution-time"${timerData}>${timeText}</span></summary>
     ${pending && execution.requestId ? `<button class="execution-stop" type="button" data-cancel-run="${escapeHtml(execution.requestId)}" title="${cancelling ? "正在终止任务" : "终止任务"}" ${cancelling ? "disabled" : ""}>${icon("\uE71A", cancelling ? "正在终止任务" : "终止任务")}</button>` : ""}
@@ -19060,6 +19065,7 @@ const renderExecutionProcess = (message) => {
       ${experienceRecallSummary ? `<div><dt>${escapeHtml(uiText("本轮经验"))}</dt><dd>${escapeHtml(experienceRecallSummary)}</dd></div>` : ""}
       ${nativeAgentExecution ? "" : `<div class="${pending ? "execution-current-state" : ""}"><dt>当前状态</dt><dd role="status" aria-live="polite">${pending ? `<span class="execution-live-dot" aria-hidden="true"></span>` : ""}<span>${escapeHtml(result)}</span></dd></div>`}
     </dl>
+    ${nativeTerminalIssue ? `<div class="execution-native-terminal-error" role="alert"><strong>${escapeHtml(nativeAgentLifecycleStageLabel({ status: execution.status, fallback: "任务未完成" }))}</strong><span>${escapeHtml(nativeTerminalIssue)}</span></div>` : ""}
     ${nativeAgentExecution ? renderNativeAgentEvidence(message) : executionContextReadMarkup(execution)}
     ${stageRows ? `<ol class="execution-stages">${stageRows}</ol>` : ""}
     ${adaptiveEvidenceRows ? `<details class="execution-capability-trace"><summary>查看本轮动态取证依据</summary><ol class="execution-stages">${adaptiveEvidenceRows}</ol></details>` : ""}
@@ -36098,10 +36104,16 @@ const monitorNativeConversation = (runtime, pending) => {
           pending.content = event.payload.text;
           pending.execution.deliveryWarnings = event.payload.warnings || pending.execution.deliveryWarnings || [];
         } else if (["failed", "cancelled"].includes(event.type)) {
-          if ((pending.streamText || "").trim()) {
-            pending.content = pending.streamText;
-            pending.execution.deliveryWarnings = [...new Set([...(pending.execution.deliveryWarnings || []), event.payload.message].filter(Boolean))];
-          } else pending.content = event.payload.message;
+          const terminal = nativeAgentTerminalPresentation({
+            status: event.type,
+            error: event.payload.message,
+            partialText: pending.streamText,
+            pendingWarnings: pending.execution.deliveryWarnings,
+          });
+          pending.content = terminal.content;
+          pending.execution.error = terminal.error;
+          pending.execution.result = terminal.result;
+          pending.execution.deliveryWarnings = terminal.warnings;
         }
         if (event.type === "text_delta" && conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
           const card = document.querySelector(`[data-native-task-card="${CSS.escape(pending.id)}"]`);
@@ -36110,13 +36122,18 @@ const monitorNativeConversation = (runtime, pending) => {
           else renderNativeConversation(runtime);
         } else renderNativeConversation(runtime);
       }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
-      pending.content ||= result.text || result.error || "Agent 已完成任务。";
       pending.pending = false;
-      const deliveryWarnings = result.deliveryWarnings || pending.execution.deliveryWarnings || [];
-      Object.assign(pending.execution, { status: result.status === "completed" ? deliveryWarnings.length ? "soft_warning" : "complete" : result.status,
-        deliveryWarnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: result.status === "completed"
-          ? deliveryWarnings.length ? "结果已交付；部分验收项未完成" : "Agent 执行完成"
-          : result.error || result.status });
+      const terminal = nativeAgentTerminalPresentation({
+        status: result.status,
+        text: result.text,
+        error: result.error || pending.execution.error,
+        partialText: pending.streamText || pending.content,
+        pendingWarnings: pending.execution.deliveryWarnings,
+        resultWarnings: result.deliveryWarnings,
+      });
+      pending.content = terminal.content;
+      Object.assign(pending.execution, { status: terminal.status, error: terminal.error,
+        deliveryWarnings: terminal.warnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: terminal.result });
       conversation.agentQuestion = null;
       conversation.nativeAgentRun = null;
       if (pending.nativeInlineEdit && result.status === "completed") {
@@ -36137,8 +36154,15 @@ const monitorNativeConversation = (runtime, pending) => {
       }
       return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
     } catch (error) {
-      pending.pending = false; pending.content = error.message; pending.execution.status = "interrupted";
-      pending.execution.nativeAgentTerminal = true;
+      const terminal = nativeAgentTerminalPresentation({
+        status: "interrupted",
+        error: error.message,
+        partialText: pending.streamText,
+        pendingWarnings: pending.execution.deliveryWarnings,
+      });
+      pending.pending = false; pending.content = terminal.content;
+      Object.assign(pending.execution, { status: terminal.status, error: terminal.error, result: terminal.result,
+        deliveryWarnings: terminal.warnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now() });
       // Do not resubmit when the transport fails after acceptance.
       await persistNativeConversation(runtime).catch(() => {});
       return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
