@@ -160,7 +160,9 @@ const run = runExternalCliAgent({
   cliPath: "codebuddy",
   cliArgs: "-p {prompt} --model {model}",
   prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"],
-  nativeHost: { url: "http://127.0.0.1:43123/mcp", headers: {} },
+  nativeHost: { url: "http://127.0.0.1:43123/mcp", headers: {}, toolNames: ["interaction_delivery", "documents_write"] },
+  agentPermissionMode: "shensi_only",
+  permissionContract: { mode: "approval_required", confirmation: { required: true } },
   resolveLaunch: async () => ({ executable: "C:\\WorkBuddy\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"] }),
   spawnProcess: (executable, args) => {
     launchRequest = { executable, args };
@@ -175,5 +177,11 @@ await run;
 assert.equal(launchRequest.executable, "C:\\WorkBuddy\\node.exe");
 assert.deepEqual(launchRequest.args.slice(0, 1), ["C:\\WorkBuddy\\codebuddy.js"]);
 assert.equal(launchRequest.args.includes("--model"), false, "WorkBuddy 空模型不得传递 --model");
+const toolsFlagIndex = launchRequest.args.indexOf("--tools");
+assert.ok(toolsFlagIndex >= 0 && launchRequest.args[toolsFlagIndex + 1] === "DeferExecuteTool", "WorkBuddy 仅神思模式只能暴露 MCP 延迟调用桥，不能开放本地工具");
+assert.ok(launchRequest.args.includes("--allowedTools=DeferExecuteTool,mcp__shensi__interaction_delivery,mcp__shensi__documents_write"), "WorkBuddy 必须以单参数白名单预授权真实 MCP 工具与调用桥");
+assert.ok(launchRequest.args.includes("--permission-mode=bypassPermissions"), "WorkBuddy 打印模式必须以独立单参数放行内部延迟调用桥");
+assert.ok(launchRequest.args.indexOf("--permission-mode=bypassPermissions") < launchRequest.args.findIndex((arg) => arg.startsWith("--allowedTools=")), "WorkBuddy 权限模式必须先于可变长度的工具白名单参数");
+assert.equal(launchRequest.args.includes("-y"), false, "WorkBuddy 不得使用无工具边界的全局 -y 跳过权限参数");
 
-console.log(JSON.stringify({ ok: true, checks: ["powershell-output-decoding", "workbuddy-official-installer", "workbuddy-model-catalog", "runner-registry-removal", "runner-login-launch", "cancelled-install", "workbuddy-absolute-launch", "empty-model"] }, null, 2));
+console.log(JSON.stringify({ ok: true, checks: ["powershell-output-decoding", "workbuddy-official-installer", "workbuddy-model-catalog", "runner-registry-removal", "runner-login-launch", "cancelled-install", "workbuddy-absolute-launch", "empty-model", "shensi-mcp-deferred-tool"] }, null, 2));

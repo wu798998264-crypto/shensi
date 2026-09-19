@@ -49,15 +49,15 @@ class CapturingLibTvDriver extends LibTvMediaDriver {
   }
 }
 
-const captureSubmission = async ({ model, request, references }) => {
+const captureSubmission = async ({ model, request, references, channel = "video" }) => {
   const workRoot = await mkdtemp(join(tmpdir(), "shensi-libtv-test-"));
   try {
     const driver = new CapturingLibTvDriver();
     await driver.submit({
       job: {
         id: `job-${model}`,
-        channel: "video",
-        request: { prompt: "测试视频", settings: { cliPath: "libtv", model }, ...request },
+        channel,
+        request: { prompt: channel === "image" ? "测试图片" : "测试视频", settings: { cliPath: "libtv", model }, ...request },
       },
       references,
       workRoot,
@@ -85,4 +85,22 @@ const motionArgs = await captureSubmission({
 assert.ok(motionArgs.includes("modeType=mixed2video"), "动作迁移必须使用图片+视频混合模式");
 assert.equal(motionArgs.some((value) => /^duration=/u.test(value)), false, "跟随参考视频时长的模型不能伪造 duration 参数");
 
-console.log("LibTV 视频模型 Schema 时长与参考模式适配测试通过");
+const imageProArgs = await captureSubmission({
+  channel: "image",
+  model: "lib-image-2.5-s",
+  request: { imageCount: 1, aspectRatio: "1:1", resolution: "2K" },
+  references: [],
+});
+assert.ok(imageProArgs.includes("model=Lib Image 2.5 Pro"), "Lib Image 2.5 Pro 必须向 CLI 传递官方模型名");
+assert.equal(imageProArgs.includes("model=lib-image-2.5-s"), false, "不得把 2.5 Pro 的内部 key 当作模型名传给 CLI");
+
+const imageFastArgs = await captureSubmission({
+  channel: "image",
+  model: "lib-image-2.5-f",
+  request: { imageCount: 1, aspectRatio: "1:1", resolution: "2K" },
+  references: [],
+});
+assert.ok(imageFastArgs.includes("model=Lib Image 2.5 Fast"), "Lib Image 2.5 Fast 必须向 CLI 传递官方模型名");
+assert.equal(imageFastArgs.includes("model=lib-image-2.5-f"), false, "不得把 2.5 Fast 的内部 key 当作模型名传给 CLI");
+
+console.log("LibTV 图片模型名、视频 Schema 时长与参考模式适配测试通过");

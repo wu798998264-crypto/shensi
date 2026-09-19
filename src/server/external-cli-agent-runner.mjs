@@ -336,13 +336,36 @@ export const runExternalCliAgent = async ({
   if (!executable) throw errorForRunner(runner, "自定义运行器需要填写 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED");
   const template = clean(cliArgs) || defaultCliArgs(runner);
   if (!template) throw errorForRunner(runner, "自定义运行器需要填写 CLI 参数模板", "EXTERNAL_CLI_ARGS_REQUIRED");
-  const accessMode = normalizeAgentPermissionMode(permissionContract?.mode || agentPermissionMode);
+  const configuredAccessMode = normalizeAgentPermissionMode(agentPermissionMode);
+  const contractAccessMode = normalizeAgentPermissionMode(permissionContract?.mode || configuredAccessMode);
+  // The gateway equips Shensi-only tasks with a one-operation approval bridge
+  // by deriving an approval_required runtime contract. That bridge must not
+  // silently widen WorkBuddy's native CLI tool surface: the persisted user
+  // mode remains Shensi-only, and external actions are requested through the
+  // Shensi permission MCP. Preserve the user's configured boundary here.
+  const accessMode = runner === "workbuddy" && configuredAccessMode === "shensi_only"
+    ? "shensi_only"
+    : contractAccessMode;
   if (accessMode === "approval_required" && !permissionContract?.confirmation?.required) {
     throw errorForRunner(runner, "操作需确认模式缺少神思权限合同", "EXTERNAL_CLI_PERMISSION_CONTRACT_REQUIRED");
   }
+  const workBuddyShensiTools = runner === "workbuddy" && accessMode === "shensi_only"
+    ? (Array.isArray(nativeHost?.toolNames) ? nativeHost.toolNames : [])
+      .map((name) => clean(name))
+      .filter(Boolean)
+      .map((name) => name.startsWith("mcp__") ? name : `mcp__shensi__${name}`)
+    : [];
   const system = nativeInstruction({ engine: runner, permissionMode: accessMode });
+  const workBuddyToolBridgeInstruction = workBuddyShensiTools.length
+    ? [
+      "WorkBuddy exposes Shensi MCP through the built-in DeferExecuteTool bridge.",
+      "When the task contract uses a dotted semantic name such as interaction.delivery, convert it to the exact registered bridge name such as mcp__shensi__interaction_delivery.",
+      `The exact Shensi bridge names available in this task are: ${workBuddyShensiTools.join(", ")}.`,
+      "Invoke those exact names through DeferExecuteTool. Do not call the dotted label directly and do not claim a tool is missing before trying its exact registered name.",
+    ].join("\n")
+    : "";
   const resources = deepSeekAgentContextText(contextBlocks);
-  const finalPrompt = [system, task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
+  const finalPrompt = [system, workBuddyToolBridgeInstruction, task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(finalPrompt, "utf8") > MAX_INPUT_BYTES) {
     throw errorForRunner(runner, `${runnerLabel(runner)} 输入超过 8MB，已停止本次调用`, "EXTERNAL_CLI_INPUT_TOO_LARGE");
   }
@@ -375,7 +398,28 @@ export const runExternalCliAgent = async ({
     // Templates without a prompt placeholder receive the same prompt through stdin.
     const sendPromptToStdin = !usesPrompt;
     if (runner === "workbuddy" && accessMode === "shensi_only" && !args.some((arg) => /^--tools(?:=|$)/u.test(arg))) {
-      args.push("--tools", "mcp__shensi__*");
+      // WorkBuddy exposes remote MCP calls through its built-in
+      // DeferExecuteTool bridge. Keep only that bridge; native file, shell,
+      // task, web and plugin tools remain unavailable.
+      args.push("--tools", "DeferExecuteTool");
+    }
+    if (runner === "workbuddy" && accessMode === "shensi_only" && !args.some((arg) => /^--permission-mode(?:=|$)/u.test(arg))) {
+      // Current WorkBuddy desktop builds still ask approval for their private
+      // DeferExecuteTool even when it is listed in --allowedTools. There is no
+      // interactive permission prompt in print mode, so the MCP call would be
+      // denied after the model had already produced an answer. Bypass that
+      // internal prompt only after --tools has reduced the exposed tool set to
+      // Shensi MCP and the process has been moved into an isolated workspace.
+      // Native file, shell and network tools therefore remain unavailable.
+      // Use the single-token form before the variadic --allowedTools option;
+      // otherwise some desktop CLI builds consume the following option as an
+      // additional tool name and silently stay in the default permission mode.
+      args.push("--permission-mode=bypassPermissions");
+    }
+    if (runner === "workbuddy" && accessMode === "shensi_only" && !args.some((arg) => /^--allowedTools(?:=|$)/u.test(arg))) {
+      // WorkBuddy invokes an MCP tool through its internal DeferExecuteTool
+      // bridge. Keep this as one token because --allowedTools is variadic.
+      args.push(`--allowedTools=${["DeferExecuteTool", ...workBuddyShensiTools].join(",")}`);
     }
     return await new Promise((resolveRun, rejectRun) => {
       const child = spawnProcess(executable, args, {

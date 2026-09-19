@@ -21,7 +21,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.3.5-retired-trae-work";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.4.4-workbuddy-tool-access";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.3.5-retired-trae-work";
+} from "./generation-profiles.js?v=6.4.4-workbuddy-tool-access";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -131,7 +131,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.3.5-retired-trae-work";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.4-workbuddy-tool-access";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -265,7 +265,7 @@ import {
 import { PANE_LAYOUT_DEFAULTS, constrainPaneWidths, resizePaneWidths } from "./pane-layout.js";
 import { CHAT_COMPOSER_HEIGHT_DEFAULT, CHAT_COMPOSER_HEIGHT_LIMITS, chatComposerHeightRange, clampChatComposerHeight, resizeChatComposerHeight } from "./chat-composer-layout.js";
 import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSession, countInsertedCharacters, formatWritingTimerDuration, normalizeWritingTimerRecord, normalizeWritingTimerStore, pauseWritingMetricsSession, pauseWritingTimer, recordWritingMetricsActivity, setWritingTimerExpanded, startWritingTimer, stopWritingTimer, writingMetricsSnapshot, writingTimerElapsedMs } from "./writing-timer.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.3.5-retired-trae-work";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.4-workbuddy-tool-access";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
 import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
@@ -291,7 +291,7 @@ import { createDocumentEditHistory, documentEditHistoryAvailability, rebaseDocum
 import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from "./document-write-transaction.js?v=3.0.10-create-title";
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
-import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.3.5-retired-trae-work";
+import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.4-workbuddy-tool-access";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
 import { memoryReviewCandidateEvidence, memoryReviewCandidatesForPlan, memoryReviewUiSummary, toggleRecommendedMemorySelection } from "./memory-review-ui-model.js?v=0.42.14-product-evidence-ux";
@@ -325,7 +325,7 @@ import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
 import { markAgentResultProjection, upsertAgentResultReference } from "./conversation-agent-document-projection.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.4-workbuddy-tool-access";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -6388,7 +6388,11 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
   const field = (name) => form.elements.namedItem(name);
   const selectedEngine = field("textAgentEngine")?.value || "";
   if (selectedEngine === "workbuddy") {
-    const profile = activeGenerationProfile(generationWorkingSettings(), "text");
+    const activeProfile = activeGenerationProfile(generationWorkingSettings(), "text");
+    // Changing the runner in the editor must not borrow the active profile's
+    // model from another engine (for example Codex's gpt-* selection).  Only a
+    // real WorkBuddy profile may provide the current WorkBuddy model.
+    const profile = agentEngineForProfile(activeProfile || {}) === selectedEngine ? activeProfile : null;
     const current = String(preferredModel || profile?.agentModelId || profile?.model || "").trim();
     const runnerLabel = agentEngineDescriptor(selectedEngine)?.label || AGENT_RUNNER_LABELS[selectedEngine] || "外置 Agent";
     const capability = agentRunnerCapability(selectedEngine);
@@ -7133,11 +7137,15 @@ const syncAgentRunnerOptions = () => {
 };
 
 const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
+  // Settings, quick-model and installer surfaces can request the same refresh
+  // during one paint.  WorkBuddy's authenticated catalogue probe is a real CLI
+  // invocation, so concurrent probes can make an otherwise healthy runner time
+  // out and briefly erase its model list.
+  if (ui.agentRunnerStatusPromise) return ui.agentRunnerStatusPromise;
   if (!force && Object.keys(ui.agentRunners || {}).length) {
     syncAgentRunnerOptions();
     return ui.agentRunners;
   }
-  if (!force && ui.agentRunnerStatusPromise) return ui.agentRunnerStatusPromise;
   const request = (async () => {
     const response = await fetch(`/api/agent-runners/status${force ? "?force=true" : ""}`);
     const payload = await response.json().catch(() => ({}));
@@ -7148,9 +7156,12 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     const selectedRunnerId = String(select?.value || "");
     if (selectedRunnerId === "workbuddy" && elements.settingsForm) {
       const profile = activeGenerationProfile(generationWorkingSettings(), "text");
+      const profileModel = agentEngineForProfile(profile || {}) === selectedRunnerId
+        ? profile?.agentModelId || profile?.model || ""
+        : "";
       renderModelOptions(elements.settingsForm.elements.provider?.value || "", {
         allowBlank: true,
-        preferredModel: profile?.agentModelId || profile?.model || "",
+        preferredModel: profileModel,
       });
     }
     if (select && selectedRunnerId !== "custom" && AGENT_RUNNER_LABELS[selectedRunnerId] && ui.agentRunners?.[selectedRunnerId]?.installed === false
@@ -15720,6 +15731,8 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
   const target = job.target ?? {};
   const documentState = state.documents[target.documentId];
   if (!documentState || documentState.documentKind !== "whiteboard") return;
+  const candidateKey = whiteboardCandidateKey(target.nodeId, { workspacePath: target.workspacePath, documentId: target.documentId });
+  const activeCandidate = ui.whiteboardCandidates.get(candidateKey);
   const userStopped = Boolean(job.userStoppedAt || job.resultSuppressed || job.userStopped);
   const targetWasDeleted = canvasGenerationRecoveryTargetDeleted(documentState.canvas, {
     nodeId: target.nodeId,
@@ -15727,18 +15740,20 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
     generationCreatedAt: job.createdAt,
   });
   if (userStopped || targetWasDeleted) {
-    const candidateKey = whiteboardCandidateKey(target.nodeId, { workspacePath: target.workspacePath, documentId: target.documentId });
     releaseWhiteboardMediaSubmissionLockForJob(job);
-    stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
-    renderWhiteboardCandidateLocation({ workspacePath: target.workspacePath, documentId: target.documentId });
+    if (whiteboardMediaJobMayClearCandidate(job, activeCandidate)) {
+      stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
+      renderWhiteboardCandidateLocation({ workspacePath: target.workspacePath, documentId: target.documentId });
+    }
     return;
   }
   promptDreaminaReverificationForJob(job);
   const targetNode = normalizeCanvas(documentState.canvas).nodes.find((node) => node.id === target.nodeId);
-  const candidateKey = whiteboardCandidateKey(target.nodeId, { workspacePath: target.workspacePath, documentId: target.documentId });
   if (targetNode && whiteboardMediaJobIsSupersededByNodeGeneration(job, targetNode)) {
-    stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
-    renderWhiteboardCandidateLocation({ workspacePath: target.workspacePath, documentId: target.documentId });
+    if (whiteboardMediaJobMayClearCandidate(job, activeCandidate)) {
+      stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
+      renderWhiteboardCandidateLocation({ workspacePath: target.workspacePath, documentId: target.documentId });
+    }
     return;
   }
   restoreInterruptedWhiteboardGenerationDraft(job);
@@ -15753,7 +15768,6 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
     });
     if (created) persist();
   }
-  const activeCandidate = ui.whiteboardCandidates.get(candidateKey);
   if (activeCandidate && activeCandidate.jobId !== job.id) return;
   // A terminal/attention result must remain visible on its originating card
   // so the user can see the real error and any recovery action. Card display
@@ -25121,7 +25135,22 @@ const agentModelsForProfile = (profile = null) => {
 
 const agentCatalogRequests = new Map();
 const hydrateAgentProfileModelCatalog = async (profile, { force = false } = {}) => {
-  if (!profile?.id || profile.adapter !== "api") return [];
+  if (!profile?.id) return [];
+  const engine = agentEngineForTextProfile(profile);
+  if (engine === "workbuddy") {
+    const current = agentRunnerCapability(engine);
+    const catalogReady = current?.authState === "authenticated"
+      && current?.modelState === "catalog_available"
+      && Array.isArray(current?.models)
+      && current.models.length > 0;
+    const statuses = await hydrateAgentRunnerStatuses({ force: force || !catalogReady });
+    const capability = statuses?.[engine] || null;
+    if (capability?.state === "login_required" || capability?.authState === "login_required") {
+      throw new Error("WorkBuddy 已安装但尚未登录；请先完成 WorkBuddy 登录");
+    }
+    return Array.isArray(capability?.models) ? capability.models : [];
+  }
+  if (profile.adapter !== "api") return [];
   const prepared = withReusableTextProviderCredential(profile);
   const cacheKey = textModelCatalogKey(prepared);
   const cached = cachedTextModelsForProfile(prepared);
@@ -59767,11 +59796,15 @@ const renderCodexAgentPanel = () => {
     || run.conversationId === state.activeConversationId
   )) || null;
   const missingRunnerLabel = AGENT_RUNNER_LABELS[agentEngine] || (agentEngine === "deepseek_opencode" ? "OpenCode" : "Codex");
+  const externalRunnerCapability = EXTERNAL_AGENT_RUNNER_IDS.includes(agentEngine)
+    ? agentRunnerCapability(agentEngine)
+    : null;
+  const runnerInstalled = externalRunnerCapability?.installed ?? status.installed;
   elements.stopCodexAgent.hidden = !isAgent || !activeRun;
   elements.stopCodexAgent.dataset.turnId = activeRun?.turnId || ui.codexAgent.activeTurnId || "";
   const statusText = !isAgent
     ? ""
-    : status.installed === false && agentEngine !== "codex_api"
+    : runnerInstalled === false && agentEngine !== "codex_api"
       ? agentEngine === "custom"
         ? "自定义运行器尚未填写 CLI 程序路径和参数模板。"
         : `没有检测到本机 ${missingRunnerLabel} CLI，请先完成安装与连接。`
@@ -62661,7 +62694,10 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
     if (String(state.settings.activeTextAgentConnectionId || "") !== requestedProfileId) return;
     void hydrateAgentProfileModelCatalog(profile)
       .then(() => {
-        if (String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId) renderQuickModelSelector();
+        if (String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId) {
+          renderQuickModelSelector();
+          renderCodexAgentPanel();
+        }
       })
       .catch((error) => {
         if (String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId) showToast(error.message || "Agent 模型目录读取失败");

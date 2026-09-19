@@ -914,6 +914,8 @@ export class DreaminaVideoDriver extends MediaProviderDriver {
 
 const LIBTV_IMAGE_NAMES = Object.freeze({
   "lib-image-2": "Lib Image",
+  "lib-image-2.5-s": "Lib Image 2.5 Pro",
+  "lib-image-2.5-f": "Lib Image 2.5 Fast",
   "nebula-ultra": "General image Pro",
   "nebula-2-flash": "General image V2",
   "doubao-seedream-5-0-pro": "Seedream 5.0 Pro",

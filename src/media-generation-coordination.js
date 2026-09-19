@@ -167,6 +167,16 @@ export const whiteboardMediaJobIsSupersededByNodeGeneration = (job = {}, node = 
   return Number.isFinite(failedAt) && Number.isFinite(currentAt) && currentAt > failedAt;
 };
 
+export const whiteboardMediaJobMayClearCandidate = (job = {}, candidate = null) => {
+  if (!candidate) return true;
+  const jobId = String(job?.id || "").trim();
+  const candidateJobId = String(candidate?.jobId || "").trim();
+  // A candidate without a server job id is the short submission handshake for
+  // the user's newest click. A recovered historical job must never erase it.
+  if (!jobId || !candidateJobId) return false;
+  return jobId === candidateJobId;
+};
+
 export const shouldPromoteMediaGenerationResult = ({
   activeCandidatePresent = false,
   activeCandidateJobId = "",

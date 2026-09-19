@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mediaRecoveryJobBlocksOperation } from "../src/media-generation-coordination.js";
+import { mediaRecoveryJobBlocksOperation, whiteboardMediaJobMayClearCandidate } from "../src/media-generation-coordination.js";
 
 const [app, server, mediaWorker] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
@@ -47,6 +47,7 @@ assert.match(app, /const remaining = await readMediaRecoveryJobsForDialog\(\);[\
 assert.match(app, /addCanvasGenerationRecoveryTombstone\(removed\.canvas, \{ nodeId, generationJobId \}\)/u, "单卡片删除必须持久化生成目标删除墓碑");
 assert.match(app, /targetWasDeleted = canvasGenerationRecoveryTargetDeleted/u, "恢复扫描必须识别用户已经删除的生成目标");
 assert.match(app, /if \(userStopped \|\| targetWasDeleted\)/u, "已停止或已删除的任务不得重建卡片");
+assert.match(app, /if \(whiteboardMediaJobMayClearCandidate\(job, activeCandidate\)\)/u, "旧任务只能清理属于自己的卡片状态");
 assert.match(app, /preserveAssetOnly: true,[\s\S]{0,500}保留已停止任务的图片资产/u, "厂商迟到结果必须只进入全部资产而不重建已删除卡片");
 assert.match(server, /WHITEBOARD_HISTORY_CONTEXT_FORBIDDEN/u, "白板卡片请求必须拒绝历史对话上下文");
 assert.match(server, /dismissMediaGenerationJob/u, "服务端必须提供持久化的旧任务释放动作");
@@ -90,6 +91,11 @@ assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", appliedAt: new Date().toISOString() }), false, "回填完成的任务必须立即隐藏");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", billingRisk: "", availableActions: { dismissCompleted: true } }), false, "已完成任务不应以放弃动作形式进入待处理");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", resultSuppressed: true, availableActions: { dismissCompleted: true } }), false, "已放弃并隐藏的完成任务不得继续阻塞");
+
+assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, null), true, "没有候选状态时可以执行幂等清理");
+assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, { jobId: "old-job" }), true, "任务可以清理自己的候选状态");
+assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, { jobId: "new-job" }), false, "旧任务不得清理新任务的候选状态");
+assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, { jobId: "" }), false, "恢复的旧任务不得清理尚未取得服务端编号的新提交状态");
 
 const dataRoot = await mkdtemp(join(tmpdir(), "shensi-media-single-flight-"));
 process.env.SHENSI_DATA_ROOT = dataRoot;
