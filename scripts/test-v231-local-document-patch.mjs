@@ -142,9 +142,11 @@ try {
     assert.equal(receipt.results[0].changeSet.length, 3);
     const loaded = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
     assert.equal(loaded.state.documents["chapter-1"].markdown, result.content);
-    assert.equal(loaded.state.histories["chapter-1"].length, 1);
+    assert.equal(loaded.state.histories["chapter-1"].length, 2, "AI 局部修改前必须保护尚未进入历史的完整正文");
     assert.equal(loaded.state.histories["chapter-1"][0].changeSet.length, 3);
     assert.equal(loaded.state.histories["chapter-1"][0].source, surface);
+    assert.equal(loaded.state.histories["chapter-1"][1].document.markdown, original);
+    assert.equal(loaded.state.histories["chapter-1"][1].preOverwriteSnapshot, true);
   }
 } finally {
   await rm(tempRoot, { recursive: true, force: true });

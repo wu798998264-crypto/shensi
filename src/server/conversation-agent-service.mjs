@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, rename, appendFile } from "node:fs/promises
 import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
+import { normalizeTextTaskExecutionContext } from "../text-task-execution-context.js";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
 const laneFor = (request) => keyFor({ ...request, branchId: "conversation-lane" });
@@ -17,6 +18,128 @@ const redactedErrorMessage = (error, apiKey = "") => String(error?.message || er
   .replaceAll(String(apiKey || "\0"), "[REDACTED]")
   .replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
 const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
+
+export const bindStructuredTaskRoutePlacements = (taskRoute = null, routeBundle = null) => {
+  if (!taskRoute || typeof taskRoute !== "object" || !routeBundle?.panel) return taskRoute;
+  const obsoleteRouteIds = new Set(["group:novel-engineering", "module:novel-engineering", "builtin:structure-engineering"]);
+  const routes = [routeBundle.panel, ...(Array.isArray(routeBundle.routes) ? routeBundle.routes : [])]
+    .filter((route) => route?.placementId);
+  const byPlacement = new Map(routes.map((route) => [route.placementId, route]));
+  const activeSkillPlacements = Array.isArray(routeBundle.skillPlacements) ? routeBundle.skillPlacements : [];
+  const staleObsoleteReference = (value) => {
+    const reference = String(value || "");
+    if (!reference || byPlacement.has(reference) || activeSkillPlacements.some((placement) => placement?.placementId === reference)) return false;
+    return [...obsoleteRouteIds].some((id) => {
+      if (!reference.includes(id)) return false;
+      if (reference === id && (routes.some((route) => route.nodeId === id) || activeSkillPlacements.some((placement) => placement?.skillId === id))) return false;
+      return true;
+    });
+  };
+  const routePath = (route) => {
+    const path = [];
+    let current = route;
+    while (current) {
+      path.unshift(current.name || current.nodeId || current.placementId);
+      current = byPlacement.get(current.parentPlacementId);
+    }
+    return path;
+  };
+  const hasAncestorNode = (route, nodeId) => {
+    let current = route;
+    while (current) {
+      if (current.nodeId === nodeId) return true;
+      current = byPlacement.get(current.parentPlacementId);
+    }
+    return false;
+  };
+  const hasAncestorPlacement = (route, placementId) => {
+    let current = route;
+    while (current) {
+      if (current.placementId === placementId) return true;
+      current = byPlacement.get(current.parentPlacementId);
+    }
+    return false;
+  };
+  const placementsFor = (nodeId, topLevelNodeId = "", topLevelPlacementId = "") => {
+    if (!nodeId) return [];
+    return routes.filter((route) => route.enabled !== false
+      && route.nodeId === nodeId
+      && (!topLevelNodeId || hasAncestorNode(route, topLevelNodeId))
+      && (!topLevelPlacementId || hasAncestorPlacement(route, topLevelPlacementId)));
+  };
+  const cleaned = { ...taskRoute };
+  const staleRouteReferences = [
+    cleaned.selectedCapabilityTopLevelId,
+    cleaned.selectedCapabilityNodeId,
+    cleaned.selectedTopLevelPlacementId,
+    cleaned.selectedRoutePlacementId,
+    cleaned.selectedModulePlacementId,
+    ...(Array.isArray(cleaned.selectedSkillPlacementIds) ? cleaned.selectedSkillPlacementIds : []),
+  ].map(String).filter(staleObsoleteReference);
+  if (staleRouteReferences.length) {
+    for (const key of ["selectedCapabilityTopLevelId", "selectedCapabilityNodeId", "selectedCapabilityTopLevelName", "selectedCapabilityNodeName", "selectedTopLevelPlacementId", "selectedRoutePlacementId", "selectedModulePlacementId", "relationType", "relationRole"]) delete cleaned[key];
+    cleaned.selectedSkillPlacementIds = (Array.isArray(cleaned.selectedSkillPlacementIds) ? cleaned.selectedSkillPlacementIds : [])
+      .filter((value) => !staleObsoleteReference(value));
+    cleaned.routeRefreshRequired = true;
+    cleaned.staleRouteReferencesRemoved = [...new Set(staleRouteReferences)];
+    cleaned.routeReason = "旧工程化管理路由已失效；保留原任务并依据当前面板重新路由";
+  }
+  const topLevelNodeId = String(cleaned.selectedCapabilityTopLevelId || "");
+  const branchNodeId = String(cleaned.selectedCapabilityNodeId || "");
+  const topLevelMatches = placementsFor(topLevelNodeId);
+  const requestedTopLevelPlacementId = String(cleaned.selectedTopLevelPlacementId || "");
+  const requestedRoutePlacementId = String(cleaned.selectedRoutePlacementId || cleaned.selectedModulePlacementId || "");
+  const requestedTopLevel = byPlacement.get(requestedTopLevelPlacementId);
+  const selectedTopLevelPlacementId = requestedTopLevel && requestedTopLevel.enabled !== false
+    && (!topLevelNodeId || requestedTopLevel.nodeId === topLevelNodeId)
+    ? requestedTopLevelPlacementId
+    : topLevelMatches.length === 1 ? topLevelMatches[0].placementId : "";
+  const routeMatches = placementsFor(branchNodeId, topLevelNodeId, selectedTopLevelPlacementId);
+  const requestedRoute = byPlacement.get(requestedRoutePlacementId);
+  const requestedRouteValid = Boolean(requestedRoute && requestedRoute.enabled !== false
+    && (!branchNodeId || requestedRoute.nodeId === branchNodeId)
+    && (!topLevelNodeId || hasAncestorNode(requestedRoute, topLevelNodeId))
+    && (!selectedTopLevelPlacementId || hasAncestorPlacement(requestedRoute, selectedTopLevelPlacementId)));
+  const selectedRoutePlacementId = requestedRouteValid
+    ? requestedRoutePlacementId
+    : routeMatches.length === 1 ? routeMatches[0].placementId : "";
+  const selectedTopLevelRoute = byPlacement.get(selectedTopLevelPlacementId);
+  const selectedRoute = byPlacement.get(selectedRoutePlacementId);
+  const selectedRouteParent = byPlacement.get(selectedRoute?.parentPlacementId);
+  const routePlacementCandidates = routeMatches.length > 1 && !selectedRoutePlacementId
+    ? routeMatches.map((route) => ({
+        placementId: route.placementId,
+        nodeId: route.nodeId,
+        name: route.name || route.nodeId,
+        parentPlacementId: route.parentPlacementId || "",
+        relationType: byPlacement.get(route.parentPlacementId)?.relationType || "parallel",
+        relationRole: route.parentRole || "peer",
+        path: routePath(route),
+      }))
+    : [];
+  return {
+    ...cleaned,
+    ...(selectedTopLevelPlacementId ? {
+      selectedTopLevelPlacementId,
+      selectedCapabilityTopLevelName: selectedTopLevelRoute?.name || cleaned.selectedCapabilityTopLevelName || "",
+      selectedTopLevelPath: routePath(selectedTopLevelRoute),
+    } : {}),
+    ...(selectedRoutePlacementId ? {
+      selectedRoutePlacementId,
+      selectedModulePlacementId: selectedRoutePlacementId,
+      selectedCapabilityNodeName: selectedRoute?.name || cleaned.selectedCapabilityNodeName || "",
+      selectedRoutePath: routePath(selectedRoute),
+      relationType: selectedRouteParent?.relationType || cleaned.relationType || "parallel",
+      relationRole: selectedRoute?.parentRole || cleaned.relationRole || "peer",
+    } : {}),
+    ...(routePlacementCandidates.length ? {
+      routePlacementCandidates,
+      routeDisambiguationRequired: true,
+      routeClarificationPolicy: "ask_only_if_semantically_unresolved",
+      routeReason: `同一能力在当前分支存在 ${routePlacementCandidates.length} 个不同位置；必须结合各位置路径和角色消歧，仍无法判断时再询问用户`,
+    } : {}),
+  };
+};
 
 // Models occasionally restate the same decision with different wording after
 // receiving an answer. Keep this guard scoped to one Agent run: it is only a
@@ -119,6 +242,107 @@ const trustedDocumentSavedPayload = ({ payload = {}, request = {}, trustedToolRu
         navigationTarget,
       }],
       batchLandingReceipt: receipt,
+    },
+  };
+};
+
+const parsedToolPayload = (result = {}) => {
+  const item = (Array.isArray(result?.contentItems) ? result.contentItems : [])
+    .find((entry) => entry?.type === "inputText" && String(entry?.text || "").trim());
+  if (!item) return null;
+  try { return JSON.parse(item.text); } catch { return null; }
+};
+
+export const preloadConversationAgentReadManifest = async ({
+  tools,
+  executionContext = null,
+  emit = async () => {},
+  maxDocuments = 16,
+  maxCharacters = 240_000,
+} = {}) => {
+  const normalized = normalizeTextTaskExecutionContext(executionContext);
+  const manifest = normalized?.readManifest;
+  if (!manifest || typeof tools?.invoke !== "function") return { contextBlocks: [], report: null };
+  const entriesById = new Map((manifest.entries || []).map((entry) => [entry.documentId, entry]));
+  const ids = [...new Set([...(manifest.requiredDocumentIds || []), ...(manifest.priorityDocumentIds || [])])]
+    .filter(Boolean)
+    .slice(0, Math.max(1, Number(maxDocuments) || 16));
+  const contextBlocks = [];
+  const documents = [];
+  let usedCharacters = 0;
+  for (const documentId of ids) {
+    const entry = entriesById.get(documentId) || { documentId, title: documentId, required: false, reason: "按本轮任务语义读取" };
+    const chunks = [];
+    let start = 0;
+    let status = "missing";
+    let title = entry.title || documentId;
+    let totalCharacters = 0;
+    let complete = false;
+    while (usedCharacters < maxCharacters) {
+      const result = await tools.invoke({ namespace: "documents", tool: "read", arguments: { documentId, start, length: 24_000 } });
+      const payload = result?.success === true ? parsedToolPayload(result) : null;
+      if (!payload) {
+        status = "failed";
+        break;
+      }
+      status = String(payload.status || "missing");
+      title = String(payload.title || title || documentId);
+      totalCharacters = Math.max(totalCharacters, Number(payload.totalCharacters) || 0);
+      const chunk = String(payload.content || "");
+      if (chunk) {
+        const remaining = Math.max(0, maxCharacters - usedCharacters);
+        const accepted = chunk.slice(0, remaining);
+        if (accepted) {
+          chunks.push(accepted);
+          usedCharacters += accepted.length;
+        }
+        if (accepted.length < chunk.length) break;
+      }
+      const nextStart = Number(payload.nextStart);
+      if (!Number.isFinite(nextStart) || nextStart <= start) {
+        complete = status === "content" || status === "empty";
+        break;
+      }
+      start = nextStart;
+    }
+    const content = chunks.join("");
+    if (complete && content) {
+      await emit("resource_read", {
+        kind: "document",
+        id: documentId,
+        title,
+        readKind: "task_manifest_full_text",
+        fullText: true,
+        characters: content.length,
+        totalCharacters: totalCharacters || content.length,
+        userVisible: true,
+      });
+    }
+    documents.push({
+      documentId,
+      title,
+      displayCharacterCount: Math.max(0, Number(entry.displayCharacterCount) || 0),
+      required: entry.required === true,
+      reason: entry.reason || "按本轮任务语义读取",
+      status,
+      characters: content.length,
+      totalCharacters,
+      fullText: complete && (status === "content" || status === "empty"),
+    });
+    if (content) contextBlocks.push({
+      name: `任务资料 · ${title}`,
+      text: `文档ID：${documentId}\n读取原因：${entry.reason || "按本轮任务语义读取"}\n读取状态：${complete ? "完整" : "受上下文预算限制"}${Number(entry.displayCharacterCount) > 0 ? `\n界面显示字数：${Number(entry.displayCharacterCount)} 字（由桌面编辑器按可见字符口径冻结，涉及界面字数时必须使用此值，不得自行估算）` : ""}\n\n${content}`,
+    });
+  }
+  return {
+    contextBlocks,
+    report: {
+      schemaVersion: 1,
+      plannedDocumentIds: ids,
+      documents,
+      completeDocumentIds: documents.filter((item) => item.fullText).map((item) => item.documentId),
+      missingDocumentIds: documents.filter((item) => ["missing", "failed"].includes(item.status)).map((item) => item.documentId),
+      memorySkillRequired: false,
     },
   };
 };
@@ -252,10 +476,55 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           ? trustedDocumentSavedPayload({ payload, request, trustedToolRuntime })
           : payload),
       });
+      const textTaskExecutionContext = normalizeTextTaskExecutionContext(request.textTaskExecutionContext);
+      const preloadedDocuments = await preloadConversationAgentReadManifest({
+        tools,
+        executionContext: textTaskExecutionContext,
+        emit: (type, payload) => event(entry, type, payload),
+      });
+      if (textTaskExecutionContext) {
+        record.textTaskExecutionContext = textTaskExecutionContext;
+        record.documentReadManifest = preloadedDocuments.report;
+        await event(entry, "read_manifest", preloadedDocuments.report || {
+          schemaVersion: 1,
+          plannedDocumentIds: [],
+          documents: [],
+          completeDocumentIds: [],
+          missingDocumentIds: [],
+          memorySkillRequired: false,
+        });
+      }
       if (request.contentOnly) request.messages = [...request.messages, { role: "user", content: "本轮是界面请求的候选内容生成；不要写入文档，只返回所需候选正文。原有选区预览与确认流程负责应用修改。" }];
       await event(entry, "started", { engine: request.settings.agentEngine, model: request.settings.model, permissionMode: request.settings.agentPermissionMode });
       const profileKey = createHash("sha256").update(JSON.stringify([keyFor(request), request.settings.agentEngine, request.settings.id, request.settings.model, request.settings.agentPermissionMode])).digest("hex");
-      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
+      const structuredTaskRoute = bindStructuredTaskRoutePlacements(
+        request.taskRoute && typeof request.taskRoute === "object" ? request.taskRoute : null,
+        routeBundle,
+      );
+      if (structuredTaskRoute) await event(entry, "task_route", { taskRoute: structuredTaskRoute });
+      const routeContractText = structuredTaskRoute
+        ? [
+            structuredTaskRoute.routeRefreshRequired
+              ? "旧任务中的失效路由引用已经清除，任务本身和历史内容保持不变。必须按当前面板重新路由，不得复活旧 Skill。"
+              : structuredTaskRoute.routeDisambiguationRequired
+                ? "宿主已确定任务类型，但同一能力在当前分支存在多个作用不同的位置。先根据完整路径、关系角色和路由正文消歧；只有仍会改变执行结果且确实无法判断时，才询问用户一次。不得选取第一个候选。"
+                : "本轮结构化任务路由是宿主编译的权威选择，不得仅凭原始指令重新猜测任务类型或模组。",
+            JSON.stringify({
+              taskRoute: structuredTaskRoute,
+              deliverableType: request.deliverableType || structuredTaskRoute.deliverableType || "",
+              targetModule: request.targetModule || request.activeModule || structuredTaskRoute.targetModule || "",
+              selectedModulePlacementId: structuredTaskRoute.selectedModulePlacementId || "",
+              selectedSkillPlacementIds: structuredTaskRoute.selectedSkillPlacementIds || [],
+              relationType: structuredTaskRoute.relationType || "",
+              relationRole: structuredTaskRoute.relationRole || "",
+              routeReason: structuredTaskRoute.routeReason || structuredTaskRoute.reason || "",
+            }, null, 2),
+            structuredTaskRoute.routeRefreshRequired || structuredTaskRoute.routeDisambiguationRequired
+              ? "完成重新路由或消歧后，必须读取命中的模组路由、模块路由和实际 Skill；不要读取无关分支。"
+              : "仍须读取面板路由、命中的模组路由、模块路由和实际 Skill 做解释与校验；读取结果不得覆盖上述结构化选择。",
+          ].join("\n")
+        : "本轮没有结构化任务路由；仅可在旧请求兼容模式下按面板路由和任务语义判断。";
+      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null, taskRoute: structuredTaskRoute, textTaskExecutionContext, deliverableType: structuredTaskRoute?.deliverableType || request.deliverableType || "", targetModule: structuredTaskRoute?.targetModule || request.targetModule || request.activeModule || "", selectedModulePlacementId: structuredTaskRoute?.selectedModulePlacementId || "", selectedSkillPlacementIds: structuredTaskRoute?.selectedSkillPlacementIds || [], relationType: structuredTaskRoute?.relationType || "", relationRole: structuredTaskRoute?.relationRole || "", routeReason: structuredTaskRoute?.routeReason || structuredTaskRoute?.reason || "" }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "本轮结构化任务路由", text: routeContractText }, ...(textTaskExecutionContext ? [{ name: "本轮统一文字任务执行合同", text: JSON.stringify(textTaskExecutionContext, null, 2) }] : []), ...preloadedDocuments.contextBlocks, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
       const deliveryReviewWarnings = [];
       // Reconcile conversation-only delivery against the original user request,
@@ -266,7 +535,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         try {
           const checked = await run({ ...runOptions, deliveryReview: true,
             onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
-            prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。选择面板能力分支后必须真实调用 skills.read；只读取面板、模组或模块路由不等于读取 Skill。确实无需 Skill 的通用问答，重新调用 interaction.delivery，声明 routingMode=general 并给出基于完整任务语义的 routingReason。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
+            prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。选择面板能力来实际执行创作、规划、自检或专项处理后必须真实调用 skills.read；只读取面板、模组或模块路由不等于读取 Skill。但 taskRoute.capabilityInspectionOnly=true 时属于路由结构核验，只读取用户要求的路由即可，不得额外读取无关 Skill。确实无需 Skill 的通用问答或路由检查，重新调用 interaction.delivery，声明 routingMode=general 并给出基于完整任务语义的 routingReason。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
           result = { ...checked, text: checked.text || previousText };
         } catch (error) {
           deliveryReviewWarnings.push(`交付复核未完成：${redactedErrorMessage(error, request.settings.apiKey)}`);
@@ -285,7 +554,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         try {
           const repaired = await run({ ...runOptions,
             onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
-            prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: previousText, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。若 routing.complete=false，先根据面板路由选择真实分支，读取对应模组/模块路由并调用 skills.read；只读路由不能代替读取 Skill。确实无需 Skill 的通用问答，应调用 interaction.delivery 声明 routingMode=general，并提供基于完整任务语义的 routingReason。随后声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存、已生成或已读取 Skill。" }) });
+            prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: previousText, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。若 routing.complete=false，先根据面板路由选择真实分支，读取对应模组/模块路由并调用 skills.read；只读路由不能代替读取 Skill。但 taskRoute.capabilityInspectionOnly=true 时只需核验用户要求的路由结构，不得为了验收额外读取无关 Skill。确实无需 Skill 的通用问答或路由检查，应调用 interaction.delivery 声明 routingMode=general，并提供基于完整任务语义的 routingReason。随后声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存、已生成或已读取 Skill。" }) });
           result = { ...repaired, text: repaired.text || previousText };
         } catch (error) {
           deliveryReviewWarnings.push(`交付补救未完成：${redactedErrorMessage(error, request.settings.apiKey)}`);

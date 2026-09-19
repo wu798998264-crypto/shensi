@@ -237,6 +237,7 @@ export const createTurnContextSnapshot = ({
   activeDocumentId = "",
   documents = {},
   editorContentRevision = "",
+  documentContentHash = "",
 } = {}) => {
   const editorDocumentId = text(activeDocumentId);
   const effectiveBoundDocumentId = associatedDocumentId(conversation, editorDocumentId) || "";
@@ -256,6 +257,7 @@ export const createTurnContextSnapshot = ({
     documentTitle: text(documentState.title),
     documentRevision: text(documentState.revision || documentState.contentRevision || documentState.updatedAt),
     editorContentRevision: text(editorContentRevision || documentState.editorContentRevision || documentState.revision || documentState.contentRevision || documentState.updatedAt),
+    documentContentHash: text(documentContentHash || editorContentRevision),
     capturedAt: new Date().toISOString(),
   });
 };

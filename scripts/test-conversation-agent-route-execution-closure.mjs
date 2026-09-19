@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createBlankNotebookState } from "../src/data.js";
 import { catalogWithManagedPlacements, compileManagedRouteBundle } from "../src/managed-route-document.js";
+import { buildAdaptiveTaskRoute } from "../src/request-routing.js";
 import { createConversationAgentService } from "../src/server/conversation-agent-service.mjs";
 import { saveWorkspaceState } from "../src/server/workspace.mjs";
 
@@ -34,6 +35,7 @@ try {
   });
   const catalog = catalogWithManagedPlacements({ catalog: skills, routeBundle });
   const articlePlacement = routeBundle.skillPlacements[0];
+  const articleGroupPlacementId = routeBundle.routes.find((route) => route.kind === "group")?.placementId;
   const events = [];
   let calls = 0;
   const invoke = async (tools, namespace, tool, args) => {
@@ -223,6 +225,52 @@ try {
   assert.equal(generalResult.status, "completed", generalResult.error);
   assert.equal(generalResult.events.filter((event) => event.type === "resource_read" && event.payload.kind === "skill").length, 0);
   assert.ok(generalCalls >= 1);
+
+  const inspectionInstruction = "请读取面板路由，再读取文章模组路由，只列出它的直接模块名称。不要修改文档。";
+  const inspectionRoute = buildAdaptiveTaskRoute({ text: inspectionInstruction, sourceMessageId: "route-inspection-user" }, { executionSurface: "agent" });
+  assert.equal(inspectionRoute.capabilityInspectionOnly, true, "纯路由结构核验必须形成独立任务类型");
+  assert.equal(inspectionRoute.taskKind, "capability_inspection");
+  let inspectionCalls = 0;
+  const inspectionService = createConversationAgentService({
+    appRoot: root,
+    storageRoot: join(root, "inspection-runs"),
+    skillCatalog: async () => ({ skills: catalog, routeBundle }),
+    readRoute: async () => ({ text: routeBundle.panel.text, routeBundle }),
+    readSkill: async () => { throw new Error("路由结构核验不得读取无关 Skill"); },
+    run: async ({ workspaceToolRuntime, deliveryReview, prompt }) => {
+      inspectionCalls += 1;
+      if (deliveryReview) return { text: JSON.parse(prompt).result };
+      await invoke(workspaceToolRuntime, "routes", "read", { placementId: articleGroupPlacementId });
+      await invoke(workspaceToolRuntime, "interaction", "delivery", {
+        mode: "conversation",
+        taskType: "general_qa",
+        routingMode: "general",
+        routingReason: "本轮只核验面板和模组路由结构，不执行任何创作能力",
+        documentIds: [],
+      });
+      return { text: "文章模组包含文章模块。" };
+    },
+  });
+  const inspectionStarted = await inspectionService.start({
+    workspacePath,
+    workspaceKind: "notebook",
+    conversationId: "route-inspection",
+    sourceMessageId: "route-inspection-user",
+    instruction: inspectionInstruction,
+    messages: [{ role: "user", content: inspectionInstruction }],
+    taskRoute: inspectionRoute,
+    settings: { agentEngine: "codex_api", model: "mock" },
+  });
+  let inspectionResult;
+  for (let index = 0; index < 300; index += 1) {
+    inspectionResult = await inspectionService.status(inspectionStarted.id);
+    if (["completed", "failed"].includes(inspectionResult.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(inspectionResult.status, "completed", inspectionResult.error);
+  assert.equal(inspectionResult.events.filter((event) => event.type === "resource_read" && event.payload.kind === "skill").length, 0);
+  assert.equal(inspectionResult.deliveryWarnings.length, 0);
+  assert.equal(inspectionCalls, 2, "路由核验只需正常交付复核，不得进入 Skill 补救循环");
   console.log("Conversation Agent route execution closure and explicit Skill-free general routing passed");
 } finally {
   await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

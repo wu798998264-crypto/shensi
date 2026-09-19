@@ -33,12 +33,15 @@ export const assertDreaminaAccountIdentity = (credit = {}) => {
   if (expected && actual !== expected) {
     throw identityError(`即梦配置“${id}”账号串号：预期 user_id=${expected}，实际 user_id=${actual}；已阻止提交`, "DREAMINA_ACCOUNT_MISMATCH");
   }
+  const rawCredit = nestedValue(credit, ["total_credit", "totalCredit", "credit", "credits"]);
+  const parsedCredit = rawCredit === "" || rawCredit === null || rawCredit === undefined
+    ? null
+    : Number(rawCredit);
   return {
     profileId: id,
     userId: actual,
     expectedUserId: expected || actual,
-    credit: Number.isFinite(Number(nestedValue(credit, ["total_credit", "totalCredit", "credit", "credits"])))
-      ? Number(nestedValue(credit, ["total_credit", "totalCredit", "credit", "credits"])) : null,
+    credit: Number.isFinite(parsedCredit) && parsedCredit >= 0 ? parsedCredit : null,
     vipLevel: String(nestedValue(credit, ["vip_level", "vipLevel"]) || ""),
   };
 };

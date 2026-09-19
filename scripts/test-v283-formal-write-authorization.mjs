@@ -77,6 +77,32 @@ const explicitNewPublicAccountRoute = routeFor("新建一个公众号文章文�
 assert.equal(explicitNewPublicAccountRoute.writeAuthorization.state, "commit");
 assert.equal(explicitNewPublicAccountRoute.writeAuthorization.action, "create", "明确要求新建文档时仍应执行创建事务");
 
+const questionTitleFormalLandingRoute = buildAdaptiveTaskRoute({
+  text: "请创作一篇约800字的公众号科普短文《为什么清晨的光让人更清醒》。不要先询问方向，直接完成正式内容并新建同名文档落盘；如果已有同名文档，创建数字后缀副本。",
+  sourceMessageId: "user-question-title-formal-landing",
+  targetDocumentId: "",
+  targetDocumentIds: [],
+  targetExists: false,
+  expectedRevisions: {},
+}, { executionSurface: "agent" });
+assert.equal(questionTitleFormalLandingRoute.writeAuthorization.state, "commit",
+  "标题中的‘为什么’不得与后文‘落盘’跨句拼成写入能力询问");
+assert.equal(questionTitleFormalLandingRoute.writeAuthorization.action, "create");
+assert.equal(questionTitleFormalLandingRoute.intentEnvelope.writeMode, "formal_auto");
+assert.equal(questionTitleFormalLandingRoute.intentEnvelope.deliverables.length, 1,
+  "明确新建并落盘的未解析目标必须保留待创建交付物");
+
+const genuineWriteCapabilityQuestionRoute = buildAdaptiveTaskRoute({
+  text: "为什么这篇文章无法落盘？",
+  sourceMessageId: "user-genuine-write-capability-question",
+  targetDocumentId: "",
+  targetDocumentIds: [],
+  targetExists: false,
+  expectedRevisions: {},
+}, { executionSurface: "agent" });
+assert.equal(genuineWriteCapabilityQuestionRoute.writeAuthorization.state, "none",
+  "真正的落盘能力询问仍不得授权正式写入");
+
 const uncertainLandingRoute = routeFor("继续完善这个故事", "chat", {
   sourceMessageId: "user-uncertain-landing",
   continuesCreativeThread: true,

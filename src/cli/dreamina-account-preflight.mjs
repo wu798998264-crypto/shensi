@@ -3,6 +3,13 @@ import { assertDreaminaAccountIdentity } from "./dreamina-account-identity.mjs";
 const clean = (value) => String(value ?? "").trim();
 const CREDIT_EVIDENCE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
 
+export const markDreaminaPreSubmitNoTask = (value) => {
+  const error = value instanceof Error ? value : new Error(clean(value) || "即梦提交前检查失败");
+  error.preSubmitNoTask = true;
+  error.submissionOutcomeKnown = true;
+  return error;
+};
+
 const requiredProfileId = (value = process.env.SHENSI_DREAMINA_PROFILE_ID) => {
   const profileId = clean(value);
   if (profileId) return profileId;
@@ -21,6 +28,37 @@ const nestedValue = (value, keys = []) => {
     if (found !== "") return found;
   }
   return "";
+};
+
+const nestedEntry = (value, keys = [], visited = new Set()) => {
+  if (!value || typeof value !== "object" || visited.has(value)) return { found: false, value: undefined };
+  visited.add(value);
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) return { found: true, value: value[key] };
+  }
+  for (const child of Object.values(value)) {
+    const found = nestedEntry(child, keys, visited);
+    if (found.found) return found;
+  }
+  return { found: false, value: undefined };
+};
+
+const DREAMINA_MEMBERSHIP_KEYS = [
+  "vip_level", "vipLevel", "member_level", "memberLevel", "membership_level", "membershipLevel",
+  "member_type", "memberType", "membership", "vip_type", "vipType", "plan_name", "planName",
+];
+const DREAMINA_FREE_MEMBERSHIP_PATTERN = /^(?:free|basic|normal|ordinary|guest|none|普通|免费)$/iu;
+
+export const assertDreaminaCliGenerationAccess = (account = {}) => {
+  if (account?.controlPlaneDeferred === true) return true;
+  const membership = nestedEntry(account?.credit || account, DREAMINA_MEMBERSHIP_KEYS);
+  if (!membership.found) return true;
+  const level = clean(membership.value);
+  if (level && !DREAMINA_FREE_MEMBERSHIP_PATTERN.test(level)) return true;
+  const error = new Error("即梦当前账号有可用积分，但厂商未开通 Dreamina CLI 生成权限（仅限会员账号）。本次未创建任务、未扣积分；请在即梦开通会员后刷新积分，或切换其他可生成配置。");
+  error.code = "DREAMINA_CLI_MEMBERSHIP_REQUIRED";
+  error.submissionOutcomeKnown = true;
+  throw error;
 };
 
 export const dreaminaAvailableCredit = (payload = {}) => {

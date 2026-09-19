@@ -87,8 +87,16 @@ const creditEstimateKey = (value = {}) => {
   ]);
 };
 
-const normalizedRecord = (value = {}) => {
-  const membership = dreaminaMembershipFromPayload(value, {
+export const normalizedRecord = (value = {}) => {
+  // Historical credit estimates deliberately retain the membership that was
+  // in effect when each task was billed. They are calibration evidence, not
+  // the account's current membership. Restrict normalization to current
+  // top-level fields so an old nested `membership: "ultra"` cannot revive a
+  // stale premium status after a live refresh reports an ordinary account.
+  const membership = dreaminaMembershipFromPayload({
+    vipLevel: value.vipLevel,
+    vipExpiresAt: value.vipExpiresAt,
+  }, {
     vipLevel: value.vipLevel,
     vipExpiresAt: value.vipExpiresAt,
     membershipTier: value.membershipTier,

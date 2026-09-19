@@ -31,7 +31,7 @@ import {
   SHENSI_AGENT_API_PROTOCOLS,
 } from "./src/agent-engine-registry.js";
 import { effectiveRuntimeContract } from "./src/effective-runtime-contract.js";
-import { normalizeAgentPermissionMode, permissionContractFor } from "./src/agent-permission-policy.js";
+import { normalizeAgentPermissionMode, permissionContractFor, permissionContractForExternalApproval } from "./src/agent-permission-policy.js";
 import { normalizeUnifiedAgentDecision, parseUnifiedAgentDecision, unifiedAgentEntrySystemPrompt, unifiedAgentEntryUserPrompt } from "./src/unified-agent-entry.js";
 import {
   agentReadPlanFailureMessage,
@@ -92,7 +92,7 @@ import { planLongFormFoundation, planVolumeChapterOutlines, runLongFormStructure
 import { planWorkspaceOperations } from "./src/server/workspace-operation-planner.mjs";
 import { planSmartLanding } from "./src/server/smart-landing-planner.mjs";
 import { createUpdateManager } from "./src/server/update-manager.mjs";
-import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation } from "./src/server/agent-runner-installer.mjs";
+import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, startKnownAgentRunnerLogin } from "./src/server/agent-runner-installer.mjs";
 import { appDataRoot, initializeConfiguredDataRoot, machineLocalDataRoot } from "./src/server/app-data.mjs";
 import {
   completeDreaminaProfileOAuth,
@@ -168,6 +168,7 @@ import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
 import { generationRuntimeCredentialsSnapshot, listGenerationRuntimeBindings, rememberGenerationRuntimeCredentials, resolveTrustedGenerationSettings, saveGenerationRuntimeBindings } from "./src/server/generation-runtime-store.mjs";
+import { listGenerationProfileSettings, saveGenerationProfileSettings } from "./src/server/generation-profile-store.mjs";
 import {
   beginGenerationAttempt,
   failGenerationAttempt,
@@ -296,6 +297,12 @@ import { untrustedSkillMessage, validateSkillSandboxOutput } from "./src/skill-s
 import { runtimeIdentity } from "./src/server/runtime-identity.mjs";
 import { resolveBundledShensiRoot, validateBundledShensi } from "./src/server/bundled-shensi.mjs";
 import { collectGlobalAssetCatalog } from "./src/server/global-asset-catalog.mjs";
+import {
+  deleteUnreferencedAssetTrashFiles,
+  moveAssetEntriesToTrash,
+  permanentlyDeleteAssetTrashEntries,
+  restoreAssetTrashEntries,
+} from "./src/server/asset-trash-service.mjs";
 import { listWorkspaceConversations, readWorkspaceConversation } from "./src/server/workspace-conversations.mjs";
 import {
   assertLocalServicePort,
@@ -704,7 +711,7 @@ const resolveClaudeCodeAgentSettings = (settings = {}) => {
   };
 };
 
-const EXTERNAL_CLI_AGENT_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["workbuddy", "custom"]);
 
 const resolveExternalCliAgentSettings = (settings = {}) => {
   const requestedEngine = String(settings?.agentEngine || "").trim();
@@ -740,6 +747,7 @@ const resolveExternalCliAgentSettings = (settings = {}) => {
     agentModelId: model,
     cliPath,
     cliArgs,
+    prefixArgs: Array.isArray(profile.prefixArgs) ? profile.prefixArgs.filter((item) => typeof item === "string").slice(0, 16) : [],
     credentialSource: String(profile.credentialSource || "external").trim() || "external",
     textConnections: [profile],
     activeTextConnectionId: String(profile.id || profile.connectionId || `${requestedEngine}-agent-session`),
@@ -843,6 +851,9 @@ const runModelAdapter = async (options = {}) => {
     : typeof options.shensiRuntime?.requestApproval === "function"
       ? options.shensiRuntime.requestApproval
       : null;
+  const runtimePermissionContract = (agentPreferred && requestApproval)
+    ? permissionContractForExternalApproval(permissionContract, { runner: selectedAgentEngine, taskId: runtimeSessionId })
+    : permissionContract;
   const onToolEvent = typeof options.shensiRuntime?.onToolEvent === "function"
     ? options.shensiRuntime.onToolEvent
     : null;
@@ -901,7 +912,8 @@ const runModelAdapter = async (options = {}) => {
       dynamicTools: [],
       invoke: async () => ({ success: false, contentItems: [{ type: "inputText", text: "Shensi workspace tools are unavailable for this request." }] }),
     };
-    const mcpTools = agentPermissionMode === "approval_required" && (claudeCodeAgent || externalCliAgent)
+    const runtimePermissionMode = runtimePermissionContract?.mode || agentPermissionMode;
+    const mcpTools = ["shensi_only", "approval_required"].includes(runtimePermissionMode) && (openCodeAgent || claudeCodeAgent || externalCliAgent)
       ? toolsWithPermissionPrompt(agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime, requestApproval, { runner: selectedAgentEngine })
       : agentWorkspaceToolRuntime || emptyWorkspaceToolRuntime;
     const nativeHost = await startConversationAgentMcp({ tools: mcpTools, onToolEvent, signal: options.signal });
@@ -912,7 +924,7 @@ const runModelAdapter = async (options = {}) => {
       allowEdits: permissionContract.capabilities.externalWrites === true,
       allowNetwork: permissionContract.capabilities.network === true,
       agentPermissionMode,
-      permissionContract,
+      permissionContract: runtimePermissionContract,
       nativeHost,
       requestApproval,
       contextBlocks: Array.isArray(options.contextBlocks) ? options.contextBlocks : [],
@@ -955,6 +967,7 @@ const runModelAdapter = async (options = {}) => {
           model: externalCliSettings.model,
           cliPath: externalCliSettings.cliPath,
           cliArgs: externalCliSettings.cliArgs,
+          prefixArgs: externalCliSettings.prefixArgs,
           timeoutMs: externalCliSettings.timeoutMs,
         });
         return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: `${selectedAgentEngine}_agent` };
@@ -969,7 +982,7 @@ const runModelAdapter = async (options = {}) => {
         cliPath: claudeCodeSettings.cliPath,
         timeoutMs: claudeCodeSettings.timeoutMs,
       });
-      return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "claude_code_agent" };
+        return { ...result, permissionMode: agentPermissionMode, permissionContract, executionRuntime: "claude_code_agent" };
     } finally {
       await nativeHost.close();
     }
@@ -989,7 +1002,7 @@ const runModelAdapter = async (options = {}) => {
     ...options,
     settings: { ...trustedSettings, agentPermissionMode },
     agentPermissionMode,
-    permissionContract,
+    permissionContract: runtimePermissionContract,
     nativeHost: null,
     workspaceToolRuntime: agentWorkspaceToolRuntime,
     onToolEvent,
@@ -1061,6 +1074,7 @@ const testModelAdapter = async ({ settings = {}, cwd } = {}) => {
         apiKey: externalSettings.apiKey,
         cliPath: externalSettings.cliPath,
         cliArgs: externalSettings.cliArgs,
+        prefixArgs: externalSettings.prefixArgs,
         nativeHost,
         agentPermissionMode: "shensi_only",
         permissionContract: permissionContractFor("shensi_only", { runner: externalSettings.agentEngine }),
@@ -1451,30 +1465,62 @@ const detectAgentRunner = async (runnerId, { force = false } = {}) => {
     configurable: true,
     message: "自定义运行器需要在当前文字配置中填写 CLI 程序路径和参数模板",
   };
-  if (["trae_work", "workbuddy"].includes(runnerId)) {
-    return detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env });
+  if (runnerId === "workbuddy") {
+    return detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), persist: true });
   }
   const capability = runnerId === "codex"
     ? await detectLocalCodex({ cwd: root, includeModels: false })
     : runnerId === "opencode"
       ? await detectLocalOpenCode({ cwd: root, includeModels: false })
       : await detectLocalClaudeCode({ cwd: root });
-  return { ...capability, installed: capability?.available === true };
+  const state = capability?.available !== true
+    ? "missing"
+    : runnerId === "claude_code" && capability?.authenticated === false
+      ? "login_required"
+      : "ready";
+  return { ...capability, installed: capability?.available === true, state };
 };
 
 const publicAgentRunnerStatuses = async ({ force = false } = {}) => {
   if (force) resetLocalCapabilityCache();
   const entries = await Promise.all(Object.values(AGENT_RUNNER_INSTALL_SPECS).map(async (spec) => {
     const capability = await detectAgentRunner(spec.id);
+    const state = String(capability?.state || (capability?.available !== true
+      ? "missing"
+      : spec.id === "claude_code" && capability?.authenticated === false
+        ? "login_required"
+        : "ready"));
     return [spec.id, {
       id: spec.id,
       label: spec.label,
       installed: capability?.available === true,
       available: capability?.available === true,
+      installState: String(capability?.installState || (capability?.available === true ? "installed" : "missing")),
+      state,
+      ready: capability?.ready === true || state === "ready",
       version: String(capability?.version || "").slice(0, 160),
-      authenticated: capability?.authenticated === true,
+      authenticated: capability?.authenticated === true ? true : capability?.authenticated === false ? false : null,
+      authState: String(capability?.authState || (capability?.authenticated === true ? "authenticated" : capability?.authenticated === false ? "login_required" : "unknown")),
+      loginRequired: state === "login_required",
+      modelState: String(capability?.modelState || "unknown"),
+      modelPolicy: String(capability?.modelPolicy || ""),
+      catalogSource: String(capability?.catalogSource || ""),
+      modelCatalogChecked: capability?.modelCatalogChecked === true,
+      models: Array.isArray(capability?.models)
+        ? capability.models.map((model) => String(typeof model === "string" ? model : model?.slug || model?.id || model?.model || model?.name || "").trim()).filter(Boolean).slice(0, 200)
+        : [],
+      cliPath: String(capability?.cliPath || "").slice(0, 2_048),
+      prefixArgs: Array.isArray(capability?.prefixArgs) ? capability.prefixArgs.slice(0, 16) : [],
       authMethod: String(capability?.authMethod || "").slice(0, 80),
       message: String(capability?.message || "").slice(0, 500),
+      error: capability?.error && typeof capability.error === "object" ? {
+        stage: String(capability.error.stage || "").slice(0, 80),
+        code: String(capability.error.code || "").slice(0, 120),
+        summary: String(capability.error.summary || "").slice(0, 500),
+        detail: String(capability.error.detail || "").slice(0, 2_000),
+        retryable: capability.error.retryable === true,
+        suggestedAction: String(capability.error.suggestedAction || "").slice(0, 500),
+      } : null,
       officialUrl: spec.officialUrl,
     }];
   }));
@@ -1484,7 +1530,12 @@ const publicAgentRunnerStatuses = async ({ force = false } = {}) => {
 const agentRunnerInstallManager = createAgentRunnerInstallManager({
   cwd: root,
   detectRunner: detectAgentRunner,
-  onInstalled: async (runnerId) => resetLocalCapabilityCache(runnerId),
+  onInstalled: async (runnerId, { result } = {}) => {
+    resetLocalCapabilityCache(runnerId);
+    if (runnerId === "workbuddy") {
+      await detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), installSource: result?.method || "", persist: true });
+    }
+  },
 });
 
 const trustedConversationModelSettings = async (settings = {}, { executionSurface = "agent" } = {}) => {
@@ -2101,6 +2152,8 @@ const rateLimits = new Map([
   ["/api/agent-runners/status", { limit: 30, windowMs: 60_000 }],
   ["/api/agent-runners/install", { limit: 3, windowMs: 60_000 }],
   ["/api/agent-runners/install/status", { limit: 120, windowMs: 60_000 }],
+  ["/api/agent-runners/install/cancel", { limit: 20, windowMs: 60_000 }],
+  ["/api/agent-runners/login/start", { limit: 6, windowMs: 60_000 }],
   ["/api/agent/operations/propose", { limit: 20, windowMs: 60_000 }],
   ["/api/agent/operations/execute", { limit: 12, windowMs: 60_000 }],
   ["/api/agent/operations/discard", { limit: 20, windowMs: 60_000 }],
@@ -2129,6 +2182,10 @@ const rateLimits = new Map([
   ["/api/books/import", { limit: 12, windowMs: 60_000 }],
   ["/api/whiteboard/web-content", { limit: 12, windowMs: 60_000 }],
   ["/api/history-assets/global", { limit: 30, windowMs: 60_000 }],
+  ["/api/history-assets/trash", { limit: 30, windowMs: 60_000 }],
+  ["/api/history-assets/restore", { limit: 30, windowMs: 60_000 }],
+  ["/api/history-assets/permanent-delete", { limit: 20, windowMs: 60_000 }],
+  ["/api/history-assets/cleanup-files", { limit: 20, windowMs: 60_000 }],
   ["/api/books/auth/start", { limit: 6, windowMs: 60_000 }],
   ["/api/books/auth/reopen", { limit: 12, windowMs: 60_000 }],
   ["/api/books/auth/status", { limit: 30, windowMs: 60_000 }],
@@ -2750,6 +2807,40 @@ const handleApiRequest = async (request, response, pathname) => {
       : sendJson(response, 404, { ok: false, message: "没有找到这次运行器装配任务" });
   }
 
+  if (pathname === "/api/agent-runners/install/cancel" && request.method === "POST") {
+    try {
+      const body = await readJsonBody(request, 16 * 1024);
+      const job = await agentRunnerInstallManager.cancel(String(body.jobId || ""));
+      return job
+        ? sendJson(response, 200, { ok: true, job })
+        : sendJson(response, 404, { ok: false, message: "没有找到可终止的运行器装配任务" });
+    } catch (error) {
+      return sendJson(response, 500, { ok: false, code: String(error?.code || "AGENT_RUNNER_INSTALL_CANCEL_FAILED"), message: String(error?.message || error).slice(0, 1_000) });
+    }
+  }
+
+  if (pathname === "/api/agent-runners/login/start" && request.method === "POST") {
+    try {
+      const body = await readJsonBody(request, 16 * 1024);
+      const result = await startKnownAgentRunnerLogin({
+        runnerId: String(body.runnerId || ""),
+        cwd: root,
+        environment: process.env,
+        machineRoot: machineLocalDataRoot(),
+      });
+      return sendJson(response, 202, result);
+    } catch (error) {
+      return sendJson(response, error?.code === "AGENT_RUNNER_LOGIN_UNSUPPORTED" ? 400 : 503, {
+        ok: false,
+        code: String(error?.code || "AGENT_RUNNER_LOGIN_LAUNCH_FAILED"),
+        stage: String(error?.stage || "login_probe"),
+        message: String(error?.summary || error?.message || error).slice(0, 1_000),
+        detail: String(error?.detail || "").slice(0, 2_000),
+        suggestedAction: String(error?.suggestedAction || "").slice(0, 500),
+      });
+    }
+  }
+
   if (pathname === "/api/opencode/models" && request.method === "GET") {
     try {
       const catalog = await detectOpenCodeModelCatalog({
@@ -3074,6 +3165,25 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...saved });
   }
 
+  if (pathname === "/api/generation/profile-settings" && request.method === "GET") {
+    return sendJson(response, 200, { ok: true, ...(await listGenerationProfileSettings()) });
+  }
+
+  if (pathname === "/api/generation/profile-settings" && request.method === "POST") {
+    const body = await readJsonBody(request, 512 * 1024);
+    if (body.confirmed !== true) {
+      const error = new Error("保存全局模型配置前必须由设置界面明确确认");
+      error.statusCode = 409;
+      error.code = "GLOBAL_GENERATION_PROFILE_CONFIRMATION_REQUIRED";
+      throw error;
+    }
+    const saved = await saveGenerationProfileSettings({
+      settings: body.settings,
+      expectedRevision: body.expectedRevision ?? null,
+    });
+    return sendJson(response, 200, { ok: true, ...saved });
+  }
+
   if (pathname === "/api/adapters/test" && request.method === "POST") {
     const body = await readJsonBody(request);
     const result = await testModelAdapter({ settings: body, cwd: root });
@@ -3373,6 +3483,44 @@ const handleApiRequest = async (request, response, pathname) => {
     }
     const catalog = await globalAssetCatalogCache.promise;
     return sendJson(response, 200, { ok: true, ...catalog, cache: "miss" });
+  }
+
+  if (["/api/history-assets/trash", "/api/history-assets/restore"].includes(pathname) && request.method === "POST") {
+    const body = await readJsonBody(request, 256 * 1024);
+    const operation = pathname.endsWith("/restore") ? restoreAssetTrashEntries : moveAssetEntriesToTrash;
+    const result = await operation({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      assets: Array.isArray(body.assets) ? body.assets.slice(0, 500) : [],
+    });
+    invalidateWorkspaceLoadCache(body.workspacePath);
+    globalAssetCatalogCache = { expiresAt: 0, catalog: null, promise: null };
+    await nutstoreSyncEngine.noteLocalChange("*").catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
+  if (pathname === "/api/history-assets/permanent-delete" && request.method === "POST") {
+    const body = await readJsonBody(request, 256 * 1024);
+    const result = await permanentlyDeleteAssetTrashEntries({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      assets: Array.isArray(body.assets) ? body.assets.slice(0, 500) : [],
+    });
+    invalidateWorkspaceLoadCache(body.workspacePath);
+    globalAssetCatalogCache = { expiresAt: 0, catalog: null, promise: null };
+    await nutstoreSyncEngine.noteLocalChange("*").catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
+  if (pathname === "/api/history-assets/cleanup-files" && request.method === "POST") {
+    const body = await readJsonBody(request, 256 * 1024);
+    const result = await deleteUnreferencedAssetTrashFiles({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      assets: Array.isArray(body.assets) ? body.assets.slice(0, 500) : [],
+    });
+    await nutstoreSyncEngine.noteLocalChange("*").catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
   }
 
   if (pathname === "/api/whiteboard/reference-content" && request.method === "POST") {

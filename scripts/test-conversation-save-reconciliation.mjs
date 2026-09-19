@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { preserveConversationReferences, reconcileConversationSave, reconcileWorkspaceSave } from "../src/conversation-save-reconciliation.js";
+import { preserveConversationReferences, reconcileConversationSave, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "../src/conversation-save-reconciliation.js";
+import { markAgentResultProjection, upsertAgentResultReference } from "../src/conversation-agent-document-projection.js";
 import { ackConversationInstruction, markConversationInstructionAccepted, recoverConversationTaskQueueForStartup } from "../src/conversation-task-queue.js";
 import { readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "../src/composer-draft-cache.js";
 import { rebaseWorkspaceConflict, workspaceDocumentHashes, workspaceStateHashes } from "../src/workspace-conflict.js";
@@ -50,6 +51,45 @@ assert.equal(inFlightMerge.ok, true);
 assert.deepEqual(inFlightMerge.state.conversations[0].messages.map((message) => message.id), ["user-a", "user-b", "assistant-a"]);
 assert.equal(inFlightMerge.state.conversations[0].messages[0].pending, false);
 assert.deepEqual(inFlightMerge.state.conversations[0].queue.map((item) => item.id), ["queue-b"]);
+
+const externalWriteBaseline = {
+  activeConversationId: "conversation-write",
+  conversations: [{
+    id: "conversation-write",
+    messages: [{ id: "user-write", content: "写入文档" }, { id: "agent-write", pending: true, execution: { result: "正在生成" } }],
+    queue: [],
+  }],
+};
+const externalWriteSubmitted = structuredClone(externalWriteBaseline);
+externalWriteSubmitted.conversations[0].messages[1].execution.result = "文档已写入并更新目录";
+const externalWriteCurrent = structuredClone(externalWriteSubmitted);
+externalWriteCurrent.conversations[0].messages[1].pending = false;
+externalWriteCurrent.conversations[0].messages[1].execution.result = "任务完成";
+const externalWritePersisted = structuredClone(externalWriteBaseline);
+externalWritePersisted.documents = { "new-document": { title: "新文档", markdown: "正文" } };
+const externalWriteMerge = reconcileConversationSaveAfterConflict({
+  baseline: externalWriteBaseline,
+  submitted: externalWriteSubmitted,
+  current: externalWriteCurrent,
+  persisted: externalWritePersisted,
+});
+assert.equal(externalWriteMerge.ok, true, "Agent 文档事务写入后不得把旧对话快照误判为冲突");
+assert.equal(externalWriteMerge.state.conversations[0].messages[1].pending, false);
+assert.equal(externalWriteMerge.state.conversations[0].messages[1].execution.result, "任务完成");
+assert.equal(externalWriteMerge.state.documents["new-document"].markdown, "正文");
+
+const projectedMessage = { execution: { agentResultReferences: [] } };
+const staleReference = upsertAgentResultReference(projectedMessage, {
+  sequence: 35,
+  type: "document_saved",
+  documentId: "new-document",
+});
+projectedMessage.execution = {
+  agentResultReferences: [{ sequence: 35, type: "document_saved", documentId: "new-document" }],
+};
+markAgentResultProjection(projectedMessage, { reference: staleReference, verified: true });
+assert.equal(projectedMessage.execution.agentResultReferences[0].clientProjectionVerified, true,
+  "保存重基线替换 execution 对象后，可信目录同步标记必须写回当前消息而不是失效旧引用");
 
 const parallelBase = {
   activeConversationId: "conversation-a",

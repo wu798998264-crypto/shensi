@@ -30,6 +30,7 @@ for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
       npmPrefix: "C:\\Users\\Test\\AppData\\Roaming\\npm",
       powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     }),
+    fetchImpl: async () => new Response("Import-Module Microsoft.PowerShell.Utility\nWrite-Output 'trae test'", { status: 200, headers: { "content-type": "text/plain" } }),
     runProcess: async (request) => { calls.push(request); return { exitCode: 0, stdout: "ok", stderr: "" }; },
   });
   const expectedCallCount = runnerId === "opencode" ? 2 : 1;
@@ -42,9 +43,10 @@ for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
   } else if (spec.installKind === "npm") {
     assert.equal(calls[0].executable, "C:\\runtime\\node.exe");
     assert.ok(calls[0].args.includes(spec.npmPackage));
-  } else if (spec.installKind === "powershell") {
+  } else if (spec.installKind === "powershell_script") {
     assert.equal(calls[0].executable, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    assert.ok(calls[0].args.includes(spec.installScript));
+    assert.ok(calls[0].args.includes("-File"));
+    assert.equal(calls[0].outputSource, "powershell");
   } else {
     assert.equal(calls[0].executable, "C:\\Windows\\winget.exe");
     assert.ok(calls[0].args.includes(spec.wingetId));

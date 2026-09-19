@@ -2,10 +2,58 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, relative, isAbsolute } from 'node:path';
-import { createConversationAgentService } from '../src/server/conversation-agent-service.mjs';
+import { bindStructuredTaskRoutePlacements, createConversationAgentService } from '../src/server/conversation-agent-service.mjs';
 import { createConversationAgentTools } from '../src/server/conversation-agent-tools.mjs';
 import { createBlankNotebookState } from '../src/data.js';
 import { saveWorkspaceState, loadWorkspaceState } from '../src/server/workspace.mjs';
+
+const boundShortFictionRoute = bindStructuredTaskRoutePlacements({
+  selectedCapabilityTopLevelId: 'group:short-fiction',
+  selectedCapabilityNodeId: 'module:short-fiction-writer',
+}, {
+  panel: { placementId: 'panel', nodeId: 'template:shensi', enabled: true },
+  routes: [
+    { placementId: 'panel>short-fiction', nodeId: 'group:short-fiction', parentPlacementId: 'panel', enabled: true },
+    { placementId: 'panel>short-fiction>writer', nodeId: 'module:short-fiction-writer', parentPlacementId: 'panel>short-fiction', enabled: true },
+    { placementId: 'panel>novel>writer', nodeId: 'module:novel-writer', parentPlacementId: 'panel>novel', enabled: true },
+  ],
+});
+assert.equal(boundShortFictionRoute.selectedModulePlacementId, 'panel>short-fiction>writer', '结构化路由必须绑定正确分支的真实 placementId');
+
+const repeatedPlacementBundle = {
+  panel: { placementId: 'panel', nodeId: 'template:shensi', name: '面板', enabled: true, relationType: 'parallel' },
+  routes: [
+    { placementId: 'panel>novel', nodeId: 'group:novel', name: '长篇小说模组', parentPlacementId: 'panel', parentRole: 'peer', enabled: true, relationType: 'parallel' },
+    { placementId: 'panel>novel>writers-a', nodeId: 'group:writers-a', name: '主笔甲组', parentPlacementId: 'panel>novel', parentRole: 'peer', enabled: true, relationType: 'primary-secondary' },
+    { placementId: 'panel>novel>writers-b', nodeId: 'group:writers-b', name: '主笔乙组', parentPlacementId: 'panel>novel', parentRole: 'peer', enabled: true, relationType: 'organization' },
+    { placementId: 'panel>novel>writers-a>shared', nodeId: 'module:shared-writer', name: '共享主笔', parentPlacementId: 'panel>novel>writers-a', parentRole: 'primary', enabled: true, relationType: 'parallel' },
+    { placementId: 'panel>novel>writers-b>shared', nodeId: 'module:shared-writer', name: '共享主笔', parentPlacementId: 'panel>novel>writers-b', parentRole: 'lower', enabled: true, relationType: 'parallel' },
+  ],
+};
+const ambiguousRepeatedPlacement = bindStructuredTaskRoutePlacements({
+  selectedCapabilityTopLevelId: 'group:novel',
+  selectedCapabilityNodeId: 'module:shared-writer',
+}, repeatedPlacementBundle);
+assert.equal(ambiguousRepeatedPlacement.selectedModulePlacementId, undefined, '重复模块不得按数组顺序选择第一个位置');
+assert.equal(ambiguousRepeatedPlacement.routeDisambiguationRequired, true);
+assert.equal(ambiguousRepeatedPlacement.routeClarificationPolicy, 'ask_only_if_semantically_unresolved', '能依据路径和角色消歧时不得提前询问用户');
+assert.equal(ambiguousRepeatedPlacement.routePlacementCandidates.length, 2);
+const exactRepeatedPlacement = bindStructuredTaskRoutePlacements({
+  selectedCapabilityTopLevelId: 'group:novel',
+  selectedCapabilityNodeId: 'module:shared-writer',
+  selectedModulePlacementId: 'panel>novel>writers-b>shared',
+}, repeatedPlacementBundle);
+assert.equal(exactRepeatedPlacement.selectedModulePlacementId, 'panel>novel>writers-b>shared', '已有精确 placementId 时必须保持原位置');
+assert.equal(exactRepeatedPlacement.relationType, 'organization');
+assert.equal(exactRepeatedPlacement.relationRole, 'lower');
+assert.deepEqual(exactRepeatedPlacement.selectedRoutePath, ['面板', '长篇小说模组', '主笔乙组', '共享主笔'], '任务卡和运行时必须保留精确的完整能力路径');
+const refreshedLegacyRoute = bindStructuredTaskRoutePlacements({
+  selectedCapabilityTopLevelId: 'group:novel',
+  selectedCapabilityNodeId: 'module:novel-engineering',
+  selectedModulePlacementId: 'panel>novel>module:novel-engineering',
+}, repeatedPlacementBundle);
+assert.equal(refreshedLegacyRoute.routeRefreshRequired, true, '旧工程化管理引用必须被标记为重新路由');
+assert.equal(refreshedLegacyRoute.selectedCapabilityNodeId, undefined, '旧工程化管理节点不得复活');
 
 const root = await mkdtemp(join(tmpdir(), 'shensi-agent-native-'));
 try {
@@ -18,6 +66,10 @@ try {
     return JSON.parse(result.contentItems[0].text);
   };
   await call('write', { operation: 'create', documentId: 'agent-note', title: 'Agent文档', content: '这是一段真实初稿。', operationId: 'create-one' });
+  await call('write', { operation: 'create', documentId: 'agent-note-two', title: 'Agent文档', content: '这是同目录的第二篇文档。', operationId: 'create-two' });
+  const resumedTools = createConversationAgentTools({ appRoot: root, workspacePath, workspaceKind: 'notebook', requestId: 'request-resumed-run', sourceMessageId: 'user-12345678', instruction: '创建文档，然后追加并局部替换保存', catalog: [], signal: new AbortController().signal });
+  const resumedCreate = await resumedTools.invoke({ namespace: 'documents', tool: 'write', arguments: { operation: 'create', documentId: 'agent-note', title: 'Agent文档', content: '这是一段真实初稿。', operationId: 'create-one' } });
+  assert.equal(resumedCreate.success, true, resumedCreate.contentItems[0].text);
   let doc = await call('read', { documentId: 'agent-note' });
   assert.ok(doc.revision);
   await call('write', { operation: 'append', documentId: 'agent-note', content: '\n\n追加的新段落。', expectedRevision: doc.revision, operationId: 'append-one' });
@@ -33,6 +85,14 @@ try {
   assert.match(saved.state.histories['agent-note'][2].content, /真实初稿[\s\S]*追加的新段落/u, '续写写入结果必须成为历史版本');
   assert.equal(saved.state.histories['agent-note'][3].content, '这是一段真实初稿。', '新建写入结果必须成为初始历史版本');
   assert.equal(saved.state.documents['agent-note'].markdown, '完整覆盖后的正文。');
+  assert.equal(saved.state.documents['agent-note-two'].title, 'Agent文档（2）', 'Agent 新建同目录同名文档必须使用中文数字后缀');
+  assert.ok(Object.values(saved.state.documentTransactionLog).every((entry) => entry.taskIdentity === 'user-12345678'), '每次 Agent 写入必须持久保存稳定任务身份');
+
+  const newConversationTools = createConversationAgentTools({ appRoot: root, workspacePath, workspaceKind: 'notebook', requestId: 'request-new-conversation', conversationId: 'conversation-two', sourceMessageId: 'user-new-conversation', instruction: '新建另一篇同名文档', catalog: [], signal: new AbortController().signal });
+  const newConversationCreate = await newConversationTools.invoke({ namespace: 'documents', tool: 'write', arguments: { operation: 'create', documentId: 'agent-note-three', title: 'Agent文档', content: '这是新对话创建的同名文档。', operationId: 'create-one' } });
+  assert.equal(newConversationCreate.success, true, newConversationCreate.contentItems[0].text);
+  const afterNewConversation = await loadWorkspaceState({ appRoot: root, requestedPath: workspacePath });
+  assert.equal(afterNewConversation.state.documents['agent-note-three'].title, 'Agent文档（3）', '新对话的新建任务必须追加数字后缀而不是覆盖旧文档');
 
   const skillReads = [];
   const skillTools = createConversationAgentTools({

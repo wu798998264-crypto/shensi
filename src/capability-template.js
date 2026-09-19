@@ -16,16 +16,13 @@ import {
   isImageAssetSourceExtractionRequest,
 } from "./image-asset-routing.js";
 
-export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 30;
+export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 31;
 export const CAPABILITY_TEMPLATE_ROUTE_SELECTION_LIMIT = 24;
 
-export const CAPABILITY_KERNEL_NODE_IDS = Object.freeze([
-  "module:novel-engineering",
-]);
+export const CAPABILITY_KERNEL_NODE_IDS = Object.freeze([]);
 
 const CAPABILITY_KERNEL_WRAPPER_GROUP_IDS = new Set([
   "group:long-form-memory",
-  "group:novel-engineering",
 ]);
 const CAPABILITY_VISIBLE_GROUP_DESCRIPTIONS = Object.freeze({
   "group:novel": "长篇小说的引导、规划、主笔、自检、理论与创作经验能力版图。",
@@ -74,7 +71,6 @@ const OFFICIAL_POLICY_DEFAULTS = Object.freeze({
   "group:novel-review": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel"], phases: ["postwrite"] },
   "group:novel-theory": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel", "short_drama_script"] },
   "group:long-form-memory": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel", "short_drama_script"], phases: ["postwrite"] },
-  "group:novel-engineering": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel"], phases: ["prewrite", "postwrite"] },
   "module:creation-experience": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel"], phases: ["prewrite", "postwrite"] },
   "group:short-drama": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["short_drama_script"], contextDomains: ["script", "script-adaptation"] },
   "group:short-drama-guidance": { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["short_drama_script"], phases: ["prewrite"] },
@@ -89,8 +85,8 @@ const OFFICIAL_POLICY_DEFAULTS = Object.freeze({
 
 const policyDefaultsForNode = (id = "") => {
   if (OFFICIAL_POLICY_DEFAULTS[id]) return OFFICIAL_POLICY_DEFAULTS[id];
-  if (/^module:novel-(?:guidance|planning|writer|review|engineering)$/.test(id)) {
-    const phase = id.endsWith("guidance") || id.endsWith("planning") || id.endsWith("engineering") ? "prewrite"
+  if (/^module:novel-(?:guidance|planning|writer|review)$/.test(id)) {
+    const phase = id.endsWith("guidance") || id.endsWith("planning") ? "prewrite"
       : id.endsWith("writer") ? "produce" : "postwrite";
     return { workspaceModes: CREATIVE_WORKSPACE_MODES, deliverableTypes: ["novel"], phases: [phase] };
   }
@@ -152,7 +148,9 @@ export const validateCapabilityRelationMembers = ({ relationType: requestedRelat
   const values = list(members);
   const errors = [];
   if (relation !== "parallel" && !values.length) errors.push(`${label}必须包含一个主要或上位节点`);
-  const roles = values.map((member, index) => member?.role || capabilityRoleForIndex(relation, index));
+  // 成员角色始终由当前关系和保存顺序重新生成。旧数据中的错误 role
+  // 不能形成保存门禁，也不能覆盖“第一位主要/上位”的最新规则。
+  const roles = values.map((_member, index) => capabilityRoleForIndex(relation, index));
   if (relation === "parallel" && roles.some((role) => role !== "peer")) errors.push(`${label}的并行节点只能使用 peer 角色`);
   if (relation === "primary-secondary") {
     if (roles.filter((role) => role === "primary").length !== 1) errors.push(`${label}必须且只能包含一个 primary`);
@@ -344,30 +342,6 @@ const kernelMemoryModule = () => capabilityModule({
   slots: [fixedSlot("builtin:memory-steps", "记忆与信息台阶", { kernelManaged: false })],
 });
 
-const kernelEngineeringModule = () => capabilityModule({
-  id: "module:novel-engineering",
-  name: "工程化管理机制",
-  description: "由可信内核维护长篇作品目录、结构化落盘与跨章工程状态；不属于可配置模板内容。",
-  triggerRules: "长篇小说工程建立、目录调整、结构化落盘或跨章管理时由可信内核按需启用。",
-  relation: "primary-secondary",
-  affectsStructure: true,
-  kernelManaged: true,
-  protectedReason: "神思内置工程化管理运行机制，不可编辑、替换、拔出或删除。",
-  slots: [skillSlot({
-    id: "slot:novel-engineering",
-    name: "工程化管理",
-    skillId: "builtin:structure-engineering",
-    fixedSlotId: "builtin:structure-engineering",
-      capabilities: ["auxiliary_advisor"],
-    workspaceModes: CREATIVE_WORKSPACE_MODES,
-    deliverableTypes: ["novel"],
-    triggerKeywords: ["工程化管理", "结构化管理", "目录调整", "结构化落盘", "跨章管理"],
-    description: "由可信内核执行结构与目录管理，不向 Skill 开放文件写入权限。",
-    allowOfficialFallback: true,
-    kernelManaged: true,
-  })],
-});
-
 export const createInitialCapabilityTemplate = () => {
   const modules = [
     singleFixedModule({ id: "module:novel-guidance", name: "小说创作引导模块", description: "确认题材、读者、目标效果与关键取舍。", triggerRules: "创作目标尚未形成完整创作合同时启用。", fixedId: "builtin:creative-guidance", skillName: "小说创作引导" }),
@@ -416,7 +390,6 @@ export const createInitialCapabilityTemplate = () => {
       ],
     }),
     kernelMemoryModule(),
-    kernelEngineeringModule(),
     creationExperienceModule(),
     singleFixedModule({
       id: "module:novel-theory-advisor",
@@ -652,14 +625,6 @@ export const createInitialCapabilityTemplate = () => {
       items: [placement("place:long-form-memory:module", "module", "module:shared-memory")],
     }),
     capabilityGroup({
-      id: "group:novel-engineering",
-      name: "工程化管理模组",
-      description: "管理长篇作品目录、结构化落盘与跨章工程建议。",
-      triggerRules: "长篇小说工程建立、目录调整、结构化落盘或跨章管理时启用。",
-      relation: "parallel",
-      items: [placement("place:novel-engineering:module", "module", "module:novel-engineering")],
-    }),
-    capabilityGroup({
       id: "group:novel-theory",
       name: "小说理论顾问模组",
       description: "小说理论顾问为上位路由，科幻、男频、女频和其他题材理论模块为下位专精。",
@@ -686,7 +651,6 @@ export const createInitialCapabilityTemplate = () => {
         placement("place:novel:review", "group", "group:novel-review"),
         placement("place:novel:theory", "group", "group:novel-theory"),
         placement("place:novel:memory", "group", "group:long-form-memory"),
-        placement("place:novel:engineering", "group", "group:novel-engineering"),
         placement("place:novel:experience", "module", "module:creation-experience"),
       ],
     }),
@@ -809,7 +773,6 @@ export const createInitialCapabilityTemplate = () => {
     ["group:novel-writer", "module:novel-writer"],
     ["group:novel-review", "module:novel-review"],
     ["group:long-form-memory", "module:shared-memory"],
-    ["group:novel-engineering", "module:novel-engineering"],
     ["group:short-drama-guidance", "module:short-drama-guidance"],
     ["group:short-drama-review", "module:short-drama-review"],
     ["group:auxiliary", "module:auxiliary-skills"],
@@ -927,7 +890,6 @@ const V2_WRAPPER_GROUPS = Object.freeze([
   { id: "group:novel-writer", name: "小说主笔模组", description: "管理小说正文主笔模块；主要与备选主笔的替换关系在模块内部生效。", triggerRules: "小说正文、续写、改写与章节交付。", moduleId: "module:novel-writer" },
   { id: "group:novel-review", name: "小说自检模组", description: "集中管理小说候选的效果复核能力。", triggerRules: "小说候选生成后或用户明确要求审稿时启用。", moduleId: "module:novel-review" },
   { id: "group:long-form-memory", name: "长文记忆模组", description: "由长篇小说与连续短剧共享，提供状态、信息台阶与伏笔建议。", triggerRules: "长篇小说或连续短剧交付后启用；最终写入仍由可信内核执行。", moduleId: "module:shared-memory" },
-  { id: "group:novel-engineering", name: "工程化管理模组", description: "管理长篇作品目录、结构化落盘与跨章工程建议。", triggerRules: "长篇小说工程建立、目录调整、结构化落盘或跨章管理时启用。", moduleId: "module:novel-engineering" },
   { id: "group:short-drama-guidance", name: "短剧创作引导模组", description: "集中管理原创短剧与小说改短剧共用的创作引导。", triggerRules: "短剧来源模式、平台、集数、冲突或制作约束尚未确认时启用。", moduleId: "module:short-drama-guidance" },
   { id: "group:short-drama-review", name: "短剧自检模组", description: "集中管理原创与改编短剧共用的成稿自检能力。", triggerRules: "正式短剧候选生成后启用。", moduleId: "module:short-drama-review" },
 ]);
@@ -1001,7 +963,6 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
         ["module:novel-writer", "group:novel-writer"],
         ["module:novel-review", "group:novel-review"],
         ["module:shared-memory", "group:long-form-memory"],
-        ["module:novel-engineering", "group:novel-engineering"],
       ])],
       ["group:short-drama", new Map([
         ["module:short-drama-guidance", "group:short-drama-guidance"],
@@ -1019,13 +980,6 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
   }
   if (sourceVersion < 3) flattenStockNoOpWrapperGroups(bundle);
   if (sourceVersion < 4) {
-    const engineeringModule = bundle.modules.find((module) => module.id === "module:novel-engineering");
-    const engineeringSlot = engineeringModule?.slots?.find((slot) => slot.id === "slot:novel-engineering");
-    if (engineeringModule?.official === true && engineeringModule.version === 1 && engineeringSlot?.official === true && !engineeringSlot.triggerKeywords.length) {
-      engineeringSlot.deliverableTypes = ["novel"];
-      engineeringSlot.artifactTypes = ["novel"];
-      engineeringSlot.triggerKeywords = ["工程化管理", "结构化管理", "目录调整", "结构化落盘", "跨章管理"];
-    }
     const shortFictionTheory = bundle.modules.find((module) => module.id === "module:short-fiction-theory");
     const legacyStockSlot = shortFictionTheory?.slots?.length === 1
       && shortFictionTheory.official === true
@@ -1053,7 +1007,7 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
     }
   }
   if (sourceVersion < 5) {
-    const canonicalModules = [kernelMemoryModule(), kernelEngineeringModule()];
+    const canonicalModules = [kernelMemoryModule()];
     for (const canonical of canonicalModules) {
       const index = bundle.modules.findIndex((module) => module.id === canonical.id);
       const normalized = normalizeNode(canonical, "module", Math.max(0, index));
@@ -1711,6 +1665,30 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
     const prompt = bundle.modules.find((module) => module.id === "module:prompt-writer" && module.official === true);
     if (canonicalPrompt && prompt && ["提示词主笔模块", "提示词模块"].includes(prompt.name)) prompt.name = canonicalPrompt.name;
   }
+  // 工程化管理不再作为可路由 Skill。这里是持续成立的数据不变量，
+  // 不能只按版本迁移一次，否则恢复被旧内容污染、但版本号较新的快照时会复活。
+  // 结构读取、目标定位、原子写入、历史和磁盘复核仍由 documents 工具与可信写入层承担。
+  {
+    const obsoleteModuleIds = new Set(bundle.modules
+      .filter((module) => module.id === "module:novel-engineering"
+        && (module.official !== false || list(module.slots).some((slot) => [slot.skillId, slot.fixedSlotId].includes("builtin:structure-engineering"))))
+      .map((module) => module.id));
+    const obsoleteGroupIds = new Set(bundle.groups
+      .filter((group) => group.id === "group:novel-engineering"
+        && (group.official !== false || list(group.items).some((item) => obsoleteModuleIds.has(item.targetId))))
+      .map((group) => group.id));
+    const obsoleteNodeIds = new Set([...obsoleteGroupIds, ...obsoleteModuleIds]);
+    bundle.template.items = list(bundle.template.items).filter((item) => !obsoleteNodeIds.has(item.targetId));
+    bundle.groups = list(bundle.groups)
+      .filter((group) => !obsoleteGroupIds.has(group.id))
+      .map((group) => ({ ...group, items: list(group.items).filter((item) => !obsoleteNodeIds.has(item.targetId)) }));
+    bundle.modules = list(bundle.modules)
+      .filter((module) => !obsoleteModuleIds.has(module.id))
+      .map((module) => ({
+        ...module,
+        slots: list(module.slots).filter((slot) => ![slot.skillId, slot.fixedSlotId].includes("builtin:structure-engineering")),
+      }));
+  }
   if (sourceVersion < 10) {
     const legacyDescriptions = new Map([
       ["group:novel", new Set([
@@ -1802,9 +1780,6 @@ export const normalizeCapabilityTemplate = (input = {}) => {
   return upgradeCapabilityTemplate(bundle, sourceVersion);
 };
 
-const canonicalKernelModules = () => [kernelEngineeringModule()]
-  .map((module, index) => normalizeNode(module, "module", index));
-
 const placementTargets = (container = {}, targetId = "") => list(container.items)
   .some((item) => item.targetType === "module" && item.targetId === targetId);
 
@@ -1821,31 +1796,9 @@ const reachableCapabilityGroupIds = (bundle = {}) => {
   return reachable;
 };
 
-const ensureKernelPlacement = (bundle, targetId, preferredGroupIds = []) => {
-  const reachableGroups = reachableCapabilityGroupIds(bundle);
-  const preferredGroups = preferredGroupIds.map((id) => bundle.groups.find((group) => group.id === id))
-    .filter((group) => group && reachableGroups.has(group.id));
-  const targets = preferredGroups.length ? preferredGroups : [bundle.template];
-  for (const target of targets) {
-    if (placementTargets(target, targetId)) continue;
-    target.items.push({
-      id: `${target.id}:kernel:${targetId.replace(/^module:/, "")}`,
-      targetType: "module",
-      targetId,
-      role: capabilityRoleForIndex(target.relationType, target.items.length),
-    });
-  }
-};
-
 export const applyCapabilityKernelMechanisms = (input = {}) => {
   const sourceVersion = Math.max(1, Number(input?.schemaVersion) || 1);
   const bundle = normalizeCapabilityTemplate(input);
-  for (const canonical of canonicalKernelModules()) {
-    const index = bundle.modules.findIndex((module) => module.id === canonical.id);
-    if (index < 0) bundle.modules.push(canonical);
-    else bundle.modules[index] = canonical;
-  }
-  ensureKernelPlacement(bundle, "module:novel-engineering", ["group:novel"]);
   if (sourceVersion < 12) {
     const canonical = createInitialCapabilityTemplate();
     const canonicalPromptWriter = canonical.modules.find((module) => module.id === "module:prompt-writer");
@@ -1869,22 +1822,10 @@ export const applyCapabilityKernelMechanisms = (input = {}) => {
 export const capabilityKernelMutationErrors = (input = {}) => {
   const bundle = normalizeCapabilityTemplate(input);
   const errors = [];
-  for (const canonical of canonicalKernelModules()) {
-    const actual = bundle.modules.find((module) => module.id === canonical.id);
-    if (!actual) {
-      errors.push(`内置运行机制不可移除：${canonical.name}`);
-      continue;
-    }
-    if (stableStructureHash(actual) !== stableStructureHash(canonical)) errors.push(`内置运行机制不可修改：${canonical.name}`);
-  }
   const reachableGroups = reachableCapabilityGroupIds(bundle);
   const memoryParents = ["group:novel", "group:short-drama"].map((id) => bundle.groups.find((group) => group.id === id)).filter((group) => group && reachableGroups.has(group.id));
-  const engineeringParents = ["group:novel"].map((id) => bundle.groups.find((group) => group.id === id)).filter((group) => group && reachableGroups.has(group.id));
   if (!(memoryParents.length ? memoryParents.every((group) => placementTargets(group, "module:shared-memory")) : placementTargets(bundle.template, "module:shared-memory"))) {
     errors.push("内置长文记忆机制必须保留在作品能力范围内");
-  }
-  if (!(engineeringParents.length ? engineeringParents.every((group) => placementTargets(group, "module:novel-engineering")) : placementTargets(bundle.template, "module:novel-engineering"))) {
-    errors.push("内置工程化管理机制必须保留在作品能力范围内");
   }
   return errors;
 };

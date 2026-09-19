@@ -103,6 +103,19 @@ assert.equal(writingRoute.intentEnvelope.targetResolution, "exact");
 assert.deepEqual(writingRoute.intentEnvelope.targetDocumentIds, ["chapter-3"]);
 assert.equal(writingRoute.intentEnvelope.deliverables[0].kind, "prose");
 
+const newShortFictionRoute = buildAdaptiveTaskRoute({
+  text: "请正式创作一篇约300字的微型科幻小说，标题《新建文档验收》，新建同名文档并落盘，完成后提供可点击文档链接。无需询问。",
+  sourceMessageId: "new-short-fiction",
+  targetModuleId: "manuscript",
+});
+assert.equal(newShortFictionRoute.writeAuthorization.state, "commit");
+assert.equal(newShortFictionRoute.writeAuthorization.action, "create");
+assert.equal(newShortFictionRoute.intentEnvelope.writeMode, "formal_auto");
+assert.equal(newShortFictionRoute.intentEnvelope.deliverables.length, 1, "待创建的新文档必须保留为待完成交付物");
+assert.equal(newShortFictionRoute.intentEnvelope.deliverables[0].targetDocumentId, "");
+assert.equal(newShortFictionRoute.intentEnvelope.completionStatus, "pending");
+assert.deepEqual(newShortFictionRoute.intentEnvelope.acceptanceCriteria, ["all_required_deliverables_verified"]);
+
 const testingRoute = buildAdaptiveTaskRoute({
   text: "测试当前软件的正文落盘能力",
   sourceMessageId: "test-write-path",
@@ -172,6 +185,7 @@ assert.match(appSource, /const intentEnvelope = execution\.taskRoute\?\.intentEn
 assert.match(appSource, /正式交付自动写入/u);
 assert.match(appSource, /仅对话，不写入/u);
 assert.match(appSource, /读取：\$\{intentRequiredContextText\}/u);
+assert.match(appSource, /待创建新文档/u);
 assert.match(appSource, /requiredContextDocumentIds: taskRoute\.intentEnvelope\?\.requiredContextDocumentIds/u);
 assert.match(serverSource, /contextDomain: String\(body\.contextDomain/u);
 assert.match(serverSource, /taskRoute\.intentEnvelope\?\.requiredContextDocumentIds/u);

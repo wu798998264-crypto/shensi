@@ -95,6 +95,7 @@ try {
           codex: { id: 'codex', label: 'Codex', installed: true, available: true, version: 'codex-cli test' },
           opencode: { id: 'opencode', label: 'OpenCode', installed: true, available: true, version: 'OpenCode test' },
           claude_code: { id: 'claude_code', label: 'Claude Code', installed, available: installed, version: installed ? 'Claude Code simulated 1.0' : '', officialUrl: 'https://code.claude.com/docs/en/installation' }
+          ,workbuddy: { id: 'workbuddy', label: 'WorkBuddy', installed: true, available: false, ready: false, state: 'login_required', version: 'WorkBuddy simulated 1.0', message: 'WorkBuddy 已安装但尚未登录' }
         }}), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       if (url.endsWith('/api/agent-runners/install')) {
@@ -113,6 +114,13 @@ try {
   await evaluate(`document.querySelector('[data-settings-section="model"]').click(); true`);
   await waitFor(`document.querySelector('#textAgentEngineSelect option[value="claude_code"]')?.textContent.includes('未安装')`, "Claude Code 未安装状态");
   await evaluate(`(() => {
+    document.querySelector('[data-model-settings-channel="text"]')?.click();
+    document.querySelector('[data-add-generation-connection="text"]')?.click();
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#textAgentEngineSelect')?.selectedOptions?.[0]?.textContent.trim() === '请选择运行器'", "新建配置运行器引导文字");
+  assert.equal(await evaluate(`document.querySelector('#textAgentEngineSelect')?.selectedOptions?.[0]?.textContent.trim()`), "请选择运行器");
+  await evaluate(`(() => {
     const form = document.querySelector('#settingsForm');
     form.elements.textExecutionMode.value = 'agent';
     form.elements.textExecutionMode.dispatchEvent(new Event('change', { bubbles: true }));
@@ -126,11 +134,15 @@ try {
     option: document.querySelector('#textAgentEngineSelect option[value="claude_code"]')?.textContent,
     dialogTitle: document.querySelector('#agentRunnerInstallTitle')?.textContent,
     button: document.querySelector('#startAgentRunnerInstall')?.textContent,
+    stage: document.querySelector('#agentRunnerInstallStage')?.textContent,
+    terminatePresent: Boolean(document.querySelector('#terminateAgentRunnerInstall')),
     selected: document.querySelector('#textAgentEngineSelect')?.value,
   }))()`);
   assert.match(missingState.option, /未安装/u);
   assert.equal(missingState.dialogTitle, "Claude Code 下载与装配");
   assert.equal(missingState.button, "下载并装配");
+  assert.match(missingState.stage, /当前阶段/u);
+  assert.equal(missingState.terminatePresent, true);
   assert.notEqual(missingState.selected, "claude_code", "未安装运行器不得写入当前配置");
   await screenshot(screenshots.missing);
 
@@ -143,6 +155,17 @@ try {
   }))()`);
   assert.deepEqual(completedState, { selected: "claude_code", option: "Claude Code", installed: true });
   await screenshot(screenshots.completed);
+
+  await evaluate(`(() => {
+    const select = document.querySelector('#textAgentEngineSelect');
+    select.value = 'workbuddy';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#agentRunnerInstallDialog')?.open", "WorkBuddy 登录提示");
+  const workbuddyCopy = await evaluate(`document.querySelector('#agentRunnerInstallCopy')?.textContent`);
+  assert.match(workbuddyCopy, /已安装并通过版本检查，但尚未登录/u);
+  assert.doesNotMatch(workbuddyCopy, /本机未检测到/u, "已安装待登录不得继续显示本机未检测到");
   console.log(JSON.stringify({ ok: true, missingState, completedState, screenshots }, null, 2));
 } finally {
   socket.close();

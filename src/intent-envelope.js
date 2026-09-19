@@ -5,6 +5,8 @@ const unique = (values = []) => [...new Set((Array.isArray(values) ? values : [v
 const clipped = (value = "", limit = 240) => clean(value).slice(0, limit);
 const REVIEW_SOURCE_REFERENCE_PATTERN = /(?:读取|阅读|查看|打开|根据|依据|结合|参考).{0,32}(?:(?:小说|剧本|短剧|漫剧|改编)?(?:自检|编译|改编)报告)/u;
 const CONTENT_MUTATION_PATTERN = /(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|增补|补写).{0,20}(?:正文|章节|本章|稿件|文稿|剧本|单集)|(?:正文|章节|本章|稿件|文稿|剧本|单集).{0,20}(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|增补|补写)/u;
+const NEGATED_CONTENT_MUTATION_PATTERN = /(?:不要|无需|不用|禁止|不得|不需要).{0,8}(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|增补|补写)(?:.{0,20}(?:正文|章节|本章|稿件|文稿|剧本|单集))?/gu;
+const affirmativeContentMutationText = (value = "") => clean(value).replace(NEGATED_CONTENT_MUTATION_PATTERN, "");
 
 const inferredDeliverableKind = (targetDocumentId = "") => {
   const id = clean(targetDocumentId);
@@ -48,7 +50,12 @@ const taskTypeFor = ({ route = {}, taskContract = null, reviewDelivery = null, i
   if (taskContract?.taskType && INTENT_TASK_TYPES.includes(clean(taskContract.taskType))) return clean(taskContract.taskType);
   if ((route.mode === "operation" || route.mode === "workspace_operation" || route.mode === "general") && /导出|导出为|下载|打包/u.test(source)) return "export";
   if (route.runtimeDiagnosisIntent === true && /测试|回归|验收/u.test(source)) return "testing";
-  if (route.mode === "quick_revision" || route.revisionIntent === true || (reviewDelivery?.active === true && CONTENT_MUTATION_PATTERN.test(clean(instruction)))) return "modification";
+  if (route.mode === "quick_revision" || route.revisionIntent === true || (reviewDelivery?.active === true && CONTENT_MUTATION_PATTERN.test(affirmativeContentMutationText(instruction)))) return "modification";
+  // A self-check requested after a new formal artifact is a downstream step of
+  // the creation task. It must not replace the task's primary writing intent.
+  if (route.formalArtifactExpected === true
+    && route.routeStage === "produce"
+    && ["creative", "visual_prompt"].includes(clean(route.mode))) return "writing";
   if (reviewDelivery?.active || route.diagnosisIntent === true || route.runtimeDiagnosisIntent === true) return "diagnosis";
   if (route.mode === "creative_guidance") return "planning";
   if (!taskContract?.deliverables?.length && /^(?:请)?(?:规划|计划|制定方案|设计方案|安排).{0,40}(?:大纲|设定|流程|任务|方案)/u.test(source)) return "planning";
@@ -92,7 +99,25 @@ const deliverablesFor = ({ route = {}, taskContract = null, reviewDelivery = nul
   if (["planning", "testing", "diagnosis", "discussion"].includes(clean(taskType)) && writeAuthorization?.state !== "commit") return [];
   if (reviewDelivery?.active === true && route.revisionIntent !== true && taskPolicy.action !== "modify") return [];
   const ids = unique(targetDocumentIds.length ? targetDocumentIds : target?.documentId);
-  if (!ids.length || !route.shensiLed) return [];
+  if (!ids.length) {
+    // A newly requested formal document has no documentId until the trusted
+    // create tool commits it. Keep a pending deliverable so downstream UI and
+    // completion checks do not mislabel the task as conversation-only.
+    if (route.shensiLed
+      && route.formalArtifactExpected === true
+      && writeAuthorization?.state === "commit"
+      && writeAuthorization?.action === "create") {
+      return [{
+        id: "deliverable-001",
+        kind: deliverableKindFor("", route.deliverableType),
+        targetDocumentId: "",
+        required: true,
+        status: "pending",
+      }];
+    }
+    return [];
+  }
+  if (!route.shensiLed) return [];
   return ids.map((targetDocumentId, index) => ({
     id: `deliverable-${String(index + 1).padStart(3, "0")}`,
     kind: deliverableKindFor(targetDocumentId, route.deliverableType),
@@ -104,7 +129,7 @@ const deliverablesFor = ({ route = {}, taskContract = null, reviewDelivery = nul
 
 const inferredRequiredContextDocumentIds = ({ instruction = "", route = {}, reviewDelivery = null } = {}) => {
   const source = clean(instruction);
-  if (!REVIEW_SOURCE_REFERENCE_PATTERN.test(source) || !CONTENT_MUTATION_PATTERN.test(source)) return [];
+  if (!REVIEW_SOURCE_REFERENCE_PATTERN.test(source) || !CONTENT_MUTATION_PATTERN.test(affirmativeContentMutationText(source))) return [];
   const target = indexWriteTargetForScenario("explicit_self_check_report", {
     contextDomain: clean(route.contextDomain) || "novel",
   });
@@ -189,7 +214,7 @@ export const normalizeIntentEnvelope = (value = {}) => {
       targetDocumentId: clean(item?.targetDocumentId || item?.targetDocument),
       required: item?.required !== false,
       status: clean(item?.status) || "pending",
-    })).filter((item) => item.targetDocumentId || item.kind === "document")
+    })).filter((item) => item.targetDocumentId || item.kind)
     : [];
   return {
     schemaVersion: INTENT_ENVELOPE_SCHEMA_VERSION,

@@ -89,7 +89,7 @@ export const runClaudeCodeAgentTurn = async ({
   const finalPrompt = [
     "You are the Claude Code Agent embedded in Shensi. Follow the current user instruction and the verified Shensi product contract.",
     accessMode === "shensi_only"
-      ? "Own the full task through the shensi MCP tools only. They preserve complete document history. Direct filesystem, shell, web, ambient plugin, Skill and subagent tools are unavailable."
+      ? "Own the full task through the shensi MCP tools only. They preserve complete document history. Direct filesystem, shell, web, ambient plugin, Skill and subagent tools are unavailable. If the user explicitly requests a Shensi-external capability, call mcp__shensi__permission_prompt with the exact operation and continue only after this single operation is approved."
       : "Native tools, configured Skills, plugins, hooks, MCP servers and subagents may be used when the task needs them. Mutations to Shensi-managed documents and assets must still use shensi MCP tools so history and revision checks remain authoritative.",
     accessMode === "approval_required"
       ? "Protected native operations are approved one at a time through Shensi. Wait for each decision and never reuse it for another operation."
@@ -118,8 +118,7 @@ export const runClaudeCodeAgentTurn = async ({
   let ownedPermissionHost = null;
   try {
     let effectiveNativeHost = nativeHost;
-    if (accessMode === "approval_required" && !effectiveNativeHost) {
-      if (typeof requestApproval !== "function") throw new Error("操作需确认模式缺少神思审批通道");
+    if (["shensi_only", "approval_required"].includes(accessMode) && !effectiveNativeHost && typeof requestApproval === "function") {
       ownedPermissionHost = await startConversationAgentMcp({
         tools: toolsWithPermissionPrompt({ dynamicTools: [] }, requestApproval),
         signal,
@@ -141,7 +140,7 @@ export const runClaudeCodeAgentTurn = async ({
       // approval tier would silently bypass confirmation for Shensi mutation
       // tools, so only the deny-by-default tier receives it.
       if (accessMode === "shensi_only") args.push("--allowedTools", "mcp__shensi__*");
-      if (accessMode === "approval_required") args.push("--permission-prompt-tool", "mcp__shensi__permission_prompt");
+      if (["shensi_only", "approval_required"].includes(accessMode)) args.push("--permission-prompt-tool", "mcp__shensi__permission_prompt");
     }
     if (accessMode === "full_access") args.push("--dangerously-skip-permissions");
     args = [...prefixArgs, ...args];

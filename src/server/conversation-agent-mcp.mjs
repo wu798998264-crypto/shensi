@@ -34,5 +34,10 @@ export const startConversationAgentMcp = async ({ tools, onToolEvent = () => {},
     } catch (error) { send(null, { code: -32603, message: String(error.message || error) }); }
   });
   await new Promise((done, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", done); });
-  return { url: `http://127.0.0.1:${server.address().port}/mcp`, headers: { Authorization: `Bearer ${token}` }, close: async () => { server.closeAllConnections(); await new Promise((done) => server.close(done)); } };
+  return {
+    url: `http://127.0.0.1:${server.address().port}/mcp`,
+    headers: { Authorization: `Bearer ${token}` },
+    toolNames: [...toolMap.keys()],
+    close: async () => { server.closeAllConnections(); await new Promise((done) => server.close(done)); },
+  };
 };

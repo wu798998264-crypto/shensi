@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalAssetEventIso, generationAssetQualifiesForHistory } from "../whiteboard.js";
 import { mergeGlobalHistoricalAssets } from "../global-history-assets.js";
+import { assetHistoryEntryIsPurged, assetHistoryTrashEntry } from "../asset-history-policy.js";
 import {
   listWorkspaceNotebooks,
   listWorkspaceProjects,
@@ -178,10 +179,19 @@ export const buildWorkspaceAssetCatalog = ({
   const sourceAssetIds = new Set();
   const mediaByPath = new Map();
   const appendWorkspaceAsset = (asset, documentId = "", documentTitle = "") => {
+    if (assetHistoryEntryIsPurged(state, asset)) return;
     const sourceAssetId = String(asset?.id || "").trim();
     if (!sourceAssetId || sourceAssetIds.has(sourceAssetId)) return;
     const record = normalizedWorkspaceAsset({ asset, workspace, workspaceKind, documentId, documentTitle, textLimit });
     if (!record) return;
+    const trashEntry = assetHistoryTrashEntry(state, asset);
+    if (trashEntry?.status === "trashed") {
+      record.assetTrash = {
+        status: "trashed",
+        deletedAt: trashEntry.deletedAt,
+        expiresAt: trashEntry.expiresAt,
+      };
+    }
     sourceAssetIds.add(sourceAssetId);
     records.push(record);
     if (record.attachment?.relativePath) mediaByPath.set(record.attachment.relativePath.toLocaleLowerCase(), record);
@@ -202,6 +212,7 @@ export const buildWorkspaceAssetCatalog = ({
     const title = String(documentState.title || documentId);
     const sourceAvailable = documentState.externalMissing !== true;
     for (const media of mediaReferencesFromDocument(documentState)) {
+      if (assetHistoryEntryIsPurged(state, media)) continue;
       const relativePath = media.attachment.relativePath;
       const pathKey = relativePath.toLocaleLowerCase();
       const existing = mediaByPath.get(pathKey);
@@ -231,6 +242,14 @@ export const buildWorkspaceAssetCatalog = ({
         aspectRatio: media.kind === "image" ? 1 : 16 / 9,
         attachment: media.attachment,
       };
+      const trashEntry = assetHistoryTrashEntry(state, media);
+      if (trashEntry?.status === "trashed") {
+        record.assetTrash = {
+          status: "trashed",
+          deletedAt: trashEntry.deletedAt,
+          expiresAt: trashEntry.expiresAt,
+        };
+      }
       records.push(record);
       mediaByPath.set(pathKey, record);
     }

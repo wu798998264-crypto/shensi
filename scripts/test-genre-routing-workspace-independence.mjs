@@ -8,7 +8,7 @@ import {
 } from "../src/capability-template.js";
 import { FIXED_SKILL_SLOT_CATALOG } from "../src/module-registry.js";
 
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 31);
 
 const expectedModes = ["project", "notebook"];
 const initial = createInitialCapabilityTemplate();

@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { normalizeDreaminaCliProfileId, validDreaminaCliProfileId } from "../media-cli-presets.js";
 import { appDataRoot } from "./app-data.mjs";
+import { dreaminaBrokerLeasePath } from "./dreamina-broker-lease.mjs";
 import { credentialFileFingerprint, dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
 
 const moduleRoot = dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,7 @@ export const dreaminaCliEnvironment = (settings = {}, base = {}) => {
     SHENSI_DREAMINA_SAVED_CREDIT_AT: identity.creditUpdatedAt || "",
     SHENSI_DREAMINA_CREDENTIAL_FINGERPRINT: credentialFileFingerprint(runtime.credentialPath)
       || String(identity.credentialFingerprint || identity.expectedUserId || "unverified"),
+    SHENSI_DREAMINA_BROKER_LEASE_PATH: dreaminaBrokerLeasePath(),
     SHENSI_DREAMINA_EXECUTABLE: useWindowsCredentialBroker ? powershellPath : (explicitExecutable || runtime.executable),
     ...(useWindowsCredentialBroker ? {
       SHENSI_DREAMINA_PREFIX_ARGS: JSON.stringify([

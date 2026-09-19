@@ -342,7 +342,6 @@ export const canonicalBuiltinSkillId = (id = "") => LEGACY_BUILTIN_SKILL_ALIASES
 
 export const FIXED_SKILL_SLOT_CATALOG = Object.freeze([
   { id: "builtin:memory-steps", name: "记忆与信息台阶", description: "小说与剧本共用的状态、读者知识和伏笔建议槽；最终更新与写入仍由可信内核执行。", category: "共享记忆", parentGroupId: "", order: 10, workspaceModes: CREATIVE_WORKSPACE_MODES, replacementCapabilities: ["memory_advisor"] },
-  { id: "builtin:structure-engineering", name: "工程化管理", description: "在作品中提供完整结构化管理，在笔记中提供智能文件夹与文档组织建议；目录变更仍由可信内核验证执行。", category: "工程化管理", parentGroupId: "", order: 20, workspaceModes: CREATIVE_WORKSPACE_MODES, replacementCapabilities: ["auxiliary_advisor"] },
   { id: "builtin:experience-advisor", name: "创作经验顾问", description: "写作前读取可信内核筛选出的相关经验，只提供建议，不覆盖用户要求、正史或模板边界。", category: "创作经验", parentGroupId: "", order: 30, workspaceModes: ["project", "notebook"], replacementCapabilities: ["experience_advisor"] },
   { id: "builtin:experience-observer", name: "创作经验观察", description: "仅从作者已经采用的成品中提炼经验候选；经验验证和入库由可信内核执行。", category: "创作经验", parentGroupId: "", order: 40, workspaceModes: ["project", "notebook"], replacementCapabilities: ["experience_observer"] },
 

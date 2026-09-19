@@ -81,6 +81,28 @@ assert.equal(timeline[0].afterContent, undefined);
 assert.equal(timeline[2].relatedDocumentOnly, false, "原单篇历史仍保留正常管理语义");
 assert.equal(timeline[0].parentVersionId, timeline[1].id, "旧记录缺少父版本时必须回退到相邻完整快照");
 
+const promotedTimeline = collectRelatedDocumentHistory({
+  documentId,
+  directEntries: [
+    {
+      id: "newer-created-version",
+      scopeType: "document",
+      scopeId: documentId,
+      createdAt: "2026-01-02T00:00:00.000Z",
+      document: revised,
+    },
+    {
+      id: "older-promoted-version",
+      scopeType: "document",
+      scopeId: documentId,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      lastActivatedAt: "2026-01-03T00:00:00.000Z",
+      document: initial,
+    },
+  ],
+});
+assert.equal(promotedTimeline[0].id, "older-promoted-version", "重新命中的旧版本必须按最近启用时间显示在最上方");
+
 const rebuilt = resolveHistoryDiffInput({
   parentBefore: timeline[1].document.html,
   snapshotAfter: timeline[0].document.html,

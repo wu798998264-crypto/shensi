@@ -10,8 +10,18 @@ import { resolveDocumentTarget } from "../src/document-target-resolver.js";
 import { bindFormalWriteCandidate } from "../src/formal-write-authorization.js";
 import { formalArtifactCommitEligibility } from "../src/formal-artifact-extractor.js";
 import { fullTextImportInstructionRequested } from "../src/full-text-import-contract.js";
-import { buildAdaptiveTaskRoute, resolveRequestedMode } from "../src/request-routing.js";
+import { buildAdaptiveTaskRoute, creativeCapabilityRouteDecision, creativeDeliverableType, resolveRequestedMode } from "../src/request-routing.js";
 import { compileTaskContract, normalizeTaskContract } from "../src/task-contract.js";
+
+assert.equal(creativeDeliverableType({ text: "请创作一篇约600字的悬疑小说开场", targetDocumentId: "chapter-20" }), "short_fiction", "明确短篇不能被当前长篇文档污染");
+assert.equal(creativeDeliverableType({ text: "把这篇短篇小说改成三集微短剧", targetDocumentId: "chapter-20" }), "short_drama_script", "转换任务必须以转换后的成品类型为准");
+assert.equal(creativeDeliverableType({ text: "把当前短剧改成一篇公众号文章", targetDocumentId: "script-episode-1" }), "public_account", "明确转换目标必须覆盖来源文体和当前文档");
+assert.deepEqual(creativeCapabilityRouteDecision({ text: "请创作一篇约600字的悬疑小说开场", deliverableType: "short_fiction", mode: "creative" }), {
+  routeStage: "produce",
+  selectedCapabilityTopLevelId: "group:short-fiction",
+  selectedCapabilityNodeId: "module:short-fiction-writer",
+  routeReason: "交付类型=short_fiction；阶段=produce；主分支=module:short-fiction-writer",
+});
 
 const authoritativeContract = compileTaskContract({
   taskType: "writing",

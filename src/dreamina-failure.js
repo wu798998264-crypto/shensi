@@ -113,6 +113,12 @@ export const dreaminaFailureDiagnosis = ({
       cause: "当前配置的可用积分不足，收费生成任务未开始。",
       resolution: "刷新积分；如果仍不足，请充值、降低生成参数或切换到积分充足的即梦配置。",
     }),
+    DREAMINA_CLI_MEMBERSHIP_REQUIRED: diagnosis({
+      category: "cli_membership_required",
+      title: "当前即梦账号没有 CLI 生成权限",
+      cause: "即梦已返回实时积分，但当前账号不是可使用 Dreamina CLI 生成的会员账号。有积分不等于已开通 CLI 权限。",
+      resolution: "在即梦开通支持 CLI 的会员权限后点击刷新，或切换其他已开通会员的即梦配置。本次未创建任务、未扣积分，不需要重复核验账号。",
+    }),
     DREAMINA_CONCURRENCY_LIMIT: diagnosis({
       category: "provider_concurrency_limit",
       title: "即梦并发名额已满",

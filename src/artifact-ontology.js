@@ -22,5 +22,5 @@ export const hasFormalAssetWriteIntent = (value = "") => {
   const negationPattern = new RegExp(FORMAL_ASSET_WRITE_NEGATION_PATTERN.source, "gu");
   const affirmativeSource = source.replace(negationPattern, " ");
   return FORMAL_ASSET_WRITE_ACTION_PATTERN.test(affirmativeSource)
-    && FORMAL_ASSET_TARGET_PATTERN.test(affirmativeSource);
+    && (FORMAL_ASSET_TARGET_PATTERN.test(affirmativeSource) || hasExplicitNewDocumentAction(affirmativeSource));
 };

@@ -239,6 +239,31 @@ export const reconcileConversationSave = ({ current = {}, submitted = {}, persis
   return { ok: conflicts.length === 0, state: next, conflictKeys: [...new Set(conflicts)] };
 };
 
+// A conflicting save has two distinct local timelines: changes already
+// included in the submitted request, and newer changes made while that
+// request was in flight. Merge them in that order. Treating the submitted
+// snapshot itself as the only baseline makes an older server-side document
+// transaction look like a deliberate conversation rollback and can either
+// discard live task progress or report a false `conversations` conflict.
+export const reconcileConversationSaveAfterConflict = ({
+  baseline = {},
+  submitted = {},
+  current = submitted,
+  persisted = {},
+} = {}) => {
+  const submittedMerge = reconcileConversationSave({
+    current: submitted,
+    submitted: baseline,
+    persisted,
+  });
+  if (!submittedMerge.ok) return submittedMerge;
+  return reconcileConversationSave({
+    current,
+    submitted,
+    persisted: submittedMerge.state,
+  });
+};
+
 export const reconcileWorkspaceSave = ({ current, submitted, persisted }) => {
   const conversations = reconcileConversationSave({ current, submitted, persisted });
   if (!conversations.ok) return { ...conversations, conflictStateKeys: conversations.conflictKeys, conflictDocumentIds: [] };

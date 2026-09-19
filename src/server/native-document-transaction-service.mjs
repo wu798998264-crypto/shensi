@@ -33,6 +33,19 @@ const operationFingerprint = (operation = {}) => createHash("sha256")
     patches: Array.isArray(operation.patches) ? operation.patches : [],
   }))
   .digest("hex");
+const taskIdentityFor = (task = {}) => clean(task.transactionKey)
+  || [clean(task.conversationId), clean(task.taskId || task.sourceMessageId || task.writeAuthorization?.sourceMessageId)].filter(Boolean).join(":");
+const createIntentFingerprint = (operation = {}) => createHash("sha256")
+  .update(JSON.stringify({
+    requestedTitle: clean(operation.requestedTitle).toLocaleLowerCase(),
+    targetDirectoryId: clean(operation.targetDirectoryId),
+    contentType: clean(operation.contentType),
+    viewId: clean(operation.viewId),
+    folderId: clean(operation.folderId),
+    folderLabel: clean(operation.folderLabel).toLocaleLowerCase(),
+    parentFolderId: clean(operation.parentFolderId),
+  }))
+  .digest("hex");
 const basicHtml = (markdown = "") => String(markdown).split(/\n{2,}/u)
   .map((paragraph) => `<p>${paragraph.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("\n", "<br>")}</p>`)
   .join("");
@@ -66,14 +79,43 @@ const defaultDocumentTitle = (documentId = "", contentType = "") => {
   return "未命名文档";
 };
 
+const nextUniqueDocumentTitle = (state = {}, title = "", { moduleId = "library", viewId = "", folderId = "", folderLabel = "" } = {}) => {
+  const base = clean(title);
+  if (!base) return base;
+  const targetFolder = clean(folderId) || clean(folderLabel).toLocaleLowerCase() || "__root__";
+  const siblingTitles = (state.moduleItems?.[moduleId] || []).flatMap((item) => {
+    const documentId = clean(item?.[0]);
+    const options = item?.[2] || {};
+    const document = state.documents?.[documentId] || {};
+    const siblingView = clean(options.workspaceView || document.workspaceView || viewId);
+    if (viewId && siblingView && siblingView !== viewId) return [];
+    const siblingFolder = clean(options.customFolderId || options.folderId || document.customFolderId || document.folderId)
+      || clean(options.customFolderLabel || options.folderLabel || document.customFolderName).toLocaleLowerCase()
+      || "__root__";
+    if (siblingFolder !== targetFolder) return [];
+    return [clean(document.title || item?.[1]).toLocaleLowerCase()];
+  });
+  const taken = new Set(siblingTitles.filter(Boolean));
+  if (!taken.has(base.toLocaleLowerCase())) return base;
+  let suffix = 2;
+  while (taken.has(`${base}（${suffix}）`.toLocaleLowerCase())) suffix += 1;
+  return `${base}（${suffix}）`;
+};
+
 const applyOperation = ({ state, task, operation, expectedRevisions, transactionId, writeAuthorization }) => {
   const operationId = clean(operation.operationId) || `op-${randomUUID()}`;
+  const type = clean(operation.type) || "replace";
+  const taskIdentity = taskIdentityFor(task);
+  const createIntentId = type === "create" && taskIdentity ? createIntentFingerprint(operation) : "";
+  state.documentTransactionLog ??= {};
+  if (type === "create" && task?.executionSurface === "agent" && !taskIdentity) {
+    throw Object.assign(new Error("新建文档缺少稳定任务身份；请确认更新现有文档还是新建副本"), { code: "DOCUMENT_TASK_IDENTITY_REQUIRED" });
+  }
   const documentId = operationDocumentId({ ...operation, operationId });
   ensureTargetIsNotSource(task, documentId);
-  state.documentTransactionLog ??= {};
+  const fingerprint = operationFingerprint(operation);
   const replay = state.documentTransactionLog[operationId];
   if (replay?.targetDocumentId === documentId && state.documents?.[documentId]) {
-    const fingerprint = operationFingerprint(operation);
     if (replay.operationFingerprint && replay.operationFingerprint !== fingerprint) {
       const error = new Error(`操作 ${operationId} 已用于不同的文档写入内容`);
       error.code = "DOCUMENT_TRANSACTION_IDEMPOTENCY_CONFLICT";
@@ -103,7 +145,6 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
     error.code = "DOCUMENT_REVISION_CONFLICT";
     throw error;
   }
-  const type = clean(operation.type) || "replace";
   if (type !== "create" && !existing) throw Object.assign(new Error(`目标文档不存在：${documentId}`), { code: "DOCUMENT_TARGET_NOT_FOUND" });
   if (type === "create" && existing) throw Object.assign(new Error(`新建目标已存在：${documentId}`), { code: "DOCUMENT_TARGET_EXISTS" });
   if (type !== "rename" && writeAuthorization?.allowBodyMutation !== true) {
@@ -150,7 +191,15 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
     });
   }
   const targetContentType = clean(operation.contentType) || clean(task?.target?.contentType);
-  const title = clean(operation.requestedTitle) || existing?.title || clean(task?.target?.requestedTitle) || defaultDocumentTitle(documentId, targetContentType);
+  const requestedOrExistingTitle = clean(operation.requestedTitle) || existing?.title || clean(task?.target?.requestedTitle) || defaultDocumentTitle(documentId, targetContentType);
+  const title = type === "create"
+    ? nextUniqueDocumentTitle(state, requestedOrExistingTitle, {
+        moduleId: intendedModuleId,
+        viewId: clean(operation.viewId) || (targetContentType === "script" ? "script" : ["prompt", "storyboard"].includes(targetContentType) ? "prompts" : targetContentType === "novel" ? "novel" : ""),
+        folderId: clean(operation.folderId),
+        folderLabel: clean(operation.folderLabel),
+      })
+    : requestedOrExistingTitle;
   const workspaceView = targetContentType === "script" ? "script"
     : ["prompt", "storyboard"].includes(targetContentType) ? "prompts"
       : targetContentType === "novel" ? "novel" : existing?.workspaceView;
@@ -202,7 +251,11 @@ const applyOperation = ({ state, task, operation, expectedRevisions, transaction
     contentHash: contentRevision(nextContent),
     status: "prepared",
     transactionId,
-    operationFingerprint: operationFingerprint(operation),
+    operationFingerprint: fingerprint,
+    logicalOperation: type,
+    taskIdentity,
+    createIntentFingerprint: createIntentId,
+    requestedTitle: title,
     versionId,
     beforeRevision: patchResult?.beforeRevision || contentRevision(previousContent),
     afterRevision: patchResult?.afterRevision || contentRevision(nextContent),
@@ -305,7 +358,10 @@ export const executeDocumentTransaction = async ({
         name: operation.folderLabel || operation.name,
         parentFolderId: operation.parentFolderId,
       });
-      const item = applyOperation({ state: next, task, operation, expectedRevisions, transactionId: batchId, writeAuthorization: task.writeAuthorization });
+      const resolvedOperation = placement?.folderId && !clean(operation.folderId)
+        ? { ...operation, folderId: placement.folderId }
+        : operation;
+      const item = applyOperation({ state: next, task, operation: resolvedOperation, expectedRevisions, transactionId: batchId, writeAuthorization: task.writeAuthorization });
       const folderId = clean(operation.folderId) || clean(placement?.folderId);
       const moduleId = clean(operation.targetDirectoryId) || item.targetDirectoryId;
       const viewId = clean(operation.viewId) || (clean(operation.contentType) === "script" ? "script" : clean(operation.contentType) === "novel" ? "novel" : "");

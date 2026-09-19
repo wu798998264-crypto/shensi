@@ -6,6 +6,13 @@ const normalizedPath = (value) => String(value || "")
 
 const normalizedId = (value) => String(value || "").trim();
 
+export const ASSET_TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+const validIso = (value) => {
+  const timestamp = Date.parse(String(value || ""));
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+};
+
 export const assetHistoryIdentity = (asset = {}) => ({
   assetId: normalizedId(asset.id),
   generationJobId: normalizedId(asset.generationJobId || asset.generation?.jobId),
@@ -23,14 +30,25 @@ export const assetHistoryIdentitiesMatch = (left, right) => {
   return Boolean(left.generationJobId && right.generationJobId && left.generationJobId === right.generationJobId);
 };
 
-export const normalizeAssetHistoryTombstones = (values = []) => {
+export const normalizeAssetHistoryTombstones = (values = [], { now = new Date().toISOString() } = {}) => {
+  const normalizedNow = validIso(now) || new Date().toISOString();
   const normalized = [];
   for (const value of Array.isArray(values) ? values : []) {
     const identity = assetHistoryIdentity(value);
     if (!identityHasValue(identity) || normalized.some((item) => assetHistoryIdentitiesMatch(item, identity))) continue;
+    // Legacy "hidden" entries had no retention contract. Start their 30-day
+    // clock when they are first migrated so an upgrade cannot immediately
+    // destroy assets that may have been hidden months ago.
+    const deletedAt = validIso(value?.deletedAt)
+      || (value?.hiddenAt ? normalizedNow : validIso(value?.createdAt))
+      || normalizedNow;
+    const purgedAt = validIso(value?.purgedAt || value?.permanentlyDeletedAt);
     normalized.push({
       ...identity,
-      hiddenAt: String(value?.hiddenAt || value?.createdAt || new Date().toISOString()),
+      deletedAt,
+      expiresAt: validIso(value?.expiresAt) || new Date(Date.parse(deletedAt) + ASSET_TRASH_RETENTION_MS).toISOString(),
+      ...(purgedAt ? { purgedAt, status: "purged" } : { status: "trashed" }),
+      ...(value?.hiddenAt && !value?.deletedAt ? { legacyHiddenAt: validIso(value.hiddenAt) || String(value.hiddenAt) } : {}),
     });
   }
   return normalized;
@@ -74,15 +92,36 @@ export const assetHistoryEntryIsSuppressed = (workspace = {}, asset = {}) => {
     .some((tombstone) => assetHistoryIdentitiesMatch(tombstone, identity));
 };
 
-export const hideHistoricalAssets = (workspace = {}, assets = [], { now = new Date().toISOString() } = {}) => {
+export const assetHistoryTrashEntry = (workspace = {}, asset = {}) => {
+  const identity = assetHistoryIdentity(asset);
+  return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones)
+    .find((entry) => assetHistoryIdentitiesMatch(entry, identity)) || null;
+};
+
+export const assetHistoryEntryIsTrashed = (workspace = {}, asset = {}) => {
+  const entry = assetHistoryTrashEntry(workspace, asset);
+  return Boolean(entry && entry.status !== "purged");
+};
+
+export const assetHistoryEntryIsPurged = (workspace = {}, asset = {}) => {
+  return assetHistoryTrashEntry(workspace, asset)?.status === "purged";
+};
+
+export const moveHistoricalAssetsToTrash = (workspace = {}, assets = [], { now = new Date().toISOString() } = {}) => {
   const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
   const protectedAssets = [];
   const deletedAssets = selected;
   const deletedIdentities = deletedAssets.map(assetHistoryIdentity).filter(identityHasValue);
-  let tombstones = normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones);
+  const deletedAt = validIso(now) || new Date().toISOString();
+  let tombstones = normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones, { now: deletedAt });
   for (const identity of deletedIdentities) {
     tombstones = tombstones.filter((tombstone) => !assetHistoryIdentitiesMatch(tombstone, identity));
-    tombstones.push({ ...identity, hiddenAt: now });
+    tombstones.push({
+      ...identity,
+      deletedAt,
+      expiresAt: new Date(Date.parse(deletedAt) + ASSET_TRASH_RETENTION_MS).toISOString(),
+      status: "trashed",
+    });
   }
   return {
     workspace: {
@@ -96,13 +135,57 @@ export const hideHistoricalAssets = (workspace = {}, assets = [], { now = new Da
   };
 };
 
-export const unhideHistoricalAssets = (workspace = {}, assets = []) => {
+export const restoreHistoricalAssets = (workspace = {}, assets = []) => {
   const identities = (Array.isArray(assets) ? assets : [assets]).filter(Boolean)
     .map(assetHistoryIdentity)
     .filter(identityHasValue);
   if (!identities.length) return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones);
   return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones)
-    .filter((tombstone) => !identities.some((identity) => assetHistoryIdentitiesMatch(tombstone, identity)));
+    .filter((entry) => entry.status === "purged" || !identities.some((identity) => assetHistoryIdentitiesMatch(entry, identity)));
+};
+
+export const expiredAssetTrashEntries = (workspace = {}, { now = new Date().toISOString() } = {}) => {
+  const timestamp = Date.parse(validIso(now) || new Date().toISOString());
+  return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones, { now })
+    .filter((entry) => entry.status !== "purged" && Date.parse(entry.expiresAt) <= timestamp);
+};
+
+const assetMatchesAnyIdentity = (asset, identities) => {
+  const candidate = assetHistoryIdentity(asset);
+  return identities.some((identity) => assetHistoryIdentitiesMatch(candidate, identity));
+};
+
+export const permanentlyDeleteHistoricalAssets = (workspace = {}, assets = [], { now = new Date().toISOString() } = {}) => {
+  const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+  const identities = selected.map(assetHistoryIdentity).filter(identityHasValue);
+  if (!identities.length) return { workspace, deletedAssets: [] };
+  const purgedAt = validIso(now) || new Date().toISOString();
+  const documents = Object.fromEntries(Object.entries(workspace.documents || {}).map(([documentId, documentState]) => {
+    const canvas = documentState?.canvas;
+    if (!Array.isArray(canvas?.assets)) return [documentId, documentState];
+    const assetsAfterDelete = canvas.assets.filter((asset) => !assetMatchesAnyIdentity(asset, identities));
+    if (assetsAfterDelete.length === canvas.assets.length) return [documentId, documentState];
+    return [documentId, { ...documentState, canvas: { ...canvas, assets: assetsAfterDelete } }];
+  }));
+  let tombstones = normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones, { now: purgedAt })
+    .filter((entry) => !identities.some((identity) => assetHistoryIdentitiesMatch(entry, identity)));
+  tombstones.push(...identities.map((identity) => ({
+    ...identity,
+    deletedAt: purgedAt,
+    expiresAt: purgedAt,
+    purgedAt,
+    status: "purged",
+  })));
+  return {
+    workspace: {
+      ...workspace,
+      documents,
+      workspaceAssets: (Array.isArray(workspace.workspaceAssets) ? workspace.workspaceAssets : [])
+        .filter((asset) => !assetMatchesAnyIdentity(asset, identities)),
+      assetHistoryTombstones: tombstones,
+    },
+    deletedAssets: selected,
+  };
 };
 
 export const restoreReferencedAssetHistoryTombstones = (workspace = {}, candidates = []) => {
@@ -111,5 +194,5 @@ export const restoreReferencedAssetHistoryTombstones = (workspace = {}, candidat
     .map(assetHistoryIdentity);
   if (!referenced.length) return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones);
   return normalizeAssetHistoryTombstones(workspace.assetHistoryTombstones)
-    .filter((tombstone) => !referenced.some((identity) => assetHistoryIdentitiesMatch(tombstone, identity)));
+    .filter((entry) => entry.status === "purged" || !referenced.some((identity) => assetHistoryIdentitiesMatch(entry, identity)));
 };

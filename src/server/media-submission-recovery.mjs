@@ -102,6 +102,7 @@ const safeRejectedImageRetry = (code) => code === "HTTP_408"
 const safeKnownNoTaskRetry = (code) => [
   "DREAMINA_PROFILE_BROKER_BUSY",
   "DREAMINA_CONTROL_PLANE_TRANSIENT",
+  "DREAMINA_QUERY_TRANSIENT",
   "DREAMINA_CREDIT_QUERY_TIMEOUT",
   "DRIVER_TIMEOUT",
   "DREAMINA_TASK_RESOURCE_UNVERIFIED",
@@ -120,7 +121,7 @@ export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutoma
   const brokerBusy = code === "DREAMINA_PROFILE_BROKER_BUSY";
   const safeAutomaticRetry = error.submissionOutcomeKnown === true
     && (safeKnownNoTaskRetry(code) || (job.channel === "image" && safeRejectedImageRetry(code)))
-    && (brokerBusy || failureCount <= Math.max(0, Number(maxAutomaticRetries) || 0));
+    && failureCount <= Math.max(0, Number(maxAutomaticRetries) || 0);
   const retryDelayMs = safeAutomaticRetry
     ? Math.max(Number(error.retryAfterMs) || 0, Math.min(30_000, 1_000 * (2 ** Math.max(0, failureCount - 1))))
     : 0;

@@ -4,7 +4,7 @@ import { normalizeAgentPermissionMode, permissionContractFor } from "./agent-per
 const defaultCapabilities = (engine, permissionMode = "shensi_only") => {
   const contract = permissionContractFor(normalizeAgentPermissionMode(permissionMode), { runner: engine });
   const enhanced = contract.mode !== "shensi_only";
-  const workspaceToolsAvailable = ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(engine);
+  const workspaceToolsAvailable = ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(engine);
   return {
     permissionMode: contract.mode,
     permissionLabel: contract.label,
@@ -16,7 +16,7 @@ const defaultCapabilities = (engine, permissionMode = "shensi_only") => {
     openCodeToolsEnabled: enhanced && ["deepseek_opencode", "opencode"].includes(engine),
     claudeCodeToolsEnabled: enhanced && engine === "claude_code",
     codexToolsEnabled: enhanced && ["codex", "codex_api"].includes(engine),
-    externalCliToolsEnabled: enhanced && ["trae_work", "workbuddy", "custom"].includes(engine),
+    externalCliToolsEnabled: enhanced && ["workbuddy", "custom"].includes(engine),
     globalPluginsEnabled: contract.capabilities.globalPlugins,
     globalMcpEnabled: contract.capabilities.globalMcp,
     globalSkillsEnabled: contract.capabilities.globalSkills,
@@ -90,7 +90,7 @@ export const agentCapabilitySummary = (profileValue = {}) => {
       ? "Claude Code 原生工具"
     : ["codex", "codex_api"].includes(profile.engine) && capabilities.codexToolsEnabled
         ? "Codex 原生工具"
-        : ["trae_work", "workbuddy", "custom"].includes(profile.engine) && capabilities.externalCliToolsEnabled
+        : ["workbuddy", "custom"].includes(profile.engine) && capabilities.externalCliToolsEnabled
           ? `${profile.label} 原生工具`
         : "";
   const ambientExtensions = capabilities.globalSkillsEnabled || capabilities.globalPluginsEnabled

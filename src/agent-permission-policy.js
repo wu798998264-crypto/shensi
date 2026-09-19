@@ -139,6 +139,18 @@ export const permissionContractFor = (value, { runner = "", taskId = "", snapsho
   });
 };
 
+// The UI default remains Shensi-only. External runners can still be started
+// with a one-operation approval bridge so an explicitly requested host action
+// can proceed after confirmation without changing the task's persisted mode.
+export const permissionContractForExternalApproval = (contract, { runner = "", taskId = "" } = {}) => {
+  if (!contract || contract.mode !== "shensi_only") return contract;
+  return permissionContractFor("approval_required", {
+    runner: contract.runner || runner,
+    taskId: contract.taskId || taskId,
+    snapshotAt: contract.snapshotAt,
+  });
+};
+
 export const codexPermissionConfig = (value) => {
   const info = agentPermissionModeInfo(value);
   return {

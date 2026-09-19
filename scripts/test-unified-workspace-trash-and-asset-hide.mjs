@@ -16,13 +16,26 @@ const {
   loadWorkspaceState,
   permanentlyDeleteDeletedWorkspace,
   restoreDeletedWorkspace,
+  saveWorkspaceAttachment,
   saveWorkspaceState,
 } = await import("../src/server/workspace.mjs");
 const {
-  assetHistoryEntryIsSuppressed,
-  hideHistoricalAssets,
-  unhideHistoricalAssets,
+  moveAssetEntriesToTrash,
+  permanentlyDeleteAssetTrashEntries,
+  restoreAssetTrashEntries,
+} = await import("../src/server/asset-trash-service.mjs");
+const {
+  ASSET_TRASH_RETENTION_MS,
+  assetHistoryEntryIsPurged,
+  assetHistoryEntryIsTrashed,
+  expiredAssetTrashEntries,
+  moveHistoricalAssetsToTrash,
+  normalizeAssetHistoryTombstones,
+  permanentlyDeleteHistoricalAssets,
+  restoreHistoricalAssets,
 } = await import("../src/asset-history-policy.js");
+const { buildWorkspaceAssetCatalog } = await import("../src/server/global-asset-catalog.mjs");
+const { mergeGlobalHistoricalAssets } = await import("../src/global-history-assets.js");
 
 const appRoot = join(tempRoot, "app");
 
@@ -89,20 +102,104 @@ try {
     },
     assetHistoryTombstones: [],
   };
-  const hidden = hideHistoricalAssets(workspace, asset, { now: "2026-08-29T00:00:00.000Z" });
-  assert.deepEqual(hidden.workspace.workspaceAssets, workspace.workspaceAssets, "隐藏资产不得删除工作区资产记录");
-  assert.deepEqual(hidden.workspace.documents, workspace.documents, "隐藏资产不得修改白板卡片或引用");
-  assert.equal(assetHistoryEntryIsSuppressed(hidden.workspace, asset), true, "即使仍被卡片引用，资产库也应允许隐藏该条目");
-  const unhiddenTombstones = unhideHistoricalAssets(hidden.workspace, asset);
-  assert.equal(unhiddenTombstones.length, 0, "取消隐藏应只移除对应隐藏标记");
+  const trashed = moveHistoricalAssetsToTrash(workspace, asset, { now: "2026-08-29T00:00:00.000Z" });
+  assert.deepEqual(trashed.workspace.workspaceAssets, workspace.workspaceAssets, "移入资产回收站时不得提前删除工作区资产记录");
+  assert.deepEqual(trashed.workspace.documents, workspace.documents, "移入资产回收站时不得修改白板卡片或引用");
+  assert.equal(assetHistoryEntryIsTrashed(trashed.workspace, asset), true, "即使仍被卡片引用，资产也应允许进入资产回收站");
+  assert.equal(trashed.workspace.assetHistoryTombstones[0].expiresAt, "2026-09-28T00:00:00.000Z");
+  assert.equal(expiredAssetTrashEntries(trashed.workspace, { now: "2026-09-27T23:59:59.999Z" }).length, 0);
+  assert.equal(expiredAssetTrashEntries(trashed.workspace, { now: "2026-09-28T00:00:00.000Z" }).length, 1, "满 30 天必须进入自动清理范围");
+  const restoredTombstones = restoreHistoricalAssets(trashed.workspace, asset);
+  assert.equal(restoredTombstones.length, 0, "恢复应只移除对应回收站标记");
+
+  const purged = permanentlyDeleteHistoricalAssets(trashed.workspace, asset, { now: "2026-09-01T00:00:00.000Z" });
+  assert.equal(purged.workspace.workspaceAssets.length, 0, "彻底删除必须移除工作区资产记录");
+  assert.equal(purged.workspace.documents.whiteboard.canvas.assets.length, 0, "彻底删除必须移除白板资产历史记录");
+  assert.equal(purged.workspace.documents.whiteboard.canvas.nodes.length, 1, "仍在白板上的当前卡片不得被资产库清理误删");
+  assert.equal(assetHistoryEntryIsPurged(purged.workspace, asset), true, "彻底删除后必须保留不可复活的清理标记");
+  assert.equal(restoreHistoricalAssets(purged.workspace, asset).length, 1, "恢复不得复活已经彻底删除的资产");
+  const catalogWorkspace = { workspacePath: "C:/catalog-test", name: "资产目录测试" };
+  const [trashedCatalogAsset] = buildWorkspaceAssetCatalog({ workspace: catalogWorkspace, state: trashed.workspace });
+  assert.equal(trashedCatalogAsset?.assetTrash?.status, "trashed", "回收站资产必须携带跨工作区恢复所需的状态和期限");
+  assert.equal(mergeGlobalHistoricalAssets({ catalogAssets: [trashedCatalogAsset] })[0]?.assetTrash?.status, "trashed", "全局目录合并不得丢失资产回收站状态");
+  assert.equal(buildWorkspaceAssetCatalog({ workspace: catalogWorkspace, state: purged.workspace }).length, 0, "彻底删除资产不得被全局目录重新扫描复活");
+
+  const migratedLegacy = normalizeAssetHistoryTombstones([{ ...asset, hiddenAt: "2025-01-01T00:00:00.000Z" }], { now: "2026-09-19T00:00:00.000Z" });
+  assert.equal(migratedLegacy[0].deletedAt, "2026-09-19T00:00:00.000Z", "旧隐藏记录升级时必须从迁移时重新计算保留期");
+  assert.equal(Date.parse(migratedLegacy[0].expiresAt) - Date.parse(migratedLegacy[0].deletedAt), ASSET_TRASH_RETENTION_MS);
+
+  const assetProject = await createWorkspaceProject({ appRoot, name: "资产彻底删除测试" });
+  const unreferencedAttachment = await saveWorkspaceAttachment({
+    appRoot,
+    requestedPath: assetProject.workspacePath,
+    name: "待彻底删除.png",
+    mimeType: "image/png",
+    base64: Buffer.from("unreferenced-asset").toString("base64"),
+  });
+  const referencedAttachment = await saveWorkspaceAttachment({
+    appRoot,
+    requestedPath: assetProject.workspacePath,
+    name: "仍被卡片使用.png",
+    mimeType: "image/png",
+    base64: Buffer.from("referenced-asset").toString("base64"),
+  });
+  const assetProjectState = createBlankProjectState({ name: assetProject.name, workspacePath: assetProject.workspacePath });
+  const assetWhiteboardId = "asset-trash-whiteboard";
+  assetProjectState.activeDocument = assetWhiteboardId;
+  assetProjectState.documents[assetWhiteboardId] = {
+    title: "资产回收站白板",
+    documentKind: "whiteboard",
+    moduleId: "manuscript",
+    workspaceView: "novel",
+  };
+  assetProjectState.workspaceAssets = [
+    { id: "delete-unreferenced", kind: "image", origin: "upload", attachment: unreferencedAttachment },
+    { id: "delete-referenced", kind: "image", origin: "upload", attachment: referencedAttachment },
+  ];
+  assetProjectState.documents[assetWhiteboardId].canvas = {
+    nodes: [{ id: "live-node", kind: "image", assetId: "delete-referenced", file: referencedAttachment.relativePath }],
+    edges: [],
+    assets: [assetProjectState.workspaceAssets[1]],
+  };
+  await saveWorkspaceState({ appRoot, requestedPath: assetProject.workspacePath, state: assetProjectState });
+  await moveAssetEntriesToTrash({
+    appRoot,
+    requestedPath: assetProject.workspacePath,
+    assets: assetProjectState.workspaceAssets,
+    now: "2026-09-19T00:00:00.000Z",
+  });
+  let trashedAssetState = await loadWorkspaceState({ appRoot, requestedPath: assetProject.workspacePath });
+  assert.equal(trashedAssetState.state.assetHistoryTombstones.filter((entry) => entry.status === "trashed").length, 2, "跨工作区删除也必须写入来源工作区的资产回收站");
+  await restoreAssetTrashEntries({
+    appRoot,
+    requestedPath: assetProject.workspacePath,
+    assets: [assetProjectState.workspaceAssets[0]],
+  });
+  trashedAssetState = await loadWorkspaceState({ appRoot, requestedPath: assetProject.workspacePath });
+  assert.equal(trashedAssetState.state.assetHistoryTombstones.filter((entry) => entry.status === "trashed").length, 1, "恢复必须精确移除对应资产的回收站标记");
+  const serviceResult = await permanentlyDeleteAssetTrashEntries({
+    appRoot,
+    requestedPath: assetProject.workspacePath,
+    assets: assetProjectState.workspaceAssets,
+    now: "2026-09-19T00:00:00.000Z",
+  });
+  assert.equal(serviceResult.deletedCount, 2);
+  assert.equal(await stat(join(assetProject.workspacePath, unreferencedAttachment.relativePath)).catch(() => null), null, "无任何引用的媒体文件必须物理删除");
+  assert.ok(await stat(join(assetProject.workspacePath, referencedAttachment.relativePath)), "仍被白板卡片使用的媒体文件必须安全保留");
+  const deletedAssetState = await loadWorkspaceState({ appRoot, requestedPath: assetProject.workspacePath });
+  assert.equal(deletedAssetState.state.workspaceAssets.length, 0, "彻底删除后资产记录不得复活");
+  assert.equal(deletedAssetState.state.assetHistoryTombstones.filter((entry) => entry.status === "purged").length, 2, "彻底删除标记必须随工作区持久化");
+  assert.equal(deletedAssetState.state.documents[assetWhiteboardId].canvas.nodes.length, 1, "彻底删除资产历史不得误删当前白板卡片");
 
   const appSource = await readFile(join(process.cwd(), "src", "app.js"), "utf8");
   assert.match(appSource, /workspaceTrash:\s*\[\]/u);
   assert.match(appSource, /\/api\/workspaces\/trash\/restore/u);
-  assert.match(appSource, /id="whiteboardAssetShowHidden"/u);
-  assert.match(appSource, /unhideAssetsFromHistoryLibrary/u);
+  assert.match(appSource, /id="whiteboardAssetShowTrash"/u);
+  assert.match(appSource, /清空回收站/u);
+  assert.match(appSource, /data-whiteboard-asset-action="permanent-delete"/u);
+  assert.match(appSource, /restoreAssetsFromHistoryLibrary/u);
 } finally {
   await rm(tempRoot, { recursive: true, force: true, maxRetries: 8, retryDelay: 150 }).catch(() => {});
 }
 
-console.log("unified workspace trash and reversible asset hiding tests passed");
+console.log("unified workspace and 30-day asset trash tests passed");

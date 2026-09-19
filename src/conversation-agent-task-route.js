@@ -64,6 +64,7 @@ export const CONVERSATION_AGENT_TASK_LABELS = Object.freeze({
   image_generation: "图片生成",
   video_generation: "视频生成",
   multi_step: "复合任务",
+  capability_inspection: "路由检查",
 });
 
 const mediaTaskType = (channel) => channel === "video" ? "video_generation" : channel === "image" ? "image_generation" : "";
@@ -84,27 +85,35 @@ export const agentTaskRouteFromMediaDispatch = (dispatch = null) => {
   };
 };
 
-export const agentTaskRouteFromDelivery = (payload = {}) => {
+export const agentTaskRouteFromDelivery = (payload = {}, currentRoute = {}) => {
   const mode = text(payload.mode);
   const mediaChannels = Array.isArray(payload.mediaChannels) ? payload.mediaChannels.map(text).filter(Boolean) : [];
   const explicitTaskType = text(payload.taskType);
+  const structuredTaskType = text(currentRoute?.taskKind || currentRoute?.taskType || currentRoute?.intentEnvelope?.taskType);
   const inferredTaskType = mode === "media"
     ? mediaChannels.length === 1 ? mediaTaskType(mediaChannels[0]) : "multi_step"
     : "";
-  const taskKind = explicitTaskType || inferredTaskType;
+  const taskKind = currentRoute?.capabilityInspectionOnly === true
+    ? "capability_inspection"
+    : structuredTaskType || explicitTaskType || inferredTaskType;
   if (!taskKind) return null;
   return {
     mode: taskKind === "creative_guidance" ? "creative_guidance" : mode || "agent",
     taskKind,
     direct: ["image_generation", "video_generation"].includes(taskKind),
+    ...(["formal_creation", "writing", "content_generation", "multi_step"].includes(taskKind)
+      ? { diagnosisIntent: false }
+      : taskKind === "quality_review" ? { diagnosisIntent: true } : {}),
   };
 };
 
 export const nativeAgentTaskWayLabel = ({ execution = {}, guided = false, qualityReview = false } = {}) => {
-  if (guided) return "创作引导";
-  if (qualityReview) return "内容质检";
   const route = execution.taskRoute && typeof execution.taskRoute === "object" ? execution.taskRoute : {};
   const taskKind = text(route.taskKind || route.taskType || route.intentEnvelope?.taskType);
-  return CONVERSATION_AGENT_TASK_LABELS[taskKind]
-    || (route.mode === "creative_guidance" || route.requestMode === "creative_guidance" ? "创作引导" : "Agent 执行");
+  const explicitLabel = CONVERSATION_AGENT_TASK_LABELS[taskKind];
+  if (explicitLabel) return explicitLabel;
+  if (guided) return "创作引导";
+  if (qualityReview) return "内容质检";
+  if (route.formalArtifactExpected === true && ["creative", "quick_revision", "visual_prompt"].includes(route.mode)) return "正式创作";
+  return route.mode === "creative_guidance" || route.requestMode === "creative_guidance" ? "创作引导" : "Agent 执行";
 };

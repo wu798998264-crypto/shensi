@@ -11,7 +11,7 @@ import {
   materializeDetectedCodexProfile,
 } from "../src/codex-local-entry-policy.js";
 import { applyGenerationRuntimeBindings, normalizeGenerationProfiles, removeGenerationProfile } from "../src/generation-profiles.js";
-import { buildCliEnvironment } from "../src/server/adapters.mjs";
+import { buildCliEnvironment, codexLoginStateFromOutput } from "../src/server/adapters.mjs";
 import { CodexAgentProvider } from "../src/server/codex-agent-provider.mjs";
 
 const capability = {
@@ -22,6 +22,19 @@ const capability = {
   defaultModel: "gpt-5.6-sol",
   models: [{ slug: "gpt-5.6-sol", defaultReasoningLevel: "medium" }],
 };
+
+assert.deepEqual(codexLoginStateFromOutput("Logged in using ChatGPT"), {
+  authenticated: true,
+  authState: "authenticated",
+});
+assert.deepEqual(codexLoginStateFromOutput("Not logged in"), {
+  authenticated: false,
+  authState: "login_required",
+});
+assert.deepEqual(codexLoginStateFromOutput("unexpected status output"), {
+  authenticated: null,
+  authState: "unknown",
+});
 
 const deepSeek = {
   id: "deepseek-main",
@@ -240,6 +253,7 @@ assert.equal(refreshHarness.account.account.marker, "new", "旧账户读取结�
 
 await assert.rejects(
   () => CodexAgentProvider.prototype.requireConnectedAccount.call({
+    state: { agentPermissionMode: "shensi_only" },
     account: { account: null, requiresOpenaiAuth: true },
     ensureStarted: async () => {},
     refreshAccountState: async () => ({ stale: false }),
@@ -254,13 +268,16 @@ const [appSource, serverSource, providerSource] = await Promise.all([
   readFile(new URL("../src/server/codex-agent-provider.mjs", import.meta.url), "utf8"),
 ]);
 assert.match(appSource, /DETECTED_CODEX_CONNECTION_ID[\s\S]{0,800}temporaryCodexSelected = true/u);
+assert.match(appSource, /setDraftSelectPlaceholder\(form\.textAgentEngine, "请选择运行器", draft\)/u, "新建文字配置时运行器不得显示为空白");
 assert.match(appSource, /patch\.credentialSource = "codex_session";[\s\S]{0,120}patch\.apiKey = "";/u, "保存 Codex CLI 配置时必须清除隐藏的旧 API Key");
-assert.match(appSource, /Codex 未连接；登录成功前不会提交本轮任务/u);
-assert.match(appSource, /codexSubmissionRequiresLogin\(\)[\s\S]{0,220}refreshCodexAgentStatus\(\{ refreshAccount: true \}\)/u, "发送前必须只读刷新已连接 Codex 的真实账户状态");
+assert.match(appSource, /const startCodexLogin[\s\S]{0,500}\/api\/codex-agent\/account\/login[\s\S]{0,500}window\.open\(authUrl/u, "登录按钮必须启动 Codex 账户授权并打开返回的授权地址");
 assert.match(appSource, /refreshCodexAgentStatus\(\{ refreshAccount: currentCodexConnectionSelected\(\) \}\)/u, "工作区恢复后必须探测当前 Codex 连接状态");
+assert.match(appSource, /directCliAuthenticated = selected && ui\.localCodex\?\.authenticated === true/u, "Codex CLI 配置必须采用 CLI 自身登录探测结果");
+assert.match(appSource, /settingsDisconnect\.hidden = !settingsSelected \|\| !actualConnected/u, "CLI 登录探测不得伪造可用的 app-server 退出操作");
 assert.match(serverSource, /trustedChatSettings[\s\S]{0,700}requireConnectedAccount\(\)/u, "Codex Chat 也必须经过当前登录会话门禁");
 assert.match(serverSource, /\/api\/codex-agent\/account\/logout/u);
 assert.match(providerSource, /request\("account\/logout"/u);
+assert.match(providerSource, /if \(shensiOnly\)[\s\S]{0,500}mkdir\(codexEnvironment\.CODEX_HOME, \{ recursive: true \}\)[\s\S]{0,500}spawnLocalCodexAppServer/u, "仅神思 Codex 登录必须先创建隔离账户目录再启动 app-server");
 assert.doesNotMatch(providerSource, /forceReauth/u);
 
 console.log("Codex detected temporary entry and login materialization contracts passed");

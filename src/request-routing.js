@@ -37,6 +37,8 @@ const CURRENT_DOCUMENT_CONTEXT_PATTERN = /当前文档|这个文档|这份文档
 const DOCUMENT_SOURCE_DEPENDENCY_PATTERN = /(?:根据|依据|基于|结合|参考|读取|阅读|查看|浏览|从|使用|用).{0,36}(?:作品|小说|剧本|正文|章节|文档|文件|资料|大纲|卷纲|章纲|设定|内容|全文|全书|故事|情节|人物)|(?:作品|小说|剧本|正文|章节|文档|文件|资料|大纲|卷纲|章纲|设定|内容|全文|全书|故事|情节|人物).{0,28}(?:改写|转换|转化|创作|生成|制作|整理|提取|回答)/;
 const FAST_STATUS_PATTERN = /(?:当前|现在|目前|刚才).{0,20}(?:打开|选择|运行|状态|进度|任务|模型|服务商|文档|文件|页面|按钮|功能|版本|保存|连接|调用|字数|多少字|哪一章)|(?:能不能|是否|有没有|为什么|如何|怎么).{0,20}(?:功能|按钮|软件|系统|模型|API|CLI|连接|调用|保存|打开|显示)/i;
 const GENERAL_META_PATTERN = /(?:为什么|为何|怎么|如何|是否|能否|有没有|解释|介绍|什么意思|区别|作用|用途).{0,40}(?:神思|创作引导|问答|任务|模式|软件|系统|功能|按钮|模型|API|CLI|调用|设置|界面|文件|文档)|(?:日常|普通|通用)(?:问题|问答)|(?:不涉及|无关)(?:剧情|写作|创作)|(?:不用|无需|不要)(?:调用|使用|读取|加载)?.{0,8}(?:神思|作品文档|创作框架)/i;
+const CAPABILITY_ROUTE_INSPECTION_PATTERN = /(?:读取|查看|检查|核对|展示|列出|告诉我|说明).{0,28}(?:面板|模组|模块).{0,12}(?:路由|结构|直接成员|直接模块|成员清单)|(?:面板|模组|模块).{0,16}(?:路由|结构|直接成员|直接模块|成员清单).{0,28}(?:读取|查看|检查|核对|展示|列出|告诉我|说明)/iu;
+const CAPABILITY_ROUTE_MUTATION_PATTERN = /(?:修改|优化|更新|重写|新增|删除|创建|保存|编译).{0,24}(?:面板|模组|模块|路由)|(?:面板|模组|模块|路由).{0,24}(?:修改|优化|更新|重写|新增|删除|创建|保存|编译)/iu;
 const CREATIVE_GENRE_PATTERN = /女频(?:虐文|爽文|甜宠文|言情文|网文|小说|短剧|剧本|文)?|男频(?:爽文|升级流|系统流|网文|小说|短剧|剧本|文)?|(?:虐文|爽文|甜文|宠文|成长文|复仇文|群像文)|(?:玄幻|仙侠|修仙|都市|悬疑|推理|科幻|末世|无限流|系统流|穿越|重生|古言|现言|宫斗|宅斗|甜宠|虐恋|追妻火葬场|真假千金|赘婿|种田|年代|校园|职场|娱乐圈|权谋|武侠|历史|恐怖|惊悚|灵异|乙女|群像)(?:文|小说|网文|短剧|剧本|故事)?/;
 const SHENSI_CREATIVE_TARGET_PATTERN = /小说|网文|故事|短篇|微型小说|中篇|长篇|连载|正文|章节|大纲|卷纲|章纲|集纲|剧集大纲|人物设定|角色设定|世界观|剧本|短剧|漫剧|剧情短视频|AI\s*短片|分镜|视频提示词|图片(?:资产)?提示词|角色定妆(?:图)?提示词|场景提示词|道具提示词|视觉资产|全景调度|站位图|公众号文章|公众号长文|公众号推文|微信推文|推文/;
 const CREATIVE_PRODUCTION_VERB_PATTERN = /完成|产出|生成|创作|撰写|编写|制作|改编|续写|改写|重写|定稿|成稿|出稿|写出|写成|写|形成|完善为|整理成|转换(?:成|为)|转化(?:成|为)|转成/;
@@ -44,7 +46,7 @@ const CREATIVE_PRODUCTION_REQUEST_CUE_PATTERN = /请|帮我|给我|替我|需要
 const CREATIVE_COMPLETION_STATUS_QUERY_PATTERN = /(?:小说|网文|故事|短篇|正文|章节|大纲|卷纲|章纲|集纲|剧本|脚本|短剧|漫剧|分镜|提示词|文案|稿件|正式稿).{0,16}(?:完成|生成|写好|产出|定稿)(?:了|了吗|没有|没|到哪|进度|情况|到什么程度)|(?:完成|生成|写好|产出|定稿)(?:了吗|没有|没|到哪|进度|情况).{0,16}(?:小说|网文|故事|正文|大纲|剧本|脚本|短剧|漫剧|分镜|提示词|稿件)/;
 const PROJECT_FACT_QUERY_ACTION_PATTERN = /是什么|指什么|有哪些|包含什么|谁|哪(?:个|些|里|一)|何时|什么时候|多少|几(?:个|次|章|集|幕|场)|是否(?:出现|提到|写到|存在|包含)|有没有(?:出现|提到|写到|包含)|发生了什么|写了什么|讲了什么/;
 const CREATIVE_HELP_PATTERN = /(?:我|本人)?(?:想|要|需要|希望|准备|打算|计划|尝试|试着|正在考虑)(?:要|来)?(?:写|创作|做)|(?:能不能|可以不可以|可不可以|可以|请|麻烦)?(?:帮我|带我|教我)(?:写|创作|构思|设计|开始|梳理)?|(?:不知道|不清楚|没想好|没有头绪|没头绪).{0,16}(?:怎么|如何|从哪|该从哪|写|创作|构思|开始|展开|推进)?|(?:怎么|如何|该怎么|应该怎么|从哪|该从哪)(?:写|创作|构思|开始|展开|推进|设计)|(?:创作|写作|构思|开篇|剧情|人物|设定).{0,12}(?:建议|思路|方向|帮助)|(?:有什么|给我|提供).{0,8}(?:创作|写作|构思|开篇|剧情|人物|设定)?(?:建议|思路|方向)|^(?:写|创作|构思|设计|做)(?:一部|一个|一篇|个|部)?/;
-const EXPLICIT_DIRECT_CREATION_PATTERN = /直接(?:写|撰写|产出|完成|生成|创作|做|转换|出)|立即(?:写|撰写|产出|完成|生成|创作)|必须直出|不要追问|无需追问|不用追问|不要创作引导|跳过创作引导|全自动|按现有.{0,10}(?:写|撰写|产出|完成|生成|创作|转换)|(?:使用|用|调用|启用).{0,24}(?:skill|技能).{0,12}(?:重新生成|重生成|重做|生成|输出)|(?:从现在|现在|从头|从开头|从第一章|由第一章).{0,6}(?:开始)?(?:写|撰写|创作|开篇)/i;
+const EXPLICIT_DIRECT_CREATION_PATTERN = /直接(?:写|撰写|产出|完成|生成|创作|做|转换|出)|立即(?:写|撰写|产出|完成|生成|创作)|必须直出|不要(?:追问|询问)|无需(?:追问|询问)|不用(?:追问|询问)|不要创作引导|跳过创作引导|全自动|按现有.{0,10}(?:写|撰写|产出|完成|生成|创作|转换)|(?:使用|用|调用|启用).{0,24}(?:skill|技能).{0,12}(?:重新生成|重生成|重做|生成|输出)|(?:从现在|现在|从头|从开头|从第一章|由第一章).{0,6}(?:开始)?(?:写|撰写|创作|开篇)/i;
 const EXPLICIT_FRESH_CREATIVE_START_PATTERN = /从零开始(?:继续执行(?:上一条任务)?)?|(?:不是|并非|不要|无需).{0,6}(?:续写|继续写|接着写|承接前文)|(?:从现在|现在|从头|从开头|从第一章|由第一章).{0,6}(?:开始)?(?:写|创作|开篇)|(?:新故事|新小说|新作品|新作).{0,10}(?:开始|开篇|写|创作)|(?:开始|开篇|写|创作).{0,10}(?:新故事|新小说|新作品|新作)/;
 const CREATIVE_GUIDANCE_ONLY_PATTERN = /(?:先|现在|本轮|这次|当前)?\s*(?:不要|无需|不必|先不|暂不|禁止|不得)\s*.{0,16}(?:写|生成|创作|落盘|创建|新建)(?:正文|章节|文档|稿件|成稿|正式内容)?|(?:只|仅)(?:需要|要|先)?\s*.{0,12}(?:提问|追问|讨论|梳理|确认|创作引导)|(?:开启|进入|进行|继续).{0,8}创作引导/u;
 const EXPLICIT_CONTINUATION_CORRECTION_PATTERN = /(?:不是|并非|不要).{0,8}(?:从现在|从头|从开头|从第一章|新故事|新小说|新作品|新作).{0,12}(?:而是|是|要).{0,6}(?:续写|继续写|接着写)/;
@@ -103,7 +105,17 @@ export const isExplicitFreshCreativeStart = ({ text = "" } = {}) => {
     && !EXPLICIT_CONTINUATION_CORRECTION_PATTERN.test(source));
 };
 
-export const isExplicitDirectCreationRequest = ({ text = "" } = {}) => EXPLICIT_DIRECT_CREATION_PATTERN.test(String(text).trim());
+export const isExplicitDirectCreationRequest = ({ text = "" } = {}) => {
+  const source = String(text).trim();
+  // “现在开启创作引导” used to match the broad “现在…创作” direct-production
+  // clause. Remove only the guidance directive before looking for an actual
+  // direct-write command; any separate “直接写/不要追问” instruction remains.
+  const withoutGuidanceDirective = source.replace(
+    /(?:现在|本轮|这次|当前)?\s*(?:开启|进入|进行|继续).{0,8}?创作引导/gu,
+    " ",
+  );
+  return EXPLICIT_DIRECT_CREATION_PATTERN.test(withoutGuidanceDirective);
+};
 
 export const freshNovelOpeningTarget = ({ text = "", workspaceKind = "project", deliverableType = "novel" } = {}) => (
   workspaceKind !== "notebook" && deliverableType === "novel" && isExplicitFreshCreativeStart({ text })
@@ -230,16 +242,38 @@ const GENERIC_PROMPT_DELIVERABLE_PATTERN = /(?:视频|分镜|漫剧|镜头|图�
 const VISUAL_ASSET_SKILL_DELIVERABLE_PATTERN = /(?:(?:视觉|图片|图像|人物|角色|场景|道具|定妆)资产|全景调度|多人站位|站位线稿图?).{0,12}(?:skill|技能)|(?:skill|技能).{0,12}(?:(?:视觉|图片|图像|人物|角色|场景|道具|定妆)资产|全景调度|多人站位|站位线稿图?)/i;
 const SKILL_ROUTE_INSPECTION_PATTERN = /(?:(?:有没有|是否|用没用|有没有用|为什么(?:没|没有|未)|为何(?:没|没有|未)|调用(?:了|过|到)?|启用(?:了|过)?|用了哪个|调用哪个).{0,36}(?:skill|技能|模块))|(?:(?:skill|技能|模块).{0,36}(?:有没有|是否|用没用|调用(?:了|过|到)?|启用(?:了|过)?|为什么(?:没|没有|未)))/i;
 
+const deliverableTypeFromText = (source = "") => {
+  const text = String(source).trim();
+  if (!text) return "";
+  // 提示词和明确的独立短篇必须先于其来源文体，避免“短视频提示词”
+  // 或“短剧改成短篇小说”被来源词污染。
+  if (GENERIC_PROMPT_DELIVERABLE_PATTERN.test(text) || VISUAL_ASSET_SKILL_DELIVERABLE_PATTERN.test(text)) return "visual_prompt";
+  if (PUBLIC_ACCOUNT_DELIVERABLE_PATTERN.test(text)) return "public_account";
+  if (SHORT_FICTION_DELIVERABLE_PATTERN.test(text)) return "short_fiction";
+  if (SHORT_VIDEO_SCRIPT_DELIVERABLE_PATTERN.test(text)) return "short_video_script";
+  if (SHORT_DRAMA_SCRIPT_DELIVERABLE_PATTERN.test(text) || GENERIC_SCRIPT_PRODUCTION_PATTERN.test(text)) return "short_drama_script";
+  if (/小说|网文|长篇|中篇|正文|章节|大纲|卷纲|章纲|细纲|详细大纲/.test(text) || CREATIVE_GENRE_PATTERN.test(text)) return "novel";
+  return "";
+};
+
+const transformedDeliverableType = (source = "") => {
+  const segments = String(source).split(/改编成|改编为|改成|改写成|转换成|转换为|转化成|转化为|转成|制作成|生成为|生成成/u);
+  return segments.length > 1 ? deliverableTypeFromText(segments.at(-1)) : "";
+};
+
 export const creativeDeliverableType = ({ text = "", targetDocumentId = "" } = {}) => {
-  const source = `${String(text)} ${String(targetDocumentId)}`;
+  const source = String(text);
   if (isBookDeconstructionRequest({ text: source })) return "book_deconstruction";
-  // 提示词必须先于短视频判断，避免“短视频提示词”被误判成短视频剧本。
-  if (String(targetDocumentId).startsWith("prompt-") || GENERIC_PROMPT_DELIVERABLE_PATTERN.test(source) || VISUAL_ASSET_SKILL_DELIVERABLE_PATTERN.test(source)) return "visual_prompt";
-  if (PUBLIC_ACCOUNT_DELIVERABLE_PATTERN.test(source)) return "public_account";
-  if (SHORT_FICTION_DELIVERABLE_PATTERN.test(source)) return "short_fiction";
-  if (SHORT_VIDEO_SCRIPT_DELIVERABLE_PATTERN.test(source)) return "short_video_script";
-  if (SHORT_DRAMA_SCRIPT_DELIVERABLE_PATTERN.test(source) || GENERIC_SCRIPT_PRODUCTION_PATTERN.test(source) || /^script-(?:episode|outline)-/.test(String(targetDocumentId))) return "short_drama_script";
-  if (/小说|网文|长篇|中篇|正文|章节|大纲|卷纲|章纲|细纲|详细大纲/.test(source) || CREATIVE_GENRE_PATTERN.test(source)) return "novel";
+  const transformed = transformedDeliverableType(source);
+  if (transformed) return transformed;
+  const explicit = deliverableTypeFromText(source);
+  if (explicit) return explicit;
+  // 当前目标只能在本轮没有明确成品类型时兜底，绝不能把“600字短篇”
+  // 因为当前打开的是长篇正文而重新解释成长篇。
+  const targetId = String(targetDocumentId);
+  if (targetId.startsWith("prompt-")) return "visual_prompt";
+  if (/^script-(?:episode|outline)-/.test(targetId)) return "short_drama_script";
+  if (/^(?:chapter-|outline-(?:general|volume|chapter)-)/.test(targetId)) return "novel";
   return "";
 };
 
@@ -257,6 +291,22 @@ export const hasExplicitCreativeProductionIntent = ({ text = "", targetDocumentI
 
 export const hasExplicitFormalAssetWriteIntent = ({ text = "" } = {}) => {
   return hasFormalAssetWriteIntent(text);
+};
+
+// A review step that follows creation is a quality stage inside the same
+// production task, not the primary task itself.  Keep the initial structured
+// route on the writer so the task card and the Agent agree about the real
+// deliverable; the Agent may still read the review module after the draft.
+export const reviewIsPostwriteStepOfFormalCreation = ({ text = "", targetDocumentId = "" } = {}) => {
+  const source = String(text).trim();
+  if (!source || !hasExplicitCreativeProductionIntent({ text: source, targetDocumentId })) return false;
+  const reviewIndex = source.search(CREATIVE_DIAGNOSTIC_INTENT_PATTERN);
+  if (reviewIndex < 0) return false;
+  const productionMatch = source.match(/(?:创作|生成|撰写|编写|写出|写成|制作).{0,36}(?:一篇|一部|一个|小说|故事|短篇|正文|文章|稿件|章节|剧本|脚本)/u);
+  const productionIndex = Number(productionMatch?.index ?? -1);
+  if (productionIndex < 0 || productionIndex >= reviewIndex) return false;
+  const sequence = source.slice(productionIndex, reviewIndex);
+  return /(?:完成|写完|写好|生成|成稿|定稿|落盘|写入)(?:后|之后|以后)|(?:然后|随后|接着|再|下一步|第[二三四五六七八九十\d]+步)/u.test(sequence);
 };
 
 const PROJECT_CONTEXT_REUSE_PATTERN = /(?:沿用|承接|延续|续写|继续写|接着写|改编|重写|改写).{0,32}(?:当前|现有|已有|原有|前文|本章|作品|小说|故事|正文|章节|设定|世界观|人物|角色)|(?:当前|现有|已有|原有|前文|本章|作品|小说|故事|正文|章节|设定|世界观|人物|角色).{0,32}(?:沿用|承接|延续|续写|继续写|接着写|改编|重写|改写)/;
@@ -279,6 +329,50 @@ export const usesStandaloneCreativeContext = ({
 };
 
 export const creativeDeliverableLabel = (type = "") => CREATIVE_DELIVERABLE_LABELS[type] ?? "创作资产";
+
+const CAPABILITY_BRANCHES_BY_DELIVERABLE = Object.freeze({
+  novel: Object.freeze({
+    topLevel: "group:novel",
+    guidance: "module:novel-guidance",
+    planning: "module:novel-planning",
+    produce: "module:novel-writer",
+    review: "module:novel-review",
+    theory: "group:novel-theory",
+    memory: "module:shared-memory",
+  }),
+  short_fiction: Object.freeze({ topLevel: "group:short-fiction", guidance: "module:short-fiction-guidance", produce: "module:short-fiction-writer", review: "module:short-fiction-review", theory: "module:short-fiction-theory" }),
+  public_account: Object.freeze({ topLevel: "group:public-account", guidance: "module:public-account-guidance", produce: "module:public-account-writer", theory: "module:public-account-theory", illustration: "module:public-account-illustration" }),
+  short_drama_script: Object.freeze({ topLevel: "group:short-drama", guidance: "module:short-drama-guidance", produce: "group:short-drama-writers", review: "module:short-drama-review", theory: "group:novel-theory", memory: "module:shared-memory" }),
+  short_video_script: Object.freeze({ topLevel: "group:short-video", guidance: "module:short-video-guidance", produce: "module:short-video-writer", review: "module:short-video-review", theory: "module:short-video-theory" }),
+  visual_prompt: Object.freeze({ topLevel: "group:prompt-engineering", guidance: "module:prompt-guidance", produce: "module:prompt-writer", panorama: "module:prompt-panorama-writer", video: "module:video-prompt-writer" }),
+});
+
+export const creativeCapabilityRouteDecision = ({ text = "", deliverableType = "", mode = "", diagnosisIntent = false } = {}) => {
+  const branch = CAPABILITY_BRANCHES_BY_DELIVERABLE[deliverableType];
+  if (!branch || !["creative", "creative_guidance", "visual_prompt", "quick_revision"].includes(mode)) return {};
+  const source = String(text);
+  const postwriteReview = reviewIsPostwriteStepOfFormalCreation({ text: source });
+  let stage = mode === "creative_guidance" ? "guidance"
+    : !postwriteReview && (diagnosisIntent || /(?:自检|质检|审稿|诊断|检查|评估).{0,18}(?:正文|文章|小说|故事|剧本|脚本|成稿|候选)/u.test(source)) ? "review"
+      : /(?:更新|整理|维护|校准|检查).{0,18}(?:记忆|连续性|人物状态|伏笔)/u.test(source) ? "memory"
+        : /(?:理论|方法论|创作规律|题材规律)/u.test(source) && !hasExplicitCreativeProductionIntent({ text: source }) ? "theory"
+          : /(?:规划|设计|制定|生成|撰写|修改|更新).{0,18}(?:大纲|卷纲|章纲|集纲|人物设定|角色设定|世界观|剧情结构)/u.test(source) ? "planning"
+            : "produce";
+  if (deliverableType === "public_account" && /(?:配图|插图|图片规划|图文规划)/u.test(source)) stage = "illustration";
+  if (deliverableType === "visual_prompt") {
+    if (mode === "creative_guidance") stage = "guidance";
+    else if (/(?:全景调度|多人站位|站位图|站位线稿)/u.test(source)) stage = "panorama";
+    else if (/(?:视频提示词|分镜提示词|镜头提示词|运镜|Seedance)/iu.test(source)) stage = "video";
+    else stage = "produce";
+  }
+  const selectedCapabilityNodeId = branch[stage] || branch.produce || branch.topLevel;
+  return {
+    routeStage: stage,
+    selectedCapabilityTopLevelId: branch.topLevel,
+    selectedCapabilityNodeId,
+    routeReason: `交付类型=${deliverableType}；阶段=${stage}；主分支=${selectedCapabilityNodeId}`,
+  };
+};
 
 export const hasSufficientCreativeBrief = ({ text = "", deliverableType = "", hasResources = false } = {}) => {
   const source = String(text).trim();
@@ -504,6 +598,7 @@ export const isCreativeAssetDiagnosis = ({
 } = {}) => {
   const source = String(text).trim();
   if (!source || !CREATIVE_DIAGNOSTIC_INTENT_PATTERN.test(source)) return false;
+  if (reviewIsPostwriteStepOfFormalCreation({ text: source, targetDocumentId })) return false;
   const diagnosedDeliverableType = creativeDeliverableType({ text: source, targetDocumentId });
   if (isExplicitDirectCreationRequest({ text: source })
     || (PREPARED_NOVEL_PRODUCTION_PATTERN.test(source) && (!diagnosedDeliverableType || diagnosedDeliverableType === "novel"))) return false;
@@ -645,7 +740,9 @@ export const classifyRequestMode = ({
   const briefReady = hasSufficientCreativeBrief({ text: source, deliverableType, hasResources });
   const freshStart = isExplicitFreshCreativeStart({ text: source });
   const explicitFormalAssetWrite = hasExplicitFormalAssetWriteIntent({ text: source });
+  const directCreationRequested = isExplicitDirectCreationRequest({ text: source });
   const guidanceOnlyThisTurn = CREATIVE_GUIDANCE_ONLY_PATTERN.test(source)
+    && !directCreationRequested
     && Boolean(deliverableType || CREATIVE_GENRE_PATTERN.test(source) || SHENSI_CREATIVE_TARGET_PATTERN.test(source));
   const preparedNovelProduction = deliverableType === "novel"
     && preparedCreativeContext === true
@@ -653,6 +750,22 @@ export const classifyRequestMode = ({
     && (!targetModuleId || targetModuleId === "manuscript")
     && PREPARED_NOVEL_PRODUCTION_PATTERN.test(source);
   if (workspaceOperation) return { mode: "operation", reason: "请求将由本地软件执行结构或文件操作", shensiLed: false };
+  // An explicit guidance-only instruction describes a question/decision
+  // deliverable, even when the active target is a chapter document or the
+  // request mentions a long-form work. Resolve it before existing-document
+  // and long-form production heuristics so a target hint cannot authorize a
+  //正文 write that the user explicitly prohibited.
+  if (guidanceOnlyThisTurn && !explicitFormalAssetWrite) {
+    return {
+      mode: "creative_guidance",
+      reason: deliverableType
+        ? `用户明确要求本轮只进行${deliverableLabel}创作引导，不生成或写入正式内容`
+        : "用户明确要求本轮只进行创作引导，不生成或写入正式内容",
+      shensiLed: true,
+      freshStart,
+      ...deliverableMeta,
+    };
+  }
   if (longForm) return { mode: "creative", reason: "请求将生成长篇神思创作资产", shensiLed: true, ...deliverableMeta };
   if (landing) return { mode: "creative", reason: "请求包含作品内容落盘或替换", shensiLed: true, ...deliverableMeta };
   if (inlineEdit) return { mode: "quick_revision", reason: "仅修改当前选中文字，使用局部快速链", shensiLed: true };
@@ -697,19 +810,6 @@ export const classifyRequestMode = ({
       ...deliverableMeta,
     };
   }
-  // “不写正文”只限制正文，不得覆盖同一条指令中明确要求写入的
-  // 设定、大纲、资料、记忆等正式资产。
-  if (guidanceOnlyThisTurn && !explicitFormalAssetWrite) {
-    return {
-      mode: "creative_guidance",
-      reason: deliverableType
-        ? `用户明确要求本轮只进行${deliverableLabel}创作引导，不生成或写入正式内容`
-        : "用户明确要求本轮只进行创作引导，不生成或写入正式内容",
-      shensiLed: true,
-      freshStart,
-      ...deliverableMeta,
-    };
-  }
   if (isContextualCreativeRevision({
     text: source,
     targetDocumentId,
@@ -743,12 +843,12 @@ export const classifyRequestMode = ({
     return { mode: "general", reason: "最终产物不属于神思创作资产", shensiLed: false };
   }
   const explicitProductionIntent = hasExplicitCreativeProductionIntent({ text: source, targetDocumentId });
-  const explicitDirectCreation = isExplicitDirectCreationRequest({ text: source });
+  const explicitDirectCreation = directCreationRequested;
   // A concrete production verb is already an executable instruction. Missing
   // optional creative dimensions are choices the writer may make, not a reason
   // to replace the requested generation with a guidance interview.
   const imageAssetSourceExtraction = isImageAssetSourceExtractionRequest(source);
-  const directProductionCommand = /^(?:请\s*)?(?:直接\s*)?(?:写|生成|制作|创作|改写|重写|续写|输出|产出)/u.test(source)
+  const directProductionCommand = /^(?:(?:请|帮我|麻烦)\s*)?(?:正式\s*)?(?:直接\s*)?(?:写|撰写|生成|制作|创作|改写|重写|续写|输出|产出)/u.test(source)
     || imageAssetSourceExtraction;
   const sourceBackedProduction = DOCUMENT_SOURCE_DEPENDENCY_PATTERN.test(source)
     || imageAssetSourceExtraction
@@ -1019,6 +1119,15 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const guidancePolicy = route.mode === "creative_guidance"
     ? "recommended"
     : route.shensiLed ? "available" : "not_applicable";
+  const explicitCapabilitySelection = (Array.isArray(input.skillIds) && input.skillIds.length)
+    || input.selectedModulePlacementId
+    || input.selectedRoutePlacementId;
+  const capabilityRouteDecision = explicitCapabilitySelection ? {} : creativeCapabilityRouteDecision({
+    text: input.text,
+    deliverableType: route.deliverableType || classifiedRoute.deliverableType || "",
+    mode: route.mode,
+    diagnosisIntent: route.diagnosisIntent === true,
+  });
   const suppliedTarget = input.target ?? {
     documentId: input.targetDocumentId ?? "",
     revision: input.targetRevision ?? "",
@@ -1137,6 +1246,13 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const formalArtifactExpected = managedRoute.shensiLed === true
     && ["commit", "candidate_only"].includes(writeAuthorization.state)
     && ["creative", "visual_prompt", "quick_revision"].includes(managedRoute.mode);
+  const capabilityRouteSource = String(input.text || "");
+  const affirmativeCapabilityRouteSource = capabilityRouteSource.replace(/(?:不要|无需|不用|禁止|不得|不需要).{0,24}(?:修改|优化|更新|重写|新增|删除|创建|保存|编译)[^，。！？；\n]{0,24}/gu, "");
+  const capabilityInspectionOnly = CAPABILITY_ROUTE_INSPECTION_PATTERN.test(capabilityRouteSource)
+    && !CAPABILITY_ROUTE_MUTATION_PATTERN.test(affirmativeCapabilityRouteSource)
+    && managedRoute.mode === "general"
+    && managedRoute.shensiLed !== true
+    && !formalArtifactExpected;
   const taskPolicy = compileAgentTaskPolicy({
     text: input.text,
     route: {
@@ -1159,6 +1275,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     sourceMessageId: input.sourceMessageId,
     route: {
       ...managedRoute,
+      ...capabilityRouteDecision,
       formalArtifactExpected,
       contextDomain: reviewContextDomain,
     },
@@ -1181,6 +1298,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   });
   const enrichedRoute = {
     ...managedRoute,
+    ...(capabilityInspectionOnly ? { taskKind: "capability_inspection", capabilityInspectionOnly: true } : {}),
     recommendedMode: managedRoute.mode,
     confidence: semanticRoute
       ? Number(semanticDecision.confidence) || 0
@@ -1193,6 +1311,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
           preparedCreativeContext: input.preparedCreativeContext === true,
         }),
     guidancePolicy,
+    ...capabilityRouteDecision,
     maxBlockingQuestions: 1,
     executionSurface: surface,
     runtimeRerouteAllowed: !taskContractDecision.authoritative && !["operation", "quick_revision"].includes(route.mode),

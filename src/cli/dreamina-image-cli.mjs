@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
-import { assertDreaminaGenerationCredit, dreaminaExecutionReceipt, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
+import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 
 const argv = process.argv.slice(2);
 const OPERATIONS = new Set(["submit", "status", "download", "cancel", "reconcile", "run"]);
@@ -107,11 +107,15 @@ const runOnce = async (args) => {
       const markedCode = detail.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
       const error = new Error(`Dreamina CLI 退出码 ${code}：${detail.replace(/(?:^|\r?\n)\[DREAMINA_[A-Z0-9_]+\]\s*/, "\n").trim()}`);
       if (markedCode) error.code = markedCode;
+      if (!markedCode && /dreamina_cli\s*使用权限|\bCLI\b.{0,24}仅限会员|当前账号.{0,24}仅限会员/iu.test(detail)) {
+        error.code = "DREAMINA_CLI_MEMBERSHIP_REQUIRED";
+        error.submissionOutcomeKnown = true;
+      }
       if (!markedCode && isDreaminaAuthRequiredResponse(detail)) {
         error.code = "DREAMINA_AUTH_REQUIRED";
         error.submissionOutcomeKnown = true;
       }
-      if (["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_AUTH_REQUIRED"].includes(markedCode)) error.submissionOutcomeKnown = true;
+      if (["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_AUTH_REQUIRED", "DREAMINA_CLI_MEMBERSHIP_REQUIRED"].includes(markedCode)) error.submissionOutcomeKnown = true;
       rejectRun(error);
     }));
   });
@@ -602,11 +606,17 @@ const reconcileSubmission = async ({ allowHistoricalMatch = false } = {}) => {
 };
 
 const submit = async () => {
-  const account = await verifiedDreaminaPaidAccount();
-  assertDreaminaGenerationCredit(account);
-  // Balance/identity and task resources are separate Dreamina auth surfaces.
-  // Verify the latter with a read-only command before any paid submission.
-  await ensureDreaminaTaskStoreSession();
+  let account;
+  try {
+    account = await verifiedDreaminaPaidAccount();
+    assertDreaminaGenerationCredit(account);
+    assertDreaminaCliGenerationAccess(account);
+    // Balance/identity and task resources are separate Dreamina auth surfaces.
+    // Verify the latter with a read-only command before any paid submission.
+    await ensureDreaminaTaskStoreSession();
+  } catch (error) {
+    throw markDreaminaPreSubmitNoTask(error);
+  }
   const idempotencyKey = String(option("--idempotency-key") || "").trim();
   const existing = await readExistingIdempotency(idempotencyKey);
   if (existing?.providerTaskId) return { ...existing, idempotentReplay: true };
@@ -814,6 +824,7 @@ const main = async () => {
 
 main().catch((error) => {
   const code = error.code || (["status", "download"].includes(operation) ? "DREAMINA_QUERY_TRANSIENT" : "");
-  process.stderr.write(`${code ? `[${code}] ` : ""}${error.message}\n`);
+  const noTaskMarker = error.preSubmitNoTask === true ? "[DREAMINA_PRE_SUBMIT_NO_TASK] " : "";
+  process.stderr.write(`${noTaskMarker}${code ? `[${code}] ` : ""}${error.message}\n`);
   process.exitCode = 1;
 });

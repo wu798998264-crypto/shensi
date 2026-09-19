@@ -11,11 +11,13 @@ const job = ({
   status = "polling",
   providerStatus = "running",
   recoveryStartedAt = "",
+  appliedAt = "",
 } = {}) => ({
   id: `generation-${profileId}-${status}`,
   status,
   providerStatus,
   recoveryStartedAt,
+  appliedAt,
   createdAt: "2026-08-24T00:00:00.000Z",
   request: {
     settings: {
@@ -27,11 +29,14 @@ const job = ({
 });
 
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "polling" })), true);
-assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), false,
-  "厂商已经成功后，下载和卡片回填不得继续占用配置切换权");
+assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "downloading", providerStatus: "completed" })), true,
+  "下载与验收仍属于受保护生成链，结果回写前不得切换到另一账号");
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "waiting_storage", providerStatus: "completed" })), false,
   "本地存储等待不得占用即梦账号切换门禁");
-assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "complete", providerStatus: "completed" })), false);
+assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "complete", providerStatus: "completed" })), true,
+  "厂商完成但尚未回写卡片时仍须保持当前账号");
+assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "complete", providerStatus: "completed", appliedAt: "2026-08-24T00:10:00.000Z" })), false,
+  "结果成功回写卡片后必须释放账号切换门禁");
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "failed", providerStatus: "failed" })), false);
 assert.equal(dreaminaJobRequiresCredentialProfile(job({ status: "cancel_requested", providerStatus: "running" })), false,
   "用户点击停止后必须立即释放配置切换门禁");
@@ -55,7 +60,7 @@ const recentUnknown = job({
 });
 assert.equal(dreaminaJobRequiresCredentialProfile(recentUnknown, {
   nowMs: Date.parse("2026-08-24T01:00:00.000Z"),
-}), true, "提交结果未知的短时核验可以临时保护当前配置");
+}), false, "提交结果未知但没有厂商任务号时必须保留记录并释放凭证锁");
 assert.equal(dreaminaJobRequiresCredentialProfile(recentUnknown, {
   nowMs: Date.parse("2026-08-24T01:11:00.000Z"),
 }), false, "短时核验超时后不得永久占用配置切换权");

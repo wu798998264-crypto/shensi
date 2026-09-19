@@ -70,7 +70,7 @@ try {
   });
 
   const initial = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id, second.id]), "列表只应显示仍占用即梦锁的任务");
+  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id, second.id, completed.id]), "列表只应显示仍处于生成至卡片回写链路的任务");
   assert.equal(initial.find((job) => job.id === first.id)?.providerTaskId, "dreamina-provider-task-1");
   const workerJobs = await listMediaGenerationJobsForWorker();
   assert.equal(workerJobs.some((job) => job.id === second.id), false, "强制解除处理中不得被 watchdog 再次调度");
@@ -82,7 +82,7 @@ try {
   assert.equal(released.request.prompt, "临时锁占用测试，不调用厂商生成", "强制解除不得删除提示词");
 
   const after = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(after.map((job) => job.id), [second.id], "单条强制解除后其他占用任务仍应保留");
+  assert.deepEqual(new Set(after.map((job) => job.id)), new Set([second.id, completed.id]), "单条强制解除后其他占用任务仍应保留");
   await assert.rejects(
     forceReleaseDreaminaJob({ jobId: first.id }),
     (error) => error?.code === "DREAMINA_PROFILE_NOT_HELD",
@@ -98,7 +98,12 @@ try {
   assert.match(manager, /const candidates = \[\];[\s\S]{0,1200}findWindowsWorkerPid\(normalizedJobId\)/u, "服务重启后必须重新扫描 worker");
   const lockDialog = app.slice(app.indexOf('id="dreaminaProfileLockDialog"'), app.indexOf('id="dreaminaLockOccupantsDialog"'));
   assert.match(lockDialog, /查看占用任务/u);
+  assert.match(lockDialog, /aria-label="关闭即梦锁提示"/u, "锁冲突提示必须允许用户关闭，但关闭不得释放即梦锁");
+  assert.match(lockDialog, /type="submit" value="cancel"/u, "锁冲突提示的关闭按钮只能关闭原生 dialog");
   assert.doesNotMatch(lockDialog, /强制解除占用/u, "底部锁提示只能进入占用任务页面，不直接显示强制操作");
+  const occupantsDialog = app.slice(app.indexOf('id="dreaminaLockOccupantsDialog"'), app.indexOf('id="dreaminaConfigSyncDialog"'));
+  assert.doesNotMatch(occupantsDialog, /aria-label="关闭即梦锁占用任务"/u, "占用任务弹窗不得保留位置错误且与底部重复的顶部关闭按钮");
+  assert.match(occupantsDialog, /<footer>[\s\S]*>关闭<\/button>/u, "占用任务弹窗必须保留底部关闭按钮");
 
   console.log("Dreamina lock occupant list and force-release invariants passed");
 } finally {

@@ -254,7 +254,7 @@ const waitFor = async (expression, label, timeout = 45_000) => {
     }
     await delay(100);
   }
-  const diagnostic = await evaluate(`(() => ({ readyState: document.readyState, title: document.title, rootChildren: document.querySelector('#root')?.childElementCount || 0, bodyText: document.body?.innerText?.slice(0, 600) || '' }))()`)
+  const diagnostic = await evaluate(`(() => ({ readyState: document.readyState, title: document.title, rootChildren: document.querySelector('#root')?.childElementCount || 0, welcomeExists: Boolean(document.querySelector('#creativeStartWelcomeDialog')), welcomeOpen: document.querySelector('#creativeStartWelcomeDialog')?.open === true, welcomeDisplay: document.querySelector('#creativeStartWelcomeDialog') ? getComputedStyle(document.querySelector('#creativeStartWelcomeDialog')).display : '', bodyText: document.body?.innerText?.slice(0, 600) || '' }))()`)
     .catch(() => null);
   throw new Error(`等待超时：${label}；页面状态=${JSON.stringify(diagnostic)}；进程错误=${stderr.slice(-1200)}`);
 };
@@ -308,7 +308,7 @@ try {
   await evaluate(`(() => { const input = document.querySelector('#textDialogInput'); input.value = '主界面验收作品'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#textDialogForm').requestSubmit(); return true; })()`);
   await waitFor("document.querySelector('#projectButton')?.textContent.includes('主界面验收作品')", "指定作品创建并打开", 30_000);
   await waitFor("document.querySelector('.autosave-state')?.dataset.state === 'saved'", "指定作品首次保存完成", 30_000);
-  await waitFor("document.querySelector('#editor')?.dataset.document === '' && document.querySelector('#editor .workspace-empty-state')", "新作品创作起始空态");
+  await waitFor("document.querySelector('#editor')?.dataset.document === '' && document.querySelector('#editor .document-tab-empty-state, #editor .workspace-empty-state')", "新作品创作起始空态");
   const indexModuleOrder = await evaluate(`[...document.querySelectorAll('#moduleSwitcher [data-module]')].map((button) => ({ id: button.dataset.module, label: button.textContent.trim() }))`);
   assert.equal(indexModuleOrder[0]?.id, "reports", "索引必须显示在正文上方");
   await evaluate(`document.querySelector('#creativeStartWelcomeDialog')?.showModal(); document.querySelector('#startCreativeJourney')?.click(); true`);
@@ -322,7 +322,7 @@ try {
     fullscreenVisible: document.querySelector('#whiteboardFullscreenButton')?.hidden === false,
   }))()`);
   assert.equal(creativeGuidanceEntryEvidence.documentId, "", "开始创作不得预先打开文档");
-  assert.match(creativeGuidanceEntryEvidence.body, /这里将呈现你的作品/u, "左侧应显示非文档起始提示");
+  assert.match(creativeGuidanceEntryEvidence.body, /这里将呈现你的作品|从左侧目录打开文档/u, "左侧应显示非文档起始提示或空白标签提示");
   assert.equal(creativeGuidanceEntryEvidence.guidanceEntry, false, "不得预建创作引导目录项");
   assert.equal(creativeGuidanceEntryEvidence.fullscreenVisible, false, "没有文档时不显示文档全屏按钮");
   const creativeGuidanceEntryScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });

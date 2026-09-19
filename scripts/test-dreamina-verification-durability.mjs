@@ -203,9 +203,9 @@ try {
     "实时探针只有明确未登录才能把已保存身份标成需要重新核验");
   assert.match(oauth, /const liveIdentity = async \(profileId\)/u,
     "账号在线读取只能探测现有凭据，不得隐式启动新的 OAuth Device Flow");
-  assert.match(oauth, /listDreaminaProfileAccountStatuses[\s\S]{0,2600}liveIdentity\(profile\.id\)/u,
+  assert.match(oauth, /listDreaminaProfileAccountStatuses[\s\S]{0,2600}confirmedLiveIdentity\(profile\.id\)/u,
     "账号状态与积分探针必须保持只读，不能占用全局凭证槽执行登录恢复");
-  assert.match(oauth, /completeDreaminaProfileOAuth[\s\S]{0,3200}liveIdentity\(id\)/u,
+  assert.match(oauth, /completeDreaminaProfileOAuth[\s\S]{0,3200}confirmedLiveIdentity\(id\)/u,
     "OAuth 完成流程必须只读验证 checklogin 写入的同一凭据快照");
   assert.doesNotMatch(oauth, /invokeProfile\(profileId, \["login", "--headless"\]/u,
     "身份探针不得把 login --headless 误作会话恢复并覆盖刚完成的 OAuth 凭据");

@@ -117,6 +117,7 @@ try {
     assert.match(handoff.options.prompt, /完整执行这项任务/u);
     assert.ok(handoff.options.nativeHost?.url, "外置 Agent 必须获得完整神思 MCP 工具入口");
     assert.equal(handoff.options.allowEdits, false, "不得绕开神思文档事务直接写作品文件");
+    assert.equal(handoff.options.permissionContract?.mode, "approval_required", "仅限神思任务的宿主能力必须临时使用逐项审批合同");
     assert.ok(handoff.options.contextBlocks.some((block) => block.name === "面板路由与运行规范"));
   }
   assert.equal(openedHosts, 4);

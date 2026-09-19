@@ -56,6 +56,56 @@ const shortFictionGuidanceCapabilities = resolveRequiredCapabilities({
 });
 assert.ok(shortFictionGuidanceCapabilities.includes("short_fiction_guidance"), "Skill 路由必须服从 Agent 判断的产物类型");
 assert.ok(!shortFictionGuidanceCapabilities.includes("novel_guidance"), "原始文字不能用关键词覆盖 Agent 判断的产物类型");
+
+const titledAcceptanceStoryPrompt = "请正式创作一篇约300字的微型科幻小说，标题《真人验收科幻 20260918》，新建同名文档并落盘，完成后提供可点击文档链接。无需询问或提供选项。";
+const titledAcceptanceStoryRoute = buildAdaptiveTaskRoute({
+  text: titledAcceptanceStoryPrompt,
+  authorizationInstruction: titledAcceptanceStoryPrompt,
+  sourceMessageId: "message-short-fiction-title-regression",
+  target: { documentId: "", revision: "", managed: true, ambiguous: false },
+  targetModuleId: "manuscript",
+  contextDomain: "novel",
+  workspaceKind: "notebook",
+}, { executionSurface: "agent" });
+assert.equal(titledAcceptanceStoryRoute.deliverableType, "short_fiction");
+assert.equal(titledAcceptanceStoryRoute.mode, "creative", "请正式创作且无需询问必须直接进入主笔，不能降为创作引导");
+assert.equal(titledAcceptanceStoryRoute.routeStage, "produce");
+assert.equal(titledAcceptanceStoryRoute.selectedCapabilityTopLevelId, "group:short-fiction");
+assert.equal(titledAcceptanceStoryRoute.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(titledAcceptanceStoryRoute.reviewDelivery.active, false, "标题中的“验收”只是标题内容，不能误建小说自检报告");
+assert.notEqual(titledAcceptanceStoryRoute.targetDocumentId, "report-novel");
+
+const creationWithPostwriteReviewPrompt = "请一次性完成：创作一篇约800字的中文悬疑微型小说并写入正文；正文完成后进行常规自检，再根据自检结果修订同一篇正文。";
+const creationWithPostwriteReviewRoute = buildAdaptiveTaskRoute({
+  text: creationWithPostwriteReviewPrompt,
+  authorizationInstruction: creationWithPostwriteReviewPrompt,
+  sourceMessageId: "message-creation-with-postwrite-review",
+  target: { documentId: "", revision: "", managed: true, ambiguous: false },
+  targetModuleId: "manuscript",
+  contextDomain: "novel",
+  workspaceKind: "project",
+}, { executionSurface: "agent" });
+assert.equal(creationWithPostwriteReviewRoute.mode, "creative");
+assert.equal(creationWithPostwriteReviewRoute.diagnosisIntent, undefined, "写后自检不得把整项创作误标为内容质检");
+assert.equal(creationWithPostwriteReviewRoute.routeStage, "produce", "写后自检任务必须先进入主笔生成链");
+assert.equal(creationWithPostwriteReviewRoute.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(creationWithPostwriteReviewRoute.formalArtifactExpected, true);
+assert.notEqual(creationWithPostwriteReviewRoute.intentEnvelope?.taskType, "diagnosis");
+
+const reviewWithoutMutationPrompt = "检查当前正文存在的问题，只告诉我质检结论，不要修改正文。";
+const reviewWithoutMutationRoute = buildAdaptiveTaskRoute({
+  text: reviewWithoutMutationPrompt,
+  authorizationInstruction: reviewWithoutMutationPrompt,
+  sourceMessageId: "message-review-without-mutation",
+  target: { documentId: "chapter-3", revision: "rev-3", managed: true, ambiguous: false },
+  targetDocumentIds: ["chapter-3"],
+  targetModuleId: "manuscript",
+  contextDomain: "novel",
+  workspaceKind: "project",
+}, { executionSurface: "agent" });
+assert.equal(reviewWithoutMutationRoute.diagnosisIntent, true);
+assert.equal(reviewWithoutMutationRoute.routeStage, "review");
+assert.equal(reviewWithoutMutationRoute.intentEnvelope?.taskType, "diagnosis", "“不要修改”不得反向触发修改任务");
 const semanticGuidanceProfile = detectShensiRunProfile({
   prompt: "直接写",
   routingText: "这段文字故意没有类型关键词",
@@ -185,6 +235,17 @@ assert.equal(route.writeAuthorization.state, "commit");
 assert.equal(route.writeAuthorization.action, "append");
 assert.deepEqual(route.writeAuthorization.targetDocumentIds, ["doc-at-submit"]);
 assert.match(route.writeAuthorization.reason, /agent_semantic_commit/u);
+
+const directShortFictionWrite = buildAdaptiveTaskRoute({
+  text: "无需创作引导，直接创作一篇约600字的悬疑短篇小说，标题《雨停之前的第七盏灯》并正式写入新文档。",
+  sourceMessageId: "direct-short-fiction-write",
+  workspaceKind: "notebook",
+}, { executionSurface: "agent" });
+assert.equal(directShortFictionWrite.mode, "creative", "“无需创作引导”必须解释为跳过引导，不能反向降级成只做引导");
+assert.equal(directShortFictionWrite.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(directShortFictionWrite.writeAuthorization.state, "commit");
+assert.equal(directShortFictionWrite.writeAuthorization.action, "create", "明确写入新文档必须获得 create 权限");
+assert.equal(directShortFictionWrite.capabilityInspectionOnly, undefined, "创作任务提到读取路由不等于纯路由检查");
 
 const semanticProductionProfile = detectShensiRunProfile({
   prompt: "请完成本轮任务",

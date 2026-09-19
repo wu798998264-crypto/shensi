@@ -64,7 +64,7 @@ assert.equal(dreaminaProfileSwitchDecision({
 assert.equal(dreaminaProfileSwitchDecision({
   jobs: [job({ profileId: "account-a", status: "complete", appliedAt: "" })],
   requestedProfileId: "account-b",
-}).allowed, true, "厂商任务成功后，本地卡片回写不得继续占用即梦凭据锁");
+}).allowed, false, "厂商任务成功但卡片尚未完成回写时必须保持原即梦配置");
 
 assert.equal(dreaminaProfileSwitchDecision({
   jobs: [job({ profileId: "account-a", status: "complete", appliedAt: "2026-08-23T10:00:00.000Z" })],
@@ -134,8 +134,10 @@ assert.match(app, /job\.target\?\.nodeId && \(userStopped \|\| !whiteboardMediaJ
 assert.doesNotMatch(data, /当前编译状态/u, "项目总览文档的固定标题必须与导航名称一致");
 assert.match(data, /\["report-compile", "项目总览"\]/u);
 assert.match(projectStatus, /<h1>项目总览<\/h1>/u);
-assert.match(app, /state\.activeDocument = rememberedModuleDocument\(\{[\s\S]{0,260}\}\) \|\| documentIds\[0\] \|\| null/u,
+assert.match(app, /const nextDocumentId = rememberedModuleDocument\(\{[\s\S]{0,260}\}\) \|\| documentIds\[0\] \|\| ""/u,
   "任意板块都必须优先恢复上次位置；首次进入时统一打开目录最上方文档");
+assert.match(app, /if \(nextDocumentId\) openDocumentTab\(nextDocumentId\)/u,
+  "板块恢复必须通过当前文档标签页状态激活目标文档");
 assert.match(app, /ui\.documentPreviewKey = substantiveManuscriptDocumentIds\(\)\.includes\(documentId\)[\s\S]{0,100}currentDocumentPreviewKey/u,
   "重启恢复到已有正文时必须继续进入正文预览");
 assert.doesNotMatch(app, /const projectEntryDocumentId/u, "应用重启恢复工作区时不能覆盖上次最后打开的文档");

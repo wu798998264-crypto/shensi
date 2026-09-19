@@ -28,7 +28,7 @@ const profile = {
   executionModes: ["chat", "agent"],
 };
 const profileBeforeLabel = JSON.stringify(profile);
-assert.equal(generationProfileLabel(profile, "text"), "OpenAI · gpt-5-codex", "文字配置名称应显示真实服务商与模型，不再生成名为神思运行器的独立配置");
+assert.equal(generationProfileLabel(profile, "text"), "OpenAI", "文字配置名称只标识配置本身，模型必须留在独立模型字段中");
 assert.equal(JSON.stringify(profile), profileBeforeLabel, "显示名称计算不得修改或复制现有配置");
 assert.equal(agentProfileBelongsToEngine(profile, "codex_api"), true);
 assert.deepEqual(executionModeCapabilities(profile).modes, ["agent"]);
@@ -158,14 +158,14 @@ const restrictedWebResult = await webRuntime.runStage({
   stage: "agent",
   requestApproval: async () => {
     restrictedApprovalCalls += 1;
-    return { answer: "allow" };
+    return { answer: "deny" };
   },
 });
 assert.equal(webRequests.at(-1).body.tools, undefined, "仅限神思不得暴露原生联网工具");
 assert.equal(restrictedWebResult.webSearchUsed, false);
 assert.equal(restrictedWebResult.permissionMode, "shensi_only", "权限合同快照必须优先于可变设置");
 assert.equal(restrictedWebResult.permissionContract.taskId, "restricted-web-session-test");
-assert.equal(restrictedApprovalCalls, 0, "仅限神思应直接拒绝原生能力，不得弹出可放行的确认");
+assert.equal(restrictedApprovalCalls, 1, "仅限神思请求外部联网能力时必须逐项确认");
 
 const approvalPrompts = [];
 const approvedWebResult = await webRuntime.runStage({

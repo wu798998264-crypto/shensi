@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DREAMINA_CLI_PROFILES, normalizeDreaminaCliProfileId, validDreaminaCliProfileId } from "../media-cli-presets.js";
 import { appDataRoot } from "./app-data.mjs";
 import { dreaminaCliRuntime } from "./dreamina-cli-profile.mjs";
+import { dreaminaBrokerLeasePath } from "./dreamina-broker-lease.mjs";
 import {
   claimDreaminaProfileIdentity,
   credentialFileFingerprint,
@@ -276,6 +277,7 @@ const invokeProfile = async (profileId, cliArgs, { freshLogin = false, timeoutMs
     HOME: runtime.profileHome,
     USERPROFILE: runtime.profileHome,
     SHENSI_DREAMINA_PROFILE_HOME: runtime.profileHome,
+    SHENSI_DREAMINA_BROKER_LEASE_PATH: dreaminaBrokerLeasePath(),
   };
   return run(powershellPath, runnerArgs(profileId, runtime.executable, cliArgs, { freshLogin }), { env, timeoutMs });
 };
@@ -289,6 +291,7 @@ export const probeDreaminaCredentialLock = async (profileId) => {
     HOME: runtime.profileHome,
     USERPROFILE: runtime.profileHome,
     SHENSI_DREAMINA_PROFILE_HOME: runtime.profileHome,
+    SHENSI_DREAMINA_BROKER_LEASE_PATH: dreaminaBrokerLeasePath(),
   };
   const result = await run(
     powershellPath,
@@ -410,22 +413,82 @@ const liveIdentity = async (profileId) => {
     }
     return "";
   };
+  const nestedEntry = (keys) => {
+    const queue = [payload];
+    const visited = new Set();
+    while (queue.length) {
+      const value = queue.shift();
+      if (!value || typeof value !== "object" || visited.has(value)) continue;
+      visited.add(value);
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) return { found: true, value: value[key] };
+      }
+      Object.values(value).forEach((child) => { if (child && typeof child === "object") queue.push(child); });
+    }
+    return { found: false, value: undefined };
+  };
   const userId = String(nestedValue(["user_id", "userId", "uid"]) || "").trim();
   if (!userId) return { ok: false, code: "DREAMINA_ACCOUNT_ID_MISSING", error: "即梦没有返回 user_id" };
-  const membership = dreaminaMembershipFromPayload(payload);
+  const rawCredit = nestedValue(["total_credit", "totalCredit", "credit", "credits"]);
+  const credit = rawCredit === "" || rawCredit === null || rawCredit === undefined
+    ? null
+    : Number(rawCredit);
+  if (!Number.isFinite(credit) || credit < 0) {
+    return {
+      ok: false,
+      transient: true,
+      code: "DREAMINA_CREDIT_RESPONSE_INCOMPLETE",
+      error: "即梦已返回账号身份，但没有返回有效积分，正在重新读取",
+    };
+  }
+  const membershipEntry = nestedEntry([
+    "vip_level", "vipLevel", "member_level", "memberLevel", "membership_level", "membershipLevel",
+    "member_type", "memberType", "membership", "vip_type", "vipType", "plan_name", "planName",
+  ]);
+  // user_credit returning an explicit empty membership field is an
+  // authoritative ordinary-account verdict, not a temporary read gap.  Do
+  // not preserve a stale local "advanced" label in that case.
+  const membership = dreaminaMembershipFromPayload(payload, {
+    membershipTier: membershipEntry.found && !String(membershipEntry.value ?? "").trim() ? "standard" : "",
+  });
+  const cliGenerationEligible = membership.tier === "advanced"
+    ? true
+    : membership.tier === "standard" ? false : null;
   return {
     ok: true,
     userId,
-    credit: Number.isFinite(Number(nestedValue(["total_credit", "totalCredit", "credit", "credits"])))
-      ? Number(nestedValue(["total_credit", "totalCredit", "credit", "credits"])) : null,
+    credit,
     vipLevel: membership.rawLevel,
     vipExpiresAt: membership.expiresAt,
     membershipTier: membership.tier,
     membershipLabel: membership.label,
+    cliGenerationEligible,
+    cliGenerationRestrictionCode: cliGenerationEligible === false ? "DREAMINA_CLI_MEMBERSHIP_REQUIRED" : "",
   };
 };
 
-const creditSnapshot = (saved = {}, live = {}) => {
+export const confirmDreaminaLiveCredit = async (readLive, {
+  attempts = 3,
+  retryDelayMs = 800,
+  wait = (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
+} = {}) => {
+  const boundedAttempts = Math.max(1, Math.min(3, Number(attempts) || 1));
+  let live = null;
+  for (let attempt = 0; attempt < boundedAttempts; attempt += 1) {
+    live = await readLive();
+    if (!live?.ok || Number(live.credit) !== 0) {
+      return { ...live, creditReadAttempts: attempt + 1 };
+    }
+    if (attempt < boundedAttempts - 1) {
+      await wait(Math.max(0, Number(retryDelayMs) || 0) * (attempt + 1));
+    }
+  }
+  return { ...live, creditReadAttempts: boundedAttempts, creditZeroConfirmed: true };
+};
+
+const confirmedLiveIdentity = (profileId) => confirmDreaminaLiveCredit(() => liveIdentity(profileId));
+
+export const creditSnapshot = (saved = {}, live = {}) => {
   const current = Number.isFinite(Number(live.credit)) ? Number(live.credit) : null;
   const previous = Number.isFinite(Number(saved.lastCredit)) ? Number(saved.lastCredit) : null;
   const delta = current !== null && previous !== null ? Math.max(0, previous - current) : 0;
@@ -433,17 +496,21 @@ const creditSnapshot = (saved = {}, live = {}) => {
   const trackedTotal = current === null
     ? (Number.isFinite(Number(saved.trackedCreditTotal)) ? Number(saved.trackedCreditTotal) : null)
     : Math.max(current + consumed, Number(saved.trackedCreditTotal) || 0);
+  const authoritativeMembership = live.membershipTier && live.membershipTier !== "unknown";
   return {
     lastCredit: current,
     trackedCreditTotal: trackedTotal,
     consumedCredit: consumed,
     lastConsumedCredit: delta > 0 ? delta : Math.max(0, Number(saved.lastConsumedCredit) || 0),
     creditUpdatedAt: new Date().toISOString(),
-    vipLevel: live.vipLevel || saved.vipLevel || "",
-    vipExpiresAt: live.vipExpiresAt || saved.vipExpiresAt || "",
-    membershipTier: live.membershipTier && live.membershipTier !== "unknown"
+    // An explicit ordinary-account result must clear a stale premium marker.
+    // Keeping the previous raw vipLevel (for example "ultra") would make the
+    // identity-store normalizer infer "advanced" again on the next read.
+    vipLevel: authoritativeMembership ? String(live.vipLevel || "") : saved.vipLevel || "",
+    vipExpiresAt: authoritativeMembership ? String(live.vipExpiresAt || "") : saved.vipExpiresAt || "",
+    membershipTier: authoritativeMembership
       ? live.membershipTier : saved.membershipTier || "unknown",
-    membershipLabel: live.membershipTier && live.membershipTier !== "unknown"
+    membershipLabel: authoritativeMembership
       ? live.membershipLabel : saved.membershipLabel || "会员等级待核验",
   };
 };
@@ -545,7 +612,7 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
     // every other verified profile for up to a minute. Explicit OAuth
     // completion below is the only path allowed to restore the session.
     const live = verifyLive && credentialExists && !oauthPending
-      ? await liveIdentity(profile.id)
+      ? await confirmedLiveIdentity(profile.id)
       : null;
     let expected = (await readDreaminaProfileIdentityStore()).profiles[profile.id] || saved;
     let credentialChanged = Boolean(expected.credentialFingerprint
@@ -603,6 +670,12 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
       vipExpiresAt: live?.ok ? live.vipExpiresAt || expected.vipExpiresAt || "" : expected.vipExpiresAt || "",
       membershipTier: live?.ok && live.membershipTier !== "unknown" ? live.membershipTier : expected.membershipTier || "unknown",
       membershipLabel: live?.ok && live.membershipTier !== "unknown" ? live.membershipLabel : expected.membershipLabel || "会员等级待核验",
+      cliGenerationEligible: live?.ok
+        ? live.cliGenerationEligible
+        : expected.membershipTier === "advanced" ? true : expected.membershipTier === "standard" ? false : null,
+      cliGenerationRestrictionCode: live?.ok
+        ? live.cliGenerationRestrictionCode || ""
+        : expected.membershipTier === "standard" ? "DREAMINA_CLI_MEMBERSHIP_REQUIRED" : "",
       verifiedAt: live?.ok ? new Date().toISOString() : expected.verifiedAt || "",
       liveVerified: live?.ok === true,
       creditSource: live?.ok ? "live" : "saved",
@@ -871,9 +944,9 @@ export const completeDreaminaProfileOAuth = async ({ requestedProfileId, pollSec
         message: `浏览器授权已经通过，但本地待确认状态暂时无法保存，将自动重试：${error?.message || "本地存储暂时不可用"}`,
       };
     }
-    live = await liveIdentity(id);
+    live = await confirmedLiveIdentity(id);
   } else {
-    live = await liveIdentity(id);
+    live = await confirmedLiveIdentity(id);
     if (evidenceUserId && live.ok && live.userId !== evidenceUserId) {
       await restoreCredentialBackup(id, pending);
       if (pending.backupPath) await rm(pending.backupPath, { force: true }).catch(() => {});
@@ -948,6 +1021,8 @@ export const completeDreaminaProfileOAuth = async ({ requestedProfileId, pollSec
       creditUpdatedAt: new Date().toISOString(),
       vipLevel: live.vipLevel,
       vipExpiresAt: live.vipExpiresAt || "",
+      membershipTier: live.membershipTier,
+      membershipLabel: live.membershipLabel,
     });
   } catch (error) {
     // The provider has accepted the browser authorization, but the local

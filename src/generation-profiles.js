@@ -3,7 +3,7 @@ import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderAud
 import { normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { SHENSI_AGENT_API_PROTOCOLS } from "./agent-engine-registry.js";
 
-const EXTERNAL_CLI_AGENT_ENGINES = new Set(["opencode", "claude_code", "trae_work", "workbuddy", "custom"]);
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["opencode", "claude_code", "workbuddy", "custom"]);
 
 const CHANNELS = ["text", "image", "video", "audio"];
 const GENERATION_RUNTIME_FIELDS = Object.freeze(["baseUrl", "cliPath", "cliArgs"]);
@@ -52,6 +52,47 @@ const TEXT_GENERATION_CONFIGURATION_FIELDS = Object.freeze([
   "retiredTextProfileBackup",
   "textProfileAliases",
   "textProfileCleanupVersion",
+]);
+const GLOBAL_GENERATION_CONFIGURATION_FIELDS = Object.freeze([
+  ...TEXT_GENERATION_CONFIGURATION_FIELDS,
+  "imageConnections",
+  "activeImageConnectionId",
+  "imageProvider",
+  "imageAdapter",
+  "imageProtocol",
+  "imageBaseUrl",
+  "imageModel",
+  "imageTimeoutMs",
+  "imageApiKey",
+  "imageCliPath",
+  "imageCliArgs",
+  "videoConnections",
+  "activeVideoConnectionId",
+  "videoProvider",
+  "videoAdapter",
+  "videoProtocol",
+  "videoBaseUrl",
+  "videoModel",
+  "videoTimeoutMs",
+  "videoApiKey",
+  "videoCliPath",
+  "videoCliArgs",
+  "audioConnections",
+  "activeAudioConnectionId",
+  "audioProvider",
+  "audioAdapter",
+  "audioProtocol",
+  "audioBaseUrl",
+  "audioModel",
+  "audioTimeoutMs",
+  "audioApiKey",
+  "audioCliPath",
+  "audioCliArgs",
+  "imageModelSelectionVersion",
+  "aggregateImageApiProfileVersion",
+  "videoCliDefaultVersion",
+  "videoProfileCleanupVersion",
+  "cliRemarkMigrationVersion",
 ]);
 export const IMAGE_MODEL_SELECTION_VERSION = 5;
 export const VIDEO_CLI_DEFAULT_VERSION = 3;
@@ -318,6 +359,13 @@ const BUILT_IN_AGGREGATE_IMAGE_API = {
   cliArgs: "",
 };
 
+const BUILT_IN_OPENAI_IMAGE_CLI = {
+  ...DEFAULTS.image,
+  id: "image-openai-codex-cli",
+  name: "OpenAI CLI",
+  remarkName: "OpenAI CLI",
+};
+
 const stringValue = (value, fallback = "") => typeof value === "string" ? value : fallback;
 
 const withoutNonDreaminaIdentity = (profile = {}) => {
@@ -483,6 +531,18 @@ const ensureBuiltInAggregateImageApiProfile = (profiles, secrets = {}) => {
   ];
 };
 
+const ensureBuiltInOpenAiImageCliProfile = (profiles, secrets = {}) => {
+  const existing = profiles.find((profile) => profile.id === BUILT_IN_OPENAI_IMAGE_CLI.id
+    || (profile.adapter === "cli"
+      && profile.provider === "OpenAI"
+      && profile.cliPath === OPENAI_IMAGE_CLI_ALIAS));
+  if (existing) return profiles;
+  return [
+    ...profiles,
+    normalizedProfile("image", BUILT_IN_OPENAI_IMAGE_CLI, profiles.length, secrets),
+  ];
+};
+
 const comparableSharedCredentialEndpoint = (value) => String(value || "")
   .trim()
   .replace(/\/+$/u, "")
@@ -540,6 +600,15 @@ const isCodexTextCliProfile = (profile = {}) => profile.adapter === "cli"
   && profile.provider === "OpenAI"
   && (profile.agentEngine === "codex"
     || /^codex(?:\.(?:exe|cmd|ps1))?$/i.test(String(profile.cliPath || "").split(/[\\/]/u).at(-1) || ""));
+
+const redundantLegacyOpenAiApiDefault = (profile = {}) => profile.id === "text-default"
+  && profile.adapter === "api"
+  && profile.provider === "OpenAI"
+  && profile.agentEngine === "codex_api"
+  && !String(profile.apiKey || "").trim()
+  && ["", "https://api.openai.com/v1"].includes(String(profile.baseUrl || "").trim().replace(/\/+$/u, ""))
+  && ["", "OpenAI", "OpenAI 文字", "OpenAI · gpt-5.6-sol"].includes(String(profile.remarkName || profile.name || "").trim())
+  && ["", "gpt-5.6-sol"].includes(String(profile.agentModelId || profile.model || "").trim());
 
 // A Codex CLI profile supports both Chat and Agent. Older migrations could
 // materialize the same connection twice when text-default was already in use.
@@ -774,7 +843,7 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
       chatModelId: modes.includes("chat") ? model : "",
     };
   }
-  if (["trae_work", "workbuddy", "custom"].includes(engine)) {
+  if (["workbuddy", "custom"].includes(engine)) {
     const selected = String(profile.agentModelId || model || "").trim();
     return {
       ...profile,
@@ -811,7 +880,10 @@ const deepSeekAgentProfile = (profile = {}) => profile.provider === "DeepSeek"
   && (["opencode", "deepseek_opencode", "claude_code"].includes(String(profile.agentEngine || "").trim())
     || ["opencode", DEEPSEEK_OPENCODE_CLI_ALIAS].includes(String(profile.cliPath || "").trim()));
 
-const legacyRemovedTextProfile = (profile = {}) => LEGACY_REMOVED_TEXT_PROFILE_IDS.has(String(profile.id || ""))
+const retiredTraeWorkProfile = (profile = {}) => String(profile.agentEngine || "").trim() === "trae_work";
+
+const legacyRemovedTextProfile = (profile = {}) => retiredTraeWorkProfile(profile)
+  || LEGACY_REMOVED_TEXT_PROFILE_IDS.has(String(profile.id || ""))
   || (profile.agentEngine === "codex_api" && profile.systemManaged !== true
     && /^神思运行器(?:配置)?(?:\s*[·_+-]\s*(?:API|Agent|文字|默认|配置))*$/iu.test(String(profile.remarkName || profile.name || "").trim()));
 
@@ -1018,6 +1090,7 @@ const retiredUnsupportedVideoProfile = (profile = {}) => {
   const endpoint = String(profile.baseUrl || "").trim().replace(/\/+$/u, "").toLocaleLowerCase();
   const dreaminaCli = profile.adapter === "cli" && provider === "即梦";
   if (profile.id === "video-cockpit-aggregate-api") return true;
+  if (provider === "OpenAI" && /^seedance[-_. ]?2\.5$/iu.test(model)) return true;
   if (!dreaminaCli && /sora/iu.test(model)) return true;
   return provider === "自定义兼容接口"
     && endpoint === "http://127.0.0.1:5317/v1"
@@ -1119,12 +1192,21 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
     const source = Array.isArray(settings[keys.list]) && settings[keys.list].length
       ? settings[keys.list]
       : [legacyProfile(settings, channel)];
-    let profiles = deduplicateProfilesById(source.map((profile, index) => normalizedProfile(channel, profile, index, secrets[channel] ?? {})));
+    const normalizationSource = channel === "text"
+      ? source.filter((profile) => !retiredTraeWorkProfile(profile))
+      : source;
+    let profiles = deduplicateProfilesById(normalizationSource.map((profile, index) => normalizedProfile(channel, profile, index, secrets[channel] ?? {})));
     if (channel === "text") {
       const disabledBuiltInTextProfileIds = Array.isArray(settings.disabledBuiltInTextProfileIds)
         ? settings.disabledBuiltInTextProfileIds
         : [];
       next.disabledBuiltInTextProfileIds = [...new Set(disabledBuiltInTextProfileIds)];
+      // The original empty OpenAI API placeholder and the bundled Codex CLI
+      // represented the same default entry to users. Replace only that exact,
+      // credential-free placeholder before adding the CLI profile. A real
+      // OpenAI API connection (credential, custom endpoint or custom name)
+      // remains a separate configuration.
+      profiles = profiles.filter((profile) => !redundantLegacyOpenAiApiDefault(profile));
       profiles = ensureBuiltInGptChatCliProfile(
         profiles,
         secrets.text ?? {},
@@ -1157,9 +1239,11 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
         ? [...textCleanup.profiles, { ...previousPublic, id: BUILT_IN_PUBLIC_AGENT_PROFILE.id }]
         : textCleanup.profiles);
       const retainedIds = new Set(profiles.map((profile) => profile.id));
-      const backup = new Map((Array.isArray(settings.retiredTextProfileBackup) ? settings.retiredTextProfileBackup : []).map((profile) => [profile.id, profile]));
+      const backup = new Map((Array.isArray(settings.retiredTextProfileBackup) ? settings.retiredTextProfileBackup : [])
+        .filter((profile) => !retiredTraeWorkProfile(profile))
+        .map((profile) => [profile.id, profile]));
       for (const profile of source) {
-        if (!profile?.id || retainedIds.has(profile.id) || backup.has(profile.id)) continue;
+        if (!profile?.id || retiredTraeWorkProfile(profile) || retainedIds.has(profile.id) || backup.has(profile.id)) continue;
         const metadata = Object.fromEntries(["id", "name", "remarkName", "provider", "adapter", "agentEngine", "model", "agentModelId", "baseUrl", "protocol", "cliPath", "cliArgs", "credentialSource", "systemManaged", "executionMode", "executionModes"]
           .filter((key) => Object.hasOwn(profile, key)).map((key) => [key, profile[key]]));
         backup.set(profile.id, metadata);
@@ -1190,6 +1274,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       if (retiredIds.size || (Number(settings.aggregateImageApiProfileVersion) || 0) < AGGREGATE_IMAGE_API_PROFILE_VERSION) {
         profiles = ensureBuiltInAggregateImageApiProfile(profiles, secrets.image ?? {});
       }
+      profiles = ensureBuiltInOpenAiImageCliProfile(profiles, secrets.image ?? {});
       next.imageModelSelectionVersion = IMAGE_MODEL_SELECTION_VERSION;
       next.aggregateImageApiProfileVersion = AGGREGATE_IMAGE_API_PROFILE_VERSION;
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.image ?? {});
@@ -1279,17 +1364,31 @@ const MODEL_FAMILY_LABELS = {
 export const generationProfileLabel = (profile = {}, channel = "text") => {
   const remarkName = String(profile.remarkName || "").trim();
   if (remarkName) return remarkName;
-  if (channel === "text" && ["codex_api", "opencode", "deepseek_opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(profile.agentEngine)) {
+  const configuredName = String(profile.name || "").trim();
+  if (channel === "text" && profile.adapter === "cli" && profile.agentEngine === "codex") return "OpenAI CLI";
+  if (channel === "text" && configuredName) {
+    // A configuration picker identifies the saved connection, not its current
+    // model. Older defaults sometimes persisted labels such as
+    // "OpenAI · gpt-5.6-sol"; keep the configured name while removing only an
+    // exact trailing model token. The model remains visible in the model field.
+    const modelTokens = [...new Set([profile.agentModelId, profile.model]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean))];
+    const withoutModelSuffix = modelTokens.reduce((label, model) => {
+      if (!label.endsWith(model)) return label;
+      return label.slice(0, -model.length).replace(/[\s·/|:：-]+$/u, "").trim();
+    }, configuredName);
+    if (withoutModelSuffix) return withoutModelSuffix;
+  }
+  if (channel === "text" && ["codex_api", "opencode", "deepseek_opencode", "claude_code", "workbuddy", "custom"].includes(profile.agentEngine)) {
     const provider = String(profile.provider || openCodeProviderForModel(profile.agentModelId || profile.model) || "").trim();
     if (profile.agentEngine === "codex_api") {
-      const model = String(profile.agentModelId || profile.model || "").trim();
-      return [provider || "API Agent", model].filter(Boolean).join(" · ");
+      return provider || "API Agent";
     }
     const runner = profile.agentEngine === "claude_code" ? "Claude Code"
-      : profile.agentEngine === "trae_work" ? "Trae Work"
-        : profile.agentEngine === "workbuddy" ? "WorkBuddy"
-          : profile.agentEngine === "custom" ? "自定义运行器"
-            : "OpenCode";
+      : profile.agentEngine === "workbuddy" ? "WorkBuddy"
+        : profile.agentEngine === "custom" ? "自定义运行器"
+          : "OpenCode";
     return provider ? `${runner}+${provider}` : runner;
   }
   const provider = String(profile.provider || "未选择服务商").trim();
@@ -1809,6 +1908,19 @@ export const withoutTextGenerationConfiguration = (settings = {}) => {
   return next;
 };
 
+export const generationConfigurationSettings = (settings = {}) => {
+  const portable = portableGenerationSettings(settings);
+  return Object.fromEntries(GLOBAL_GENERATION_CONFIGURATION_FIELDS
+    .filter((field) => Object.hasOwn(portable, field))
+    .map((field) => [field, portable[field]]));
+};
+
+export const withoutGenerationConfiguration = (settings = {}) => {
+  const next = { ...settings };
+  for (const field of GLOBAL_GENERATION_CONFIGURATION_FIELDS) delete next[field];
+  return next;
+};
+
 export const portableGenerationSettings = (settings = {}) => {
   const next = withoutGenerationRuntime(withoutGenerationSecrets(settings));
   for (const key of ["apiKey", "imageApiKey", "videoApiKey", "audioApiKey"]) delete next[key];
@@ -1925,7 +2037,7 @@ export const applyGenerationRuntimeBindings = (settings = {}, payload = {}, secr
         && !existingIds.has(String(binding.profileId).trim())
         && ["api", "cli"].includes(String(binding.adapter || ""))
         && (String(binding.provider || "").trim()
-          || (channel === "text" && ["trae_work", "workbuddy", "custom"].includes(String(binding.agentEngine || "").trim()))))
+          || (channel === "text" && ["workbuddy", "custom"].includes(String(binding.agentEngine || "").trim()))))
       .map((binding) => profileFromRuntimeBinding(channel, binding));
     next[keys.list] = [...profiles, ...recovered];
   }

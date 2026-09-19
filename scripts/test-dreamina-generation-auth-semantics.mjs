@@ -10,6 +10,8 @@ import {
   dreaminaFailureRequiresAccountVerification,
 } from "../src/dreamina-failure.js";
 import { dreaminaProfileSwitchMessage } from "../src/dreamina-manual-profile-policy.js";
+import { markDreaminaPreSubmitNoTask } from "../src/cli/dreamina-account-preflight.mjs";
+import { classifyMediaSubmissionFailure } from "../src/server/media-submission-recovery.mjs";
 
 const runChild = (executable, args, env) => new Promise((resolveRun, rejectRun) => {
   const child = spawn(executable, args, { cwd: fileURLToPath(new URL("..", import.meta.url)), env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
@@ -39,7 +41,21 @@ assert.equal(dreaminaFailureRequiresAccountVerification({
 assert.match(dreaminaProfileSwitchMessage({
   reason: "submission_outcome_unknown",
   activeProfileId: "default",
-}), /手动终止本机任务/u);
+}), /凭证锁已经释放/u);
+assert.match(dreaminaProfileSwitchMessage({
+  reason: "submission_outcome_unknown",
+  activeProfileId: "default",
+  channel: "image",
+}), /一次图片提交/u);
+const markedPreSubmitFailure = markDreaminaPreSubmitNoTask(Object.assign(new Error("list_task timeout"), { code: "DREAMINA_QUERY_TRANSIENT" }));
+assert.equal(markedPreSubmitFailure.submissionOutcomeKnown, true);
+assert.equal(markedPreSubmitFailure.preSubmitNoTask, true);
+const safePreSubmitRetry = classifyMediaSubmissionFailure({
+  job: { status: "submitting", channel: "image", transientFailures: 0 },
+  error: markedPreSubmitFailure,
+});
+assert.equal(safePreSubmitRetry.submissionUnknown, false, "付费命令前失败不得误判为厂商可能已受理");
+assert.equal(safePreSubmitRetry.safeAutomaticRetry, true, "付费命令前的临时查询失败应保留同一幂等键自动重试");
 
 const [runner, videoCli, driver, worker, app] = await Promise.all([
   readFile(new URL("../scripts/windows/dreamina-profile-runner.ps1", import.meta.url), "utf8"),
@@ -56,11 +72,22 @@ assert.match(videoCli, /dreaminaTaskIdInText/u);
 assert.match(videoCli, /non-control commands containing `video`/u);
 assert.match(driver, /providerTaskIdFromOutput/u);
 assert.match(driver, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
+assert.match(driver, /DREAMINA_PRE_SUBMIT_NO_TASK/u);
+assert.match(driver, /preSubmitNoTask\) error\.submissionOutcomeKnown = true/u);
 assert.match(worker, /errorProviderTaskId/u);
 assert.match(worker, /providerStatus: providerCode\.toUpperCase\(\) === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"[\s\S]{0,120}\? "failed"/u);
 assert.match(worker, /dreaminaSubmissionRecoveryPending[\s\S]{0,600}DREAMINA_SUBMISSION_UNCERTAIN/u);
+assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,2200}另一即梦配置正在生成，本次只读找回已延后/u,
+  "未知提交的只读找回遇到其他配置占锁时必须延后，不能被改写为失败");
+assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,1800}submissionState: "uncertain"[\s\S]{0,500}billingRisk: "submission_outcome_unknown"/u,
+  "临时配置锁冲突必须保留原提交不确定性和计费保护");
 assert.match(app, /promptDreaminaSubmissionBlockForJob/u);
-assert.match(app, /手动终止本机任务/u);
+assert.match(app, /const terminalJob = \["complete", "failed", "cancelled"\]\.includes\(jobStatus\)/u,
+  "已完成、已失败或已取消的旧任务不得在重启恢复时重新弹出即梦占锁门禁");
+assert.match(app, /DREAMINA_PROFILE_SWITCH_BLOCKED"[\s\S]{0,180}&& !terminalJob[\s\S]{0,100}&& !reconciliationOnly/u,
+  "只读找回或费用状态未知的旧任务不得伪装成当前生成锁冲突");
+assert.match(app, /凭证锁已经释放，不影响新的生成/u);
+assert.doesNotMatch(app, /已暂停新的提交；请查看占用任务/u);
 
 const runtimeRoot = await mkdtemp(join(tmpdir(), "shensi-dreamina-generation-runtime-"));
 const fakeCliPath = join(runtimeRoot, "fake-dreamina-generation.mjs");
@@ -75,10 +102,18 @@ if (operation === "user_credit") {
     process.stderr.write("authsdk: not logged in\\n");
     process.exit(1);
   }
+  if (mode === "membership-required") {
+    process.stdout.write(JSON.stringify({ user_id: "2842687099901300", total_credit: 20, vip_level: "" }));
+    process.exit(0);
+  }
   process.stdout.write(JSON.stringify({ user_id: "2842687099901300", total_credit: 837, vip_level: "1" }));
   process.exit(0);
 }
 if (operation === "list_task") {
+  if (mode === "preflight-list-failure") {
+    process.stderr.write("[DREAMINA_QUERY_TRANSIENT] temporary list_task timeout\\n");
+    process.exit(1);
+  }
   process.stdout.write(JSON.stringify({ status: "submit", data: [] }));
   process.exit(0);
 }
@@ -154,6 +189,20 @@ try {
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "control-auth" });
   assert.notEqual(controlAuth.code, 0, "控制面未登录必须失败");
   assert.match(controlAuth.stderr, /\[DREAMINA_AUTH_REQUIRED\]/u, "控制面未登录仍必须要求账号核验");
+
+  const preflightListFailure = await runChild(process.execPath, [
+    videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-preflight-list-failure-key",
+  ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "preflight-list-failure" });
+  assert.notEqual(preflightListFailure.code, 0, "任务资源只读检查失败时不得进入付费提交");
+  assert.match(preflightListFailure.stderr, /\[DREAMINA_PRE_SUBMIT_NO_TASK\]/u, "提交前失败必须跨子进程保留未创建厂商任务的事实");
+  assert.match(preflightListFailure.stderr, /\[DREAMINA_QUERY_TRANSIENT\]/u);
+
+  const membershipRequired = await runChild(process.execPath, [
+    videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-membership-required-key",
+  ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "membership-required" });
+  assert.notEqual(membershipRequired.code, 0, "有积分但无 CLI 会员权限时必须在付费提交前停止");
+  assert.match(membershipRequired.stderr, /\[DREAMINA_PRE_SUBMIT_NO_TASK\]/u);
+  assert.match(membershipRequired.stderr, /\[DREAMINA_CLI_MEMBERSHIP_REQUIRED\]/u);
 } finally {
   await rm(runtimeRoot, { recursive: true, force: true });
 }
@@ -211,7 +260,7 @@ try {
   assert.equal(migrated.billingRisk, "submission_outcome_unknown");
   assert.equal(migrated.safeNoTaskRetry, false);
   const occupants = await listDreaminaProfileBlockingJobs();
-  assert.equal(occupants.some((item) => item.id === job.id), true, "不确定提交必须继续显示为凭证锁占用任务");
+  assert.equal(occupants.some((item) => item.id === job.id), false, "不确定提交必须进入待处理但释放凭证锁，不能无限阻断其他配置");
   console.log("Dreamina generation-stage auth semantics and legacy migration checks passed");
 } finally {
   const resolved = resolve(root);

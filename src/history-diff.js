@@ -75,38 +75,42 @@ export const normalizeHistoryChangeSet = (changeSet = [], before = "", after = "
 export const resolveHistoryDiffInput = ({
   changeSet = [],
   explicitBefore = "",
-  explicitAfter = "",
-  hasExplicitAfter = false,
+  hasExplicitBefore = false,
   parentBefore = "",
   snapshotAfter = "",
   hasParent = false,
+  hasSnapshot = true,
 } = {}) => {
   const explicitChanges = Array.isArray(changeSet) ? changeSet : [];
   const snapshot = value(snapshotAfter);
+  if (!hasSnapshot) {
+    return {
+      hasDiff: false,
+      before: "",
+      after: "",
+      changeSet: [],
+      source: "missing-complete-snapshot",
+      integrityError: "历史正文快照不完整，已停止显示残缺内容",
+    };
+  }
+  const parent = value(parentBefore);
   if (explicitChanges.length) {
-    const before = snapshot || value(explicitBefore);
-    const after = value(explicitAfter);
-    const verified = validateHistoryChangeSet(explicitChanges, before, after);
+    // A change set only marks ranges. Both sides of the preview must still be
+    // complete document bodies: the parent snapshot when available, otherwise
+    // the full pre-edit body captured with the partial write. The selected
+    // version's complete snapshot is always the after side.
+    const completeBefore = hasParent ? parent : hasExplicitBefore ? value(explicitBefore) : snapshot;
+    const completeAfter = snapshot;
+    const verified = validateHistoryChangeSet(explicitChanges, completeBefore, completeAfter);
     if (verified.valid) {
       return {
         hasDiff: true,
-        before,
-        after,
+        before: completeBefore,
+        after: completeAfter,
         changeSet: verified.changes,
         source: "stored-change-set",
       };
     }
-    if (hasExplicitAfter) {
-      return {
-        hasDiff: before !== after,
-        before,
-        after,
-        changeSet: fallbackChangeSet(before, after),
-        source: before === after ? "full-snapshot" : "rebuilt-from-complete-content",
-        rejectedChangeSetReason: verified.reason,
-      };
-    }
-    const parent = value(parentBefore);
     if (hasParent && parent !== snapshot) {
       return {
         hasDiff: true,
@@ -119,19 +123,18 @@ export const resolveHistoryDiffInput = ({
     }
     return {
       hasDiff: false,
-      before: snapshot,
-      after: snapshot,
+      before: completeAfter,
+      after: completeAfter,
       changeSet: [],
       source: "full-snapshot",
       rejectedChangeSetReason: verified.reason,
     };
   }
-  const before = value(parentBefore);
   const after = snapshot;
-  if (!hasParent || before === after) {
+  if (!hasParent || parent === after) {
     return { hasDiff: false, before: after, after, changeSet: [], source: "full-snapshot" };
   }
-  return { hasDiff: true, before, after, changeSet: [], source: "parent-snapshot" };
+  return { hasDiff: true, before: parent, after, changeSet: [], source: "parent-snapshot" };
 };
 
 export const renderHistoryDiff = ({ before = "", after = "", changeSet = [] } = {}) => {

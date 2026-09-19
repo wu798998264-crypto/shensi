@@ -147,7 +147,16 @@ export const runOpenCodeAgent = async ({
   const variant = String(reasoningEffort || "").trim().toLowerCase();
   if (["high", "max"].includes(variant)) args.push("--variant", variant);
   const permissions = deepSeekOpenCodeAgentPermissions({ allowEdits, allowNetwork, agentPermissionMode: accessMode });
-  if (nativeHost && accessMode === "shensi_only") Object.assign(permissions, { read: "deny", glob: "deny", grep: "deny", list: "deny", shensi_: "allow", "shensi_*": "allow" });
+  if (nativeHost) {
+    if (accessMode === "shensi_only") {
+      Object.assign(permissions, { read: "deny", glob: "deny", grep: "deny", list: "deny" });
+    }
+    for (const name of Array.isArray(nativeHost.toolNames) ? nativeHost.toolNames : []) {
+      const localName = String(name || "").trim();
+      const permissionName = localName.startsWith("shensi_") ? localName : `shensi_${localName}`;
+      if (/^shensi_[a-z0-9_]+$/iu.test(permissionName)) permissions[permissionName] = "allow";
+    }
+  }
   let tempRoot = "";
   const managedCredential = credentialSource === "shensi";
   const isolateHostConfiguration = accessMode === "shensi_only";
@@ -198,7 +207,15 @@ export const runOpenCodeAgent = async ({
   }
   if (nativeHost && !managedCredential && !isolateHostConfiguration) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
   if (accessMode !== "shensi_only") { const pureIndex = args.indexOf("--pure"); if (pureIndex >= 0) args.splice(pureIndex, 1); }
-  if (accessMode === "full_access") args.splice(args.indexOf("run") + 1, 0, "--auto");
+  // `opencode run` is non-interactive. Without --auto it converts an MCP
+  // permission prompt into "the user rejected permission" even when our
+  // isolated config explicitly allows shensi_* tools. All native tools are
+  // still explicitly denied in shensi_only, so --auto can approve only the
+  // Shensi workspace tools that remain allowed by the permission matrix.
+  if (["shensi_only", "full_access"].includes(accessMode)) args.splice(args.indexOf("run") + 1, 0, "--auto");
+  if (String(environment.SHENSI_OPENCODE_DEBUG_PERMISSION || "") === "1") {
+    args.push("--print-logs", "--log-level", "DEBUG");
+  }
   const permissionPort = accessMode === "approval_required" ? await allocatePermissionPort() : 0;
   const permissionServerAuth = permissionPort ? openCodePermissionServerAuth() : null;
   const permissionServerPassword = permissionServerAuth?.password || "";

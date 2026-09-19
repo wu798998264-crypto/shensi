@@ -48,7 +48,7 @@ try {
   const statuses = await statusResponse.json();
   assert.equal(statusResponse.status, 200);
   assert.equal(statuses.ok, true);
-  assert.deepEqual(Object.keys(statuses.runners).sort(), ["claude_code", "codex", "opencode"]);
+  assert.deepEqual(Object.keys(statuses.runners).sort(), ["claude_code", "codex", "custom", "opencode", "workbuddy"]);
   assert.equal(statuses.runners.codex.installed, true);
   assert.equal(statuses.runners.opencode.installed, true);
   assert.equal(statuses.runners.claude_code.installed, true);
@@ -69,7 +69,7 @@ try {
     job = payload.job;
   }
   assert.equal(job.status, "completed");
-  assert.match(job.message, /已安装，无需重复装配/u);
+  assert.match(job.message, /已安装并通过版本复检，无需重复装配/u);
   console.log(JSON.stringify({ ok: true, runners: statuses.runners, installedGuard: job.message }, null, 2));
 } finally {
   child.kill();

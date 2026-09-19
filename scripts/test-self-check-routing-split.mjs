@@ -9,7 +9,7 @@ import {
 import { resolveProjectCapabilityPlan, reviewCapabilitiesForPrompt } from "../src/module-registry.js";
 import { loadShensiContext } from "../src/server/shensi-context.mjs";
 
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 31);
 
 const initial = createInitialCapabilityTemplate();
 const reviewModule = initial.modules.find((module) => module.id === "module:novel-review");

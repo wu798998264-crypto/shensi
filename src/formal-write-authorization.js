@@ -28,7 +28,11 @@ const BODY_PROTECTION = /(?:不|不要|无需|不必|禁止|不得|别).{0,8}(?:
 const NEGATED_WRITE_CLAUSE = /(?:不|不要|不用|无需|不必|禁止|不得|别|先别|暂不|不能|不可).{0,8}(?:修改|修复|改动|改写|重写|润色|优化|调整|替换|续写|覆盖|写入|落盘|保存).{0,12}(?:正文|原文|内容|文档|章节|文章|稿件)?/gu;
 const NO_WRITE_DOCUMENT_DIRECTIVE = /(?:^|[，。！？；;\n\s])(?:不|不要|不用|无需|不必|禁止|不得|别|先别|暂不|不能|不可).{0,12}(?:修改|修复|改动|改写|重写|润色|优化|调整|替换|续写|覆盖|写入|落盘|保存).{0,18}(?:正文|原文|内容|文档|章节|文章|稿件|设定|正史|世界观|大纲|章纲|卷纲|资料)?/u;
 const MUTATION_QUESTION_PATTERN = /(?:能否|能不能|是否|可不可以|可以吗|会不会|如何|怎么|为什么|为何).{0,120}(?:插入|插写|补写|增补|补充|增加|添加|加入|追加|写入)|(?:插入|插写|补写|增补|补充|增加|添加|加入|追加).{0,80}(?:吗|呢|如何|怎么|为什么|为何|[?？])/u;
-const WRITE_CAPABILITY_QUESTION = /(?:能否|能不能|是否|可不可以|可以吗|会不会|如何|怎么|为什么|为何).{0,120}(?:保存|写入|落盘|覆盖)|(?:保存|写入|落盘|覆盖).{0,80}(?:吗|呢|如何|怎么|为什么|为何|[?？])/u;
+// Capability questions must be resolved inside one clause.  A title such as
+// 《为什么清晨的光让人更清醒》 followed by an explicit “新建文档并落盘”
+// is a formal delivery request, not the question “为什么要落盘”.
+const WRITE_CAPABILITY_QUESTION = /(?:能否|能不能|是否|可不可以|可以吗|会不会|如何|怎么|为什么|为何)[^，。！？；;\n]{0,120}(?:保存|写入|落盘|覆盖)|(?:保存|写入|落盘|覆盖)[^，。！？；;\n]{0,80}(?:吗|呢|如何|怎么|为什么|为何|[?？])/u;
+const withoutQuotedTitles = (value = "") => clean(value).replace(/《[^》\n]{1,160}》/gu, "《标题》");
 
 const uniqueStrings = (values = []) => [...new Set((Array.isArray(values) ? values : [values])
   .map(clean)
@@ -228,7 +232,7 @@ export const createFormalWriteAuthorization = ({
     && !/(?:直接执行|立即执行|现在执行|确认写入|直接写入|立即写入|现在写入|直接落盘|立即落盘|现在落盘)/u.test(actionableSource)) {
     return noAuthorization({ ...base, reason: "contextual_insertion_question" });
   }
-  if (!authoritativeContract && WRITE_CAPABILITY_QUESTION.test(actionableSource)
+  if (!authoritativeContract && WRITE_CAPABILITY_QUESTION.test(withoutQuotedTitles(actionableSource))
     && !/(?:直接执行|立即执行|现在执行|确认保存|确认写入|确认落盘|直接保存|直接写入|直接落盘)/u.test(actionableSource)) {
     return noAuthorization({ ...base, reason: "write_capability_question" });
   }

@@ -16,6 +16,12 @@ assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { taskKind: "qual
 assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { taskKind: "software_operation" } } }), "软件操作");
 assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { taskKind: "image_generation" } } }), "图片生成");
 assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { taskKind: "video_generation" } } }), "视频生成");
+assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { taskKind: "capability_inspection" } } }), "路由检查");
+assert.equal(nativeAgentTaskWayLabel({
+  execution: { taskRoute: { taskKind: "formal_creation", diagnosisIntent: true } },
+  qualityReview: true,
+}), "正式创作", "最终真实交付类型必须覆盖早期残留的质检标记");
+assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { mode: "creative", formalArtifactExpected: true } } }), "正式创作", "正式产物生成期间不得显示成泛化 Agent 执行");
 
 assert.deepEqual(agentTaskRouteFromMediaDispatch({ kind: "media", channel: "image" }), {
   mode: "media",
@@ -24,7 +30,19 @@ assert.deepEqual(agentTaskRouteFromMediaDispatch({ kind: "media", channel: "imag
 });
 assert.equal(agentTaskRouteFromDelivery({ mode: "conversation", documentIds: [] }), null, "未提供真实细分类别时必须保留 Agent 执行兜底");
 assert.equal(agentTaskRouteFromDelivery({ mode: "conversation", documentIds: [], taskType: "general_qa" }).taskKind, "general_qa");
+assert.equal(agentTaskRouteFromDelivery(
+  { mode: "conversation", documentIds: [], taskType: "software_operation" },
+  { taskKind: "quality_review" },
+).taskKind, "quality_review", "执行中使用文档工具不得把宿主已编译的内容质检改成软件操作");
+assert.equal(agentTaskRouteFromDelivery(
+  { mode: "conversation", documentIds: [], taskType: "general_qa" },
+  { capabilityInspectionOnly: true, taskKind: "capability_inspection" },
+).taskKind, "capability_inspection", "路由检查不得被交付声明覆盖回普通问答");
 assert.equal(agentTaskRouteFromDelivery({ mode: "documents", documentIds: ["doc-1"], taskType: "quality_review" }).taskKind, "quality_review");
+assert.equal(agentTaskRouteFromDelivery(
+  { mode: "documents", documentIds: ["doc-1"], taskType: "formal_creation" },
+  { taskKind: "formal_creation", diagnosisIntent: true },
+).diagnosisIntent, false, "正式创作交付必须清除早期残留的质检主任务标记");
 assert.equal(agentTaskRouteFromDelivery({ mode: "media", documentIds: [], mediaChannels: ["video"] }).taskKind, "video_generation");
 
 const failed = nativeAgentTerminalPresentation({
@@ -51,6 +69,7 @@ assert.equal(completedWithWarning.content, "正式结果");
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const serverSource = await readFile(new URL("../server.mjs", import.meta.url), "utf8");
+const conversationServiceSource = await readFile(new URL("../src/server/conversation-agent-service.mjs", import.meta.url), "utf8");
 assert.match(appSource, /nativeAgentExecution\s*\?\s*nativeAgentTaskWayLabel/u, "原生 Agent 任务卡必须使用真实任务类型映射");
 assert.match(appSource, /const mediaDispatch = normalizeConversationMediaDispatchContract\(queuedItem\?\.mediaDispatch\)[\s\S]{0,180}options\.mediaDispatch/u, "直接发送和排队恢复都必须保留已确认媒体意图");
 assert.match(appSource, /attachments:\s*refs\.attachments[^\n]+mediaProfiles,[\s\S]{0,80}mediaDispatch/u, "原生 Agent 请求必须把媒体交付合同发给服务端");
@@ -62,5 +81,11 @@ assert.match(serverSource, /let taskRoute = suppliedTaskRoute\s*\?[\s\S]{0,520}\
 assert.match(serverSource, /const agentActiveModule = String\(body\.activeModule \|\| body\.targetModuleId \|\| body\.targetModule \|\| taskRoute\.targetModule/u, "目标模块必须从结构化合同贯穿到运行时");
 assert.match(serverSource, /const agentDeliverableType = String\(body\.deliverableType \|\| taskRoute\.deliverableType/u, "交付类型必须从结构化合同贯穿到运行时");
 assert.match(serverSource, /prompt:\s*agentSemanticAuthority \|\| suppliedTaskRoute \? "" : routingText/u, "结构化路由存在时不得再用原始文字重复猜测 Skill 语义");
+assert.match(appSource, /const nativeTaskRoute = initialTaskRoute \|\| \(\(\) => \{[\s\S]{0,2600}buildAdaptiveTaskRoute\(/u, "原生对话入口必须编译统一结构化任务路由");
+assert.match(appSource, /const createDocumentFromOperation = \(operation\) => \{[\s\S]{0,1800}nextUniqueDocumentName\(title, \{ moduleId, viewId, treeOptions: options \}\)/u, "Agent 创建文档必须按目录作用域追加同名数字后缀");
+assert.match(appSource, /event\.type === "route_read"[\s\S]{0,420}actualRouteReads/u, "原生 Agent 必须保存三级路由真实读取记录");
+assert.match(appSource, /event\.type === "task_route"[\s\S]{0,500}pending\.execution\.taskRoute/u, "任务卡必须接收服务端补全后的真实 placementId 路由");
+assert.match(appSource, /<dt>能力路由<\/dt>[\s\S]{0,120}capabilityRouteSummary/u, "任务卡必须向用户显示实际能力路由摘要");
+assert.match(conversationServiceSource, /const structuredTaskRoute = bindStructuredTaskRoutePlacements\([\s\S]{0,2800}本轮结构化任务路由是宿主编译的权威选择/u, "原生 Agent 服务必须绑定真实 placementId 并强调结构化路由优先级");
 
 console.log("Native Agent task route and task-card labels passed");

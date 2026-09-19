@@ -55,10 +55,10 @@ const agentPermissions = ({ allowEdits = false, allowNetwork = false, agentPermi
       skill: "allow", question: "allow", doom_loop: "ask",
     };
     return {
-      "*": "deny", read: "deny", glob: "deny", grep: "deny", list: "deny", todowrite: "deny",
-      edit: "deny", bash: "deny", task: "deny", external_directory: "deny", webfetch: "deny",
+      read: "deny", write: "deny", edit: "deny", apply_patch: "deny", patch: "deny",
+      glob: "deny", grep: "deny", list: "deny", todowrite: "deny", execute: "deny",
+      bash: "deny", task: "deny", external_directory: "deny", webfetch: "deny",
       websearch: "deny", lsp: "deny", skill: "deny", question: "deny", doom_loop: "deny",
-      shensi_: "allow", "shensi_*": "allow",
     };
   }
   return {
@@ -166,6 +166,13 @@ export const runDeepSeekOpenCodeAgent = async ({
   try {
     const launch = await launchResolver({ environment });
     const permissions = agentPermissions({ allowEdits, allowNetwork, agentPermissionMode: accessMode });
+    if (nativeHost) {
+      for (const name of Array.isArray(nativeHost?.toolNames) ? nativeHost.toolNames : []) {
+        const localName = String(name || "").trim();
+        const permissionName = localName.startsWith("shensi_") ? localName : `shensi_${localName}`;
+        if (/^shensi_[a-z0-9_]+$/iu.test(permissionName)) permissions[permissionName] = "allow";
+      }
+    }
     const config = {
       ...deepSeekOpenCodeProviderConfig([model]),
       share: "disabled",
@@ -200,7 +207,10 @@ export const runDeepSeekOpenCodeAgent = async ({
       const pureIndex = args.indexOf("--pure");
       if (pureIndex >= 0) args.splice(pureIndex, 1);
     }
-    if (accessMode === "full_access") args.splice(args.indexOf("run") + 1, 0, "--auto");
+    if (["shensi_only", "full_access"].includes(accessMode)) args.splice(args.indexOf("run") + 1, 0, "--auto");
+    if (String(environment.SHENSI_OPENCODE_DEBUG_PERMISSION || "") === "1") {
+      args.push("--print-logs", "--log-level", "DEBUG");
+    }
     const permissionPort = accessMode === "approval_required" ? await allocatePermissionPort() : 0;
     const permissionServerAuth = permissionPort ? openCodePermissionServerAuth() : null;
     const permissionServerPassword = permissionServerAuth?.password || "";

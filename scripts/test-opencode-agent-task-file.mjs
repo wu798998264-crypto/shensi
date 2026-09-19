@@ -63,7 +63,7 @@ process.stdout.write(JSON.stringify({ type: "text", text: JSON.stringify({
       model: "provider/model",
       credentialSource: "opencode",
       agentPermissionMode,
-      nativeHost: { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" } },
+      nativeHost: { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" }, toolNames: ["routes_read"] },
       requestApproval: async () => ({ answer: "deny" }),
       launchResolver: async () => ({ executable: process.execPath, prefixArgs: [permissionRunner] }),
       allocatePermissionPort: async () => 49999,
@@ -75,7 +75,9 @@ process.stdout.write(JSON.stringify({ type: "text", text: JSON.stringify({
   const restricted = await runMode("shensi_only");
   assert.equal(restricted.permission.bash, "deny");
   assert.equal(restricted.permission.read, "deny");
-  assert.equal(restricted.args.includes("--auto"), false);
+  assert.equal(restricted.permission.shensi_routes_read, "allow");
+  assert.equal(restricted.config.tools, undefined, "旧 tools 兼容字段会干扰 MCP 权限，必须移除");
+  assert.equal(restricted.args.includes("--auto"), true, "非交互模式必须自动答复未被明确拒绝的 MCP 请求");
   assert.notEqual(restricted.xdgConfig, "", "仅限神思必须隔离 OpenCode 宿主配置");
   assert.equal(restricted.xdgData, "", "复用 OpenCode 登录时应保留其凭据数据入口");
   assert.deepEqual(restricted.config.plugin, []);

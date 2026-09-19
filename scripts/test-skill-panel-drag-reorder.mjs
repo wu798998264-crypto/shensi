@@ -143,21 +143,7 @@ try {
     targetMemberId: theory.items[0].id,
   }), /找不到要交换的插槽或目标位置/u, "不同作用域的成员不得跨容器交换");
   const novelGroup = capabilityTemplateNode(initial.capabilityTemplate.current, "group", "group:novel");
-  const kernelPlacement = novelGroup.items.find((item) => item.targetId === "module:novel-engineering");
-  const movablePlacement = novelGroup.items.find((item) => item.targetId !== "module:novel-engineering");
-  assert.ok(kernelPlacement && movablePlacement, "测试面板应包含内置工程机制和普通模块");
-  assert.throws(() => swapCapabilityTemplateMembers(initial.capabilityTemplate.current, {
-    scopeType: "group",
-    scopeId: novelGroup.id,
-    memberId: kernelPlacement.id,
-    targetMemberId: movablePlacement.id,
-  }), /内置运行机制不可调整位置/u, "内置锁定节点不得参与精确交换");
-  assert.throws(() => swapCapabilityTemplateMembers(initial.capabilityTemplate.current, {
-    scopeType: "group",
-    scopeId: novelGroup.id,
-    memberId: movablePlacement.id,
-    targetMemberId: kernelPlacement.id,
-  }), /内置运行机制不可调整位置/u, "内置锁定目标不得被普通节点替换");
+  assert.equal(novelGroup.items.some((item) => item.targetId === "module:novel-engineering"), false, "工程化管理不再占用面板路由位置");
 
   const legacyCatalog = await listManagedSkills();
   const rootSlots = legacyCatalog.customSlots

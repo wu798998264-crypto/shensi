@@ -276,8 +276,7 @@ export class ShensiCodexAgentRuntime {
   }
 
   async resolveRuntimeApproval(message, run) {
-    if (!run || run.permissionMode === "shensi_only") {
-      if (run) run.deniedToolCalls += 1;
+    if (!run) {
       this.respond(message.id, deniedApprovalResult(message.method));
       return;
     }
@@ -288,6 +287,11 @@ export class ShensiCodexAgentRuntime {
     const detail = approvalDetail(message.method, message.params || {});
     run.onToolEvent?.({ phase: "approval_requested", kind: "permission", name: message.method, input: detail, callId: String(message.id) });
     try {
+      if (typeof run.requestApproval !== "function") {
+        run.deniedToolCalls += 1;
+        this.respond(message.id, deniedApprovalResult(message.method));
+        return;
+      }
       const response = await run.requestApproval?.({
         question: approvalQuestion(detail),
         options: [
@@ -472,18 +476,23 @@ export class ShensiCodexAgentRuntime {
     const requestedWebSearchEnabled = hasNativeWebSearchOverride
       ? options.nativeWebSearchEnabled
       : options.settings?.webSearchEnabled === true;
-    const nativeWebSearchEnabled = permissionMode === "shensi_only"
-      ? false
-      : hasNativeWebSearchOverride
-        ? requestedWebSearchEnabled
-        : requestedWebSearchEnabled
-          ? await requestAgentCapabilityApproval({
+    const nativeWebSearchEnabled = requestedWebSearchEnabled
+      ? hasNativeWebSearchOverride
+        ? permissionMode === "full_access"
+          ? true
+          : await requestAgentCapabilityApproval({
             permissionMode,
             capability: "原生联网搜索",
             runner: "Codex Agent",
             requestApproval: options.requestApproval,
           })
-          : false;
+        : await requestAgentCapabilityApproval({
+          permissionMode,
+          capability: "原生联网搜索",
+          runner: "Codex Agent",
+          requestApproval: options.requestApproval,
+        })
+      : false;
     const session = await this.ensureSession({ ...options, nativeWebSearchEnabled });
     const permission = codexPermissionConfig(session.permissionMode);
     const provisionalId = `starting-${randomUUID()}`;

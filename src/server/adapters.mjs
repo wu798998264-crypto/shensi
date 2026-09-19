@@ -979,6 +979,17 @@ export const prepareMultimodalAttachments = async ({ settings = {}, attachments 
   }
 };
 
+export const codexLoginStateFromOutput = (value = "") => {
+  const text = String(value || "").trim();
+  if (/\bnot\s+logged\s+in\b|\blog[ -]?in\s+required\b|\bplease\s+log\s+in\b|未登录|需要登录/iu.test(text)) {
+    return { authenticated: false, authState: "login_required" };
+  }
+  if (/\blogged\s+in\b|已登录/iu.test(text)) {
+    return { authenticated: true, authState: "authenticated" };
+  }
+  return { authenticated: null, authState: "unknown" };
+};
+
 export const detectLocalCodex = async ({ cwd, includeModels = true }) => {
   try {
     const launch = await resolveLocalCodexLaunch();
@@ -990,17 +1001,28 @@ export const detectLocalCodex = async ({ cwd, includeModels = true }) => {
       timeoutMs: 8000,
     });
     const version = result.stdout.split(/\r?\n/)[0] || "Codex CLI";
-    let models = [];
-    if (includeModels) try {
-      const catalog = await spawnCaptured({
+    const loginProbe = spawnCaptured({
+      executable: launch.executable,
+      args: [...launch.prefixArgs, "login", "status"],
+      input: "",
+      cwd,
+      timeoutMs: 8000,
+    }).then(
+      (login) => codexLoginStateFromOutput(`${login.stdout}\n${login.stderr}`),
+      (error) => codexLoginStateFromOutput(`${error?.partialOutput || ""}\n${error?.stderrTail || ""}`),
+    );
+    const modelProbe = includeModels
+      ? spawnCaptured({
         executable: launch.executable,
         args: [...launch.prefixArgs, "debug", "models"],
         input: "",
         cwd,
         timeoutMs: 12_000,
-      });
-      models = normalizeCodexModelCatalog(JSON.parse(catalog.stdout));
-    } catch {}
+      }).then((catalog) => normalizeCodexModelCatalog(JSON.parse(catalog.stdout)), () => [])
+      : Promise.resolve([]);
+    // Both probes are read-only and independent. Running them together avoids
+    // delaying desktop readiness merely to make account state truthful.
+    const [loginState, models] = await Promise.all([loginProbe, modelProbe]);
     return {
       available: true,
       version,
@@ -1008,6 +1030,7 @@ export const detectLocalCodex = async ({ cwd, includeModels = true }) => {
       cliArgs: [...launch.prefixArgs.map(quoteCliTemplateArg), "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-"].join(" "),
       models,
       defaultModel: models[0]?.slug ?? "",
+      ...loginState,
     };
   } catch (error) {
     return { available: false, message: error.message };

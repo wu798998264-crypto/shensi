@@ -44,7 +44,7 @@ const sourceGroup = (type = "") => ({
 }[type] ?? "关联历史");
 
 const historyTimestamp = (entry = {}) => {
-  const parsed = Date.parse(String(entry.createdAt || entry.timestamp || ""));
+  const parsed = Date.parse(String(entry.lastActivatedAt || entry.createdAt || entry.timestamp || ""));
   if (Number.isFinite(parsed)) return parsed;
   const embedded = String(entry.id || "").match(/(?:^|[-_])(\d{13})(?:[-_]|$)/u)?.[1];
   return embedded ? Number(embedded) : 0;

@@ -367,7 +367,16 @@ export const migrateHistoryScopes = (state) => {
   return { changed: true, moved, removedDuplicates: Math.max(0, beforeCount - afterCount) };
 };
 
-export const sameDocumentHistoryContent = (left, right) => documentSignature(left) === documentSignature(right);
+// Manual version saving compares the complete user-visible document snapshot.
+// A title-only edit is a real version change just like punctuation, Markdown,
+// rich-text formatting or continuity metadata.
+export const sameDocumentHistoryContent = (left, right) => (
+  stableStringify(documentPayload(left?.document && typeof left.document === "object" ? left.document : left))
+  === stableStringify(documentPayload(right?.document && typeof right.document === "object" ? right.document : right))
+);
+export const matchingDocumentHistoryIndex = (entries = [], candidate = {}) => (
+  (Array.isArray(entries) ? entries : []).findIndex((entry) => sameDocumentHistoryContent(entry, candidate))
+);
 export const sameViewHistoryContent = (left, right, moduleId) => moduleSignature(left, moduleId) === moduleSignature(right, moduleId);
 export const sameModuleHistoryContent = (left, right, moduleId) => moduleSignature(left, moduleId) === moduleSignature(right, moduleId);
 export const sameProjectHistoryContent = (left, right) => projectSignature(left) === projectSignature(right);

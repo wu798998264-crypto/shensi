@@ -32,6 +32,49 @@ $recoveryAuth = Join-Path $recoveryRoot 'current.reg'
 $recoveryEmpty = Join-Path $recoveryRoot 'current.empty'
 $hadCurrentAuth = $false
 $exitCode = 1
+$brokerLeasePath = [string]$env:SHENSI_DREAMINA_BROKER_LEASE_PATH
+$brokerLeaseToken = [guid]::NewGuid().ToString('N')
+
+function Write-DreaminaBrokerLease([string]$Command) {
+  if ([string]::IsNullOrWhiteSpace($brokerLeasePath)) { return }
+  $leaseDirectory = [System.IO.Path]::GetDirectoryName($brokerLeasePath)
+  if (-not [string]::IsNullOrWhiteSpace($leaseDirectory)) {
+    [System.IO.Directory]::CreateDirectory($leaseDirectory) | Out-Null
+  }
+  $lease = [ordered]@{
+    profileId = $ProfileId
+    token = $brokerLeaseToken
+    pid = $PID
+    jobId = [string]$env:SHENSI_DREAMINA_JOB_ID
+    channel = [string]$env:SHENSI_DREAMINA_CHANNEL
+    command = [string]$Command
+    acquiredAt = [DateTime]::UtcNow.ToString('o')
+  }
+  $temporary = "$brokerLeasePath.$PID.$brokerLeaseToken.tmp"
+  [System.IO.File]::WriteAllText($temporary, ($lease | ConvertTo-Json -Compress), $utf8NoBom)
+  try {
+    if ([System.IO.File]::Exists($brokerLeasePath)) {
+      [System.IO.File]::Replace($temporary, $brokerLeasePath, $null)
+    } else {
+      [System.IO.File]::Move($temporary, $brokerLeasePath)
+    }
+  } finally {
+    if ([System.IO.File]::Exists($temporary)) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Clear-DreaminaBrokerLease {
+  if ([string]::IsNullOrWhiteSpace($brokerLeasePath) -or -not (Test-Path -LiteralPath $brokerLeasePath)) { return }
+  try {
+    $lease = Get-Content -LiteralPath $brokerLeasePath -Raw -ErrorAction Stop | ConvertFrom-Json
+    if ([string]$lease.token -eq $brokerLeaseToken) {
+      Remove-Item -LiteralPath $brokerLeasePath -Force -ErrorAction SilentlyContinue
+    }
+  } catch {
+    # Never remove another live runner's lease when an interrupted write left
+    # unreadable metadata. The server will discard it after the owner exits.
+  }
+}
 
 function Test-DreaminaRegistryKey {
   $previousPreference = $ErrorActionPreference
@@ -159,6 +202,8 @@ try {
     [Console]::Error.WriteLine('[DREAMINA_PROFILE_BROKER_BUSY] Dreamina credential slot is busy; command not started.')
     exit 75
   }
+  $leaseCommand = if ($ProbeOnly) { 'probe_lock' } elseif ($CliArgs.Count -gt 0) { [string]$CliArgs[0] } else { '' }
+  Write-DreaminaBrokerLease -Command $leaseCommand
   if ($ProbeOnly) {
     [Console]::Out.WriteLine('DREAMINA_PROFILE_LOCK_ACQUIRED')
     $exitCode = 0
@@ -243,6 +288,7 @@ try {
       if (Test-Path -LiteralPath $recoveryRoot) { Remove-Item -LiteralPath $recoveryRoot -Force -ErrorAction SilentlyContinue }
       if (Test-Path -LiteralPath $temporaryRoot) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force }
     }
+    Clear-DreaminaBrokerLease
     if ($lockTaken) { $mutex.ReleaseMutex() }
     $mutex.Dispose()
   }

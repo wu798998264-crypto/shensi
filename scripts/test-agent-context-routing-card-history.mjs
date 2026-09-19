@@ -39,7 +39,7 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-assert.deepEqual(AGENT_ENGINE_IDS, ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"]);
+assert.deepEqual(AGENT_ENGINE_IDS, ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"]);
 assert.equal(agentEngineDescriptor("codex").label, "Codex");
 assert.equal(agentEngineDescriptor("deepseek_opencode").label, "OpenCode+DeepSeek");
 assert.equal(agentEngineDescriptor("opencode").label, "OpenCode");

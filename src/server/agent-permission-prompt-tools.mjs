@@ -13,9 +13,9 @@ export const requestAgentCapabilityApproval = async ({
   runner = "Agent",
   requestApproval,
 } = {}) => {
-  if (permissionMode === "shensi_only") return false;
   if (permissionMode === "full_access") return true;
   if (typeof requestApproval !== "function") {
+    if (permissionMode === "shensi_only") return false;
     throw Object.assign(new Error("操作需确认模式缺少神思审批通道"), { code: "AGENT_APPROVAL_CHANNEL_REQUIRED" });
   }
   const response = await requestApproval({

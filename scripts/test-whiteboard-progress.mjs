@@ -126,6 +126,8 @@ assert.match(app, /if \(ownsCandidate && !retainCandidateUntilVerified\)/u, "回
 assert.match(app, /completedGenerationStatusVisible = Boolean\(!candidate && !generating && !generationElapsedDismissed && completedGenerationElapsedMs > 0\)/u, "文字、图片和视频成功回填后都必须继续固定显示完整生成状态");
 assert.match(app, /completedGenerationStatusVisible \? uiText\("生成成功"\)/u, "成功卡片左上角必须明确显示生成成功，不能退化成没有状态含义的耗时文字");
 assert.match(app, /candidate\s+\? durableMediaCandidate \? providerQueueLabel \|\| mediaGenerationPhaseText\(candidate\)/u, "候选任务仍存在时必须始终显示状态文案，不能因未知中间态静默消失");
+assert.match(app, /queueLength !== null && queueLength > 0/u, "厂商未返回有效队列总人数时不得显示“共 0 人”");
+assert.match(app, /queuePosition !== null && queuePosition > 0/u, "厂商未返回有效队列位置时不得伪造“当前第 1 位”");
 assert.match(app, /data-generation-complete-status="true" title="点击卡片隐藏本次生成状态"/u, "成功状态必须保留到用户点击卡片为止");
 assert.match(app, /querySelector\(":scope > \.whiteboard-card-kind\[data-generation-complete-status=\\"true\\"\]"\)[\s\S]{0,420}status\.remove\(\)/u, "点击卡片必须一次性隐藏完整成功状态，而不是只移除耗时");
 assert.match(app, /if \(card\) dismissWhiteboardGenerationElapsed\(card\)/u, "完成状态只能在用户点击对应卡片后隐藏");

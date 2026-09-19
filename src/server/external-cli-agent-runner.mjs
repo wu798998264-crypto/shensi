@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
+import { resolveRunnerLaunch } from "./agent-runner-launch.mjs";
 import { deepSeekAgentContextText } from "./deepseek-opencode-agent-runner.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
@@ -9,7 +10,7 @@ import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
-const EXTERNAL_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
+const EXTERNAL_ENGINES = new Set(["workbuddy", "custom"]);
 
 const clean = (value = "") => String(value ?? "").replace(/\0/gu, "").trim();
 
@@ -212,18 +213,14 @@ export const parseExternalCliOutput = (stdout = "", { outputFormat = "auto" } = 
 };
 
 const runnerLabel = (engine = "") => ({
-  trae_work: "Trae Work",
   workbuddy: "WorkBuddy",
   custom: "自定义运行器",
 }[engine] || "外置 Agent");
 
-const defaultCliPath = (engine = "") => engine === "trae_work" ? "traecli"
-  : engine === "workbuddy" ? "codebuddy"
+const defaultCliPath = (engine = "") => engine === "workbuddy" ? "codebuddy"
     : "";
 
-const defaultCliArgs = (engine = "") => engine === "trae_work"
-  ? "exec --json --skip-git-repo-check --ephemeral --color never --model {model} --cd {workspace} -"
-  : engine === "workbuddy"
+const defaultCliArgs = (engine = "") => engine === "workbuddy"
     ? "-p {prompt} --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config"
     : "";
 
@@ -236,7 +233,8 @@ const nativeInstruction = ({ engine, permissionMode }) => {
   ];
   if (permissionMode === "shensi_only") {
     common.push(
-      "Use only the supplied shensi MCP server. Native filesystem, shell, network, ambient MCP, plugins, Skills and subagents are not authorized.",
+      "Use the supplied shensi MCP server for all normal work. Native filesystem, shell, network, ambient MCP, plugins, external Skill installation and subagents are blocked by default.",
+      "If the user explicitly requests a Shensi-external capability, first call the supplied shensi permission.prompt tool with the exact operation and continue only when this single operation is approved. A previous approval never applies to another operation.",
       "The current directory is an empty isolated scratch directory, not the user's work; do not use it to bypass Shensi tools.",
     );
   } else if (permissionMode === "approval_required") {
@@ -262,8 +260,15 @@ const mcpConfig = (nativeHost) => ({
 
 const externalEnvironment = ({ environment = process.env, nativeHost, mcpConfigFile, provider, model, baseUrl, apiKey, permissionMode }) => {
   const authorization = clean(nativeHost?.headers?.Authorization || nativeHost?.headers?.authorization);
+  const executable = clean(nativeHost?.runnerExecutable);
+  const executableDirectory = executable && isAbsolute(executable) ? dirname(executable) : "";
+  const currentPath = clean(environment.PATH || environment.Path);
+  const launchPath = executableDirectory && !currentPath.split(delimiter).includes(executableDirectory)
+    ? [executableDirectory, currentPath].filter(Boolean).join(delimiter)
+    : currentPath;
   return {
     ...environment,
+    ...(launchPath ? { PATH: launchPath, Path: launchPath } : {}),
     SHENSI_AGENT_MCP_CONFIG_FILE: mcpConfigFile,
     SHENSI_MCP_CONFIG_FILE: mcpConfigFile,
     SHENSI_MCP_URL: clean(nativeHost?.url),
@@ -276,7 +281,15 @@ const externalEnvironment = ({ environment = process.env, nativeHost, mcpConfigF
   };
 };
 
-const errorForRunner = (engine, message, code = "EXTERNAL_CLI_AGENT_FAILED") => Object.assign(new Error(message), { code });
+const errorForRunner = (engine, message, code = "EXTERNAL_CLI_AGENT_FAILED", patch = {}) => Object.assign(new Error(message), {
+  code,
+  runnerId: clean(engine),
+  stage: patch.stage || (/(?:PATH|EXECUTABLE|LAUNCH)/iu.test(code) ? "executable_resolution" : /(?:TIMEOUT|ABORTED)/iu.test(code) ? "execution" : "response"),
+  summary: bounded(message),
+  detail: bounded(patch.detail || message, 4_000),
+  retryable: patch.retryable === true,
+  suggestedAction: clean(patch.suggestedAction),
+});
 
 export const runExternalCliAgent = async ({
   engine = "",
@@ -288,6 +301,7 @@ export const runExternalCliAgent = async ({
   apiKey = "",
   cliPath = "",
   cliArgs = "",
+  prefixArgs = [],
   contextBlocks = [],
   nativeHost = null,
   agentPermissionMode = "",
@@ -298,13 +312,27 @@ export const runExternalCliAgent = async ({
   onEvent = null,
   onProcess = null,
   spawnProcess = spawn,
+  resolveLaunch = resolveRunnerLaunch,
 } = {}) => {
   const runner = clean(engine);
   if (!EXTERNAL_ENGINES.has(runner)) throw errorForRunner(runner, "所选运行器未提供外置 CLI Agent 接口", "EXTERNAL_CLI_RUNNER_UNSUPPORTED");
   const task = clean(prompt);
   if (!task) throw errorForRunner(runner, `${runnerLabel(runner)} 没有收到任务指令`, "EXTERNAL_CLI_PROMPT_REQUIRED");
   if (!nativeHost?.url) throw errorForRunner(runner, `${runnerLabel(runner)} 缺少神思 MCP 工具入口`, "EXTERNAL_CLI_MCP_REQUIRED");
-  const executable = clean(cliPath) || defaultCliPath(runner);
+  let executable = clean(cliPath) || defaultCliPath(runner);
+  let resolvedPrefixArgs = Array.isArray(prefixArgs) ? prefixArgs.map(clean).filter(Boolean).slice(0, 16) : [];
+  const defaultCommand = defaultCliPath(runner);
+  const executableName = basename(executable).replace(/\.(?:cmd|exe|ps1)$/iu, "").toLowerCase();
+  const needsResolution = runner !== "custom" && (!executable || executable === defaultCommand || executableName === defaultCommand.toLowerCase());
+  if (needsResolution) {
+    try {
+      const launch = await resolveLaunch({ runnerId: runner, environment, machineRoot: environment.SHENSI_MACHINE_DATA_ROOT || "" });
+      executable = clean(launch.executable);
+      resolvedPrefixArgs = Array.isArray(launch.prefixArgs) ? launch.prefixArgs.map(clean).filter(Boolean) : [];
+    } catch (error) {
+      throw errorForRunner(runner, `${runnerLabel(runner)} 已配置但找不到可执行文件：${redactAgentError(error?.message || error, [apiKey])}`, "EXTERNAL_CLI_EXECUTABLE_NOT_FOUND");
+    }
+  }
   if (!executable) throw errorForRunner(runner, "自定义运行器需要填写 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED");
   const template = clean(cliArgs) || defaultCliArgs(runner);
   if (!template) throw errorForRunner(runner, "自定义运行器需要填写 CLI 参数模板", "EXTERNAL_CLI_ARGS_REQUIRED");
@@ -334,7 +362,7 @@ export const runExternalCliAgent = async ({
       writeFile(mcpConfigFile, JSON.stringify(mcpConfig(nativeHost), null, 2), "utf8"),
     ]);
     const workspace = accessMode === "shensi_only" ? isolatedWorkspace : clean(cwd) || isolatedWorkspace;
-    let args = expandCliArgs(template, {
+    let args = [...resolvedPrefixArgs, ...expandCliArgs(template, {
       prompt: finalPrompt,
       promptFile: promptPath,
       model: clean(model),
@@ -342,28 +370,17 @@ export const runExternalCliAgent = async ({
       mcpConfigFile,
       workspace,
       permissionMode: accessMode,
-    });
+    })];
     const usesPrompt = /\{prompt(?:File)?\}/u.test(template);
-    // Trae's documented exec command accepts `-` for stdin. Custom templates
-    // without a prompt placeholder receive the same prompt through stdin.
+    // Templates without a prompt placeholder receive the same prompt through stdin.
     const sendPromptToStdin = !usesPrompt;
-    if (runner === "trae_work") {
-      if (!args.includes("--sandbox")) args.push("--sandbox", accessMode === "full_access" ? "danger-full-access" : "read-only");
-      if (!args.includes("--permission-mode")) args.push("--permission-mode", accessMode === "full_access" ? "bypass_permissions" : accessMode === "approval_required" ? "custom" : "plan");
-      if (accessMode === "shensi_only") {
-        if (!args.includes("--ignore-user-config")) args.push("--ignore-user-config");
-        for (const forbidden of ["shell", "bash", "read", "write", "edit", "apply_patch", "web_search", "webfetch"]) {
-          args.push("--disallowed-tool", forbidden);
-        }
-      }
-    }
     if (runner === "workbuddy" && accessMode === "shensi_only" && !args.some((arg) => /^--tools(?:=|$)/u.test(arg))) {
       args.push("--tools", "mcp__shensi__*");
     }
     return await new Promise((resolveRun, rejectRun) => {
       const child = spawnProcess(executable, args, {
         cwd: workspace,
-        env: externalEnvironment({ environment, nativeHost, mcpConfigFile, provider, model, baseUrl, apiKey, permissionMode: accessMode }),
+        env: externalEnvironment({ environment, nativeHost: { ...nativeHost, runnerExecutable: executable }, mcpConfigFile, provider, model, baseUrl, apiKey, permissionMode: accessMode }),
         shell: false,
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],

@@ -129,7 +129,6 @@ const toolResultText = (result) => {
 };
 
 const webSearchApproval = async ({ permissionMode, requestApproval, settings = {} } = {}) => {
-  if (permissionMode === "shensi_only") return false;
   if (permissionMode === "full_access") return true;
   if (typeof requestApproval !== "function") {
     throw Object.assign(new Error("操作需确认模式下启用联网搜索需要神思审批通道"), { code: "CODEX_API_APPROVAL_CHANNEL_REQUIRED" });

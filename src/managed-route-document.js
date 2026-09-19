@@ -51,6 +51,28 @@ const routeMemberDetail = (child = {}) => {
   return `- ${details.join("；")}`;
 };
 
+const deliverableRouteLine = (children = [], deliverableType = "", label = "") => {
+  const matches = children.filter((child) => child.enabled !== false && list(child.node?.deliverableTypes).includes(deliverableType));
+  if (matches.length === 1) return `- ${label}：选择“${limited(matches[0].name, 100)}”（placementId=${matches[0].placementId}）。`;
+  if (matches.length > 1) return `- ${label}：当前有 ${matches.length} 个直接成员声明此交付类型；先按用户明确指向、成员触发条件与用途消歧，只能选出一个主分支，无法确定时只询问一个会改变成品类型的问题。`;
+  return `- ${label}：当前面板没有声明对应直接成员，不得借用相似模组；按通用 Agent 处理或明确告知能力缺口。`;
+};
+
+const groupStageDecisionLines = (children = []) => {
+  const stagePatterns = [
+    ["创作引导", /guidance|创作引导/u, "只在方向、受众、关键约束或会改变成品的取舍尚未确定时进入；用户已给出可执行要求或明确要求直接生成时跳过。"],
+    ["规划", /planning|规划|大纲|设定/u, "用于大纲、结构、人物、世界观、信息释放或阶段设计；已有可执行规划且用户只要成稿时不重复调用。"],
+    ["主笔", /writer|主笔/u, "用于生成、续写、改写或完成正式成品；不能因为存在引导或规划成员就先输出另一套平行结果。"],
+    ["自检", /review|自检|质检|审稿/u, "用于检查既有候选或用户明确要求的质检；只要求诊断时不擅自重写正文。"],
+    ["理论", /theory|理论/u, "用于解释方法、题材规律或为创作提供必要理论约束；普通成稿任务不默认调用全部理论。"],
+    ["记忆", /memory|记忆/u, "只在跨章节、连续状态、伏笔或长期一致性确实需要时调用；独立短内容不强制进入。"],
+  ];
+  return stagePatterns.flatMap(([stage, pattern, rule]) => {
+    const matches = children.filter((child) => child.enabled !== false && pattern.test(`${child.nodeId}\n${child.name}`));
+    return matches.length ? [`- ${stage}：${matches.map((child) => `“${limited(child.name, 80)}”`).join("、")}。${rule}`] : [];
+  });
+};
+
 const identityVariants = (value) => {
   const id = clean(value);
   if (!id) return [];
@@ -214,17 +236,29 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
       "",
       "## 任务语义分流",
       "",
-      "- 长篇小说、章节续写、卷纲、章纲、全书或连续写作：选择长篇小说模组；下一层按任务读取创作引导、剧情规划、小说主笔、自检、理论、记忆或工程模块。",
-      "- 短篇小说、短篇故事、微小说、小小说或明确短篇字数限制的独立故事：选择短篇小说模组；不得仅因当前文档属于 manuscript/novel 就改选长篇小说模组。",
-      "- 公众号文章、公众号长文或微信推文：选择公众号文章模组；下一层按任务读取公众号创作引导、公众号主笔、公众号理论或配图规划。",
-      "- 短剧、漫剧、微短剧或小说改短剧：选择短剧剧本模组；按原创或改编读取对应主笔、创作引导、自检和理论模块。",
-      "- 剧情类短视频脚本：选择短视频剧本模组；下一层读取短视频创作引导、短视频主笔、自检和理论模块。",
-      "- 图片提示词、视频提示词、分镜、人物或场景视觉资产：选择提示词工程模组；下一层按任务读取提示词引导、图片资产、多人站位或 AI 视频导演模块。",
+      deliverableRouteLine(children, "novel", "长篇小说、章节续写、卷纲、章纲、全书或连续写作"),
+      deliverableRouteLine(children, "short_fiction", "短篇小说、短篇故事、微小说、小小说或明确短篇篇幅的独立故事"),
+      deliverableRouteLine(children, "public_account", "公众号文章、公众号长文或微信推文"),
+      deliverableRouteLine(children, "short_drama_script", "短剧、漫剧、微短剧或小说改短剧"),
+      deliverableRouteLine(children, "short_video_script", "剧情类短视频脚本"),
+      deliverableRouteLine(children, "visual_prompt", "图片提示词、视频提示词、分镜、人物或场景视觉资产"),
       "- 不属于以上创作资产的普通问题：不强行选择创作模组，使用通用 Agent 问答。",
+      "- 当前文档、作品类型和历史对话只能作为缺少明确产物时的辅助证据，不能覆盖用户本轮明确指定的文体和成品类型。",
+      "",
+      "## 统一语义优先级",
+      "",
+      "按以下顺序只确定一个主要交付分支：本轮明确指定的模组/模块/Skill或@引用 → 明确的转换目标与成品类型 → 明确篇幅和文体 → 本轮已确认选择 → 目标文档 → 当前工作区上下文。低优先级不得覆盖高优先级。",
+      "短篇与长篇、短剧与短视频脚本、短视频脚本与视频提示词必须互斥判断；不能因为词语相似、当前文档属于 novel/manuscript，或某个成员排在前面，就把同一任务随机分给不同模组。",
+      "多个成员都声明同一交付类型时，继续比较成员用途、触发条件和用户要求；仍会改变最终成品时只问一个问题，不并行启动多个主分支。",
+      "自定义模组或模块保存后，本路由会根据其真实名称、具体作用、成员、关系和启用状态自动重新编译。未声明标准交付类型时，先依据这些真实信息判断；只有多个自定义位置仍同样适用且会产生不同结果时才询问用户，不能借用数组中的第一个位置。",
+      "",
+      "## 复合任务协作",
+      "",
+      "复合任务按依赖顺序执行：必要引导 → 必要规划 → 主笔生成 → 按需自检 → 可信写入。上一步已由用户资料或既有文档充分提供时直接跳过；不得因面板存在某成员就全量调用，也不得并行输出互相冲突的规划、正文与审稿结果。结构清单、物理路径、原子落盘、历史和磁盘复核由 documents 工具与可信写入层负责，不需要工程化管理 Skill。",
       "",
       "## 读取顺序",
       "",
-      "先根据用户任务完整语义选择一个或多个顶层模组/模块；随后使用返回的 placementId 读取对应模组路由或模块路由，再读取实际 Skill。面板路由不展开深层成员，也不把面板外 Skill 当作自动候选。",
+      "先根据用户任务完整语义选择一个主要顶层模组/模块；复合任务只按实际依赖增加必要协作分支。随后使用返回的 placementId 读取对应模组路由或模块路由，再读取实际 Skill。面板路由不展开深层成员，也不把面板外 Skill 当作自动候选。",
       "",
       "## 无匹配任务",
       "",
@@ -235,7 +269,9 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
       "面板结构中的成员、顺序、角色和启用状态是唯一事实来源；本文件中的文字只解释用途，不能改变面板结构。",
     );
   } else if (entry.kind === "group") {
-    lines.push("", "## 读取顺序", "", "先依据本模组的关系和成员用途确定实际分支，再读取命中模组或模块的路由文档；不得因成员存在就读取整个模组的所有深层 Skill。", "", "## 事实边界", "", "模组只负责内部组织和分支选择，不改变下级模块的插槽能力；下级模块的具体 Skill 角色以模块路由为准。");
+    const stageLines = groupStageDecisionLines(children);
+    if (stageLines.length) lines.push("", "## 阶段选择规则", "", ...stageLines, "- 一个任务需要多个阶段时按前后依赖顺序串联，把上一步结果交给下一步；除非任务本身要求多个独立候选，不并行输出互相竞争的最终成果。");
+    lines.push("", "## 读取顺序", "", "先依据本模组的关系和成员用途确定唯一主分支；复合任务再按依赖顺序增加必要协作成员。随后读取命中模组或模块的路由文档；不得因成员存在就读取整个模组的所有深层 Skill。", "", "## 事实边界", "", "模组只负责内部组织和分支选择，不改变下级模块的插槽能力；下级模块的具体 Skill 角色以模块路由为准。");
   } else if (entry.relationType === "organization" || children.some((child) => child.organizationUpperPlacementIds?.length)) {
     lines.push("", "## 读取顺序", "", "先按本模块关系确定主要/次要、上位/下位或并行插槽，再使用具体 placementId 读取 Skill。每个 Skill 的能力边界、触发说明和启用状态必须同时纳入执行计划。", "", "## 上位协作", "", "组织关系默认加载上位；只有 Agent 明确判断当前输入已具备下位所需信息、当前环节不需要上位能力或用户明确限定下位时，才可携带语义理由跳过上位。", "", "## 事实边界", "", "模块路由只描述当前模块的真实插槽，不自动调用面板外 Skill；未出现在当前面板插槽中的 Skill 只有用户明确点名或 @ 引用时才能调用。");
   } else {

@@ -77,6 +77,13 @@ assert.equal(mediaRecoveryJobBlocksOperation({
   availableActions: { dismissUncertain: true },
 }), false, "明确失败不得因陈旧的处理动作重新进入待处理");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "running" }), false, "正常生成中的任务不属于待处理阻塞项目");
+assert.equal(mediaRecoveryJobBlocksOperation({
+  ...blockingJob,
+  status: "retry_required",
+  billingRisk: "",
+  providerTaskId: "provider-task-query-paused",
+  availableActions: { resumeOriginal: true },
+}), true, "厂商状态查询耗尽后必须进入可操作的待处理列表");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, billingRisk: "", availableActions: {} }), false, "没有卡片锁或收费不确定性的历史失败不得污染待处理页面");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, resultSuppressed: true }), false, "用户已处理并放弃的任务必须立即隐藏");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", billingRisk: "", availableActions: {} }), false, "已完成任务不应进入待处理阻塞列表");
@@ -230,6 +237,21 @@ try {
   assert.equal(cancelPending.status, "cancel_requested");
   assert.equal(cancelPending.desiredAction, "cancel");
   assert.ok(cancelPending.userStoppedAt, "用户确认终止后必须立即记录用户停止状态，以便前端释放按钮");
+
+  const knownNoTaskTarget = { ...target, nodeId: "image-card-known-no-task" };
+  const knownNoTaskJob = await createMediaGenerationJob({ channel: "image", target: knownNoTaskTarget, request, submissionId: "single-flight-known-no-task-0001" });
+  await updateMediaGenerationJob({ jobId: knownNoTaskJob.id, patch: {
+    status: "waiting_credentials",
+    providerStatus: "not_submitted",
+    providerErrorCode: "DREAMINA_AUTH_REQUIRED",
+    submissionState: "not_submitted",
+    safeNoTaskRetry: true,
+    attempt: 1,
+  } });
+  const knownNoTaskCancelled = await requestMediaGenerationCancel({ jobId: knownNoTaskJob.id });
+  assert.equal(knownNoTaskCancelled.status, "cancelled", "已证明未创建厂商任务的核验失败应立即停止，不得倒退为未知提交");
+  assert.equal(knownNoTaskCancelled.providerStatus, "cancelled");
+  assert.equal(knownNoTaskCancelled.billingRisk || "", "");
   const replacementBeforeProviderResolution = await createMediaGenerationJob({
     channel: "video",
     target: cancelTarget,
@@ -239,9 +261,9 @@ try {
   });
   assert.notEqual(replacementBeforeProviderResolution.id, cancelJob.id, "用户明确新提交时，取消待确认的旧任务也必须让路");
   const abandonedCancelPending = await getGenerationJob({ jobId: cancelJob.id });
-  assert.equal(abandonedCancelPending.status, "cancelled");
+  assert.equal(abandonedCancelPending.status, "polling", "已有厂商任务号的旧任务必须继续只读跟踪，不能伪装成远端已取消");
   assert.equal(abandonedCancelPending.resultSuppressed, true);
-  assert.equal(abandonedCancelPending.cancelOutcome, "replacement_local_abandonment");
+  assert.equal(abandonedCancelPending.replacementTrackingOnly, true);
   const lateCompletion = await completeMediaGenerationJob({
     jobId: cancelJob.id,
     allowProviderCompletionAfterCancel: true,
@@ -251,12 +273,12 @@ try {
     },
   });
   assert.equal(lateCompletion.status, "complete", "厂商迟到结果仍应持久化为已完成资产");
-  assert.equal(lateCompletion.desiredAction, "cancel", "厂商迟到结果不得把用户停止意图改回运行");
+  assert.equal(lateCompletion.desiredAction, "run", "替代后的旧任务只允许继续跟踪原厂商结果");
   assert.equal(lateCompletion.resultSuppressed, true, "厂商迟到结果不得自动回填用户已放弃的卡片");
   assert.ok(lateCompletion.userStoppedAt, "厂商迟到结果必须保留用户停止时间");
   await updateMediaGenerationJob({ jobId: cancelJob.id, patch: { desiredAction: "run", resultSuppressed: false } });
   const afterLateWorkerWrite = await getGenerationJob({ jobId: cancelJob.id });
-  assert.equal(afterLateWorkerWrite.desiredAction, "cancel", "后续后台更新不得覆盖已停止意图");
+  assert.equal(afterLateWorkerWrite.desiredAction, "run", "后续后台更新必须保留只读跟踪状态");
   assert.equal(afterLateWorkerWrite.resultSuppressed, true, "后续后台更新不得解除结果抑制");
   const blockedWhileProviderCancelPending = await createMediaGenerationJob({
     channel: "video",

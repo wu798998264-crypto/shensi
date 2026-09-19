@@ -63,6 +63,37 @@ const MAX_READ_ONLY_ROOTS = 64;
 const RPC_TIMEOUT_MS = 30_000;
 const AGENT_PREPARATION_TIMEOUT_MS = 180_000;
 const AGENT_INTERRUPT_TERMINAL_TIMEOUT_MS = 8_000;
+const assertKnownExternalRunnerReady = (capability = {}, { runnerId = "", label = "Agent 运行器", model = "" } = {}) => {
+  if (capability.available !== true) {
+    throw Object.assign(new Error(capability.message || `没有检测到可用的 ${label} CLI`), { code: "AGENT_RUNNER_NOT_INSTALLED" });
+  }
+  if (capability.state === "login_required" || capability.authenticated === false || capability.authState === "login_required") {
+    throw Object.assign(new Error(capability.message || `${label} 已安装但尚未登录，请先完成登录`), { code: "AGENT_RUNNER_LOGIN_REQUIRED" });
+  }
+  const structuredCapability = Object.hasOwn(capability, "authState") || Object.hasOwn(capability, "modelState") || Object.hasOwn(capability, "ready");
+  if (structuredCapability && capability.authState !== "authenticated") {
+    throw Object.assign(new Error(capability.message || `${label} 登录状态尚未通过检查`), {
+      code: "AGENT_RUNNER_AUTHENTICATION_UNVERIFIED",
+      stage: capability.error?.stage || "login_probe",
+    });
+  }
+  if (structuredCapability && capability.ready !== true) {
+    throw Object.assign(new Error(capability.message || `${label} 模型能力尚未就绪`), {
+      code: "AGENT_RUNNER_MODEL_CAPABILITY_UNAVAILABLE",
+      stage: capability.error?.stage || "model_catalog",
+    });
+  }
+  const selectedModel = String(model || "").trim();
+  const models = Array.isArray(capability.models) ? capability.models.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  if (selectedModel && capability.modelState === "catalog_available" && models.length && !models.includes(selectedModel)) {
+    throw Object.assign(new Error(`${selectedModel} 不在 ${label} 当前登录账号返回的模型目录中，请刷新后重新选择`), {
+      code: "AGENT_RUNNER_MODEL_INVALID",
+      stage: "model_validation",
+      runnerId,
+    });
+  }
+  return capability;
+};
 const APPROVAL_METHODS = new Set([
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
@@ -477,7 +508,7 @@ const defaultState = () => ({
   agentEngine: "codex",
   agentPermissionMode: "shensi_only",
   agentModel: "",
-  agentModels: { codex: "", codex_api: "", deepseek_opencode: "deepseek-v4-pro", opencode: "", claude_code: "", trae_work: "", workbuddy: "", custom: "" },
+  agentModels: { codex: "", codex_api: "", deepseek_opencode: "deepseek-v4-pro", opencode: "", claude_code: "", workbuddy: "", custom: "" },
   agentReasoningEffort: "",
   agentSpeedMode: "default",
   agentRequestOptions: {
@@ -486,7 +517,6 @@ const defaultState = () => ({
     deepseek_opencode: { reasoningEffort: "high", speedMode: "default" },
     opencode: { reasoningEffort: "", speedMode: "default" },
     claude_code: { reasoningEffort: "high", speedMode: "default" },
-    trae_work: { reasoningEffort: "", speedMode: "default" },
     workbuddy: { reasoningEffort: "", speedMode: "default" },
     custom: { reasoningEffort: "", speedMode: "default" },
   },
@@ -494,6 +524,10 @@ const defaultState = () => ({
   projects: {},
   lastUpdatedAt: "",
 });
+
+const withoutRetiredTraeWork = (value = {}) => Object.fromEntries(
+  Object.entries(value && typeof value === "object" ? value : {}).filter(([key]) => key !== "trae_work"),
+);
 
 export class CodexAgentProvider {
   constructor({ machineRoot, appRoot, defaultProjectRoot = appRoot, appVersion = "1.0.0", launchResolver = resolveLocalCodexLaunch, openCodeLaunchResolver = resolveLocalOpenCodeLaunch, claudeCodeLaunchResolver = resolveLocalClaudeCodeLaunch, deepSeekAgentRunner = runDeepSeekOpenCodeAgent, openCodeAgentRunner = runOpenCodeAgent, claudeCodeAgentRunner = runClaudeCodeAgentTurn, externalCliAgentRunner = runExternalCliAgent, apiAgentRuntime = createCodexApiAgentRuntime(), workspaceReadBrokerFactory = createAgentWorkspaceReadBroker, startMcp = startConversationAgentMcp, systemReadRoots = null, finalResponseGraceMs = 15_000, mutationRetryLimit = 1, evidenceRetryLimit = mutationRetryLimit, creativeOutputRetryLimit = 1, terminalRunLimit = DEFAULT_TERMINAL_RUN_LIMIT, nativeCodexHome = "", environment = process.env } = {}) {
@@ -566,7 +600,7 @@ export class CodexAgentProvider {
     this.claudeCodeDetectedLaunch = null;
     this.claudeCodeInstalled = null;
     this.claudeCodeCliVersion = "";
-    this.externalRunnerInstallations = { trae_work: null, workbuddy: null };
+    this.externalRunnerInstallations = { workbuddy: null };
     this.deepSeekProcesses = new Map();
     this.closing = false;
     this.selfRepairProject = null;
@@ -580,16 +614,16 @@ export class CodexAgentProvider {
         ...defaultState(),
         ...raw,
         schemaVersion: STATE_SCHEMA_VERSION,
-        agentEngine: ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(raw?.agentEngine) ? raw.agentEngine : "codex",
+        agentEngine: ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(raw?.agentEngine) ? raw.agentEngine : "codex",
         agentPermissionMode: normalizeAgentPermissionMode(raw?.agentPermissionMode),
         agentModels: {
           ...defaultState().agentModels,
-          ...(raw?.agentModels && typeof raw.agentModels === "object" ? raw.agentModels : {}),
+          ...withoutRetiredTraeWork(raw?.agentModels),
           ...(!raw?.agentModels?.codex && raw?.agentModel ? { codex: String(raw.agentModel) } : {}),
         },
         agentRequestOptions: {
           ...defaultState().agentRequestOptions,
-          ...(raw?.agentRequestOptions && typeof raw.agentRequestOptions === "object" ? raw.agentRequestOptions : {}),
+          ...withoutRetiredTraeWork(raw?.agentRequestOptions),
           ...(!raw?.agentRequestOptions?.codex ? {
             codex: {
               reasoningEffort: String(raw?.agentReasoningEffort || ""),
@@ -730,7 +764,7 @@ export class CodexAgentProvider {
   }
 
   activeAgentEngine() {
-    return ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(this.state.agentEngine) ? this.state.agentEngine : "codex";
+    return ["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(this.state.agentEngine) ? this.state.agentEngine : "codex";
   }
 
   activeAgentModel() {
@@ -751,7 +785,7 @@ export class CodexAgentProvider {
 
   taskRuntimeSettings(settings = {}, project = null) {
     const agentEngine = settings.agentEngine || this.activeAgentEngine();
-    if (!["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(agentEngine)) throw new Error("不支持的 Agent 引擎");
+    if (!["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(agentEngine)) throw new Error("不支持的 Agent 引擎");
     const saved = this.state.agentRequestOptions?.[agentEngine] || {};
     return {
       ...settings, agentEngine,
@@ -846,7 +880,7 @@ export class CodexAgentProvider {
     const openCodeEngine = ["deepseek_opencode", "opencode"].includes(agentEngine);
     const codexApiEngine = agentEngine === "codex_api";
     const claudeCodeEngine = agentEngine === "claude_code";
-    const externalCliEngine = ["trae_work", "workbuddy", "custom"].includes(agentEngine);
+    const externalCliEngine = ["workbuddy", "custom"].includes(agentEngine);
     const legacyDeepSeekEngine = agentEngine === "deepseek_opencode";
     const activeModel = agentEngine === "codex" ? String(selected?.model || this.activeAgentModel()) : this.activeAgentModel();
     const requestOptions = this.activeAgentRequestOptions();
@@ -867,7 +901,7 @@ export class CodexAgentProvider {
       ok: true,
       provider: this.state.activeProvider,
       agentEngine,
-      agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : agentEngine === "trae_work" ? "Trae Work Agent" : agentEngine === "workbuddy" ? "WorkBuddy Agent" : agentEngine === "custom" ? "自定义运行器 Agent" : codexApiEngine ? "神思运行器" : "Codex Agent",
+      agentEngineLabel: legacyDeepSeekEngine ? "DeepSeek Agent · OpenCode" : agentEngine === "opencode" ? "OpenCode Agent" : claudeCodeEngine ? "Claude Code Agent" : agentEngine === "workbuddy" ? "WorkBuddy Agent" : agentEngine === "custom" ? "自定义运行器 Agent" : codexApiEngine ? "神思运行器" : "Codex Agent",
       permissionMode,
       permissionLabel: permissionContract.label,
       permissionContract,
@@ -879,7 +913,6 @@ export class CodexAgentProvider {
         { id: "codex_api", label: "神思运行器", installed: true, requiresApiKey: true, credentialsManagedBy: "shensi" },
         { id: "opencode", label: "OpenCode Agent", installed: this.openCodeInstalled, requiresApiKey: false, credentialsManagedBy: "opencode" },
         { id: "claude_code", label: "Claude Code Agent", installed: this.claudeCodeInstalled, requiresApiKey: false, credentialsManagedBy: "claude_code" },
-        { id: "trae_work", label: "Trae Work Agent", installed: this.externalRunnerInstallations?.trae_work?.available === true, requiresApiKey: false, credentialsManagedBy: "trae_work" },
         { id: "workbuddy", label: "WorkBuddy Agent", installed: this.externalRunnerInstallations?.workbuddy?.available === true, requiresApiKey: false, credentialsManagedBy: "workbuddy" },
         { id: "custom", label: "自定义运行器 Agent", installed: true, requiresApiKey: false, credentialsManagedBy: "user" },
       ],
@@ -1021,14 +1054,14 @@ export class CodexAgentProvider {
 
   async setAgentEngine(engine) {
     const normalized = String(engine || "").trim();
-    if (!["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(normalized)) throw new Error("不支持的 Agent 引擎");
+    if (!["codex", "codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(normalized)) throw new Error("不支持的 Agent 引擎");
     if (["deepseek_opencode", "opencode"].includes(normalized) && this.openCodeInstalled !== true) await this.detectOpenCodeInstallation();
     if (normalized === "codex" && this.installed !== true) await this.detectInstallation();
     if (normalized === "claude_code" && this.claudeCodeInstalled !== true) await this.detectClaudeCodeInstallation();
-    if (["trae_work", "workbuddy"].includes(normalized)) {
+    if (normalized === "workbuddy") {
       const capability = await detectKnownAgentRunnerInstallation({ runnerId: normalized, cwd: this.appRoot, environment: this.environment });
       this.externalRunnerInstallations[normalized] = capability;
-      if (capability.available !== true) throw Object.assign(new Error(capability.message || `没有检测到可用的 ${normalized} CLI`), { code: "AGENT_RUNNER_NOT_INSTALLED" });
+      assertKnownExternalRunnerReady(capability, { runnerId: normalized, label: "WorkBuddy" });
     }
     this.state.agentEngine = normalized;
     this.state.agentModels ||= defaultState().agentModels;
@@ -1243,6 +1276,13 @@ export class CodexAgentProvider {
     const codexEnvironment = shensiOnly
       ? shensiCodexEnvironment({ machineRoot: this.machineRoot, environment: this.environment })
       : nativeCodexEnvironment({ environment: this.environment, profileRoot: this.codexProfileRoot });
+    if (shensiOnly) {
+      // Codex refuses to start when CODEX_HOME points at a directory that
+      // does not exist. The dedicated Shensi account profile is created on
+      // first use, before app-server starts, so one-click login never falls
+      // through to an unrelated API profile or a generic process-exit error.
+      await mkdir(codexEnvironment.CODEX_HOME, { recursive: true });
+    }
     const { child, launch } = await spawnLocalCodexAppServer({
       cwd: this.appRoot,
       env: codexEnvironment,
@@ -1545,7 +1585,7 @@ export class CodexAgentProvider {
   }
 
   requestExternalApproval(run, details = {}) {
-    if (!run || run.permissionMode === "shensi_only") return Promise.resolve({ answer: "deny" });
+    if (!run) return Promise.resolve({ answer: "deny" });
     if (run.permissionMode === "full_access") return Promise.resolve({ answer: "allow" });
     return new Promise((resolveApproval) => {
       const detail = details.detail && typeof details.detail === "object" ? details.detail : {};
@@ -2568,9 +2608,9 @@ export class CodexAgentProvider {
     const activeExternalEngine = runtimeSettings.agentEngine;
     const genericOpenCode = activeExternalEngine === "opencode";
     const claudeCode = activeExternalEngine === "claude_code";
-    const externalCli = ["trae_work", "workbuddy", "custom"].includes(activeExternalEngine);
+    const externalCli = ["workbuddy", "custom"].includes(activeExternalEngine);
     const engine = claudeCode ? "claude_code" : genericOpenCode ? "opencode" : externalCli ? activeExternalEngine : "deepseek_opencode";
-    const engineLabel = claudeCode ? "Claude Code Agent" : genericOpenCode ? "OpenCode Agent" : externalCli ? `${activeExternalEngine === "trae_work" ? "Trae Work" : activeExternalEngine === "workbuddy" ? "WorkBuddy" : "自定义运行器"} Agent` : "DeepSeek Agent";
+    const engineLabel = claudeCode ? "Claude Code Agent" : genericOpenCode ? "OpenCode Agent" : externalCli ? `${activeExternalEngine === "workbuddy" ? "WorkBuddy" : "自定义运行器"} Agent` : "DeepSeek Agent";
     if (claudeCode) {
       if (this.claudeCodeInstalled !== true) await this.detectClaudeCodeInstallation();
       if (this.claudeCodeInstalled !== true) throw new Error("没有检测到可用的 Claude Code CLI，无法启动 Claude Code Agent");
@@ -2578,7 +2618,11 @@ export class CodexAgentProvider {
       if (activeExternalEngine !== "custom") {
         const capability = await detectKnownAgentRunnerInstallation({ runnerId: activeExternalEngine, cwd: project.cwd, environment: this.environment });
         this.externalRunnerInstallations[activeExternalEngine] = capability;
-        if (capability.available !== true) throw new Error(capability.message || `没有检测到可用的 ${engineLabel} CLI`);
+        assertKnownExternalRunnerReady(capability, {
+          runnerId: activeExternalEngine,
+          label: "WorkBuddy",
+          model: runtimeSettings.agentModelId || runtimeSettings.model,
+        });
       }
     } else if (this.openCodeInstalled !== true) await this.detectOpenCodeInstallation();
     throwIfAgentStartCancelled(signal);
@@ -2666,7 +2710,7 @@ export class CodexAgentProvider {
     };
     let run = null;
     const requestApproval = (details) => this.requestExternalApproval(run, details);
-    const mcpTools = permissionMode === "approval_required" && (claudeCode || externalCli)
+    const mcpTools = ["shensi_only", "approval_required"].includes(permissionMode) && (openCode || claudeCode || externalCli)
       ? toolsWithPermissionPrompt(workspaceToolRuntime || unavailableWorkspaceTools, requestApproval, { runner: engine })
       : workspaceToolRuntime || unavailableWorkspaceTools;
     let nativeHost = null;
@@ -2806,7 +2850,7 @@ export class CodexAgentProvider {
           credentialSource: runtimeSettings?.credentialSource,
         } : { apiKey }),
         model,
-        ...((genericOpenCode || claudeCode || externalCli) ? { cliPath: runtimeSettings?.cliPath, cliArgs: runtimeSettings?.cliArgs } : {}),
+        ...((genericOpenCode || claudeCode || externalCli) ? { cliPath: runtimeSettings?.cliPath, cliArgs: runtimeSettings?.cliArgs, prefixArgs: runtimeSettings?.prefixArgs } : {}),
         reasoningEffort: requestOptions.reasoningEffort || String(runtimeSettings?.reasoningEffort || "high"),
         allowEdits: expectsFileMutation,
         allowNetwork: permissionContract.capabilities.network,
@@ -3139,7 +3183,7 @@ export class CodexAgentProvider {
     if (requestedEngine === "codex_api") {
       return await this.startCodexApiTurnForProject(text, selectedProject, { taskRoute, contextBlocks, taskPacket, projectMode: "selected_project", runtimeSettings, signal });
     }
-    if (["deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(requestedEngine)) {
+    if (["deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(requestedEngine)) {
       if (workspaceSelfRepairIntent(text, taskRoute)) {
         const readRoots = await this.normalizeReadRoots([selectedProject.cwd, ...(selectedProject.readRoots || [])], this.appRoot);
         this.selfRepairProject = {
@@ -3683,7 +3727,7 @@ export class CodexAgentProvider {
     }
     run.status = "interrupting";
     run.phase = "interrupting";
-    if (["codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(run.engine)) {
+    if (["codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(run.engine)) {
       run.controller?.abort?.();
       for (const [approvalId, approval] of this.approvals) {
         if (approval.method !== "external/permission/requestApproval"
@@ -3755,7 +3799,7 @@ export class CodexAgentProvider {
       return {
         accepted: false,
         deferred: true,
-        reason: ["codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(run.engine) ? "provider_boundary_required" : "turn_not_started",
+        reason: ["codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(run.engine) ? "provider_boundary_required" : "turn_not_started",
         run: this.publicRun(run),
       };
     }
@@ -3844,7 +3888,7 @@ export class CodexAgentProvider {
 
   async close() {
     this.closing = true;
-    for (const run of new Set(this.runs.values())) if (["codex_api", "deepseek_opencode", "opencode", "claude_code", "trae_work", "workbuddy", "custom"].includes(run.engine)) run.controller?.abort?.();
+    for (const run of new Set(this.runs.values())) if (["codex_api", "deepseek_opencode", "opencode", "claude_code", "workbuddy", "custom"].includes(run.engine)) run.controller?.abort?.();
     this.apiAgentRuntime?.close?.();
     for (const child of this.deepSeekProcesses.values()) {
       try { child.kill(); } catch {}

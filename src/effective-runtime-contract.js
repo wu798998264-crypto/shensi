@@ -7,7 +7,8 @@ import {
 
 const text = (value = "") => String(value ?? "").trim();
 const uniqueModes = () => ["agent"];
-const EXTERNAL_CLI_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
+const EXTERNAL_CLI_ENGINES = new Set(["workbuddy", "custom"]);
+const RUNNER_MANAGED_CLI_ENGINES = new Set(["workbuddy"]);
 
 const failed = ({ code, message, profileId = "", surface = "", ...rest }) => ({
   ok: false,
@@ -25,6 +26,7 @@ const credentialSourceForProfile = (profile = {}, engine = "", surface = "") => 
   if (engine === "codex") return "codex";
   if (engine === "opencode" || engine === "deepseek_opencode") return "opencode";
   if (engine === "claude_code") return "claude";
+  if (RUNNER_MANAGED_CLI_ENGINES.has(engine)) return "runner_login";
   if (EXTERNAL_CLI_ENGINES.has(engine)) return "external";
   return "shensi";
 };
@@ -59,6 +61,7 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
   const provider = text(profile.provider);
   const model = modelForSurface(profile, requestedSurface, engine);
   const credentialSource = credentialSourceForProfile(profile, engine, requestedSurface);
+  const runnerManaged = RUNNER_MANAGED_CLI_ENGINES.has(engine);
   const base = {
     profileId,
     surface: requestedSurface,
@@ -68,8 +71,11 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
     adapter: text(profile.adapter),
     protocol: text(profile.protocol),
     runner,
+    runnerId: text(profile.runnerId) || engine,
     engine,
     model,
+    modelPolicy: text(profile.modelPolicy) || (runnerManaged && !model ? "runner_default" : "explicit"),
+    providerId: text(profile.providerId) || (runnerManaged ? "runner_managed" : provider),
     credentialSource,
     baseUrl: text(profile.baseUrl),
     cliPath: text(profile.cliPath),
@@ -80,7 +86,7 @@ export const runtimeContractForProfile = ({ profile = null, surface = "chat" } =
   if (!provider && !externalCli) return failed({ ...base, code: "RUNTIME_PROVIDER_REQUIRED", message: "没有选择模型服务商" });
   if (!runner) return failed({ ...base, code: "RUNTIME_RUNNER_REQUIRED", message: "没有选择可用的运行器" });
   if (!model && !externalCli) return failed({ ...base, code: "RUNTIME_MODEL_REQUIRED", message: "没有选择模型" });
-  if (externalCli && adapter !== "cli") {
+  if (externalCli && base.adapter !== "cli") {
     return failed({ ...base, code: "EXTERNAL_CLI_ADAPTER_REQUIRED", message: "外置 Agent 运行器必须使用 CLI 调用方式" });
   }
   if (engine === "custom" && !text(profile.cliPath)) {

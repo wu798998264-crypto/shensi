@@ -8,6 +8,7 @@ import {
   normalizeAgentPermissionMode,
   normalizeAgentPermissionSettings,
   permissionContractFor,
+  permissionContractForExternalApproval,
 } from "../src/agent-permission-policy.js";
 
 assert.equal(DEFAULT_AGENT_PERMISSION_MODE, "shensi_only");
@@ -43,6 +44,11 @@ assert.equal(contract.runner, "opencode");
 assert.equal(contract.taskId, "task-1");
 assert.equal(contract.confirmation.scope, "per_operation");
 assert.ok(contract.confirmation.protectedOperations.includes("secret_read"));
+const shensiContract = permissionContractFor("shensi_only", { runner: "claude_code", taskId: "task-shensi", snapshotAt: "2026-09-09T00:00:00.000Z" });
+const externalApprovalContract = permissionContractForExternalApproval(shensiContract);
+assert.equal(externalApprovalContract.mode, "approval_required", "神思默认权限只能在外部操作获批时临时升级内部运行合同");
+assert.equal(externalApprovalContract.taskId, "task-shensi");
+assert.equal(permissionContractForExternalApproval(contract), contract, "已有逐项确认合同不得被二次改写");
 assert.equal(agentPermissionModeInfo("native").id, "full_access");
 
 console.log("agent permission policy: defaults, aliases, capability matrices, contracts passed");

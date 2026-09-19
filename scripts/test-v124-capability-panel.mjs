@@ -12,7 +12,7 @@ import {
 } from "../src/capability-template.js";
 import { capabilityAssetTypeLabel } from "../src/skill-ui-model.js";
 
-assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 30);
+assert.equal(CAPABILITY_TEMPLATE_SCHEMA_VERSION, 31);
 const bundle = normalizeCapabilityTemplate(createInitialCapabilityTemplate());
 const migratedLegacyBundle = normalizeCapabilityTemplate({
   ...createInitialCapabilityTemplate(),

@@ -407,6 +407,13 @@ export const normalizeGenerationAsset = (asset) => {
     ...(typeof asset.catalogLinked === "boolean" ? { catalogLinked: asset.catalogLinked } : {}),
     ...(typeof asset.readOnlySource === "boolean" ? { readOnlySource: asset.readOnlySource } : {}),
     ...(asset.sourceAvailable === false ? { sourceAvailable: false } : asset.catalogLinked === true ? { sourceAvailable: true } : {}),
+    ...(asset.assetTrash?.status === "trashed" ? {
+      assetTrash: {
+        status: "trashed",
+        deletedAt: String(asset.assetTrash.deletedAt || ""),
+        expiresAt: String(asset.assetTrash.expiresAt || ""),
+      },
+    } : {}),
     ...(asset.generationJobId ? { generationJobId: String(asset.generationJobId) } : {}),
     ...(normalizeNovelCoverAssetMetadata(asset.novelCover) ? { novelCover: normalizeNovelCoverAssetMetadata(asset.novelCover) } : {}),
     aspectRatio: clamp(finite(asset.aspectRatio, kind === "image" ? 1 : 16 / 9), 0.1, 10),

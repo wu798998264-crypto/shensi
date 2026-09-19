@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  assertDreaminaCliGenerationAccess,
   assertDreaminaGenerationCredit,
   dreaminaAvailableCredit,
   dreaminaSavedPositiveCreditEvidence,
@@ -13,6 +14,12 @@ assert.equal(dreaminaAvailableCredit({ data: { credits: 37 } }), 37);
 assert.equal(dreaminaAvailableCredit({}), null);
 assert.doesNotThrow(() => assertDreaminaGenerationCredit({ credit: { total_credit: 1 } }));
 assert.doesNotThrow(() => assertDreaminaGenerationCredit({ controlPlaneDeferred: true, credit: {} }));
+assert.doesNotThrow(() => assertDreaminaCliGenerationAccess({ credit: { total_credit: 20, vip_level: "maestro" } }));
+assert.doesNotThrow(() => assertDreaminaCliGenerationAccess({ controlPlaneDeferred: true, credit: {} }));
+assert.throws(
+  () => assertDreaminaCliGenerationAccess({ credit: { total_credit: 20, vip_level: "" } }),
+  (error) => error.code === "DREAMINA_CLI_MEMBERSHIP_REQUIRED" && error.submissionOutcomeKnown === true,
+);
 assert.throws(
   () => assertDreaminaGenerationCredit({ credit: { total_credit: 0 } }),
   (error) => error.code === "DREAMINA_INSUFFICIENT_CREDIT" && error.submissionOutcomeKnown === true,
@@ -70,5 +77,7 @@ assert.match(imageCli, /accountCreditSourceConflict: account\.creditSourceConfli
 assert.match(videoCli, /accountCreditSourceConflict: account\.creditSourceConflict === true/u);
 assert.match(dreaminaFailureDisplayText({ code: "DREAMINA_INSUFFICIENT_CREDIT" }), /积分不足/u);
 assert.match(dreaminaFailureDisplayText({ code: "DREAMINA_INSUFFICIENT_CREDIT" }), /处理方法：.*刷新积分/u);
+assert.match(dreaminaFailureDisplayText({ code: "DREAMINA_CLI_MEMBERSHIP_REQUIRED" }), /CLI 生成.*会员/u);
+assert.match(dreaminaFailureDisplayText({ code: "DREAMINA_CLI_MEMBERSHIP_REQUIRED" }), /不需要重复核验账号/u);
 
 console.log("v3.0 Dreamina zero-credit preflight checks passed");

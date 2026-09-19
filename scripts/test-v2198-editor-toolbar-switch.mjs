@@ -56,6 +56,8 @@ for (const handler of [
 assert.match(toolbar, /noteColorPickerMarkup\("foreColor"/u, "文字颜色控件必须出现在工具栏");
 assert.match(toolbar, /noteColorPickerMarkup\("hiliteColor"/u, "高亮颜色控件必须出现在工具栏");
 assert.match(app, /chooseNoteEditorColor\(command, colorPreset\.dataset\.noteColorValue/u, "文字与高亮颜色必须执行真实编辑命令");
+assert.match(app, /elements\.editor\.classList\.add\("note-color-selection-preview"\)/u, "应用颜色后必须保留选区目标并进入无障碍预览状态");
+assert.match(app, /elements\.editor\.classList\.remove\("note-color-selection-preview"\)/u, "用户重新选择或切换文档时必须退出颜色预览状态");
 assert.match(app, /return command === "foreColor" \? "#000000" : ""/u, "文字颜色默认值必须为纯黑，高亮默认值必须为空");
 assert.match(app, /noteColorDisplayValue = \(command\) => noteColorPreferences\[command\] \|\| \(command === "hiliteColor" \? "无" : "#000000"\)/u, "工具栏状态必须显示纯黑和高亮无的默认值");
 assert.match(app, /Missing preferences use the current defaults/u, "升级时缺失颜色偏好必须使用当前默认值并保留显式选择");
@@ -75,6 +77,7 @@ assert.match(styles, /\.note-color-trigger\[data-note-color-toggle="foreColor"\]
 assert.match(styles, /\.note-color-trigger\[data-note-color-toggle="hiliteColor"\] \.note-color-icon::after[\s\S]{0,140}clip-path:\s*inset\(100%/u, "高亮颜色不得覆盖荧光笔外轮廓");
 assert.match(styles, /\.note-color-trigger\[data-note-color-toggle="hiliteColor"\] \.note-color-icon::before[\s\S]{0,120}inset:\s*0[\s\S]{0,120}background:\s*var\(--note-control-color/u, "高亮颜色必须使用图标内部填充层");
 assert.match(styles, /\.note-color-trigger\[data-note-color-toggle="hiliteColor"\] \.note-color-icon::before[\s\S]{0,180}z-index:\s*-1[\s\S]{0,220}clip-path:\s*polygon\([\s\S]{0,260}90\.625%/u, "高亮颜色必须位于原色轮廓下方并只填充笔尖内部区域");
+assert.match(styles, /\.manuscript-editor\.note-color-selection-preview::selection,[\s\S]{0,180}background:\s*transparent/u, "颜色实时预览时原生选中遮罩不得覆盖实际文字色或高亮色");
 assert.match(app, /cached\?\.prepared === true[\s\S]{0,260}resumePointerUnchanged/u, "工作区切换必须复用未变化的已准备缓存");
 
 console.log("v2.19.8 editor toolbar, color swatches, and workspace switch regression tests passed");

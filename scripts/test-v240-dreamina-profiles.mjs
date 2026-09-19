@@ -38,6 +38,57 @@ assert.ok(migratedSettings.videoConnections
   .filter(({ provider, adapter }) => provider === "即梦" && adapter === "cli")
   .every(({ model }) => model === "seedance2.5"));
 
+const cleanedUnsupportedVideoProfiles = normalizeGenerationProfiles({
+  videoCliDefaultVersion: 2,
+  activeVideoConnectionId: "video-openai-seedance",
+  videoConnections: [
+    {
+      id: "video-openai-seedance",
+      name: "OpenAI",
+      provider: "OpenAI",
+      adapter: "api",
+      protocol: "videos",
+      model: "seedance2.5",
+    },
+    {
+      id: "video-dreamina-preserved",
+      name: "银鸥师姐",
+      provider: "即梦",
+      adapter: "cli",
+      cliPath: "shensi-dreamina-video",
+      dreaminaCliProfile: "yinou-shijie",
+      model: "seedance2.5",
+    },
+    {
+      id: "video-libtv-preserved",
+      name: "LibTV",
+      provider: "LibTV",
+      adapter: "cli",
+      model: "seedance2.5",
+    },
+  ],
+});
+assert.equal(
+  cleanedUnsupportedVideoProfiles.videoConnections.some(({ id }) => id === "video-openai-seedance"),
+  false,
+  "不存在的 OpenAI Seedance 视频配置必须清除",
+);
+assert.equal(
+  cleanedUnsupportedVideoProfiles.videoConnections.some(({ id }) => id === "video-dreamina-preserved"),
+  true,
+  "真实即梦 Seedance 配置必须保留",
+);
+assert.equal(
+  cleanedUnsupportedVideoProfiles.videoConnections.some(({ id }) => id === "video-libtv-preserved"),
+  true,
+  "其他合法视频运行器不得被清理规则误删",
+);
+assert.notEqual(
+  cleanedUnsupportedVideoProfiles.activeVideoConnectionId,
+  "video-openai-seedance",
+  "活动指针不得继续指向已清理的伪视频配置",
+);
+
 const portableImageRemarkMigration = normalizeGenerationProfiles({
   cliRemarkMigrationVersion: 1,
   imageConnections: [{ id: "image-default", provider: "OpenAI", adapter: "cli", model: "gpt-image-2" }],

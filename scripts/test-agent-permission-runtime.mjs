@@ -8,7 +8,7 @@ import { requestAgentCapabilityApproval, toolsWithPermissionPrompt } from "../sr
 import { createCodexAgentProvider } from "../src/server/codex-agent-provider.mjs";
 import { createConversationAgentService } from "../src/server/conversation-agent-service.mjs";
 import { runDeepSeekOpenCodeAgent } from "../src/server/deepseek-opencode-agent-runner.mjs";
-import { openCodePermissionPrompt, replyToOpenCodePermission } from "../src/server/opencode-agent-runner.mjs";
+import { openCodePermissionPrompt, replyToOpenCodePermission, runOpenCodeAgent } from "../src/server/opencode-agent-runner.mjs";
 import { createShensiCodexAgentRuntime } from "../src/server/shensi-codex-agent-runtime.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "shensi-agent-permission-runtime-"));
@@ -97,7 +97,8 @@ try {
   const deniedTool = await permissionTools.invoke({ namespace: "permission", tool: "prompt", arguments: { tool_name: "Bash", input: { command: "whoami" } } });
   assert.deepEqual(JSON.parse(deniedTool.contentItems[0].text), { behavior: "deny", message: "用户拒绝了本次操作" });
 
-  assert.equal(await requestAgentCapabilityApproval({ permissionMode: "shensi_only", capability: "原生联网搜索", requestApproval: async () => ({ answer: "allow" }) }), false);
+  assert.equal(await requestAgentCapabilityApproval({ permissionMode: "shensi_only", capability: "原生联网搜索", requestApproval: async () => ({ answer: "allow" }) }), true);
+  assert.equal(await requestAgentCapabilityApproval({ permissionMode: "shensi_only", capability: "外部 Skill 安装", requestApproval: async () => ({ answer: "deny" }) }), false);
   assert.equal(await requestAgentCapabilityApproval({ permissionMode: "full_access", capability: "原生联网搜索", requestApproval: async () => ({ answer: "deny" }) }), true);
   let capabilityPrompt;
   assert.equal(await requestAgentCapabilityApproval({ permissionMode: "approval_required", capability: "原生联网搜索", runner: "神思运行器", requestApproval: async (details) => { capabilityPrompt = details; return { answer: "allow" }; } }), true);
@@ -108,8 +109,8 @@ try {
   const runtime = createShensiCodexAgentRuntime({ machineRoot: root, appRoot: root });
   const responses = [];
   runtime.respond = (id, result) => responses.push({ id, result });
-  await runtime.resolveRuntimeApproval({ id: 1, method: "item/commandExecution/requestApproval", params: { command: "whoami" } }, { permissionMode: "shensi_only", deniedToolCalls: 0 });
-  assert.equal(responses.at(-1).result.decision, "decline");
+  await runtime.resolveRuntimeApproval({ id: 1, method: "item/commandExecution/requestApproval", params: { command: "whoami" } }, { permissionMode: "shensi_only", deniedToolCalls: 0, requestApproval: async () => ({ answer: "allow" }) });
+  assert.equal(responses.at(-1).result.decision, "accept");
   await runtime.resolveRuntimeApproval({ id: 2, method: "item/commandExecution/requestApproval", params: { command: "whoami" } }, { permissionMode: "full_access", deniedToolCalls: 0 });
   assert.equal(responses.at(-1).result.decision, "accept");
   await runtime.resolveRuntimeApproval({ id: 3, method: "item/permissions/requestApproval", params: { permissions: { network: { enabled: true } } } }, {
@@ -160,11 +161,13 @@ try {
     "const args=process.argv.slice(1);let input='';",
     "process.stdin.setEncoding('utf8');process.stdin.on('data',(chunk)=>input+=chunk);",
     "process.stdin.on('end',()=>{const config=JSON.parse(process.env.OPENCODE_CONFIG_CONTENT||'{}');",
-    "const value={args,input,mcp:Boolean(config.mcp?.shensi),isolated:Boolean(process.env.XDG_CONFIG_HOME),plugin:config.plugin};",
+    "const value={args,input,mcp:Boolean(config.mcp?.shensi),isolated:Boolean(process.env.XDG_CONFIG_HOME),plugin:config.plugin,permission:config.permission,agentPermission:config.agent?.shensi?.permission,tools:config.tools,agentTools:config.agent?.shensi?.tools};",
     "console.log(JSON.stringify({type:'text',text:JSON.stringify(value),sessionID:'deepseek-permission-test'}));});",
   ].join("");
   const deepSeekLaunchResolver = async () => ({ executable: process.execPath, prefixArgs: ["-e", deepSeekFixture, "--"] });
-  const nativeHost = { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" } };
+  // The MCP host exposes local names. OpenCode prefixes them with the server
+  // name when evaluating permissions (routes_read -> shensi_routes_read).
+  const nativeHost = { url: "http://127.0.0.1:1/mcp", headers: { Authorization: "Bearer test" }, toolNames: ["routes_read", "documents_list"] };
   const restrictedDeepSeek = await runDeepSeekOpenCodeAgent({
     prompt: "检查权限",
     cwd: root,
@@ -177,7 +180,54 @@ try {
   assert.equal(restrictedDeepSeekProcess.mcp, true, "仅限神思仍必须获得神思 MCP 工具");
   assert.equal(restrictedDeepSeekProcess.isolated, true, "仅限神思必须隔离 OpenCode 宿主配置");
   assert.ok(restrictedDeepSeekProcess.args.includes("--pure"));
+  assert.equal(restrictedDeepSeekProcess.args.includes("--auto"), true, "OpenCode 非交互模式必须答复未被明确拒绝的 MCP 权限请求");
   assert.deepEqual(restrictedDeepSeekProcess.plugin, []);
+  assert.equal(restrictedDeepSeekProcess.permission["*"], undefined, "OpenCode 1.18.10 下不得依赖有歧义的总通配权限");
+  assert.equal(restrictedDeepSeekProcess.permission.bash, "deny", "仅限神思必须拒绝原生命令工具");
+  assert.equal(restrictedDeepSeekProcess.permission.execute, "deny", "仅限神思必须拒绝原生编排执行工具");
+  assert.equal(restrictedDeepSeekProcess.permission.shensi_routes_read, "allow", "必须精确授权本轮真实路由工具");
+  assert.equal(restrictedDeepSeekProcess.permission.shensi_documents_list, "allow", "必须精确授权本轮真实文档工具");
+  assert.deepEqual(restrictedDeepSeekProcess.agentPermission, restrictedDeepSeekProcess.permission, "Agent 层必须应用同一精确权限契约");
+  assert.equal(restrictedDeepSeekProcess.tools, undefined, "不得继续使用旧 tools 兼容字段");
+
+  const restrictedGenericOpenCode = await runOpenCodeAgent({
+    prompt: "检查权限",
+    cwd: root,
+    model: "deepseek/deepseek-v4-pro",
+    provider: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/v1",
+    apiKey: "test-only-secret",
+    credentialSource: "shensi",
+    nativeHost,
+    agentPermissionMode: "shensi_only",
+    launchResolver: deepSeekLaunchResolver,
+  });
+  const restrictedGenericOpenCodeProcess = JSON.parse(restrictedGenericOpenCode.text);
+  assert.equal(restrictedGenericOpenCodeProcess.mcp, true, "通用 OpenCode 仅限神思仍必须获得神思 MCP 工具");
+  assert.equal(restrictedGenericOpenCodeProcess.args.includes("--auto"), true, "通用 OpenCode 非交互模式必须答复未被明确拒绝的 MCP 请求");
+  assert.equal(restrictedGenericOpenCodeProcess.permission.bash, "deny", "通用 OpenCode 必须拒绝原生命令工具");
+  assert.equal(restrictedGenericOpenCodeProcess.permission.shensi_routes_read, "allow", "通用 OpenCode 必须精确授权真实路由工具");
+  assert.equal(restrictedGenericOpenCodeProcess.permission.shensi_documents_list, "allow", "通用 OpenCode 必须精确授权真实文档工具");
+  assert.deepEqual(restrictedGenericOpenCodeProcess.agentPermission, restrictedGenericOpenCodeProcess.permission, "通用 OpenCode Agent 层必须应用同一精确权限契约");
+  assert.equal(restrictedGenericOpenCodeProcess.tools, undefined, "通用 OpenCode 不得保留旧 tools 字段");
+
+  const approvalGenericOpenCode = await runOpenCodeAgent({
+    prompt: "检查神思内部工具是否免除外部权限确认",
+    cwd: root,
+    model: "deepseek/deepseek-v4-pro",
+    provider: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/v1",
+    apiKey: "test-only-secret",
+    credentialSource: "shensi",
+    nativeHost,
+    agentPermissionMode: "approval_required",
+    requestApproval: async () => ({ approved: true }),
+    launchResolver: deepSeekLaunchResolver,
+  });
+  const approvalGenericOpenCodeProcess = JSON.parse(approvalGenericOpenCode.text);
+  assert.equal(approvalGenericOpenCodeProcess.permission["*"], "ask", "神思外能力仍须逐次确认");
+  assert.equal(approvalGenericOpenCodeProcess.permission.shensi_routes_read, "allow", "神思内部路由读取不得弹出外部权限门禁");
+  assert.equal(approvalGenericOpenCodeProcess.permission.shensi_documents_list, "allow", "神思内部文档工具不得弹出外部权限门禁");
 
   const fullDeepSeek = await runDeepSeekOpenCodeAgent({
     prompt: "检查权限",

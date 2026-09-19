@@ -123,9 +123,11 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
     settled = true;
     clearTimeout(timer);
     if (code !== 0) {
-      const message = extractDreaminaTaskId
+      const rawMessage = extractDreaminaTaskId
         ? [stdout.trim(), stderr.trim()].filter(Boolean).join("\n") || `媒体驱动退出码 ${code}`
         : stderr.trim() || stdout.trim() || `媒体驱动退出码 ${code}`;
+      const preSubmitNoTask = /\[DREAMINA_PRE_SUBMIT_NO_TASK\]/u.test(rawMessage);
+      const message = rawMessage.replace(/\[DREAMINA_PRE_SUBMIT_NO_TASK\]\s*/gu, "").trim();
       const providerTaskId = extractDreaminaTaskId ? providerTaskIdFromOutput(message) : "";
       const rawMarkedCode = message.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
       const markedCode = extractDreaminaTaskId && providerTaskId && rawMarkedCode === "DREAMINA_AUTH_REQUIRED"
@@ -144,10 +146,12 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
         "DREAMINA_PROFILE_BROKER_BUSY",
         "DREAMINA_AUTH_REQUIRED",
         "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED",
+        "DREAMINA_CLI_MEMBERSHIP_REQUIRED",
         "DREAMINA_REFERENCE_UPLOAD_NO_TASK",
         "DREAMINA_REFERENCE_INVALID",
         "DREAMINA_TASK_RESOURCE_UNVERIFIED",
       ].includes(providerCode)) error.submissionOutcomeKnown = true;
+      if (preSubmitNoTask) error.submissionOutcomeKnown = true;
       error.stdout = stdout.trim();
       error.stderr = stderr.trim();
       if (providerTaskId) {
@@ -1359,7 +1363,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     };
   }
 
-  async submit({ job, references = [], workRoot }) {
+  async submit({ job, references = [], workRoot, onProviderTaskCreated = null }) {
     await mkdir(workRoot, { recursive: true });
     const metadataPath = join(workRoot, "libtv-node.json");
     const modelKey = String(job.request.settings?.model || "").trim();
@@ -1433,6 +1437,13 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || "").trim(), nodeName, leftNodes };
       if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
       await writeFile(metadataPath, JSON.stringify(node), "utf8");
+    }
+    if (typeof onProviderTaskCreated === "function") {
+      await onProviderTaskCreated({
+        providerTaskId: node.nodeKey,
+        providerStatus: "running",
+        rawStatus: "node_created",
+      });
     }
     const run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: Math.max(Number(job.request.settings?.timeoutMs) || 0, 30 * 60_000) });
     return { ...libtvTaskFromPayload(run), providerTaskId: libtvTaskFromPayload(run).providerTaskId || node.nodeKey };

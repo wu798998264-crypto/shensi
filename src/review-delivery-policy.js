@@ -17,6 +17,7 @@ const REVIEW_META_INQUIRY_PATTERN = /(?:自检|审稿|审查|验收).{0,16}(?:�
 const REVIEW_CONTENT_MUTATION_PATTERN = /(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写).{0,18}(?:正文|章节|本章|稿件|文稿|剧本|单集)|(?:正文|章节|本章|稿件|文稿|剧本|单集).{0,18}(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写)|(?:并|然后|同时|检查后|自检后).{0,4}(?:直接)?(?:修改|修复|重写|改写|润色|返修|调整|优化|替换|续写|扩写|压缩|微增|增补|补写)(?!建议|意见|方案)/u;
 const REVIEW_CONTENT_PRODUCTION_PATTERN = /(?:创作|撰写|编写|写出|写成|生成|完成|产出).{0,24}(?:正式)?(?:小说)?(?:正文|章节|本章|稿件|文稿|剧本|单集)|(?:正式)?(?:小说)?(?:正文|章节|本章|稿件|文稿|剧本|单集).{0,24}(?:创作|撰写|编写|写出|写成|生成|完成|产出)/u;
 const EXPLICIT_REVIEW_REPORT_REQUEST_PATTERN = /(?:生成|创建|新建|输出|撰写|编写|写入|保存|落盘|归档|提交).{0,18}(?:小说|剧本|正文|改编)?(?:自检|审稿|审查|诊断|验收|评估)(?:报告|文档)|(?:小说|剧本|正文|改编)?(?:自检|审稿|审查|诊断|验收|评估)(?:报告|文档).{0,18}(?:生成|创建|新建|输出|撰写|编写|写入|保存|落盘|归档|提交)/u;
+const TITLED_ARTIFACT_LITERAL_PATTERN = /(?:标题|题目|命名(?:为|叫)?|名为)\s*[：:]?\s*(?:《[^》\n]{1,160}》|“[^”\n]{1,160}”|"[^"\n]{1,160}")/gu;
 
 export const reviewIncludesContentMutation = (value = "") => {
   const source = String(value || "");
@@ -84,12 +85,15 @@ export const reviewReportTarget = ({ contextDomain = "novel" } = {}) => {
 
 export const reviewDeliveryPolicy = ({ text = "", contextDomain = "novel" } = {}) => {
   const source = String(text || "").trim();
-  const sourceWithoutNamedReportReferences = source.replace(NAMED_REVIEW_REPORT_PATTERN, "报告文档");
-  const explicitlyRequestsFullReport = FULL_REVIEW_REPORT_PATTERN.test(source);
+  // A title is payload, not an instruction. Words such as “验收”“检查” in a
+  // requested title must never turn a creation task into a review report.
+  const semanticSource = source.replace(TITLED_ARTIFACT_LITERAL_PATTERN, " ");
+  const sourceWithoutNamedReportReferences = semanticSource.replace(NAMED_REVIEW_REPORT_PATTERN, "报告文档");
+  const explicitlyRequestsFullReport = FULL_REVIEW_REPORT_PATTERN.test(semanticSource);
   const review = (REVIEW_INTENT_PATTERN.test(sourceWithoutNamedReportReferences) || explicitlyRequestsFullReport)
-    && !REVIEW_INTENT_NEGATION_PATTERN.test(source)
-    && !REVIEW_META_INQUIRY_PATTERN.test(source)
-    && (REVIEW_TARGET_PATTERN.test(source) || LOCAL_REVIEW_SCOPE_PATTERN.test(source) || SINGLE_REVIEW_SCOPE_PATTERN.test(source) || /自检|审稿|质量(?:复检|审计|报告)/u.test(source));
+    && !REVIEW_INTENT_NEGATION_PATTERN.test(semanticSource)
+    && !REVIEW_META_INQUIRY_PATTERN.test(semanticSource)
+    && (REVIEW_TARGET_PATTERN.test(semanticSource) || LOCAL_REVIEW_SCOPE_PATTERN.test(semanticSource) || SINGLE_REVIEW_SCOPE_PATTERN.test(semanticSource) || /自检|审稿|质量(?:复检|审计|报告)/u.test(semanticSource));
   if (!review) return {
     active: false,
     kind: "not_review",
@@ -99,23 +103,23 @@ export const reviewDeliveryPolicy = ({ text = "", contextDomain = "novel" } = {}
     landingEligible: false,
     target: null,
   };
-  const parsedChapterBatch = requestedChapterBatch(source, { baseChapterNumber: 0, plannedEndChapter: 0 });
-  const batch = Number(parsedChapterBatch?.count || 0) > 1 || BATCH_REVIEW_SCOPE_PATTERN.test(source);
-  const explicitlyNoLanding = REPORT_LANDING_NEGATION_PATTERN.test(source);
-  const explicitlyRequestsLanding = REPORT_LANDING_PATTERN.test(source);
-  const contentProductionOrMutation = reviewIncludesContentMutation(source);
-  const explicitlyRequestsReportArtifact = explicitlyRequestsFullReport || EXPLICIT_REVIEW_REPORT_REQUEST_PATTERN.test(source);
-  const localDiagnostic = LOCAL_REVIEW_SCOPE_PATTERN.test(source) && !batch;
-  const singleUnitReview = !batch && SINGLE_REVIEW_SCOPE_PATTERN.test(source);
+  const parsedChapterBatch = requestedChapterBatch(semanticSource, { baseChapterNumber: 0, plannedEndChapter: 0 });
+  const batch = Number(parsedChapterBatch?.count || 0) > 1 || BATCH_REVIEW_SCOPE_PATTERN.test(semanticSource);
+  const explicitlyNoLanding = REPORT_LANDING_NEGATION_PATTERN.test(semanticSource);
+  const explicitlyRequestsLanding = REPORT_LANDING_PATTERN.test(semanticSource);
+  const contentProductionOrMutation = reviewIncludesContentMutation(semanticSource);
+  const explicitlyRequestsReportArtifact = explicitlyRequestsFullReport || EXPLICIT_REVIEW_REPORT_REQUEST_PATTERN.test(semanticSource);
+  const localDiagnostic = LOCAL_REVIEW_SCOPE_PATTERN.test(semanticSource) && !batch;
+  const singleUnitReview = !batch && SINGLE_REVIEW_SCOPE_PATTERN.test(semanticSource);
   // Scope determines the default artifact boundary. Local and single-unit
   // checks stay conversational; batch/whole-work and explicitly complete
   // reports are formal deliverables unless the author explicitly opts out.
   const reportRequested = !explicitlyNoLanding
     && (explicitlyRequestsReportArtifact || batch || (!contentProductionOrMutation && explicitlyRequestsLanding));
   const resolvedDomain = contextDomain === "script-adaptation"
-    || ADAPTATION_PATTERN.test(source)
+    || ADAPTATION_PATTERN.test(semanticSource)
     ? "script-adaptation"
-    : SCRIPT_PATTERN.test(source) ? "script" : contextDomain;
+    : SCRIPT_PATTERN.test(semanticSource) ? "script" : contextDomain;
   return {
     active: true,
     kind: reportRequested

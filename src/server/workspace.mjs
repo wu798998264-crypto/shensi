@@ -4295,6 +4295,19 @@ export const readWorkspaceAttachmentContent = async ({ appRoot, requestedPath, r
   };
 };
 
+export const permanentlyDeleteWorkspaceAttachment = async ({ appRoot, requestedPath, relativePath }) => {
+  const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
+  const { targetPath } = await secureManagedTarget(workspaceRoot, relativePath, { label: "待彻底删除的资产附件" });
+  const metadata = await stat(targetPath).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!metadata) return { deleted: false, missing: true };
+  if (!metadata.isFile()) throw new Error("待彻底删除的资产附件不是文件");
+  await rm(targetPath, { force: true });
+  return { deleted: true, missing: false };
+};
+
 const DYNAMIC_MODULE_PATHS = {
   outline: join("01_剧情控制", "其他大纲"),
   canon: join("02_正史设定", "其他设定"),
@@ -5199,6 +5212,11 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     layout: safeState.layout ?? null,
     activeModule: safeState.activeModule,
     activeDocument: safeState.activeDocument,
+    documentTabs: Array.isArray(safeState.documentTabs) ? safeState.documentTabs : [],
+    activeDocumentTabId: String(safeState.activeDocumentTabId || ""),
+    documentViewStates: safeState.documentViewStates && typeof safeState.documentViewStates === "object"
+      ? safeState.documentViewStates
+      : {},
     activeConversationId: safeState.activeConversationId,
     expandedFolders: safeState.expandedFolders ?? [],
     directoryOrders: safeState.directoryOrders ?? {},
@@ -5215,6 +5233,7 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     memoryStore: safeState.memoryStore ?? null,
     pendingInlineEdits: safeState.pendingInlineEdits ?? [],
     workspaceAssets: safeState.workspaceAssets ?? [],
+    assetHistoryTombstones: safeState.assetHistoryTombstones ?? [],
     selectedText: safeState.selectedText,
     currentVersionMeta: safeState.currentVersionMeta ?? { documents: {}, views: {}, volumes: {}, modules: {}, project: null },
     longFormJobs: safeState.longFormJobs ?? [],
@@ -5814,6 +5833,7 @@ export const loadWorkspaceCurrentContent = async ({ appRoot, requestedPath }) =>
     projectName: safeState.projectName || basename(workspaceRoot),
     workspaceKind: safeState.workspaceKind === "notebook" ? "notebook" : "project",
     workspaceAssets: Array.isArray(safeState.workspaceAssets) ? safeState.workspaceAssets : [],
+    assetHistoryTombstones: Array.isArray(safeState.assetHistoryTombstones) ? safeState.assetHistoryTombstones : [],
     savedAt: String(safeState.savedAt || ""),
     documents: await hydrateCurrentDocumentsFromWorkspace({
       workspaceRoot,

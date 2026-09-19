@@ -1550,19 +1550,31 @@ body.resizing-panes * {
   grid-row: 1;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 10px 0 28px;
+  gap: 0;
+  padding: 0 10px 0 20px;
+}
+
+.editor-header::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 0;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
 }
 
 .editor-header-actions {
-  position: absolute;
-  right: 10px;
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   flex: 0 0 auto;
   gap: 6px;
   min-width: 0;
-  margin-left: 0;
+  margin-left: auto;
 }
 
 .whiteboard-credit-balance {
@@ -1852,12 +1864,10 @@ body.resizing-panes * {
 }
 
 .breadcrumbs {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
+  /* The document tabs now provide the navigation context. Keep this node
+     mounted for existing breadcrumb actions and state updates, but remove
+     the legacy visual strip so it cannot consume header space. */
+  display: none !important;
 }
 
 .breadcrumbs > span,
@@ -1897,6 +1907,222 @@ body.resizing-panes * {
   height: 12px;
   flex-basis: 12px;
   font-size: 10px;
+}
+
+.document-tabs {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  align-self: stretch;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: none;
+  gap: 0;
+  padding-top: 10px;
+  padding-right: 8px;
+  padding-left: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.document-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.document-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-end;
+  min-width: 0;
+  max-width: 240px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.document-tab[draggable="true"],
+.document-tab[draggable="true"] .document-tab-select {
+  cursor: grab;
+}
+
+.document-tab.is-dragging,
+.document-tab.is-dragging .document-tab-select {
+  cursor: grabbing;
+}
+
+.document-tab.is-dragging {
+  opacity: .55;
+}
+
+.document-tab-drop-indicator {
+  position: absolute;
+  bottom: 3px;
+  z-index: 5;
+  width: 2px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--review);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 75%, transparent);
+  pointer-events: none;
+  transform: translateX(-1px);
+}
+
+.document-tab + .document-tab {
+  margin-left: 0;
+}
+
+.document-tab:not(.active) + .document-tab:not(.active)::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 1px;
+  border-radius: 999px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.document-tab.active {
+  border-color: var(--border);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: var(--surface);
+  margin-bottom: 0;
+  z-index: 1;
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--surface) 82%, white);
+}
+
+.document-tab.active::before {
+  content: "";
+  position: absolute;
+  top: auto;
+  bottom: 0;
+  left: -9px;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 0;
+  background: radial-gradient(circle at 0 0,
+    transparent 8px,
+    var(--border) 8px,
+    var(--border) 9px,
+    var(--surface) 9px);
+  pointer-events: none;
+}
+
+.document-tab.active::after {
+  content: "";
+  position: absolute;
+  right: -9px;
+  bottom: 0;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  background: radial-gradient(circle at 100% 0,
+    transparent 8px,
+    var(--border) 8px,
+    var(--border) 9px,
+    var(--surface) 9px);
+  pointer-events: none;
+}
+
+.document-tab-select,
+.document-tab-close,
+.document-tab-add {
+  appearance: none;
+  min-height: 33px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.document-tab-select {
+  min-width: 0;
+  max-width: 202px;
+  overflow: hidden;
+  padding: 0 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 12px;
+}
+
+.document-tab.active .document-tab-select,
+.document-tab-select:hover {
+  color: var(--text);
+}
+
+.document-tab-close,
+.document-tab-add {
+  width: 26px;
+  padding: 4px;
+  color: var(--text-tertiary);
+}
+
+.document-tab-close {
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.document-tab:hover .document-tab-close,
+.document-tab:focus-within .document-tab-close,
+.document-tab.active .document-tab-close {
+  opacity: 1;
+}
+
+.document-tab-close:hover,
+.document-tab-add:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.document-tab-add {
+  align-self: flex-end;
+  height: 34px;
+  min-height: 34px;
+  margin-left: 10px;
+  border-radius: 0;
+}
+
+.document-tab-add:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+.document-tab-empty-state {
+  display: grid;
+  width: min(420px, 100%);
+  justify-items: center;
+  gap: 10px;
+  margin: 15vh auto 0;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.document-tab-empty-state strong {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.document-tab-empty-state span {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.document-tab-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .whiteboard-history-controls,
@@ -4661,13 +4887,13 @@ textarea.whiteboard-find-textarea-source::selection {
   margin: 0;
 }
 
-#whiteboardAssetShowHidden[aria-pressed="true"] {
+#whiteboardAssetShowTrash[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
   color: var(--accent);
 }
 
-#whiteboardAssetShowHidden {
+#whiteboardAssetShowTrash {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4753,7 +4979,7 @@ textarea.whiteboard-find-textarea-source::selection {
   background: var(--surface-secondary);
 }
 
-.whiteboard-asset-card.is-history-hidden {
+.whiteboard-asset-card.is-in-asset-trash {
   border-style: dashed;
   opacity: .88;
 }
@@ -9799,6 +10025,13 @@ textarea.whiteboard-find-textarea-source::selection {
 .manuscript-editor::selection,
 .manuscript-editor *::selection {
   background: var(--selection);
+}
+
+.manuscript-editor.note-color-selection-preview::selection,
+.manuscript-editor.note-color-selection-preview *::selection {
+  color: inherit;
+  background: transparent;
+  text-shadow: none;
 }
 
 .seed-selection {
@@ -15539,6 +15772,8 @@ body.resizing-chat-composer * {
 }
 
 .history-preview-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -15609,8 +15844,10 @@ body.resizing-chat-composer * {
 .history-preview-content {
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr);
+  height: 100%;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .history-preview-content > header {
@@ -15705,11 +15942,6 @@ body.resizing-chat-composer * {
   color: #b42318;
   background: rgba(220, 38, 38, 0.12);
   text-decoration: line-through;
-}
-
-.history-diff-legend .modified {
-  color: var(--text-primary, #262626);
-  background: linear-gradient(90deg, rgba(220, 38, 38, 0.12) 0 50%, rgba(34, 197, 94, 0.16) 50% 100%);
 }
 
 .history-diff-toolbar button {
@@ -16938,6 +17170,10 @@ button.trash-entry-main:focus-visible {
   width: min(520px, calc(100vw - 32px));
 }
 
+.agent-runner-install-dialog footer {
+  flex-wrap: wrap;
+}
+
 .agent-runner-install-body {
   display: grid;
   gap: 14px;
@@ -16971,6 +17207,20 @@ button.trash-entry-main:focus-visible {
 
 .agent-runner-install-state[data-state="failed"] > span {
   background: var(--error);
+}
+
+.agent-runner-install-state[data-state="cancelled"] > span {
+  background: var(--text-tertiary);
+}
+
+.agent-runner-install-stage {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-runner-install-dialog .secondary-button.danger {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border));
+  color: var(--error);
 }
 
 .agent-runner-install-body progress {
@@ -22976,6 +23226,13 @@ button.trash-entry-main:focus-visible {
   border: 1px solid var(--border);
   border-radius: 5px;
   background: var(--surface);
+}
+
+.quick-agent-permission-summary {
+  display: block;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .nutstore-connected-identity[hidden] { display: none; }

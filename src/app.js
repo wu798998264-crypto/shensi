@@ -1,4 +1,5 @@
 import { MODULES, MODULE_ITEMS, MODULE_VIEWS, clone, createBlankNotebookState, createBlankProjectState, createInitialState, ensureScriptOutlineSeries, normalizeChapterNumbering } from "./data.js";
+import { MAX_DOCUMENT_TABS, activateDocumentTab as activateDocumentTabState, closeDocumentTab, normalizeDocumentTabState, normalizeDocumentViewStates, openBlankDocumentTab, openDocumentInTabs, removeDocumentFromTabs, reorderDocumentTabs, updateDocumentViewState } from "./document-tabs.js";
 import { selectPendingAgentMessage } from "./codex-agent-event-routing.js";
 import { conversationAgentRequest, watchConversationAgent, snapshotAgentConfiguration } from "./conversation-agent-client.js";
 import { generationResultMayDefaultLand, terminalGenerationAttempt, waitForGenerationAttemptTerminal } from "./generation-attempt-client.js?v=1.0.0-live-task-recovery-2";
@@ -20,7 +21,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.1.8";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.3.5-retired-trae-work";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -52,8 +53,8 @@ import {
 } from "./video-generation-sequence.js";
 import {
   historyEntryMatchesScope,
+  matchingDocumentHistoryIndex,
   migrateHistoryScopes,
-  sameDocumentHistoryContent,
   sameModuleHistoryContent,
   sameProjectHistoryContent,
   sameViewHistoryContent,
@@ -106,19 +107,31 @@ import {
   uniqueGenerationPickerProfiles,
   validateDeepSeekOpenCodeConnection,
   validateGenericOpenCodeConnection,
-  withoutTextGenerationConfiguration,
+  withoutGenerationConfiguration,
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.1.8-terminal-errors";
-import { assetHistoryEntryIsSuppressed, hideHistoricalAssets, normalizeAssetHistoryTombstones, unhideHistoricalAssets } from "./asset-history-policy.js";
+} from "./generation-profiles.js?v=6.3.5-retired-trae-work";
+import {
+  ASSET_TRASH_RETENTION_MS,
+  assetHistoryIdentitiesMatch,
+  assetHistoryIdentity,
+  assetHistoryEntryIsPurged,
+  assetHistoryEntryIsSuppressed,
+  assetHistoryEntryIsTrashed,
+  expiredAssetTrashEntries,
+  moveHistoricalAssetsToTrash,
+  normalizeAssetHistoryTombstones,
+  permanentlyDeleteHistoricalAssets,
+  restoreHistoricalAssets,
+} from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
 import { conversationRollbackPatch, persistableStateWithoutEphemeralConversationRollbacks } from "./conversation-rollback.js";
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.1.8-terminal-errors";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.3.5-retired-trae-work";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -218,7 +231,7 @@ import { modelPickerDisplayName } from "./public-model-catalog.js?v=5.4.10-perfo
 import { classifyPublicTextCapabilityFailure, describePublicTextCapabilityFailure, publicTextFailureIsRequestSpecific } from "./public-text-capability-evidence.js";
 import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFragment, proseParagraphs, stripMatchingLeadingHeadingHtml } from "./prose-format.js";
 import { agentCapabilitySummary, agentExecutionProfilePatch, agentRuntimeProfileFromExecution } from "./agent-runtime-profile.js";
-import { agentPermissionModeInfo, agentPermissionModeOptions, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
+import { DEFAULT_AGENT_PERMISSION_MODE, agentPermissionModeInfo, normalizeAgentPermissionMode } from "./agent-permission-policy.js";
 import { journalManualConversation, forgetManualConversation, restoreManualConversations } from "./manual-conversation-journal.js";
 import { AGENT_ENGINE_IDS, agentEngineDescriptor, agentEngineForProfile, agentModelsForEngine, agentProfilesForEngine } from "./agent-engine-registry.js";
 import { shouldShowCodexAccountControls, shouldShowCodexAccountControlsForSettings } from "./effective-runtime-contract.js";
@@ -252,7 +265,7 @@ import {
 import { PANE_LAYOUT_DEFAULTS, constrainPaneWidths, resizePaneWidths } from "./pane-layout.js";
 import { CHAT_COMPOSER_HEIGHT_DEFAULT, CHAT_COMPOSER_HEIGHT_LIMITS, chatComposerHeightRange, clampChatComposerHeight, resizeChatComposerHeight } from "./chat-composer-layout.js";
 import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSession, countInsertedCharacters, formatWritingTimerDuration, normalizeWritingTimerRecord, normalizeWritingTimerStore, pauseWritingMetricsSession, pauseWritingTimer, recordWritingMetricsActivity, setWritingTimerExpanded, startWritingTimer, stopWritingTimer, writingMetricsSnapshot, writingTimerElapsedMs } from "./writing-timer.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=5.4.11-single-semantic-pass";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.3.5-retired-trae-work";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
 import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
@@ -278,6 +291,7 @@ import { createDocumentEditHistory, documentEditHistoryAvailability, rebaseDocum
 import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from "./document-write-transaction.js?v=3.0.10-create-title";
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
+import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.3.5-retired-trae-work";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
 import { memoryReviewCandidateEvidence, memoryReviewCandidatesForPlan, memoryReviewUiSummary, toggleRecommendedMemorySelection } from "./memory-review-ui-model.js?v=0.42.14-product-evidence-ux";
@@ -309,7 +323,8 @@ import { moveWorkspaceEntry, orderWorkspaceEntries, replaceWorkspaceOrderPath } 
 import { resolveWorkspaceModeSelection, workspaceKindHasEntry } from "./workspace-mode.js";
 import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
-import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSave, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
+import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
+import { markAgentResultProjection, upsertAgentResultReference } from "./conversation-agent-document-projection.js";
 import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration } from "./media-generation-coordination.js?v=5.4.10-performance";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
@@ -441,7 +456,8 @@ const WORKSPACE_LIST_SNAPSHOT_KEY = "shensi-workspace-list-snapshot-v1";
 const ACTIVE_WORKSPACE_KEY = "shensi-active-workspace-v1";
 const WORKSPACE_KIND_HISTORY_KEY = "shensi-workspace-kind-history-v1";
 const RECOVERY_CLIENT_KEY = "shensi-recovery-client-v1";
-const GLOBAL_ASSET_HIDDEN_KEY = "shensi-global-asset-hidden-v1";
+const GLOBAL_ASSET_TRASH_KEY = "shensi-global-asset-trash-v1";
+const LEGACY_GLOBAL_ASSET_HIDDEN_KEY = "shensi-global-asset-hidden-v1";
 const WHITEBOARD_DISMISSED_GENERATION_ELAPSED_KEY = "shensi-whiteboard-dismissed-generation-elapsed-v1";
 const WHITEBOARD_GENERATION_COMPLETION_TIMES_KEY = "shensi-whiteboard-generation-completion-times-v1";
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -503,20 +519,45 @@ const PRODUCT_VERSION = String(window.shensiDesktop?.appVersion || "1.0.0");
 const nowTime = () => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
 const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-const storedGlobalAssetHiddenIds = () => {
+const normalizedGlobalAssetTrashRecord = (value, { now = new Date().toISOString() } = {}) => {
+  const id = String(typeof value === "string" ? value : value?.id || "").trim();
+  if (!id) return null;
+  const validIso = (candidate) => Number.isFinite(Date.parse(String(candidate || "")))
+    ? new Date(Date.parse(String(candidate))).toISOString()
+    : "";
+  const purgedAt = validIso(value?.purgedAt);
+  const deletedAt = validIso(value?.deletedAt) || validIso(now) || new Date().toISOString();
+  return {
+    id,
+    deletedAt,
+    expiresAt: validIso(value?.expiresAt) || new Date(Date.parse(deletedAt) + ASSET_TRASH_RETENTION_MS).toISOString(),
+    ...(purgedAt ? { status: "purged", purgedAt } : { status: "trashed" }),
+  };
+};
+
+const storedGlobalAssetTrashRecords = () => {
   try {
-    const values = JSON.parse(localStorage.getItem(GLOBAL_ASSET_HIDDEN_KEY) || "[]");
-    return new Set((Array.isArray(values) ? values : []).map(String).filter(Boolean).slice(-5000));
+    const current = JSON.parse(localStorage.getItem(GLOBAL_ASSET_TRASH_KEY) || "[]");
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_GLOBAL_ASSET_HIDDEN_KEY) || "[]");
+    const source = Array.isArray(current) && current.length ? current : (Array.isArray(legacy) ? legacy : []);
+    return new Map(source.slice(-5000)
+      .map((value) => normalizedGlobalAssetTrashRecord(value))
+      .filter(Boolean)
+      .map((record) => [record.id, record]));
   } catch {
-    return new Set();
+    return new Map();
   }
 };
 
-const persistGlobalAssetHiddenIds = (values) => {
+const persistGlobalAssetTrashRecords = (records) => {
   try {
-    localStorage.setItem(GLOBAL_ASSET_HIDDEN_KEY, JSON.stringify([...values].slice(-5000)));
+    const values = records instanceof Map ? [...records.values()] : Array.isArray(records) ? records : [];
+    localStorage.setItem(GLOBAL_ASSET_TRASH_KEY, JSON.stringify(values.slice(-5000)));
+    localStorage.removeItem(LEGACY_GLOBAL_ASSET_HIDDEN_KEY);
   } catch {}
 };
+
+const initialGlobalAssetTrashRecords = storedGlobalAssetTrashRecords();
 
 const storedWhiteboardDismissedGenerationElapsed = () => {
   try {
@@ -1038,6 +1079,45 @@ const hydrateDesktopGenerationSecrets = async () => {
 };
 
 let machineGenerationRuntime = { schemaVersion: 1, revision: 0, bindings: [] };
+let machineGenerationProfiles = { schemaVersion: 1, revision: 0, exists: false, settings: {} };
+
+const hydrateGlobalGenerationProfiles = async () => {
+  try {
+    const response = await fetch("/api/generation/profile-settings");
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "全局模型配置读取失败");
+    machineGenerationProfiles = {
+      schemaVersion: Number(payload.schemaVersion) || 1,
+      revision: Number(payload.revision) || 0,
+      exists: payload.exists === true,
+      settings: payload.settings && typeof payload.settings === "object" ? payload.settings : {},
+    };
+  } catch (error) {
+    console.warn("Global generation profiles unavailable:", error.message);
+  }
+  return machineGenerationProfiles;
+};
+
+const saveGlobalGenerationProfiles = async (settings, { confirmed = true } = {}) => {
+  const response = await fetch("/api/generation/profile-settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      settings,
+      confirmed,
+      expectedRevision: machineGenerationProfiles.revision,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "全局模型配置保存失败");
+  machineGenerationProfiles = {
+    schemaVersion: Number(payload.schemaVersion) || 1,
+    revision: Number(payload.revision) || 0,
+    exists: true,
+    settings: payload.settings && typeof payload.settings === "object" ? payload.settings : {},
+  };
+  return machineGenerationProfiles;
+};
 
 const hydrateGenerationRuntimeBindings = async () => {
   try {
@@ -1719,7 +1799,7 @@ let ui = {
   whiteboardAssetOriginFilter: "all",
   whiteboardAssetKindFilter: "all",
   whiteboardAssetSortDirection: "desc",
-  whiteboardAssetShowHidden: false,
+  whiteboardAssetShowTrash: false,
   whiteboardAssetDeleteMode: false,
   whiteboardAssetSelectedIds: new Set(),
   whiteboardAssetVisibleLimit: 48,
@@ -1733,7 +1813,9 @@ let ui = {
   globalHistoricalAssetDiagnostics: [],
   globalHistoricalAssetsScannedAt: "",
   globalHistoricalAssetsToken: 0,
-  globalAssetHiddenIds: storedGlobalAssetHiddenIds(),
+  globalAssetTrashRecords: initialGlobalAssetTrashRecords,
+  globalAssetHiddenIds: new Set(initialGlobalAssetTrashRecords.keys()),
+  assetTrashCleanupPromise: null,
   whiteboardImagePoint: null,
   whiteboardLandingPayload: null,
   whiteboardGuidance: {
@@ -3087,6 +3169,7 @@ const ensureStateSchema = () => {
   state.structureLanguage = normalizeStructureLanguage(state.structureLanguage);
   if (state.settings) delete state.settings.shensiRoot;
   state.settings = normalizeGenerationProfiles(state.settings ?? {}, storedGenerationSecrets());
+  state.settings.agentPermissionMode = DEFAULT_AGENT_PERMISSION_MODE;
   state.projectName ||= "未命名";
   state.documents ??= {};
   state.histories ??= {};
@@ -3266,6 +3349,29 @@ const ensureStateSchema = () => {
   state.moduleViews ??= {};
   for (const [moduleId, views] of Object.entries(MODULE_VIEWS)) state.moduleViews[moduleId] ||= views[0].id;
   reconcileActiveDocumentState(state, MODULE_VIEWS);
+  const previousDocumentTabState = JSON.stringify({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+  });
+  const normalizedDocumentTabState = normalizeDocumentTabState({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    documentViewStates: state.documentViewStates,
+    activeDocument: state.activeDocument,
+    documents: state.documents,
+  });
+  state.documentTabs = normalizedDocumentTabState.documentTabs;
+  state.activeDocumentTabId = normalizedDocumentTabState.activeDocumentTabId;
+  state.activeDocument = normalizedDocumentTabState.activeDocument;
+  state.documentViewStates = normalizedDocumentTabState.documentViewStates;
+  if (previousDocumentTabState !== JSON.stringify({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+  })) ui.structureMigrationPending = true;
   const knownFolderIds = new Set();
   for (const module of MODULES) {
     const views = MODULE_VIEWS[module.id] ?? [{ id: state.moduleViews[module.id] ?? "default" }];
@@ -3571,7 +3677,12 @@ const selectCreativeWorkspaceView = (deliverableType, { selectFirstDocument = tr
     documentIds,
   }) || null;
   state.activeModule = "manuscript";
-  state.activeDocument = nextDocumentId;
+  if (nextDocumentId) openDocumentTab(nextDocumentId);
+  else {
+    const activeTab = state.documentTabs?.find((tab) => tab.id === state.activeDocumentTabId);
+    if (activeTab) activeTab.documentId = "";
+    state.activeDocument = "";
+  }
   if (nextDocumentId) rememberModuleDocument(nextDocumentId, { moduleId: "manuscript", viewId });
   elements.editor.dataset.document = "";
   return true;
@@ -3911,17 +4022,24 @@ const withSynchronousWorkspaceState = (workspaceState, callback) => {
 
 const captureTaskContextSnapshot = (conversationId = "") => {
   const conversation = conversationById(conversationId) ?? activeConversation() ?? {};
+  const activeDocumentId = String(state.activeDocument || "");
+  const activeDocumentState = state.documents?.[activeDocumentId] ?? null;
+  const documentContentHash = activeDocumentState
+    ? contentRevision(String(activeDocumentState.html || activeDocumentState.markdown || ""))
+    : "";
   return {
     ...createTurnContextSnapshot({
       conversation,
       workspaceKind: state.workspaceKind,
       workspacePath: state.settings?.workspacePath || "",
       workspaceName: state.projectName || state.settings?.projectName || "",
-      activeDocumentId: state.activeDocument || "",
+      activeDocumentId,
       documents: state.documents,
+      editorContentRevision: documentContentHash,
     }),
+    documentContentHash,
     selectedText: String(state.selectedText || ""),
-    selectedTextDocumentId: state.selectedText ? String(state.activeDocument || "") : "",
+    selectedTextDocumentId: state.selectedText ? activeDocumentId : "",
   };
 };
 
@@ -4237,6 +4355,7 @@ const restoreActiveWorkspaceView = ({ workspaceKind = state.workspaceKind, works
     : savedDocumentId;
   if (documentId && state.documents[documentId]) {
     state.activeDocument = documentId;
+    synchronizeDocumentTabState();
     state.activeModule = moduleForDocument(documentId);
     if (MODULE_VIEWS[state.activeModule]) {
       state.moduleViews[state.activeModule] = itemWorkspaceView(state.activeModule, documentItem(documentId)?.item);
@@ -4674,7 +4793,12 @@ const saveWorkspaceAfterConflict = async ({
       ? workspaceState
       : conversationBaseline);
     const conversationPlan = submittedConversationSnapshot
-      ? reconcileConversationSave({ current: localState, submitted: submittedConversationSnapshot, persisted: latest.state })
+      ? reconcileConversationSaveAfterConflict({
+          baseline: conversationBaseline || submittedConversationSnapshot,
+          submitted: submittedConversationSnapshot,
+          current: localState,
+          persisted: latest.state,
+        })
       : null;
     const stateConflictResolutions = conversationPlan?.ok
       ? Object.fromEntries(CONVERSATION_SAVE_KEYS
@@ -6263,16 +6387,55 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
   if (!form || !select || !customInput) return;
   const field = (name) => form.elements.namedItem(name);
   const selectedEngine = field("textAgentEngine")?.value || "";
+  if (selectedEngine === "workbuddy") {
+    const profile = activeGenerationProfile(generationWorkingSettings(), "text");
+    const current = String(preferredModel || profile?.agentModelId || profile?.model || "").trim();
+    const runnerLabel = agentEngineDescriptor(selectedEngine)?.label || AGENT_RUNNER_LABELS[selectedEngine] || "外置 Agent";
+    const capability = agentRunnerCapability(selectedEngine);
+    const models = capability?.modelState === "catalog_available" && capability?.authState === "authenticated" && Array.isArray(capability?.models)
+      ? capability.models.map((model) => String(model || "").trim()).filter(Boolean)
+      : [];
+    const installed = capability?.installed === true;
+    const loginRequired = capability?.state === "login_required" || capability?.authState === "login_required";
+    const readyDefault = capability?.modelState === "verified_runner_default" && capability?.authState === "authenticated";
+    const invalidCurrent = current && !models.includes(current);
+    select.hidden = false;
+    customInput.hidden = true;
+    customInput.value = "";
+    customInput.placeholder = "";
+    customInput.title = "";
+    select.disabled = !models.length && !readyDefault;
+    if (!installed) {
+      select.innerHTML = `<option value="">安装 ${escapeHtml(runnerLabel)} 后读取模型</option>`;
+    } else if (loginRequired) {
+      select.innerHTML = `<option value="">请先登录 ${escapeHtml(runnerLabel)}，登录后自动读取模型</option>`;
+    } else if (models.length) {
+      select.innerHTML = `<option value="">跟随 ${escapeHtml(runnerLabel)} CLI 默认模型</option>${invalidCurrent ? `<optgroup label="当前配置（CLI 未返回）"><option value="${escapeHtml(current)}" disabled>${escapeHtml(modelPickerDisplayName(current))} · 不可用</option></optgroup>` : ""}<optgroup label="${escapeHtml(runnerLabel)} CLI 当前账号">${models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(modelPickerDisplayName(model))}</option>`).join("")}</optgroup>`;
+    } else if (readyDefault) {
+      select.innerHTML = `<option value="">跟随 ${escapeHtml(runnerLabel)} CLI 默认模型</option>`;
+    } else {
+      select.innerHTML = `<option value="">${escapeHtml(runnerLabel)} 模型读取失败，请重新检查</option>`;
+    }
+    select.value = models.includes(current) ? current : "";
+    syncModelCapabilityControls();
+    return;
+  }
+  select.disabled = false;
   if (EXTERNAL_AGENT_RUNNER_IDS.includes(selectedEngine)) {
     const profile = activeGenerationProfile(generationWorkingSettings(), "text");
     const current = String(preferredModel || profile?.agentModelId || profile?.model || customInput.value || "").trim();
+    const runnerLabel = agentEngineDescriptor(selectedEngine)?.label || "外置 Agent";
     select.hidden = true;
     select.innerHTML = "";
     customInput.hidden = false;
+    customInput.placeholder = `${runnerLabel} 默认模型（留空使用 CLI 默认）`;
+    customInput.title = `${runnerLabel} 的模型由 CLI 登录状态或本机配置决定；留空时不传 --model，由 CLI 使用自己的默认模型。`;
     customInput.value = current;
     syncModelCapabilityControls();
     return;
   }
+  customInput.placeholder = "输入模型 ID";
+  customInput.title = "";
   const openCodeEngine = field("textAgentEngine")?.value === "opencode";
   if (openCodeEngine) {
     const profile = activeGenerationProfile(generationWorkingSettings(), "text");
@@ -6651,7 +6814,10 @@ const prepareGenerationDraftFields = (channel, profile) => {
   const fields = GENERATION_FORM_FIELDS[channel];
   setDraftSelectPlaceholder(form[fields.adapter], "请选择调用方式", draft);
   setDraftSelectPlaceholder(form[fields.provider], "请选择服务商", draft);
-  if (channel === "text") setDraftSelectPlaceholder(form.protocol, "请选择 API 协议", draft);
+  if (channel === "text") {
+    setDraftSelectPlaceholder(form.textAgentEngine, "请选择运行器", draft);
+    setDraftSelectPlaceholder(form.protocol, "请选择 API 协议", draft);
+  }
 };
 
 const captureGenerationFormProfile = (channel) => {
@@ -6739,12 +6905,16 @@ const captureGenerationFormProfile = (channel) => {
       delete patch.requiresQualifiedModel;
     } else if (isExternalCli) {
       const descriptor = agentEngineDescriptor(patch.agentEngine);
+      const runnerManaged = patch.agentEngine === "workbuddy";
       patch.adapter = "cli";
-      patch.provider = String(patch.provider || "").trim();
+      patch.provider = runnerManaged ? "" : String(patch.provider || "").trim();
       patch.protocol = "";
       patch.baseUrl = "";
       patch.apiKey = "";
-      patch.credentialSource = "external";
+      patch.credentialSource = runnerManaged ? "runner_login" : "external";
+      patch.runnerId = patch.agentEngine;
+      patch.providerId = runnerManaged ? "runner_managed" : (patch.provider || "custom");
+      patch.modelPolicy = String(patch.model || "").trim() ? "explicit" : "runner_default";
       patch.executionMode = "agent";
       patch.executionModes = ["agent"];
       patch.agentModelId = String(patch.model || "").trim();
@@ -6785,6 +6955,14 @@ const captureGenerationFormProfile = (channel) => {
   const customInput = document.querySelector(`#custom${channel === "text" ? "Model" : channel === "image" ? "ImageModel" : channel === "video" ? "VideoModel" : "AudioModel"}Input`);
   if (customInput && !customInput.hidden) patch.model = customInput.value.trim();
   const externalTextRunner = channel === "text" && EXTERNAL_AGENT_RUNNER_IDS.includes(String(patch.agentEngine || "").trim());
+  if (externalTextRunner) {
+    // The hidden select uses a legacy manual-input sentinel for other
+    // providers. External CLIs have no select option, so only the visible
+    // text value is authoritative and the sentinel must never be persisted
+    // as a model ID.
+    if (patch.model === "__manual_model__") patch.model = "";
+    patch.agentModelId = patch.model;
+  }
   const ready = externalTextRunner
     ? Boolean(patch.adapter === "cli" && patch.cliPath && (patch.agentEngine !== "custom" || patch.cliArgs))
     : Boolean(patch.adapter && patch.model
@@ -6917,8 +7095,8 @@ const refreshGenerationSettingsForm = () => {
   syncProviderSpecificCliButtons();
 };
 
-const AGENT_RUNNER_LABELS = Object.freeze({ codex: "Codex", opencode: "OpenCode", claude_code: "Claude Code", trae_work: "Trae Work", workbuddy: "WorkBuddy", custom: "自定义运行器" });
-const EXTERNAL_AGENT_RUNNER_IDS = Object.freeze(["trae_work", "workbuddy", "custom"]);
+const AGENT_RUNNER_LABELS = Object.freeze({ codex: "Codex", opencode: "OpenCode", claude_code: "Claude Code", workbuddy: "WorkBuddy", custom: "自定义运行器" });
+const EXTERNAL_AGENT_RUNNER_IDS = Object.freeze(["workbuddy", "custom"]);
 
 const agentRunnerCapability = (runnerId = "") => ui.agentRunners?.[runnerId] || null;
 
@@ -6936,7 +7114,17 @@ const syncAgentRunnerOptions = () => {
     option.textContent = capability
       ? runnerId === "custom" ? `${baseLabel} · 手动配置` : capability.installed === true ? baseLabel : `${baseLabel} · 未安装（点击装配）`
       : `${baseLabel} · 正在检查`;
-    option.title = runnerId === "custom" ? "填写 CLI 程序路径和参数模板" : capability?.installed === false ? `点击下载并装配 ${baseLabel}` : "";
+    if (capability?.state === "login_required" && capability.installed === true) option.textContent = `${baseLabel} · 已安装待登录`;
+    else if (runnerId === "workbuddy" && capability?.installed === true && capability?.ready !== true) option.textContent = `${baseLabel} · 已安装待检查`;
+    option.title = runnerId === "custom"
+      ? "填写 CLI 程序路径和参数模板"
+      : capability?.installed === false
+        ? `点击下载并装配 ${baseLabel}`
+        : capability?.state === "login_required"
+          ? `已安装 ${baseLabel}，需要登录后读取模型`
+          : runnerId === "workbuddy" && capability?.ready !== true
+            ? capability?.message || `${baseLabel} 尚未通过登录与模型检查`
+            : "";
     // Keep the missing option selectable. A disabled native <option> cannot
     // receive a click, so the change guard below restores the previous value
     // and opens the installer instead of silently accepting an unusable runner.
@@ -6958,6 +7146,13 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     syncAgentRunnerOptions();
     const select = document.querySelector("#textAgentEngineSelect");
     const selectedRunnerId = String(select?.value || "");
+    if (selectedRunnerId === "workbuddy" && elements.settingsForm) {
+      const profile = activeGenerationProfile(generationWorkingSettings(), "text");
+      renderModelOptions(elements.settingsForm.elements.provider?.value || "", {
+        allowBlank: true,
+        preferredModel: profile?.agentModelId || profile?.model || "",
+      });
+    }
     if (select && selectedRunnerId !== "custom" && AGENT_RUNNER_LABELS[selectedRunnerId] && ui.agentRunners?.[selectedRunnerId]?.installed === false
       && !elements.agentRunnerInstallDialog?.open) {
       select.value = select.dataset.previousAvailableValue || "";
@@ -6977,27 +7172,45 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
 const renderAgentRunnerInstallJob = (job = null) => {
   const dialog = elements.agentRunnerInstallDialog;
   if (!dialog) return;
+  ui.agentRunnerInstallLastJob = job;
   const runnerId = String(job?.runnerId || dialog.dataset.runnerId || "");
   const label = AGENT_RUNNER_LABELS[runnerId] || "Agent 运行器";
   const status = String(job?.status || "idle");
   const running = status === "running";
   const completed = status === "completed";
+  const state = String(job?.state || status);
+  const loginRequired = state === "login_required" || job?.capability?.state === "login_required";
+  const installed = job?.capability?.installed === true || completed;
+  const ready = job?.capability?.ready === true || state === "ready";
+  const stageLabels = Object.freeze({ idle: "检查本机", detecting: "检查本机", preparing: "准备安装源", download: "下载官方安装源", prerequisite: "检查安装前置", executable_resolution: "查找可执行文件", version_probe: "版本复检", login_probe: "登录状态检查", model_probe: "模型状态检查", installing: "安装", validating: "版本复检", completed: "已完成", failed: "失败", cancelled: "已终止", partial_install: "部分安装" });
   elements.agentRunnerInstallTitle.textContent = `${label} 下载与装配`;
-  elements.agentRunnerInstallState.dataset.state = completed ? "completed" : status === "failed" ? "failed" : running ? "running" : "idle";
+  elements.agentRunnerInstallState.dataset.state = ready ? "completed" : status === "failed" || state === "partial_install" ? "failed" : status === "cancelled" ? "cancelled" : running ? "running" : "idle";
   elements.agentRunnerInstallStatus.textContent = job?.message || `尚未安装 ${label}`;
+  if (elements.agentRunnerInstallStage) elements.agentRunnerInstallStage.textContent = `当前阶段：${stageLabels[String(job?.stage || status)] || String(job?.stage || status)}`;
   elements.agentRunnerInstallProgress.hidden = !running;
   elements.agentRunnerInstallProgress.value = Number(job?.progress || 0);
-  elements.agentRunnerInstallDetail.textContent = completed
-    ? `版本复检通过${job?.capability?.version ? `：${job.capability.version}` : ""}。登录和模型凭据仍按你当前选择分别管理。`
+  elements.agentRunnerInstallDetail.textContent = installed
+    ? `${loginRequired ? "安装和版本复检通过，但当前运行器需要先登录" : ready ? "安装、版本、登录和模型能力检查通过" : "版本复检通过，但登录或模型能力尚未就绪"}${job?.capability?.version ? `：${job.capability.version}` : ""}。模型由 ${label} CLI 内部管理。`
     : status === "failed"
-      ? "安装没有改变当前模型配置。请根据上方原因处理网络、代理或系统权限后重试。"
+      ? `${job?.error?.summary || "安装没有完成"}${job?.suggestedAction ? `；建议：${job.suggestedAction}` : ""}`
+      : status === "cancelled"
+        ? "本次装配已终止；如果安装程序已经写入部分文件，状态会保留为部分安装，重新检查后再决定是否重试。"
+        : state === "partial_install"
+          ? `${job?.error?.summary || "安装可能已完成，但路径或版本复检未通过"}${job?.suggestedAction ? `；建议：${job.suggestedAction}` : ""}`
       : running
         ? "请保持神思运行；安装期间不会改动作品、笔记、模型配置或凭据。"
         : "安装成功后会自动复检版本；不会修改你的模型、API、凭据或现有运行器配置。";
-  elements.agentRunnerInstallSource.textContent = job?.officialUrl ? `官方来源：${job.officialUrl}` : runnerId === "custom" ? "自定义运行器不会自动下载，请在下方填写 CLI 程序和参数模板。" : "仅使用对应运行器的官方安装源。";
-  elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running || completed;
-  elements.startAgentRunnerInstall.textContent = runnerId === "custom" ? "无需下载" : running ? "正在装配…" : completed ? "装配完成" : status === "failed" ? "重新下载并装配" : "下载并装配";
-  elements.cancelAgentRunnerInstall.textContent = running ? "关闭（后台继续）" : completed ? "完成" : "取消";
+  elements.agentRunnerInstallSource.textContent = job?.officialUrl ? `官方来源：${job.officialUrl}${job?.scriptSha256 ? ` · 脚本 SHA-256：${job.scriptSha256}` : ""}` : runnerId === "custom" ? "自定义运行器不会自动下载，请在下方填写 CLI 程序和参数模板。" : "仅使用对应运行器的官方安装源。";
+  elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running || installed;
+  elements.startAgentRunnerInstall.textContent = runnerId === "custom" ? "无需下载" : running ? "正在装配…" : installed ? "已安装" : status === "failed" ? "重新下载并装配" : "下载并装配";
+  if (elements.loginAgentRunner) {
+    elements.loginAgentRunner.hidden = !installed || runnerId !== "workbuddy" || !loginRequired;
+    elements.loginAgentRunner.disabled = running || dialog.dataset.loginPolling === runnerId;
+    elements.loginAgentRunner.textContent = `登录 ${label}`;
+  }
+  if (elements.terminateAgentRunnerInstall) elements.terminateAgentRunnerInstall.hidden = !running;
+  if (elements.showAgentRunnerInstallDetails) elements.showAgentRunnerInstallDetails.hidden = !job?.error?.detail;
+  elements.cancelAgentRunnerInstall.textContent = running ? "关闭（后台继续）" : ready ? "完成" : "关闭窗口";
 };
 
 const selectInstalledAgentRunner = (runnerId) => {
@@ -7021,17 +7234,51 @@ const pollAgentRunnerInstallJob = async (jobId) => {
       if (payload.job.status === "completed") {
         await hydrateAgentRunnerStatuses({ force: true });
         const runnerId = String(payload.job.runnerId || "");
-        if (elements.agentRunnerInstallDialog.open && ui.pendingAgentRunnerSelection === runnerId) {
+        const capability = agentRunnerCapability(runnerId);
+        const usable = capability?.ready === true || (runnerId !== "workbuddy" && capability?.installed === true);
+        if (capability?.installed === true) selectInstalledAgentRunner(runnerId);
+        if (usable && elements.agentRunnerInstallDialog.open && ui.pendingAgentRunnerSelection === runnerId) {
           ui.pendingAgentRunnerSelection = "";
           elements.agentRunnerInstallDialog.close();
-          selectInstalledAgentRunner(runnerId);
-          showToast(`${AGENT_RUNNER_LABELS[runnerId] || "Agent 运行器"} 已装配并通过版本复检`);
+          showToast(`${AGENT_RUNNER_LABELS[runnerId] || "Agent 运行器"} 已装配并可用`);
+        } else if (capability?.state === "login_required") {
+          renderAgentRunnerInstallJob({ ...payload.job, state: "login_required", capability, message: capability.message });
         }
       }
       return payload.job;
     }
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 700));
   }
+  return null;
+};
+
+const pollAgentRunnerLoginState = async (runnerId, { attempts = 40 } = {}) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!elements.agentRunnerInstallDialog?.open || elements.agentRunnerInstallDialog.dataset.runnerId !== runnerId) return null;
+    if (attempt > 0) await new Promise((resolvePoll) => setTimeout(resolvePoll, 3_000));
+    const statuses = await hydrateAgentRunnerStatuses({ force: true });
+    const capability = statuses?.[runnerId] || null;
+    renderAgentRunnerInstallJob({
+      runnerId,
+      status: "completed",
+      state: capability?.state || "failed",
+      stage: capability?.state === "login_required" ? "login_probe" : "model_probe",
+      progress: 100,
+      message: capability?.message || `${AGENT_RUNNER_LABELS[runnerId] || "Agent"} 登录状态检查失败`,
+      capability,
+      error: capability?.error || null,
+      suggestedAction: capability?.error?.suggestedAction || "",
+      officialUrl: capability?.officialUrl || "",
+    });
+    if (capability?.ready === true) {
+      selectInstalledAgentRunner(runnerId);
+      elements.agentRunnerInstallDialog.close();
+      ui.pendingAgentRunnerSelection = "";
+      showToast(`${AGENT_RUNNER_LABELS[runnerId] || "Agent 运行器"} 登录成功，模型状态已刷新`);
+      return capability;
+    }
+  }
+  showToast("尚未检测到登录完成；完成 CLI 登录后点击“重新检查”即可继续");
   return null;
 };
 
@@ -7052,12 +7299,44 @@ const openAgentRunnerInstallDialog = async (runnerId) => {
   try {
     const statuses = await hydrateAgentRunnerStatuses({ force: true });
     if (statuses?.[runnerId]?.installed === true) {
-      elements.agentRunnerInstallDialog.close();
-      ui.pendingAgentRunnerSelection = "";
+      const capability = statuses[runnerId];
+      elements.agentRunnerInstallCopy.textContent = capability.state === "login_required"
+        ? `${label} 已安装并通过版本检查，但尚未登录。完成登录后重新检查即可读取真实模型并开始任务。`
+        : capability.state === "model_configuration_required"
+          ? `${label} 已安装并通过版本检查，但仍需完成模型配置。配置完成后重新检查即可开始任务。`
+          : `${label} 已安装，正在复检登录状态、模型策略和真实启动能力。`;
       selectInstalledAgentRunner(runnerId);
-      showToast(`${label} 已安装，已刷新本机状态`);
-      return true;
+      if (capability.ready === true || runnerId !== "workbuddy") {
+        elements.agentRunnerInstallDialog.close();
+        ui.pendingAgentRunnerSelection = "";
+        showToast(`${label} 已安装并可用`);
+        return true;
+      }
+      renderAgentRunnerInstallJob({
+        runnerId,
+        status: "completed",
+        state: capability.state || "failed",
+        stage: capability.state === "login_required" ? "login_probe" : "model_probe",
+        progress: 100,
+        message: capability.message || `${label} 已安装，但尚未完成可用性检查`,
+        capability,
+        error: capability.error || null,
+        suggestedAction: capability.error?.suggestedAction || "",
+        officialUrl: capability.officialUrl || "",
+      });
+      return false;
     }
+    const capability = statuses?.[runnerId];
+    renderAgentRunnerInstallJob({
+      runnerId,
+      status: "idle",
+      state: capability?.state || "missing",
+      stage: "executable_resolution",
+      message: capability?.message || `尚未安装 ${label}`,
+      error: capability?.error || null,
+      suggestedAction: capability?.error?.suggestedAction || "",
+      officialUrl: capability?.officialUrl || "",
+    });
   } catch (error) {
     renderAgentRunnerInstallJob({ runnerId, status: "failed", message: error.message || "运行器状态检查失败" });
   }
@@ -7270,6 +7549,7 @@ root.innerHTML = `
       <main class="editor-pane">
         <header class="editor-header">
           <div class="breadcrumbs" id="breadcrumbs"></div>
+          <nav class="document-tabs" id="documentTabs" aria-label="文档标签页"></nav>
           <div class="whiteboard-history-controls" id="whiteboardHistoryControls" role="group" aria-label="白板操作历史" hidden>
             <button class="icon-button bare" id="whiteboardUndo" type="button" title="上一步（Ctrl + Z）" aria-label="上一步" disabled>${icon("\uE7A7", "上一步")}</button>
             <button class="icon-button bare" id="whiteboardRedo" type="button" title="下一步（Ctrl + Y）" aria-label="下一步" disabled>${icon("\uE7A6", "下一步")}</button>
@@ -7489,15 +7769,6 @@ root.innerHTML = `
       <aside class="chat-panel" id="chatPanel" aria-label="神思对话">
         <header class="chat-panel-toolbar" aria-label="对话快捷操作">
           <div class="chat-panel-toolbar-actions">
-            <details class="conversation-permission-menu" id="conversationPermissionMenu">
-              <summary id="conversationPermissionLabel">仅限神思 ▾</summary>
-              <div class="agent-permission-options" data-agent-permission-surface="quick" role="group" aria-label="新任务权限档位">
-                <button type="button" data-agent-permission-mode="shensi_only">仅限神思</button>
-                <button type="button" data-agent-permission-mode="approval_required">操作需确认</button>
-                <button type="button" data-agent-permission-mode="full_access">完全权限</button>
-                <small>仅影响新任务</small>
-              </div>
-            </details>
             <button class="quick-model-button" id="quickModelButton" type="button" title="切换文字模型与档位" aria-haspopup="dialog" aria-expanded="false"><span id="quickModelLabel">模型</span>${icon("\uE70D", "切换模型")}</button>
             <button class="icon-button bare" id="quickNewConversationButton" type="button" title="新建对话" aria-label="新建对话">${icon("\uE710", "新建对话")}</button>
             <button class="icon-button bare" id="conversationHistoryButton" type="button" title="全部历史对话" aria-label="全部历史对话" aria-expanded="false">${icon("\uE81C", "全部历史对话")}</button>
@@ -7532,6 +7803,7 @@ root.innerHTML = `
               <button class="secondary-button codex-project-button" id="resetCodexProject" type="button" title="恢复跟随当前编辑文档所在目录" hidden>恢复默认</button>
               <button class="secondary-button codex-stop-button" id="stopCodexAgent" type="button" hidden>停止</button>
             </div>
+            <small class="quick-agent-permission-summary" id="quickAgentPermissionSummary">普通任务默认仅限神思；需要宿主能力时会显示具体操作授权。</small>
           </div>
           <section class="quick-codex-connection" id="quickCodexConnection" hidden aria-live="polite">
             <span id="codexConnectionStatus">Codex 未连接</span>
@@ -8050,7 +8322,7 @@ root.innerHTML = `
                 <label class="wide generation-connection-remark">备注名称<input name="textRemarkName" data-generation-remark="text" type="text" maxlength="80" autocomplete="off" placeholder="例如：日常写作、长文创作、测试连接" /><small class="setting-field-help">仅用于界面区分连接；留空时自动显示服务商和模型名称。</small></label>
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
-                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="trae_work">Trae Work</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
+                <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
                 <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
@@ -8236,11 +8508,12 @@ root.innerHTML = `
       <header class="dialog-header"><div><small>Agent 运行器</small><h2 id="agentRunnerInstallTitle">下载与装配</h2><p id="agentRunnerInstallCopy">将只使用该运行器的官方安装源。</p></div><button class="icon-button bare" type="submit" value="cancel" title="关闭">${icon("\uE711", "关闭")}</button></header>
       <div class="agent-runner-install-body">
         <div class="agent-runner-install-state" id="agentRunnerInstallState" data-state="idle"><span aria-hidden="true"></span><strong id="agentRunnerInstallStatus">正在检查本机状态…</strong></div>
+        <small class="agent-runner-install-stage" id="agentRunnerInstallStage">当前阶段：检查本机</small>
         <progress id="agentRunnerInstallProgress" max="100" value="0" hidden></progress>
         <p id="agentRunnerInstallDetail">安装成功后会自动复检版本；不会修改你的模型、API、凭据或现有运行器配置。</p>
         <p class="agent-runner-install-source" id="agentRunnerInstallSource"></p>
       </div>
-      <footer><button class="secondary-button" id="cancelAgentRunnerInstall" type="submit" value="cancel">取消</button><button class="primary-button" id="startAgentRunnerInstall" type="button">下载并装配</button></footer>
+      <footer><button class="secondary-button" id="cancelAgentRunnerInstall" type="submit" value="cancel">关闭窗口</button><button class="secondary-button" id="refreshAgentRunnerInstall" type="button">重新检查</button><button class="secondary-button" id="showAgentRunnerInstallDetails" type="button" hidden>查看详情</button><button class="secondary-button danger" id="terminateAgentRunnerInstall" type="button" hidden>终止装配</button><button class="secondary-button" id="loginAgentRunner" type="button" hidden>登录运行器</button><button class="primary-button" id="startAgentRunnerInstall" type="button">下载并装配</button></footer>
     </form>
   </dialog>
 
@@ -8869,14 +9142,14 @@ root.innerHTML = `
 
   <dialog class="text-dialog dreamina-profile-lock-dialog" id="dreaminaProfileLockDialog" aria-labelledby="dreaminaProfileLockTitle">
     <form method="dialog">
-      <header><h2 id="dreaminaProfileLockTitle">当前即梦配置暂时无法生成</h2><p id="dreaminaProfileLockMessage"></p></header>
+      <header class="dialog-header"><div><h2 id="dreaminaProfileLockTitle">当前即梦配置暂时无法生成</h2><p id="dreaminaProfileLockMessage"></p></div><button class="icon-button bare" type="submit" value="cancel" aria-label="关闭即梦锁提示" title="关闭">${icon("\uE711", "关闭")}</button></header>
       <footer><button class="primary-button" id="openDreaminaLockOccupants" type="button">查看占用任务</button></footer>
     </form>
   </dialog>
 
   <dialog class="text-dialog media-recovery-dialog dreamina-lock-occupants-dialog" id="dreaminaLockOccupantsDialog" aria-labelledby="dreaminaLockOccupantsTitle">
     <form method="dialog">
-      <header><div><h2 id="dreaminaLockOccupantsTitle">当前占用即梦锁的任务</h2><p>这里只显示仍在使用即梦凭证锁的任务。强制解除只终止本机任务进程并释放本机锁；远端任务状态和可能费用仍保留待核对。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭即梦锁占用任务">${icon("\uE711", "关闭")}</button></header>
+      <header><div><h2 id="dreaminaLockOccupantsTitle">当前占用即梦锁的任务</h2><p>这里只显示仍在使用即梦凭证锁的任务。强制解除只终止本机任务进程并释放本机锁；远端任务状态和可能费用仍保留待核对。</p></div></header>
       <section class="media-recovery-list" id="dreaminaLockOccupantsList" aria-live="polite"><p class="panel-empty">正在读取占用任务…</p></section>
       <footer><button class="secondary-button" id="refreshDreaminaLockOccupants" value="refresh" type="button">重新检查</button><button class="primary-button" value="cancel" type="submit">关闭</button></footer>
     </form>
@@ -8920,7 +9193,7 @@ root.innerHTML = `
         <label><span>来源</span><select id="whiteboardAssetOriginFilter"><option value="all">全部</option><option value="upload">上传</option><option value="generated">生成</option></select></label>
         <label><span>类型</span><select id="whiteboardAssetKindFilter"><option value="all">全部</option><option value="text">文本</option><option value="image">图片</option><option value="video">视频</option><option value="audio">音频</option></select></label>
         <button class="icon-button bare whiteboard-asset-sort" id="whiteboardAssetSort" type="button" title="资产排序：新的在上；点击切换排序" aria-label="全部资产排序：新的在上" aria-pressed="false">${icon("\uE8CB", "切换资产排序")}</button>
-        <button class="secondary-button compact" id="whiteboardAssetShowHidden" type="button" title="显示或隐藏已隐藏的资产" aria-pressed="false">${icon("\uE890", "显示已隐藏")}<span>显示已隐藏</span></button>
+        <button class="secondary-button compact" id="whiteboardAssetShowTrash" type="button" title="打开卡片与媒体资产回收站" aria-pressed="false">${icon("\uE74D", "资产回收站")}<span>资产回收站</span></button>
         <div class="whiteboard-asset-batch-actions" id="whiteboardAssetBatchActions"></div>
         <output id="whiteboardAssetFilterCount" aria-live="polite"></output>
       </div>
@@ -9056,6 +9329,7 @@ const elements = {
   whiteboardImageInput: document.querySelector("#whiteboardImageInput"),
   workspace: document.querySelector(".workspace"),
   breadcrumbs: document.querySelector("#breadcrumbs"),
+  documentTabs: document.querySelector("#documentTabs"),
   leftSidebar: document.querySelector(".left-sidebar"),
   leftSidebarToggle: document.querySelector("#leftSidebarToggle"),
   chatPanel: document.querySelector("#chatPanel"),
@@ -9307,7 +9581,7 @@ const elements = {
   whiteboardAssetList: document.querySelector("#whiteboardAssetList"),
   whiteboardAssetOriginFilter: document.querySelector("#whiteboardAssetOriginFilter"),
   whiteboardAssetKindFilter: document.querySelector("#whiteboardAssetKindFilter"),
-  whiteboardAssetShowHidden: document.querySelector("#whiteboardAssetShowHidden"),
+  whiteboardAssetShowTrash: document.querySelector("#whiteboardAssetShowTrash"),
   whiteboardAssetSort: document.querySelector("#whiteboardAssetSort"),
   whiteboardAssetBatchActions: document.querySelector("#whiteboardAssetBatchActions"),
   whiteboardAssetFilterCount: document.querySelector("#whiteboardAssetFilterCount"),
@@ -9364,9 +9638,14 @@ const elements = {
   agentRunnerInstallCopy: document.querySelector("#agentRunnerInstallCopy"),
   agentRunnerInstallState: document.querySelector("#agentRunnerInstallState"),
   agentRunnerInstallStatus: document.querySelector("#agentRunnerInstallStatus"),
+  agentRunnerInstallStage: document.querySelector("#agentRunnerInstallStage"),
   agentRunnerInstallProgress: document.querySelector("#agentRunnerInstallProgress"),
   agentRunnerInstallDetail: document.querySelector("#agentRunnerInstallDetail"),
   agentRunnerInstallSource: document.querySelector("#agentRunnerInstallSource"),
+  refreshAgentRunnerInstall: document.querySelector("#refreshAgentRunnerInstall"),
+  showAgentRunnerInstallDetails: document.querySelector("#showAgentRunnerInstallDetails"),
+  terminateAgentRunnerInstall: document.querySelector("#terminateAgentRunnerInstall"),
+  loginAgentRunner: document.querySelector("#loginAgentRunner"),
   startAgentRunnerInstall: document.querySelector("#startAgentRunnerInstall"),
   cancelAgentRunnerInstall: document.querySelector("#cancelAgentRunnerInstall"),
   modelFieldHelpDialog: document.querySelector("#modelFieldHelpDialog"),
@@ -12071,7 +12350,7 @@ const historicalAssetWorkspaceContext = (asset = {}) => {
   };
 };
 
-const allHistoricalAssets = ({ includeHidden = false } = {}) => {
+const allHistoricalAssets = ({ includeTrash = false } = {}) => {
   const workspaceAssets = Array.isArray(state.workspaceAssets) ? state.workspaceAssets : [];
   const canvasAssets = normalizeCanvas(activeWhiteboardDocument()?.canvas).assets;
   const assets = normalizeGenerationAssets(workspaceAssets);
@@ -12087,27 +12366,47 @@ const allHistoricalAssets = ({ includeHidden = false } = {}) => {
     localAssets: assets,
     catalogAssets: ui.globalHistoricalAssets,
     currentWorkspacePath: state.settings.workspacePath,
-    hiddenCatalogIds: includeHidden ? new Set() : ui.globalAssetHiddenIds,
+    hiddenCatalogIds: includeTrash ? new Set() : ui.globalAssetHiddenIds,
   });
-  const annotated = merged.map((asset) => ({
-    ...asset,
-    historyHidden: globalCatalogAsset(asset)
-      ? ui.globalAssetHiddenIds.has(String(asset.id))
-      : assetHistoryEntryIsSuppressed(state, asset),
-  }));
-  return includeHidden ? annotated : annotated.filter((asset) => !asset.historyHidden);
+  const annotated = merged.map((asset) => {
+    const catalogTrash = globalCatalogAsset(asset) ? ui.globalAssetTrashRecords.get(String(asset.id)) : null;
+    return {
+      ...asset,
+      inAssetTrash: globalCatalogAsset(asset)
+        ? catalogTrash?.status !== "purged" && Boolean(catalogTrash)
+        : assetHistoryEntryIsTrashed(state, asset),
+      permanentlyDeleted: globalCatalogAsset(asset)
+        ? catalogTrash?.status === "purged"
+        : assetHistoryEntryIsPurged(state, asset),
+    };
+  });
+  return includeTrash
+    ? annotated.filter((asset) => asset.inAssetTrash && !asset.permanentlyDeleted)
+    : annotated.filter((asset) => !asset.inAssetTrash && !asset.permanentlyDeleted);
 };
 
-const refreshGlobalHistoricalAssets = async () => {
+const refreshGlobalHistoricalAssets = async ({ fresh = false } = {}) => {
   const token = ++ui.globalHistoricalAssetsToken;
   ui.globalHistoricalAssetsLoading = true;
   ui.globalHistoricalAssetsError = "";
   if (elements.whiteboardAssetDialog.open) renderWhiteboardAssets();
   try {
-    const response = await fetch("/api/history-assets/global", { cache: "no-store" });
+    const response = await fetch(`/api/history-assets/global${fresh ? "?fresh=true" : ""}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok || !Array.isArray(payload.items)) throw new Error(payload.message || "全局资产目录读取失败");
     if (token !== ui.globalHistoricalAssetsToken) return false;
+    let trashRecordsChanged = false;
+    for (const item of payload.items) {
+      if (item?.assetTrash?.status !== "trashed" || !item.id) continue;
+      const id = String(item.id);
+      if (ui.globalAssetTrashRecords.get(id)?.status === "purged") continue;
+      const record = normalizedGlobalAssetTrashRecord({ id, ...item.assetTrash });
+      if (!record) continue;
+      if (JSON.stringify(ui.globalAssetTrashRecords.get(id) || null) !== JSON.stringify(record)) trashRecordsChanged = true;
+      ui.globalAssetTrashRecords.set(id, record);
+      ui.globalAssetHiddenIds.add(id);
+    }
+    if (trashRecordsChanged) persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
     ui.globalHistoricalAssets = payload.items;
     ui.globalHistoricalAssetDiagnostics = Array.isArray(payload.diagnostics) ? payload.diagnostics : [];
     ui.globalHistoricalAssetsScannedAt = String(payload.scannedAt || "");
@@ -12124,76 +12423,117 @@ const refreshGlobalHistoricalAssets = async () => {
   }
 };
 
-const hideGlobalCatalogAssets = (assets = [], { announce = true } = {}) => {
+const moveGlobalCatalogAssetsToTrash = (assets = [], { announce = true, now = new Date().toISOString() } = {}) => {
   const selected = (Array.isArray(assets) ? assets : [assets]).filter(globalCatalogAsset);
   if (!selected.length) return 0;
-  selected.forEach((asset) => ui.globalAssetHiddenIds.add(asset.id));
-  persistGlobalAssetHiddenIds(ui.globalAssetHiddenIds);
+  selected.forEach((asset) => {
+    const record = normalizedGlobalAssetTrashRecord({ id: asset.id, deletedAt: now });
+    if (record) ui.globalAssetTrashRecords.set(record.id, record);
+    ui.globalAssetHiddenIds.add(String(asset.id));
+  });
+  persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
   if (announce) showToast(selected.length > 1
-    ? `已从资产库隐藏 ${selected.length} 项来源记录；原始资产和源文件保持不变`
-    : "已从资产库隐藏该来源记录；原始资产和源文件保持不变");
+    ? `已将 ${selected.length} 项资产移入资产回收站；30 天后自动清理`
+    : "资产已移入资产回收站；30 天后自动清理");
   return selected.length;
 };
 
-const hideAssetsFromHistoryLibrary = (assets = []) => {
-  const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
-  const localAssets = selected.filter((asset) => !globalCatalogAsset(asset));
-  const selectedCatalogAssets = selected.filter(globalCatalogAsset);
-  const beforeGlobalAssetHiddenIds = globalAssetHiddenIdsSnapshot();
-  const localSourceIdentities = new Set(localAssets.map((asset) => historicalAssetSourceIdentity(asset, state.settings.workspacePath)));
-  const mirroredCatalogAssets = ui.globalHistoricalAssets.filter((asset) => (
-    globalCatalogAsset(asset)
-    && localSourceIdentities.has(historicalAssetSourceIdentity(asset, state.settings.workspacePath))
-  ));
-  hideGlobalCatalogAssets([...selectedCatalogAssets, ...mirroredCatalogAssets], { announce: false });
-  const result = hideHistoricalAssetRecords(localAssets, { beforeGlobalAssetHiddenIds, announce: false });
-  const deletedCount = result.deletedAssets.length + selectedCatalogAssets.length;
-  const protectedCount = result.protectedAssets.length;
-  const english = globalUiPreferences.uiLanguage === "en-US";
-  if (deletedCount && protectedCount) {
-    showToast(english
-      ? `Hidden ${deletedCount} asset(s); kept ${protectedCount} protected item(s).`
-      : `已隐藏 ${deletedCount} 项资产；${protectedCount} 项受保护内容保持显示`);
-  } else if (deletedCount) {
-    const onlyCatalogRecords = selectedCatalogAssets.length === deletedCount && !localAssets.length;
-    showToast(onlyCatalogRecords
-      ? english
-        ? `${deletedCount} source record(s) hidden; original assets and source files were kept.`
-        : deletedCount > 1
-          ? `已从资产库隐藏 ${deletedCount} 项来源记录；原始资产和源文件保持不变`
-          : "已从资产库隐藏该来源记录；原始资产和源文件保持不变"
-      : english
-        ? `${deletedCount} asset(s) hidden; records and local media files were kept.`
-        : deletedCount > 1
-          ? `已隐藏 ${deletedCount} 项资产；记录与本地媒体文件保持不变`
-          : "资产已隐藏；记录与本地媒体文件保持不变");
-  } else if (protectedCount) {
-    showToast(english
-      ? "The selected asset is still used by a whiteboard or document. Remove that reference before deleting its history record."
-      : "所选资产仍被白板或正文使用，已保留历史记录；移除引用后可再次删除");
-  }
-  return result;
-};
-
-const unhideAssetsFromHistoryLibrary = (assets = []) => {
+const moveAssetsToTrashFromHistoryLibrary = async (assets = []) => {
   const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
   if (!selected.length) return 0;
+  const beforeGlobalAssetHiddenIds = globalAssetHiddenIdsSnapshot();
+  const groups = new Map();
+  for (const asset of selected) {
+    const workspacePath = String(historicalAssetWorkspaceContext(asset).workspacePath || "").trim();
+    if (!workspacePath) throw new Error("资产缺少所属作品或笔记路径，无法移入回收站");
+    const key = normalizedWorkspacePath(workspacePath);
+    if (!groups.has(key)) groups.set(key, { workspacePath, assets: [] });
+    groups.get(key).assets.push(asset);
+  }
+  const currentWorkspaceKey = normalizedWorkspacePath(state.settings.workspacePath);
+  try {
+    for (const [workspaceKey, group] of groups) {
+      const identities = new Set(group.assets.map((asset) => historicalAssetSourceIdentity(asset, state.settings.workspacePath)));
+      const catalogMatches = [
+        ...group.assets.filter(globalCatalogAsset),
+        ...ui.globalHistoricalAssets.filter((asset) => identities.has(historicalAssetSourceIdentity(asset, state.settings.workspacePath))),
+      ];
+      if (workspaceKey === currentWorkspaceKey) {
+        const beforeLocalTombstones = clone(state.assetHistoryTombstones);
+        moveGlobalCatalogAssetsToTrash(catalogMatches, { announce: false });
+        moveHistoricalAssetRecordsToTrash(group.assets.map(permanentAssetDescriptor), { beforeGlobalAssetHiddenIds, announce: false });
+        try {
+          await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true });
+        } catch (error) {
+          state.assetHistoryTombstones = beforeLocalTombstones;
+          persist();
+          throw error;
+        }
+      } else {
+        await requestPermanentAssetOperation("/api/history-assets/trash", group.workspacePath, group.assets);
+        moveGlobalCatalogAssetsToTrash(catalogMatches, { announce: false });
+      }
+    }
+  } catch (error) {
+    applyGlobalAssetHiddenIdsSnapshot(beforeGlobalAssetHiddenIds);
+    throw error;
+  }
+  const deletedCount = selected.length;
+  const english = globalUiPreferences.uiLanguage === "en-US";
+  if (deletedCount) showToast(english
+    ? `${deletedCount} asset(s) moved to Asset Trash. They will be cleared after 30 days.`
+    : deletedCount > 1
+      ? `已将 ${deletedCount} 项资产移入资产回收站；30 天后自动清理`
+      : "资产已移入资产回收站；30 天后自动清理");
+  return deletedCount;
+};
+
+const restoreAssetsFromHistoryLibrary = async (assets = []) => {
+  const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+  if (!selected.length) return 0;
+  const groups = new Map();
+  for (const asset of selected) {
+    const workspacePath = String(historicalAssetWorkspaceContext(asset).workspacePath || "").trim();
+    if (!workspacePath) throw new Error("资产缺少所属作品或笔记路径，无法恢复");
+    const key = normalizedWorkspacePath(workspacePath);
+    if (!groups.has(key)) groups.set(key, { workspacePath, assets: [] });
+    groups.get(key).assets.push(asset);
+  }
+  const currentWorkspaceKey = normalizedWorkspacePath(state.settings.workspacePath);
+  for (const [workspaceKey, group] of groups) {
+    if (workspaceKey === currentWorkspaceKey) {
+      const beforeLocalTombstones = clone(state.assetHistoryTombstones);
+      state.assetHistoryTombstones = restoreHistoricalAssets(state, group.assets.map(permanentAssetDescriptor));
+      persist();
+      try {
+        await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true });
+      } catch (error) {
+        state.assetHistoryTombstones = beforeLocalTombstones;
+        persist();
+        throw error;
+      }
+    } else {
+      await requestPermanentAssetOperation("/api/history-assets/restore", group.workspacePath, group.assets);
+    }
+  }
   const sourceIdentities = new Set(selected.map((asset) => historicalAssetSourceIdentity(asset, state.settings.workspacePath)));
   const matchingCatalogIds = ui.globalHistoricalAssets
     .filter((asset) => sourceIdentities.has(historicalAssetSourceIdentity(asset, state.settings.workspacePath)))
     .map((asset) => String(asset.id));
   selected.forEach((asset) => matchingCatalogIds.push(String(asset.id)));
-  matchingCatalogIds.forEach((assetId) => ui.globalAssetHiddenIds.delete(assetId));
-  persistGlobalAssetHiddenIds(ui.globalAssetHiddenIds);
-  const currentWorkspaceAssets = selected.filter((asset) => !globalCatalogAsset(asset)
-    || normalizedWorkspacePath(asset.sourceWorkspacePath) === normalizedWorkspacePath(state.settings.workspacePath));
-  state.assetHistoryTombstones = unhideHistoricalAssets(state, currentWorkspaceAssets);
-  persist();
-  showToast(selected.length > 1 ? `已取消隐藏 ${selected.length} 项资产` : "已取消隐藏该资产");
+  matchingCatalogIds.forEach((assetId) => {
+    ui.globalAssetHiddenIds.delete(assetId);
+    if (ui.globalAssetTrashRecords.get(assetId)?.status !== "purged") ui.globalAssetTrashRecords.delete(assetId);
+  });
+  persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
+  showToast(selected.length > 1 ? `已恢复 ${selected.length} 项资产` : "资产已恢复");
   return selected.length;
 };
 
-const whiteboardAssetById = (assetId) => allHistoricalAssets({ includeHidden: true }).find((asset) => asset.id === assetId) ?? null;
+const whiteboardAssetById = (assetId) => [
+  ...allHistoricalAssets(),
+  ...allHistoricalAssets({ includeTrash: true }),
+].find((asset) => asset.id === assetId) ?? null;
 
 const whiteboardNodeForHistoricalAsset = (asset, documentState = activeWhiteboardDocument()) => {
   if (!asset || !documentState) return null;
@@ -12208,14 +12548,14 @@ const whiteboardNodeForHistoricalAsset = (asset, documentState = activeWhiteboar
   return nodes.find(matches) || null;
 };
 
-const hideHistoricalAssetRecords = (assets = [], { beforeGlobalAssetHiddenIds = null, announce = true } = {}) => {
+const moveHistoricalAssetRecordsToTrash = (assets = [], { beforeGlobalAssetHiddenIds = null, announce = true } = {}) => {
   const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
   if (!selected.length && !Array.isArray(beforeGlobalAssetHiddenIds)) return { deletedAssets: [], protectedAssets: [] };
   const activeDocument = activeWhiteboardDocument();
   const beforeCanvas = activeDocument ? whiteboardCanvasSnapshot(activeDocument.canvas) : null;
   const beforeWorkspaceAssets = workspaceAssetsSnapshot();
   const beforeAssetHistoryTombstones = assetHistoryTombstonesSnapshot();
-  const result = hideHistoricalAssets(state, selected);
+  const result = moveHistoricalAssetsToTrash(state, selected);
   state.workspaceAssets = result.workspace.workspaceAssets;
   state.assetHistoryTombstones = result.workspace.assetHistoryTombstones;
   state.documents = result.workspace.documents;
@@ -12228,8 +12568,8 @@ const hideHistoricalAssetRecords = (assets = [], { beforeGlobalAssetHiddenIds = 
     if (beforeCanvas) {
       pushWhiteboardHistory(beforeCanvas, {
         label: result.deletedAssets.length > 1
-        ? `批量隐藏资产（${result.deletedAssets.length} 项）`
-          : "隐藏资产",
+          ? `批量删除资产（${result.deletedAssets.length} 项）`
+          : "删除资产",
         beforeWorkspaceAssets,
         beforeAssetHistoryTombstones,
         beforeGlobalAssetHiddenIds,
@@ -12239,22 +12579,137 @@ const hideHistoricalAssetRecords = (assets = [], { beforeGlobalAssetHiddenIds = 
   }
   if (!announce) return result;
   const english = globalUiPreferences.uiLanguage === "en-US";
-  if (result.deletedAssets.length && result.protectedAssets.length) {
-    showToast(english
-      ? `Hidden ${result.deletedAssets.length} asset(s); kept ${result.protectedAssets.length} protected item(s).`
-      : `已隐藏 ${result.deletedAssets.length} 项资产；${result.protectedAssets.length} 项受保护内容保持显示`);
-  } else if (result.deletedAssets.length) {
-    showToast(english
-      ? `${result.deletedAssets.length} asset(s) hidden; records and local media files were kept.`
-      : result.deletedAssets.length > 1
-        ? `已隐藏 ${result.deletedAssets.length} 项资产；记录与本地媒体文件保持不变`
-        : "资产已隐藏；记录与本地媒体文件保持不变");
-  } else if (result.protectedAssets.length) {
-    showToast(english
-      ? "The selected asset is still used by a whiteboard or document. Remove that reference before deleting its history record."
-      : "所选资产仍被白板或正文使用，已保留历史记录；移除引用后可再次删除");
-  }
+  if (result.deletedAssets.length) showToast(english
+    ? `${result.deletedAssets.length} asset(s) moved to Asset Trash. They will be cleared after 30 days.`
+    : result.deletedAssets.length > 1
+      ? `已将 ${result.deletedAssets.length} 项资产移入资产回收站；30 天后自动清理`
+      : "资产已移入资产回收站；30 天后自动清理");
   return result;
+};
+
+const permanentAssetDescriptor = (asset = {}) => ({
+  ...asset,
+  id: String(asset.sourceAssetId || (!asset.catalogLinked ? asset.id || asset.assetId : "") || ""),
+  sourceAssetId: String(asset.sourceAssetId || ""),
+  sourceRelativePath: String(asset.sourceRelativePath || asset.attachment?.relativePath || asset.relativePath || asset.file || ""),
+  attachment: {
+    ...(asset.attachment || {}),
+    relativePath: String(asset.sourceRelativePath || asset.attachment?.relativePath || asset.relativePath || asset.file || ""),
+  },
+});
+
+const markGlobalAssetRecordsPurged = (assets = [], { now = new Date().toISOString() } = {}) => {
+  const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+  const identities = new Set(selected.map((asset) => historicalAssetSourceIdentity(asset, state.settings.workspacePath)));
+  const catalogAssets = ui.globalHistoricalAssets.filter((asset) => identities.has(historicalAssetSourceIdentity(asset, state.settings.workspacePath)));
+  for (const asset of [...selected.filter(globalCatalogAsset), ...catalogAssets]) {
+    const id = String(asset.id || "");
+    if (!id) continue;
+    const record = normalizedGlobalAssetTrashRecord({ id, deletedAt: now, purgedAt: now });
+    if (record) ui.globalAssetTrashRecords.set(id, record);
+    ui.globalAssetHiddenIds.add(id);
+  }
+  persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
+};
+
+const requestPermanentAssetOperation = async (pathname, workspacePath, assets) => {
+  const response = await fetch(pathname, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workspacePath, assets: assets.map(permanentAssetDescriptor) }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "资产彻底删除失败");
+  return payload;
+};
+
+const permanentlyDeleteAssetsFromHistoryLibrary = async (assets = [], { announce = true } = {}) => {
+  const selected = (Array.isArray(assets) ? assets : [assets]).filter(Boolean);
+  if (!selected.length) return 0;
+  const groups = new Map();
+  for (const asset of selected) {
+    const context = historicalAssetWorkspaceContext(asset);
+    const workspacePath = String(context.workspacePath || "").trim();
+    if (!workspacePath) throw new Error("资产缺少所属作品或笔记路径，无法安全彻底删除");
+    const key = normalizedWorkspacePath(workspacePath);
+    if (!groups.has(key)) groups.set(key, { workspacePath, assets: [] });
+    groups.get(key).assets.push(asset);
+  }
+
+  const currentWorkspaceKey = normalizedWorkspacePath(state.settings.workspacePath);
+  let deletedCount = 0;
+  let retainedFileCount = 0;
+  for (const [workspaceKey, group] of groups) {
+    if (workspaceKey === currentWorkspaceKey) {
+      await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true });
+      const before = {
+        documents: clone(state.documents),
+        workspaceAssets: clone(state.workspaceAssets),
+        assetHistoryTombstones: clone(state.assetHistoryTombstones),
+      };
+      try {
+        const deletion = permanentlyDeleteHistoricalAssets(state, group.assets.map(permanentAssetDescriptor));
+        state.documents = deletion.workspace.documents;
+        state.workspaceAssets = deletion.workspace.workspaceAssets;
+        state.assetHistoryTombstones = deletion.workspace.assetHistoryTombstones;
+        persist();
+        await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true });
+      } catch (error) {
+        state.documents = before.documents;
+        state.workspaceAssets = before.workspaceAssets;
+        state.assetHistoryTombstones = before.assetHistoryTombstones;
+        persist();
+        throw error;
+      }
+      try {
+        const cleanup = await requestPermanentAssetOperation("/api/history-assets/cleanup-files", group.workspacePath, group.assets);
+        retainedFileCount += (cleanup.fileResults || []).filter((result) => result.retainedBecauseReferenced).length;
+      } catch (error) {
+        console.warn("Asset file cleanup deferred:", error.message);
+      }
+    } else {
+      const payload = await requestPermanentAssetOperation("/api/history-assets/permanent-delete", group.workspacePath, group.assets);
+      retainedFileCount += (payload.fileResults || []).filter((result) => result.retainedBecauseReferenced).length;
+    }
+    markGlobalAssetRecordsPurged(group.assets);
+    deletedCount += group.assets.length;
+  }
+  await refreshGlobalHistoricalAssets({ fresh: true });
+  if (announce) showToast(retainedFileCount
+    ? `已彻底删除 ${deletedCount} 项资产；${retainedFileCount} 个仍被正文或白板使用的媒体文件已安全保留`
+    : deletedCount > 1 ? `已彻底删除 ${deletedCount} 项资产` : "资产已彻底删除");
+  return deletedCount;
+};
+
+const pruneExpiredAssetTrash = async () => {
+  if (ui.assetTrashCleanupPromise) return ui.assetTrashCleanupPromise;
+  ui.assetTrashCleanupPromise = (async () => {
+    const now = new Date().toISOString();
+    const trashedAssets = allHistoricalAssets({ includeTrash: true });
+    const expiredLocalEntries = expiredAssetTrashEntries(state, { now });
+    const expiredLocalAssets = expiredLocalEntries.map((entry) => (
+      trashedAssets.find((asset) => assetHistoryIdentitiesMatch(assetHistoryIdentity(asset), entry)) || entry
+    ));
+    const expiredCatalogAssets = [...ui.globalAssetTrashRecords.values()]
+      .filter((record) => record.status !== "purged" && Date.parse(record.expiresAt) <= Date.parse(now))
+      .map((record) => trashedAssets.find((asset) => String(asset.id) === record.id))
+      .filter(Boolean);
+    const unique = new Map([...expiredLocalAssets, ...expiredCatalogAssets].map((asset) => [
+      `${historicalAssetWorkspaceContext(asset).workspacePath}\u0000${historicalAssetSourceIdentity(asset, state.settings.workspacePath)}`,
+      asset,
+    ]));
+    if (unique.size) await permanentlyDeleteAssetsFromHistoryLibrary([...unique.values()], { announce: false });
+    for (const record of ui.globalAssetTrashRecords.values()) {
+      if (record.status === "purged" || Date.parse(record.expiresAt) > Date.parse(now)) continue;
+      if (![...unique.values()].some((asset) => String(asset.id) === record.id)) {
+        ui.globalAssetTrashRecords.set(record.id, { ...record, status: "purged", purgedAt: now });
+        ui.globalAssetHiddenIds.add(record.id);
+      }
+    }
+    persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
+    return unique.size;
+  })().finally(() => { ui.assetTrashCleanupPromise = null; });
+  return ui.assetTrashCleanupPromise;
 };
 
 const closeWhiteboardAssetTransformMenus = (exceptCard = null) => {
@@ -12285,11 +12740,11 @@ const renderWhiteboardAssets = () => {
   const referenceSlot = String(ui.whiteboardAssetReferenceSlot || "");
   const conversationReferenceMode = ui.whiteboardAssetConversationReferenceMode === true;
   const referenceMode = conversationReferenceMode || Boolean(referenceTarget);
-  const showHidden = !referenceMode && ui.whiteboardAssetShowHidden === true;
+  const showTrash = !referenceMode && ui.whiteboardAssetShowTrash === true;
   if (referenceTargetNodeId && !referenceTarget) ui.whiteboardAssetReferenceTargetNodeId = "";
   const sortDirection = ui.whiteboardAssetSortDirection === "asc" ? "asc" : "desc";
-  const allAssets = [...(showHidden
-    ? allHistoricalAssets({ includeHidden: true }).filter((asset) => asset.historyHidden)
+  const allAssets = [...(showTrash
+    ? allHistoricalAssets({ includeTrash: true })
     : allHistoricalAssets())].sort((left, right) => {
     const leftTime = assetEventTimestamp(left);
     const rightTime = assetEventTimestamp(right);
@@ -12316,15 +12771,17 @@ const renderWhiteboardAssets = () => {
   elements.whiteboardAssetSort.setAttribute("aria-label", `全部资产排序：${sortDirection === "desc" ? "新的在上" : "旧的在上"}`);
   elements.whiteboardAssetSort.title = sortDirection === "desc" ? "资产排序：新的在上；点击改为旧的在上" : "资产排序：旧的在上；点击改为新的在上";
   elements.whiteboardAssetSort.innerHTML = icon("\uE8CB", sortDirection === "desc" ? "新的在上" : "旧的在上");
-  elements.whiteboardAssetShowHidden.hidden = referenceMode;
-  elements.whiteboardAssetShowHidden.setAttribute("aria-pressed", String(showHidden));
-  elements.whiteboardAssetShowHidden.innerHTML = showHidden
+  elements.whiteboardAssetShowTrash.hidden = referenceMode;
+  elements.whiteboardAssetShowTrash.setAttribute("aria-pressed", String(showTrash));
+  elements.whiteboardAssetShowTrash.innerHTML = showTrash
     ? `${icon("\uE890", "返回全部资产")}<span>返回全部资产</span>`
-    : `${icon("\uE890", "显示已隐藏")}<span>显示已隐藏</span>`;
+    : `${icon("\uE74D", "资产回收站")}<span>资产回收站</span>`;
   elements.whiteboardAssetBatchActions.hidden = referenceMode;
   elements.whiteboardAssetBatchActions.innerHTML = deleteMode
-    ? `<button class="secondary-button compact" type="button" data-whiteboard-asset-batch-action="cancel">${icon("\uE711")}<span>取消</span></button><button class="secondary-button compact" type="button" data-whiteboard-asset-batch-action="select-all" aria-pressed="${allFilteredSelected}" ${filteredAssetIds.length ? "" : "disabled"}>${icon(allFilteredSelected ? "\uE711" : "\uE73E")}<span>${allFilteredSelected ? "取消全选" : `全选（${filteredAssetIds.length}）`}</span></button><button class="${showHidden ? "primary-button" : "danger-button"} whiteboard-asset-batch-confirm" type="button" data-whiteboard-asset-batch-action="confirm" title="${showHidden ? `确认取消隐藏 ${selectedCount} 项资产` : `确认隐藏 ${selectedCount} 项资产`}" aria-label="${showHidden ? `确认取消隐藏 ${selectedCount} 项资产` : `确认隐藏 ${selectedCount} 项资产`}" ${selectedCount ? "" : "disabled"}>${icon(showHidden ? "\uE777" : "\uE890")}<span>确认</span></button>`
-    : `<button class="icon-button bare ${showHidden ? "" : "danger"}" type="button" data-whiteboard-asset-batch-action="begin" title="${showHidden ? "批量取消隐藏" : "批量隐藏"}" aria-label="${showHidden ? "批量取消隐藏" : "批量隐藏"}" ${allAssets.length ? "" : "disabled"}>${icon(showHidden ? "\uE777" : "\uE890", showHidden ? "批量取消隐藏" : "批量隐藏")}</button>`;
+    ? `<button class="secondary-button compact" type="button" data-whiteboard-asset-batch-action="cancel">${icon("\uE711")}<span>取消</span></button><button class="secondary-button compact" type="button" data-whiteboard-asset-batch-action="select-all" aria-pressed="${allFilteredSelected}" ${filteredAssetIds.length ? "" : "disabled"}>${icon(allFilteredSelected ? "\uE711" : "\uE73E")}<span>${allFilteredSelected ? "取消全选" : `全选（${filteredAssetIds.length}）`}</span></button><button class="${showTrash ? "primary-button" : "danger-button"} whiteboard-asset-batch-confirm" type="button" data-whiteboard-asset-batch-action="confirm" title="${showTrash ? `确认恢复 ${selectedCount} 项资产` : `确认删除 ${selectedCount} 项资产`}" aria-label="${showTrash ? `确认恢复 ${selectedCount} 项资产` : `确认删除 ${selectedCount} 项资产`}" ${selectedCount ? "" : "disabled"}>${icon(showTrash ? "\uE777" : "\uE74D")}<span>确认</span></button>`
+    : showTrash
+      ? `<button class="icon-button bare" type="button" data-whiteboard-asset-batch-action="begin" title="批量恢复" aria-label="批量恢复" ${allAssets.length ? "" : "disabled"}>${icon("\uE777", "批量恢复")}</button><button class="danger-button compact" type="button" data-whiteboard-asset-batch-action="clear-trash" ${allAssets.length ? "" : "disabled"}>${icon("\uE74D")}<span>清空回收站</span></button>`
+      : `<button class="icon-button bare danger" type="button" data-whiteboard-asset-batch-action="begin" title="批量删除" aria-label="批量删除" ${allAssets.length ? "" : "disabled"}>${icon("\uE74D", "批量删除")}</button>`;
   elements.whiteboardAssetFilterCount.textContent = uiText(deleteMode ? `${selectedCount} 已选 · ${assets.length} / ${allAssets.length} 项` : `${assets.length} / ${allAssets.length} 项`);
   elements.whiteboardAssetList.innerHTML = assets.length ? `${visibleAssets.map((asset) => {
     const kindLabel = asset.kind === "image" ? "图片" : asset.kind === "video" ? "视频" : asset.kind === "audio" ? "音频" : "文本";
@@ -12403,7 +12860,7 @@ const renderWhiteboardAssets = () => {
     const typeSourceLabel = asset.source === "conversation" ? " · 对话" : asset.source === "asset-library" ? " · 独立资产" : "";
     const disabledSourceAction = sourceAvailable ? "" : "disabled";
     const originLabel = asset.origin === "generated" ? "生成" : asset.origin === "upload" ? "上传" : "来源待确认";
-    return `<article class="whiteboard-asset-card ${referenceMode ? "is-reference-picker" : ""} ${deleteMode ? "is-batch-selecting" : ""} ${selected ? "is-selected" : ""} ${asset.historyHidden ? "is-history-hidden" : ""} ${globalCatalogAsset(asset) ? "is-global-source" : ""} ${sourceAvailable ? "" : "is-source-unavailable"}" data-whiteboard-asset="${escapeHtml(asset.id)}" data-whiteboard-asset-kind="${escapeHtml(asset.kind)}" data-whiteboard-asset-origin="${escapeHtml(asset.origin)}"${deleteMode ? ` data-whiteboard-asset-selectable role="checkbox" aria-checked="${selected}" tabindex="0"` : ""}>
+    return `<article class="whiteboard-asset-card ${referenceMode ? "is-reference-picker" : ""} ${deleteMode ? "is-batch-selecting" : ""} ${selected ? "is-selected" : ""} ${asset.inAssetTrash ? "is-in-asset-trash" : ""} ${globalCatalogAsset(asset) ? "is-global-source" : ""} ${sourceAvailable ? "" : "is-source-unavailable"}" data-whiteboard-asset="${escapeHtml(asset.id)}" data-whiteboard-asset-kind="${escapeHtml(asset.kind)}" data-whiteboard-asset-origin="${escapeHtml(asset.origin)}"${deleteMode ? ` data-whiteboard-asset-selectable role="checkbox" aria-checked="${selected}" tabindex="0"` : ""}>
       ${deleteMode ? `<span class="whiteboard-asset-selection-marker" aria-hidden="true"><span class="whiteboard-asset-selection-check">✓</span></span>` : ""}
       <header><strong>${coverLabel || kindLabel} · ${originLabel}${typeSourceLabel}</strong><time>${escapeHtml(`${Number.isNaN(createdAt.getTime()) ? "时间待确认" : createdAt.toLocaleString("zh-CN")}${elapsedLabel}`)}</time></header>
       <div class="whiteboard-asset-preview">${preview}${referenceControl}</div>
@@ -12422,18 +12879,20 @@ const renderWhiteboardAssets = () => {
         <button class="icon-button bare" type="button" data-whiteboard-asset-action="add" title="添加到白板" ${disabledSourceAction}>${icon("\uE710", "添加到白板")}</button>
         <button class="icon-button bare" type="button" data-whiteboard-asset-action="copy" title="复制" ${disabledSourceAction}>${icon("\uE8C8", "复制")}</button>
         <button class="icon-button bare" type="button" data-whiteboard-asset-action="save" title="另存为" ${disabledSourceAction}>${icon("\uE792", "另存为")}</button>
-        <button class="icon-button bare ${asset.historyHidden ? "" : "danger"}" type="button" data-whiteboard-asset-action="${asset.historyHidden ? "unhide" : "delete"}" title="${asset.historyHidden ? "取消隐藏" : "从资产库隐藏（不删除文件或记录）"}">${icon(asset.historyHidden ? "\uE777" : "\uE890", asset.historyHidden ? "取消隐藏" : "隐藏")}</button>
+        ${asset.inAssetTrash
+          ? `<button class="icon-button bare" type="button" data-whiteboard-asset-action="restore" title="恢复" aria-label="恢复">${icon("\uE777", "恢复")}</button><button class="icon-button bare danger" type="button" data-whiteboard-asset-action="permanent-delete" title="彻底删除" aria-label="彻底删除">${icon("\uE74D", "彻底删除")}</button>`
+          : `<button class="icon-button bare danger" type="button" data-whiteboard-asset-action="delete" title="删除到资产回收站" aria-label="删除到资产回收站">${icon("\uE74D", "删除")}</button>`}
       </footer>`}
     </article>`;
-  }).join("")}${visibleAssets.length < assets.length ? `<button class="secondary-button whiteboard-assets-load-more" type="button" data-whiteboard-asset-load-more>继续显示（${visibleAssets.length} / ${assets.length}）</button>` : ""}` : `<p class="whiteboard-assets-empty">${ui.globalHistoricalAssetsLoading ? "正在读取笔记与作品资产…" : allAssets.length ? "没有符合当前筛选条件的资产。" : ui.globalHistoricalAssetsError ? `全局资产目录读取失败：${escapeHtml(ui.globalHistoricalAssetsError)}` : "还没有可用的资产。"}</p>`;
+  }).join("")}${visibleAssets.length < assets.length ? `<button class="secondary-button whiteboard-assets-load-more" type="button" data-whiteboard-asset-load-more>继续显示（${visibleAssets.length} / ${assets.length}）</button>` : ""}` : `<p class="whiteboard-assets-empty">${ui.globalHistoricalAssetsLoading ? "正在读取笔记与作品资产…" : allAssets.length ? "没有符合当前筛选条件的资产。" : ui.globalHistoricalAssetsError ? `全局资产目录读取失败：${escapeHtml(ui.globalHistoricalAssetsError)}` : showTrash ? "资产回收站为空。" : "还没有可用的资产。"}</p>`;
   const scopeLabel = elements.whiteboardAssetDialog.querySelector(".whiteboard-assets-shell > header small");
   if (scopeLabel) scopeLabel.textContent = referenceMode
     ? conversationReferenceMode
       ? "添加到当前对话引用"
       : `${referenceSlot === "primary" ? "选择编辑视频" : referenceSlot === "additional" ? "选择参考内容" : "连接到"}：${referenceTarget.name || whiteboardNodeKindLabel(referenceTarget) || "当前生成节点"}`
-    : ui.globalHistoricalAssetsLoading ? "正在读取笔记与作品资产…" : "笔记与作品全部资产";
+    : showTrash ? "卡片与媒体资产最长保留 30 天" : ui.globalHistoricalAssetsLoading ? "正在读取笔记与作品资产…" : "笔记与作品全部资产";
   const title = elements.whiteboardAssetDialog.querySelector("#whiteboardAssetTitle");
-  if (title) title.textContent = conversationReferenceMode ? "引用全部资产" : referenceMode ? "选择全部资产作为参考" : showHidden ? "已隐藏资产" : "全部资产";
+  if (title) title.textContent = conversationReferenceMode ? "引用全部资产" : referenceMode ? "选择全部资产作为参考" : showTrash ? "资产回收站" : "全部资产";
 };
 
 let whiteboardAssetRenderToken = 0;
@@ -12466,7 +12925,9 @@ const openWhiteboardAssets = ({ referenceTargetNodeId = "", referenceSlot = "", 
   // previews is deferred until the following frame so the dropdown never
   // opens as a blank white panel on media-heavy whiteboards.
   scheduleWhiteboardAssetRender({ settleNativeSelect: true });
-  void refreshGlobalHistoricalAssets();
+  void refreshGlobalHistoricalAssets().then(() => pruneExpiredAssetTrash()).then(() => {
+    if (elements.whiteboardAssetDialog.open) renderWhiteboardAssets();
+  }).catch((error) => console.warn("Asset Trash cleanup deferred:", error.message));
 };
 
 const whiteboardCardHistoryEntries = (nodeId = ui.whiteboardCardHistoryNodeId) => canvasNodeGenerationHistory(
@@ -13547,7 +14008,10 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
     const updatedAt = Date.parse(current.updatedAt || current.createdAt || "");
     const submissionAge = Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : 0;
     const submissionError = mediaGenerationErrorText(current);
-    if (submissionError && submissionAge >= 3_000) return `${uiText("提交失败")} · ${submissionError}${taskLabel}`;
+    if (current.safeNoTaskRetry === true && submissionAge >= 3_000) {
+      return `${uiText("提交暂未完成，本次未创建收费任务，正在自动重试")} · ${uiText("未收费")}${submissionError ? ` · ${submissionError}` : ""}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    }
+    if (submissionError && submissionAge >= 3_000) return `${uiText("提交暂未完成")} · ${submissionError}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
     if (retryIn > 0 && submissionAge >= 3_000) return `${uiText("提交暂未完成")} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
     return `${uiText("正在提交")} · ${uiText("未收费")}${taskLabel}`;
   }
@@ -15214,6 +15678,26 @@ const promptDreaminaReverificationForJob = (job) => {
 
 const promptDreaminaSubmissionBlockForJob = (job) => {
   if (!job?.id || dreaminaSubmissionBlockPromptedJobs.has(job.id)) return false;
+  const jobStatus = String(job.status || "").trim().toLowerCase();
+  const terminalJob = ["complete", "failed", "cancelled"].includes(jobStatus);
+  const reconciliationOnly = String(job.submissionState || "").toLowerCase() === "uncertain"
+    || String(job.providerStatus || "").toLowerCase() === "reconciling"
+    || String(job.billingRisk || "").toLowerCase() === "submission_outcome_unknown";
+  if (String(job.providerErrorCode || "").toUpperCase() === "DREAMINA_PROFILE_SWITCH_BLOCKED"
+    && !terminalJob
+    && !reconciliationOnly) {
+    const conflict = job.lockConflict && typeof job.lockConflict === "object" ? job.lockConflict : {};
+    const fallbackSettings = mediaGenerationSettingsForJob(job) || job.request?.settings || {};
+    dreaminaSubmissionBlockPromptedJobs.add(job.id);
+    openDreaminaProfileLockDialog({
+      ...conflict,
+      activeProfileId: conflict.activeProfileId || String(fallbackSettings.dreaminaCliProfile || ""),
+      blockingJobId: conflict.blockingJobId || "",
+      reason: conflict.reason || "physical_credential_slot_busy",
+    });
+    showToast(mediaGenerationErrorText(job) || "即梦通道正被其他配置占用，本次任务未提交厂商。");
+    return true;
+  }
   if (String(job.status || "") !== "retry_required"
     || String(job.providerStatus || "") !== "reconciling"
     || job.providerTaskId
@@ -15222,12 +15706,7 @@ const promptDreaminaSubmissionBlockForJob = (job) => {
   const profileId = String(settings?.dreaminaCliProfile || "").trim();
   if (!profileId || elements.dreaminaReverifyDialog?.open) return false;
   dreaminaSubmissionBlockPromptedJobs.add(job.id);
-  openDreaminaProfileLockDialog({
-    reason: "submission_outcome_unknown",
-    activeProfileId: profileId,
-    blockingJobId: job.id,
-  });
-  showToast("即梦提交结果暂时无法确认，已暂停新的提交；请查看占用任务并在需要时手动终止本机任务。不会重复核验或重复扣费。");
+  showToast("即梦提交结果暂时无法确认，任务已保留在待处理中；凭证锁已经释放，不影响新的生成。可在原卡片继续找回或手动停止。");
   return true;
 };
 
@@ -17508,7 +17987,7 @@ const renderWhiteboard = (documentState) => {
       ? Math.max(0, Number(candidate.providerQueueLength))
       : null;
     const providerQueueLabel = whiteboardProviderQueueVisible(candidate)
-      ? `${uiText("厂商排队")}${queueLength !== null ? ` · ${uiText("共")} ${queueLength.toLocaleString()} ${uiText("人")}` : ""}${queuePosition !== null ? ` · ${uiText("当前第")} ${Math.max(1, queuePosition).toLocaleString()} ${uiText("位")}` : ""}`
+      ? `${uiText("厂商排队")}${queueLength !== null && queueLength > 0 ? ` · ${uiText("共")} ${queueLength.toLocaleString()} ${uiText("人")}` : ""}${queuePosition !== null && queuePosition > 0 ? ` · ${uiText("当前第")} ${queuePosition.toLocaleString()} ${uiText("位")}` : ""}`
       : "";
     const generationStatusLabel = candidateApplyFailed
       ? uiText("结果已生成，卡片回填失败")
@@ -17995,7 +18474,7 @@ const cockpitDecisionExecutionPrompt = ({ item, decisionType, opinion = "" }) =>
     "这是用户已经确认的修改指令，不得再设置候选稿、自检满意度或二次审批门禁；只有发现会导致不可逆删除、目标含义互斥或缺少用户才能提供的事实时，才返回清晰的自然语言问题交由界面弹窗确认。",
     "读取当前作品全部必要资料并建立影响清单；从来源文档和正式设定开始，检查资料、设定、大纲、正文与记忆中的直接提及、别名、语义依赖和因果依赖。",
     "对每个受影响文档读取用户当前最新版，优先使用精确 Patch、范围 Patch、块级 Patch 或语义 Patch；不要整篇重写，不要改动无关内容。",
-    "对任何已有文档执行覆盖、续写、追加或局部替换前，都必须保存一次完整历史版本；包括空白或只有标题的占位文档。",
+    "每次 AI 正式写入成功后，服务端会在同一事务中把写入后的完整文档保存为历史版本。不要在每次写入前机械创建旧版本；仅当即将覆盖的当前完整文档包含尚未进入历史的人工修改时，服务端才先保存一次覆盖前完整版本。空白或只有标题的首次落盘只保存写入结果。",
     "将确认结论写入所有实际受影响的正式文档并回读验证；没有真实内容时不要创建文档，不得只写编译报告或只解释方案。",
     "完成后逐项列出实际修改的正式文档。不要修改任何 CLI、API、模型、凭证或生成连接配置。",
   ].join("\n");
@@ -18186,7 +18665,127 @@ const deferWhiteboardSurfaceHide = () => {
   }, { delay: 80, timeout: 1_200 });
 };
 
+const currentDocumentViewState = (documentId = state.activeDocument) => state.documentViewStates?.[documentId] ?? null;
+
+const synchronizeDocumentTabState = () => {
+  const next = normalizeDocumentTabState({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  });
+  state.documentTabs = next.documentTabs;
+  state.activeDocumentTabId = next.activeDocumentTabId;
+  state.activeDocument = next.activeDocument || "";
+  state.documentViewStates = next.documentViewStates;
+  return next;
+};
+
+const renderDocumentTabs = () => {
+  const container = elements.documentTabs;
+  if (!container) return;
+  synchronizeDocumentTabState();
+  const tabs = Array.isArray(state.documentTabs) ? state.documentTabs : [];
+  container.innerHTML = `${tabs.map((tab) => {
+    const documentState = tab.documentId ? state.documents?.[tab.documentId] : null;
+    const label = documentState?.title || (tab.documentId ? tab.documentId : "新标签页");
+    const active = tab.id === state.activeDocumentTabId;
+    return `<div class="document-tab ${active ? "active" : ""}" data-document-tab-id="${escapeHtml(tab.id)}" draggable="true">
+      <button class="document-tab-select" type="button" draggable="true" data-document-tab-select="${escapeHtml(tab.id)}" aria-selected="${active}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>
+      <button class="document-tab-close" type="button" draggable="false" data-document-tab-close="${escapeHtml(tab.id)}" title="关闭标签页" aria-label="关闭标签页">${icon("\uE711", "关闭标签页")}</button>
+    </div>`;
+  }).join("")}<button class="document-tab-add" type="button" draggable="false" data-document-tab-add title="新建空白标签页" aria-label="新建空白标签页" ${tabs.length >= MAX_DOCUMENT_TABS ? "disabled" : ""}>${icon("\uE710", "新建空白标签页")}</button><span class="document-tab-drop-indicator" data-document-tab-drop-indicator hidden></span>`;
+};
+
+const captureActiveDocumentViewState = () => {
+  const documentId = String(state.activeDocument || "");
+  if (!documentId || !state.documents?.[documentId]) return;
+  const documentState = state.documents[documentId];
+  if (elements.editor?.dataset.document === documentId && documentState.documentKind !== "whiteboard" && !documentPreviewActive()) {
+    documentState.html = serializableEditorHtml();
+  }
+  state.documentViewStates = updateDocumentViewState(state.documentViewStates, documentId, {
+    mode: documentPreviewActive() ? "read" : "edit",
+    scrollTop: elements.editorCanvas?.scrollTop || 0,
+  });
+};
+
+const applyDocumentTabState = (next) => {
+  state.documentTabs = next.documentTabs;
+  state.activeDocumentTabId = next.activeDocumentTabId;
+  state.activeDocument = next.activeDocument || "";
+  state.documentViewStates = normalizeDocumentViewStates(next.documentViewStates, state.documents);
+};
+
+const openDocumentTab = (documentId) => {
+  captureActiveDocumentViewState();
+  const next = openDocumentInTabs({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  }, documentId);
+  if (next.limitReached) {
+    showToast("最多打开 8 个标签页");
+    return false;
+  }
+  applyDocumentTabState(next);
+  const viewState = currentDocumentViewState(state.activeDocument);
+  const defaultRead = manuscriptDocumentHasSubstantiveContent(state.activeDocument);
+  ui.documentPreviewKey = (viewState?.mode === "read" || (!viewState && defaultRead))
+    ? currentDocumentPreviewKey()
+    : null;
+  elements.editor.dataset.document = "";
+  persistNavigationState();
+  return true;
+};
+
+const activateDocumentTab = (tabId) => {
+  captureActiveDocumentViewState();
+  const next = activateDocumentTabState({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  }, tabId);
+  if (!next.changed) return false;
+  applyDocumentTabState(next);
+  const viewState = currentDocumentViewState(state.activeDocument);
+  ui.documentPreviewKey = viewState?.mode === "read" ? currentDocumentPreviewKey() : null;
+  if (!viewState && manuscriptDocumentHasSubstantiveContent(state.activeDocument)) ui.documentPreviewKey = currentDocumentPreviewKey();
+  elements.editor.dataset.document = "";
+  persistNavigationState();
+  renderDocumentActivation();
+  requestAnimationFrame(() => { if (elements.editorCanvas) elements.editorCanvas.scrollTop = viewState?.scrollTop || 0; });
+  return true;
+};
+
+const closeDocumentTabById = (tabId) => {
+  captureActiveDocumentViewState();
+  const next = closeDocumentTab({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  }, tabId);
+  if (!next.changed) return false;
+  applyDocumentTabState(next);
+  ui.documentPreviewKey = currentDocumentViewState(state.activeDocument)?.mode === "read"
+    ? currentDocumentPreviewKey()
+    : (manuscriptDocumentHasSubstantiveContent(state.activeDocument) ? currentDocumentPreviewKey() : null);
+  elements.editor.dataset.document = "";
+  persistNavigationState();
+  renderDocumentActivation();
+  requestAnimationFrame(() => { if (elements.editorCanvas) elements.editorCanvas.scrollTop = currentDocumentViewState(state.activeDocument)?.scrollTop || 0; });
+  return true;
+};
+
 const renderEditor = () => {
+  renderDocumentTabs();
   clearEditorNarrativePlaceholder();
   elements.whiteboardFullscreenButton.hidden = true;
   dismissWhiteboardGenerationDialogsOutsideActiveSurface();
@@ -18234,10 +18833,20 @@ const renderEditor = () => {
     elements.editor.hidden = false;
     elements.editor.contentEditable = "false";
     elements.editor.dataset.document = "";
-    elements.editor.classList.toggle("workspace-empty", state.workspaceKind === "project");
-    elements.editor.innerHTML = state.workspaceKind === "project"
-      ? `<section class="workspace-empty-state" contenteditable="false"><strong>${escapeHtml(uiText("这里将呈现你的作品"))}</strong><span>${escapeHtml(uiText("可以先在右侧聊一个想法，或者带入已有稿件。"))}</span></section>`
-      : "";
+    const blankTab = !workspaceHasNoActiveEntry() && !state.activeDocument && Boolean(state.activeDocumentTabId);
+    elements.editor.classList.toggle("workspace-empty", !blankTab && state.workspaceKind === "project");
+    elements.editor.innerHTML = blankTab
+      ? `<section class="document-tab-empty-state" contenteditable="false">
+          <strong>新标签页</strong>
+          <span>从左侧目录打开文档，或创建一篇新文档。</span>
+          <div class="document-tab-empty-actions">
+            <button class="primary-button" type="button" data-blank-tab-create>新建文档</button>
+            <button class="secondary-button" type="button" data-blank-tab-close>关闭标签页</button>
+          </div>
+        </section>`
+      : state.workspaceKind === "project"
+        ? `<section class="workspace-empty-state" contenteditable="false"><strong>${escapeHtml(uiText("这里将呈现你的作品"))}</strong><span>${escapeHtml(uiText("可以先在右侧聊一个想法，或者带入已有稿件。"))}</span></section>`
+        : "";
     elements.breadcrumbs.innerHTML = `<span>${state.workspaceKind === "notebook" ? "笔记目录" : "作品目录"}</span>`;
     elements.wordCount.textContent = "";
     const saveVersionButton = document.querySelector("#saveVersionButton");
@@ -18293,7 +18902,7 @@ const renderEditor = () => {
   const saveVersionButton = document.querySelector("#saveVersionButton");
   const canSaveCurrentDocument = Boolean(state.documents[state.activeDocument] && state.activeDocument !== "library-trash" && !documentState.derived && !documentState.externalMarkdown && !cockpitFixedDocument);
   saveVersionButton.disabled = !canSaveCurrentDocument;
-  saveVersionButton.title = canSaveCurrentDocument ? "版本保存当前文档" : "当前内容不支持版本保存";
+  saveVersionButton.title = canSaveCurrentDocument ? `保存《${documentState.title}》历史版本` : "当前内容不支持版本保存";
   saveVersionButton.setAttribute("aria-label", saveVersionButton.title);
   const hasDocumentTitle = !isWhiteboard && state.activeDocument !== "library-trash";
   const editableDocumentTitle = hasDocumentTitle && canSaveCurrentDocument && !previewMode;
@@ -18404,6 +19013,16 @@ const renderEditor = () => {
     hideSelectionToolbar();
   });
   requestAnimationFrame(renderSearchHighlight);
+  // Restore the active document's independent viewport after its content has
+  // been materialized. This also covers a cold restart, where no tab-switch
+  // handler runs after workspace hydration.
+  const renderedDocumentId = state.activeDocument;
+  const savedViewState = currentDocumentViewState(renderedDocumentId);
+  if (savedViewState?.scrollTop) requestAnimationFrame(() => {
+    if (state.activeDocument === renderedDocumentId) {
+      elements.editorCanvas.scrollTop = savedViewState.scrollTop;
+    }
+  });
 };
 
 const targetLabel = (target = null) => {
@@ -18784,9 +19403,10 @@ const renderExecutionProcess = (message) => {
     || execution.lane === "guided_dialogue"
     || execution.taskRoute?.mode === "creative_guidance"
     || execution.taskRoute?.requestMode === "creative_guidance";
-  const qualityReviewExecution = execution.taskRoute?.taskKind === "quality_review"
-    || execution.taskRoute?.diagnosisIntent === true
-    || intentEnvelope?.taskType === "diagnosis";
+  const explicitNativeTaskKind = nativeAgentExecution ? String(execution.taskRoute?.taskKind || "") : "";
+  const qualityReviewExecution = explicitNativeTaskKind
+    ? ["quality_review", "diagnosis"].includes(explicitNativeTaskKind)
+    : execution.taskRoute?.diagnosisIntent === true || intentEnvelope?.taskType === "diagnosis";
   const conversationOnlyExecution = !guidedExecution && !qualityReviewExecution && (intentEnvelope?.writeMode === "conversation_only"
     || String(execution.taskRoute?.commitDisposition || execution.taskRoute?.taskPolicy?.commitDisposition || "") === "no_artifact"
     || execution.strength === "general");
@@ -18933,9 +19553,15 @@ const renderExecutionProcess = (message) => {
     .filter(Boolean)
     .slice(0, 4)
     .join("、");
-  const taskDisplayLabel = qualityReviewExecution ? "内容质检" : intentTaskTypeLabel;
+  const taskDisplayLabel = nativeAgentExecution && explicitNativeTaskKind
+    ? strengthLabel
+    : qualityReviewExecution ? "内容质检" : intentTaskTypeLabel;
+  const unresolvedIntentTargetLabel = intentEnvelope?.writeMode === "formal_auto"
+    && execution.taskRoute?.writeAuthorization?.action === "create"
+    ? "待创建新文档"
+    : intentEnvelope?.writeMode === "conversation_only" ? "无需写入文档" : "写入目标待确定";
   const intentSummary = intentEnvelope
-    ? [taskDisplayLabel, intentWriteModeLabel, intentTargetText ? `${intentTargetLabel}：${intentTargetText}` : "无需写入文档", intentRequiredContextText ? `读取：${intentRequiredContextText}` : ""].filter(Boolean).join(" · ")
+    ? [taskDisplayLabel, intentWriteModeLabel, intentTargetText ? `${intentTargetLabel}：${intentTargetText}` : unresolvedIntentTargetLabel, intentRequiredContextText ? `读取：${intentRequiredContextText}` : ""].filter(Boolean).join(" · ")
     : "";
   const nativeAgentSession = agentExecution && execution.nativeSession && typeof execution.nativeSession === "object"
     ? execution.nativeSession
@@ -19017,11 +19643,53 @@ const renderExecutionProcess = (message) => {
   const contextReadState = executionContextReadStateFor(execution);
   const actualReadDocumentCount = contextReadState.actual?.documents?.length || 0;
   const actualReadSkillCount = contextReadState.actual?.skills?.length || 0;
+  const nativePlannedReadEntries = Array.isArray(execution.documentReadManifest?.documents)
+    ? execution.documentReadManifest.documents
+    : Array.isArray(execution.documentReadManifest?.entries) ? execution.documentReadManifest.entries : [];
+  const nativeActualDocumentReads = [...new Set((execution.actualReads || [])
+    .filter((item) => item?.kind !== "skill" && (item?.id || item?.title))
+    .map((item) => item.id || item.title))];
+  const nativeFullDocumentReads = [...new Set((execution.actualReads || [])
+    .filter((item) => item?.kind !== "skill" && item?.fullText === true && (item?.id || item?.title))
+    .map((item) => item.id || item.title))];
+  const nativeReadSummary = nativeAgentExecution && (nativePlannedReadEntries.length || nativeActualDocumentReads.length)
+    ? `计划 ${nativePlannedReadEntries.length} 份 · 已实际读取 ${nativeActualDocumentReads.length} 份 · 全文 ${nativeFullDocumentReads.length} 份`
+    : "";
   const nativeDeliveryTargets = nativeAgentExecution ? (execution.deliveryTargets || []) : [];
   const nativeTargetText = nativeDeliveryTargets
     .map((item) => item.title || item.documentId)
     .filter(Boolean)
     .join("、");
+  const capabilityNodeLabels = {
+    "group:novel": "长篇小说模组", "group:short-fiction": "短篇小说模组", "group:public-account": "公众号文章模组",
+    "group:short-drama": "短剧剧本模组", "group:short-video": "短视频剧本模组", "group:prompt-engineering": "提示词工程模组",
+    "module:novel-guidance": "小说创作引导模块", "module:novel-planning": "小说规划模块", "module:novel-writer": "小说主笔模块",
+    "module:novel-review": "小说自检模块", "group:novel-theory": "小说理论模组", "module:shared-memory": "长文记忆模块",
+    "module:short-fiction-guidance": "短篇小说创作引导模块", "module:short-fiction-writer": "短篇小说主笔模块", "module:short-fiction-review": "短篇小说自检模块", "module:short-fiction-theory": "短篇小说理论模块",
+    "module:public-account-guidance": "公众号创作引导模块", "module:public-account-writer": "公众号主笔模块", "module:public-account-theory": "公众号理论模块", "module:public-account-illustration": "公众号配图规划模块",
+    "module:short-drama-guidance": "短剧创作引导模块", "group:short-drama-writers": "短剧主笔模组", "module:short-drama-review": "短剧自检模块",
+    "module:short-video-guidance": "短视频创作引导模块", "module:short-video-writer": "短视频主笔模块", "module:short-video-review": "短视频自检模块", "module:short-video-theory": "短视频理论模块",
+    "module:prompt-guidance": "提示词创作引导模块", "module:prompt-writer": "图片资产提示词模块", "module:prompt-panorama-writer": "多人站位模块", "module:video-prompt-writer": "AI 视频导演模块",
+  };
+  const actualRouteTitles = [...new Set((execution.actualRouteReads || []).map((item) => item.title).filter(Boolean))];
+  const selectedTopLevelNodeId = String(execution.taskRoute?.selectedCapabilityTopLevelId || "");
+  const selectedCapabilityNodeId = String(execution.taskRoute?.selectedCapabilityNodeId || "");
+  const selectedRoutePath = Array.isArray(execution.taskRoute?.selectedRoutePath)
+    ? execution.taskRoute.selectedRoutePath.filter(Boolean)
+    : [];
+  const declaredCapabilityPath = selectedRoutePath.length
+    ? selectedRoutePath.join(" → ")
+    : [capabilityNodeLabels[selectedTopLevelNodeId] || selectedTopLevelNodeId, capabilityNodeLabels[selectedCapabilityNodeId] || selectedCapabilityNodeId].filter(Boolean).join(" → ");
+  const capabilityRouteSummary = nativeAgentExecution
+    ? selectedTopLevelNodeId || selectedCapabilityNodeId
+      ? [
+          declaredCapabilityPath,
+          actualRouteTitles.length ? `已读取：${actualRouteTitles.join(" → ")}` : pending ? "正在读取命中分支" : "未保留路由读取记录",
+        ].filter(Boolean).join(" → ")
+      : execution.taskRoute?.capabilityInspectionOnly === true
+        ? "面板与分支路由检查；按任务仅读取所需路由，不强制读取无关 Skill"
+        : execution.taskRoute?.mode === "general" ? "通用 Agent 问答；本轮不强行调用创作 Skill" : "尚未确定能力分支"
+    : "";
   const deliveryWarnings = Array.isArray(execution.deliveryWarnings) ? execution.deliveryWarnings.filter(Boolean) : [];
   const nativeTerminalIssue = nativeAgentExecution && ["failed", "interrupted", "cancelled", "canceled"].includes(String(execution.status || "").toLowerCase())
     ? String(execution.error || execution.result || "Agent 未返回具体失败原因").replace(/^(?:任务失败|任务已中断|任务已取消)：\s*/u, "")
@@ -19040,9 +19708,12 @@ const renderExecutionProcess = (message) => {
       ${agentExecution ? `<div><dt>${escapeHtml(uiText("模型"))}</dt><dd>${escapeHtml(agentRuntime.model || "本次运行未记录模型")}</dd></div><div><dt>${escapeHtml(uiText("Agent 能力"))}</dt><dd>${escapeHtml(agentCapabilityText)}</dd></div><div><dt>${escapeHtml(uiText("Agent 阶段"))}</dt><dd>${escapeHtml(agentPhase)}</dd></div><div><dt>${escapeHtml(uiText("Agent 耗时"))}</dt><dd class="execution-agent-elapsed"${agentTimerData}>${escapeHtml(agentElapsedText)}</dd></div>` : ""}
       <div><dt>${escapeHtml(uiText("当前阶段"))}</dt><dd>${escapeHtml(taskLifecycleSummary)}</dd></div>
       ${intentSummary ? `<div><dt>本轮任务</dt><dd>${escapeHtml(intentSummary)}</dd></div>` : ""}
+      ${capabilityRouteSummary ? `<div><dt>能力路由</dt><dd>${escapeHtml(capabilityRouteSummary)}</dd></div>` : ""}
       <div><dt>目标文档</dt><dd>${escapeHtml(nativeAgentExecution ? nativeTargetText || "尚未确定写入目标" : execution.targetLabel || "当前绑定文档")}</dd></div>
       ${deliveryWarnings.length ? `<div><dt>验收提示</dt><dd>${escapeHtml(`结果已正常显示；${deliveryWarnings.join("；")}`)}</dd></div>` : ""}
-      ${nativeAgentExecution ? "" : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
+      ${nativeAgentExecution
+        ? nativeReadSummary ? `<div><dt>资料读取</dt><dd>${escapeHtml(nativeReadSummary)}（完整证据见下方）</dd></div>` : ""
+        : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
       ${contextCoverageText ? `<div><dt>创作依据</dt><dd>${escapeHtml(contextCoverageText)}</dd></div>` : ""}
       ${contextDependencySummary ? `<div><dt>资料缺口</dt><dd>${escapeHtml(contextDependencySummary)}</dd></div>` : ""}
       ${taskCanonModeLabel ? `<div><dt>${escapeHtml(uiText("正典模式"))}</dt><dd>${escapeHtml(taskCanonModeLabel)}</dd></div>` : ""}
@@ -22831,6 +23502,7 @@ const historyPreviewVersion = () => {
 const previewDocumentHtml = (documentState = {}) => {
   if (documentState.html) return sanitizeDocumentHtml(documentState.html);
   if (documentState.markdown) return `<pre class="history-preview-markdown">${escapeHtml(documentState.markdown)}</pre>`;
+  if (documentState.content) return `<div class="history-preview-plain-content">${proseToHtml(documentState.content)}</div>`;
   return `<p class="history-preview-empty">此版本没有可显示的内容</p>`;
 };
 
@@ -22870,7 +23542,26 @@ const historyDiffTextFromHtml = (html = "") => {
 
 const historyVersionDiffText = (version = {}) => {
   const htmlText = historyDiffTextFromHtml(version.document?.html || version.html || "");
-  return htmlText || String(version.document?.markdown || version.markdown || "");
+  return htmlText || String(
+    version.document?.markdown
+    || version.markdown
+    || version.document?.content
+    || version.content
+    || "",
+  );
+};
+
+const historyVersionHasCompleteSnapshot = (version = {}) => {
+  const documentSnapshot = version?.document;
+  return Boolean(
+    documentSnapshot && typeof documentSnapshot === "object" && (
+      Object.prototype.hasOwnProperty.call(documentSnapshot, "html")
+      || Object.prototype.hasOwnProperty.call(documentSnapshot, "markdown")
+      || Object.prototype.hasOwnProperty.call(documentSnapshot, "content")
+    )
+  ) || Object.prototype.hasOwnProperty.call(version, "html")
+    || Object.prototype.hasOwnProperty.call(version, "markdown")
+    || Object.prototype.hasOwnProperty.call(version, "content");
 };
 
 const historyDiffSourceLabel = (diffInput = {}) => ({
@@ -22890,7 +23581,10 @@ const buildHistoryPreview = (scope, version) => {
         ...clone(versionDocument),
         title: versionDocument.title ?? currentDocument.title ?? "未命名文档",
         html: versionDocument.html ?? version.html ?? "",
-        afterContent: version.afterContent ?? "",
+        markdown: versionDocument.markdown ?? version.markdown ?? "",
+        content: versionDocument.content ?? version.content ?? "",
+        // afterContent/changeSet are annotations only. The historical
+        // document snapshot remains the sole source for preview content.
         changeSet: version.changeSet ?? [],
       } },
       groups: [{ id: "document", label: currentDocument.title ?? "文档", items: [[scope.id, currentDocument.title ?? "未命名文档"]] }],
@@ -22938,18 +23632,20 @@ const renderHistoryPreview = () => {
   preview.selectedDocumentId = selectedDocumentId;
   const selectedDocument = snapshot.documents[selectedDocumentId] ?? {};
   const structured = preview.scope.type !== "document";
-  const parentVersion = !structured && version.parentVersionId
-    ? historyDisplayData(preview.scope).find((candidate) => candidate.id === version.parentVersionId) ?? null
+  const comparisonVersionId = version.latestComparisonVersionId || version.parentVersionId;
+  const parentVersion = !structured && comparisonVersionId
+    ? historyDisplayData(preview.scope).find((candidate) => candidate.id === comparisonVersionId) ?? null
     : null;
   const completeSnapshotText = historyVersionDiffText(version);
+  const completeSnapshotAvailable = historyVersionHasCompleteSnapshot(version);
   const diffInput = structured ? { hasDiff: false } : resolveHistoryDiffInput({
     changeSet: version.changeSet,
-    explicitBefore: completeSnapshotText,
-    explicitAfter: version.afterContent ?? "",
-    hasExplicitAfter: Object.prototype.hasOwnProperty.call(version, "afterContent"),
+    explicitBefore: version.beforeContent,
+    hasExplicitBefore: Object.prototype.hasOwnProperty.call(version, "beforeContent"),
     parentBefore: historyVersionDiffText(parentVersion ?? {}),
     snapshotAfter: completeSnapshotText,
-    hasParent: Boolean(parentVersion),
+    hasParent: Boolean(parentVersion && historyVersionHasCompleteSnapshot(parentVersion)),
+    hasSnapshot: completeSnapshotAvailable,
   });
 
   document.querySelector("#historyPreviewTitle").textContent = version.name || version.title;
@@ -22968,12 +23664,13 @@ const renderHistoryPreview = () => {
       ${snapshot.groups.map((group) => `<section><h3>${escapeHtml(group.label)}</h3>${group.items.map(([id, label]) => `<button class="${id === selectedDocumentId ? "active" : ""}" type="button" data-preview-document="${escapeHtml(id)}" aria-pressed="${id === selectedDocumentId}">${icon("\uE8A5")}<span>${escapeHtml(label)}</span></button>`).join("")}</section>`).join("")}
     </aside>
     <section class="history-preview-content">
-      <header><strong>${escapeHtml(selectedDocument.title ?? "未命名文档")}</strong><span>${stripHtml(selectedDocument.html ?? "").length.toLocaleString("zh-CN")} 字</span></header>
+      <header><strong>${escapeHtml(selectedDocument.title ?? "未命名文档")}</strong><span>${(historyDiffTextFromHtml(selectedDocument.html ?? "") || String(selectedDocument.markdown || selectedDocument.content || "")).length.toLocaleString("zh-CN")} 字</span></header>
       <article class="history-preview-document">${previewDocumentHtml(selectedDocument)}</article>
     </section>
   ` : `<section class="history-preview-content single-history-preview${diffInput.hasDiff ? " has-history-diff" : ""}">
-    ${diffInput.hasDiff ? `<header class="history-diff-toolbar"><span><strong>完整版本与修改标注</strong><small>${escapeHtml(historyDiffSourceLabel(diffInput))}</small></span><span class="history-diff-legend"><i class="added">新增</i><i class="deleted">删除</i><i class="modified">修改</i></span></header>` : ""}
-    <article class="history-preview-document single ${diffInput.hasDiff ? "has-diff" : ""}">${diffInput.hasDiff
+    ${diffInput.integrityError ? `<p class="history-preview-integrity-error" role="alert">${escapeHtml(diffInput.integrityError)}</p>` : ""}
+    ${diffInput.hasDiff ? `<header class="history-diff-toolbar"><span><strong>完整版本与修改标注</strong><small>${escapeHtml(historyDiffSourceLabel(diffInput))}</small></span><span class="history-diff-legend"><i class="added">新增</i><i class="deleted">删除</i></span></header>` : ""}
+    <article class="history-preview-document single ${diffInput.hasDiff ? "has-diff" : ""}">${diffInput.integrityError ? `<p class="history-preview-empty">无法预览：历史版本缺少完整正文快照。</p>` : diffInput.hasDiff
       ? renderHistoryDiff(diffInput)
       : previewDocumentHtml(selectedDocument)}</article>
   </section>`;
@@ -24413,6 +25110,12 @@ const agentModelsForProfile = (profile = null) => {
   if (engine === "claude_code") {
     return agentModelsForEngine(engine, { codexModels: candidates, effectiveModel: profile.agentModelId || profile.model });
   }
+  if (engine === "workbuddy") {
+    return (agentRunnerCapability(engine)?.models || []).map((slug) => ({
+      slug: String(slug || ""),
+      label: modelPickerDisplayName(slug),
+    })).filter((item) => item.slug);
+  }
   return agentModelsForEngine(engine, { codexModels: ui.localCodex?.models || [], effectiveModel: profile.agentModelId || profile.model });
 };
 
@@ -24500,7 +25203,13 @@ const renderCodexConnectionControls = () => {
   const status = ui.codexAgent.status || {};
   const selected = currentCodexConnectionSelected();
   const actualConnected = selected && (status.codexAuthenticated === true || (status.agentEngine === "codex" && status.authenticated === true));
-  const connected = actualConnected && (!ui.temporaryCodexSelected || ui.temporaryCodexLoginRequested);
+  // Direct Codex CLI profiles run against the CLI's own ChatGPT session. The
+  // legacy app-server provider may currently be assigned to another runner
+  // (for example OpenCode), so its global account status is not authoritative
+  // for the selected Codex CLI profile.
+  const directCliAuthenticated = selected && ui.localCodex?.authenticated === true;
+  const connected = directCliAuthenticated
+    || (actualConnected && (!ui.temporaryCodexSelected || ui.temporaryCodexLoginRequested));
   if (elements.quickCodexConnection) elements.quickCodexConnection.hidden = !selected || connected;
   if (elements.codexConnectionStatus) elements.codexConnectionStatus.textContent = selected
     ? (connected ? "Codex 已连接" : "Codex 未连接")
@@ -24527,7 +25236,9 @@ const renderCodexConnectionControls = () => {
     ? `${ui.localCodex.version || "Codex CLI"} · 已检测`
     : `未检测到 Codex CLI${ui.localCodex?.message ? `：${ui.localCodex.message}` : ""}`;
   const accountStatus = document.querySelector("#codexSettingsAccountStatus");
-  if (accountStatus) accountStatus.textContent = connected ? "Codex 已连接" : "Codex 未连接";
+  if (accountStatus) accountStatus.textContent = connected
+    ? (directCliAuthenticated && !actualConnected ? "Codex CLI 已登录" : "Codex 已连接")
+    : "Codex 未连接";
   const settingsLogin = document.querySelector("#codexSettingsLogin");
   if (settingsLogin) {
     settingsLogin.hidden = !settingsSelected || connected;
@@ -24535,7 +25246,10 @@ const renderCodexConnectionControls = () => {
   }
   const settingsDisconnect = document.querySelector("#codexSettingsDisconnect");
   if (settingsDisconnect) {
-    settingsDisconnect.hidden = !settingsSelected || !connected;
+    // This button controls the app-server account only. A read-only detection
+    // of the CLI's own session must not advertise a logout operation that it
+    // cannot safely perform.
+    settingsDisconnect.hidden = !settingsSelected || !actualConnected;
     settingsDisconnect.disabled = status.accountLogin?.active === true;
   }
 };
@@ -24563,26 +25277,12 @@ const generationSettingsForAgentEngine = (settings = state.settings, overrides =
   };
 };
 
-const quickTextConnectionStatusSuffix = (profile) => {
-  if (!publicTextModelProbeIsolated(profile)) return "";
-  const stateName = textModelVisualState(profile, profile?.agentModelId || profile?.model);
-  if (stateName === "checking") return " · 自动检查中";
-  if (stateName === "available") return " · 已验证";
-  if (["limited", "unavailable"].includes(stateName)) return " · 当前不可用";
-  return " · 将自动验证";
-};
-
 const renderQuickAgentPermissionMode = () => {
   const mode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
-  const label = document.querySelector('#conversationPermissionLabel');
-  if (label) label.textContent = `${agentPermissionModeInfo(mode).label} ▾`;
-  const descriptions = new Map(agentPermissionModeOptions().map((option) => [option.id, option.description]));
-  document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]').forEach((button) => {
-    const selected = button.dataset.agentPermissionMode === mode;
-    button.classList.toggle("is-selected", selected);
-    button.setAttribute("aria-pressed", String(selected));
-    button.title = descriptions.get(button.dataset.agentPermissionMode) || "";
-  });
+  const summary = document.querySelector("#quickAgentPermissionSummary");
+  if (summary) summary.textContent = mode === "shensi_only"
+    ? "普通任务默认仅限神思；需要宿主能力时会显示具体操作授权。"
+    : `${agentPermissionModeInfo(mode).label}仅对当前运行时生效；受保护操作仍按具体授权处理。`;
 };
 
 const renderQuickModelSelector = () => {
@@ -24617,11 +25317,11 @@ const renderQuickModelSelector = () => {
     const labels = generationConnectionOptionLabels("text", agentProfiles);
     const activeAgentProfile = activeAgentTextProfile(state.settings);
     elements.quickAgentEngine.innerHTML = agentProfiles.map((profile, index) => (
-      `<option value="${escapeHtml(profile.id)}">${escapeHtml(labels[index])}${escapeHtml(quickTextConnectionStatusSuffix(profile))}</option>`
+      `<option value="${escapeHtml(profile.id)}">${escapeHtml(labels[index])}</option>`
     )).join("") || '<option value="">没有可用 Agent 配置</option>';
     elements.quickAgentEngine.value = activeAgentProfile?.id || agentProfiles[0]?.id || "";
   }
-  const savedOptions = configuredProfiles.map((profile, index) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(configuredProfileLabels[index])}${escapeHtml(quickTextConnectionStatusSuffix(profile))}</option>`).join("");
+  const savedOptions = configuredProfiles.map((profile, index) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(configuredProfileLabels[index])}</option>`).join("");
   const temporaryOption = temporaryProfile
     ? `<option value="${DETECTED_CODEX_CONNECTION_ID}">${escapeHtml(temporaryProfile.label)}</option>`
     : "";
@@ -24657,9 +25357,16 @@ const renderQuickModelSelector = () => {
       : [];
     const agentModels = agentModelsForProfile(configuredAgentProfile);
     const matchingEffectiveModel = agentModels.some((item) => item.slug === effectiveAgentModel) ? effectiveAgentModel : "";
+    const configuredAgentEngine = configuredAgentProfile ? agentEngineForTextProfile(configuredAgentProfile) : "";
+    const externalRunner = ["workbuddy", "custom"].includes(configuredAgentEngine);
+    const externalRunnerLabel = externalRunner
+      ? agentEngineDescriptor(configuredAgentEngine)?.label || "外置 Agent"
+      : "";
     const defaultAgentModelLabel = matchingEffectiveModel
       ? `跟随当前配置 · ${modelPickerDisplayName(matchingEffectiveModel)}`
-      : "跟随当前配置默认模型";
+      : externalRunner
+        ? `跟随 ${externalRunnerLabel} 默认模型（留空）`
+        : "跟随当前配置默认模型";
     const agentModelMarkup = publicTextModelProbeIsolated(configuredAgentProfile)
       ? agentModels.map((item) => agentTextModelOptionMarkup(item, configuredAgentProfile)).join("")
       : agentModels.map((item) => `<option value="${escapeHtml(item.slug)}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("");
@@ -25229,7 +25936,7 @@ const snapshotCommittedAiWriteHistory = (targets, reason, {
   return scope;
 };
 
-const snapshotDocument = (documentId, reason, { force = false, operations = [], changeSet = [], afterContent = "" } = {}) => {
+const snapshotDocument = (documentId, reason, { force = false, operations = [], changeSet = [], beforeContent, afterContent = "" } = {}) => {
   const documentState = state.documents[documentId];
   if (!documentState) return;
   const substantive = hasSubstantiveVersionContent(documentState.html ?? documentState.markdown ?? "", {
@@ -25256,21 +25963,40 @@ const snapshotDocument = (documentId, reason, { force = false, operations = [], 
     scopeType: "document",
     scopeId: documentId,
     changeSet: clone(changeSet),
+    ...(beforeContent !== undefined ? { beforeContent: String(beforeContent ?? "") } : {}),
     afterContent: String(afterContent ?? ""),
   }, { reason, operations, parentVersionId: state.histories[documentId][0]?.id || "" });
   const integrity = verifyHistoryEntryIntegrity(entry);
   if (!integrity.ok) throw Object.assign(new Error(integrity.reason || "历史版本完整性校验失败"), { code: integrity.code || "HISTORY_INTEGRITY_FAILED" });
-  if (force || !state.histories[documentId].some((version) => sameDocumentHistoryContent(version, entry))) state.histories[documentId].unshift(entry);
+  const historyEntries = state.histories[documentId];
+  const matchingIndex = matchingDocumentHistoryIndex(historyEntries, entry);
+  if (matchingIndex >= 0) {
+    const matchingEntry = historyEntries[matchingIndex];
+    if (matchingIndex > 0) {
+      const previousLatestId = historyEntries[0]?.id || "";
+      historyEntries.splice(matchingIndex, 1);
+      matchingEntry.lastActivatedAt = entry.createdAt;
+      matchingEntry.time = entry.time;
+      matchingEntry.latestComparisonVersionId = previousLatestId;
+      historyEntries.unshift(matchingEntry);
+    }
+    clearCurrentVersionMetadata(scope);
+    return { entry: matchingEntry, created: false, promoted: matchingIndex > 0 };
+  }
+  historyEntries.unshift(entry);
   clearCurrentVersionMetadata(scope);
-  return entry;
+  return { entry, created: true, promoted: false };
 };
 
-const annotateLatestDocumentHistory = (documentId, { changeSet = [], afterContent = "" } = {}) => {
+const annotateLatestDocumentHistory = (documentId, { changeSet = [], beforeContent, afterContent = "" } = {}) => {
   const entry = state.histories?.[documentId]?.[0];
   if (!entry || !Array.isArray(changeSet) || !changeSet.length) return;
   entry.changeSet = clone(changeSet);
+  if (beforeContent !== undefined) entry.beforeContent = String(beforeContent ?? "");
   entry.afterContent = String(afterContent ?? "");
-  entry.beforeRevision = contentRevision(documentTextFromHtml(entry.html ?? ""));
+  entry.beforeRevision = contentRevision(beforeContent !== undefined
+    ? String(beforeContent ?? "")
+    : documentTextFromHtml(entry.html ?? ""));
   entry.afterRevision = contentRevision(entry.afterContent);
   entry.changedCharacterCount = changeSet.reduce((total, change) => total + Math.max(String(change.before ?? "").length, String(change.after ?? "").length), 0);
 };
@@ -25310,18 +26036,22 @@ const saveCurrentDocumentVersion = (documentId = state.activeDocument) => {
     return;
   }
   if (elements.editor.dataset.document === documentId) documentState.html = serializableEditorHtml();
-  const beforeCount = state.histories[documentId]?.length ?? 0;
-  snapshotDocument(documentId, "用户点击版本保存", { force: true, operations: [{ type: "history.save_document", documentId }] });
-  const created = (state.histories[documentId]?.length ?? 0) > beforeCount;
-  if (created) {
+  const snapshotResult = snapshotDocument(documentId, "用户点击版本保存", { operations: [{ type: "history.save_document", documentId }] });
+  if (snapshotResult?.created) {
     recordActivity({ type: "history", label: `手动保存${documentState.title}的当前版本`, documentId });
+    persist();
+    renderHistory();
+  } else if (snapshotResult?.promoted) {
+    recordActivity({ type: "history", label: `将${documentState.title}的相同历史版本调整为最新`, documentId });
     persist();
     renderHistory();
   }
   rebuildProjectCompilationStatus();
-  showToast(created
+  showToast(snapshotResult?.created
     ? "已保存为历史版本，索引状态已刷新"
-    : "历史版本创建失败");
+    : snapshotResult?.promoted
+      ? "内容与已有历史版本完全相同，已将该版本调整为最新"
+      : "当前完整内容与最新历史版本完全相同，无需重复保存");
 };
 
 const LAZY_COCKPIT_DOCUMENTS = Object.freeze({
@@ -25371,7 +26101,7 @@ const openVersionSaveConfirmation = () => {
   ui.deleteProjectTarget = null;
   ui.deleteDocumentId = null;
   document.querySelector("#confirmDialogTitle").textContent = uiText("创建历史版本");
-  document.querySelector("#confirmDialogCopy").textContent = uiText(`“${documentState.title}”已经自动保存，无需通过此按钮保存文档。继续后，将根据当前内容额外创建一个可恢复的历史版本文件。`);
+  document.querySelector("#confirmDialogCopy").textContent = uiText(`将比较“${documentState.title}”的当前完整内容与最新历史版本。标题、正文、标点或格式有任何变化时创建新版本；完全相同时不重复保存。`);
   const submit = document.querySelector("#confirmDialogSubmit");
   submit.textContent = uiText("创建版本");
   submit.classList.remove("danger-button");
@@ -27192,7 +27922,7 @@ const openMediaAssetContextMenu = (event, relativePath = "", { assetId = "", kin
   const normalizedRevealPath = String(revealRelativePath || "").trim();
   const normalizedRevealKind = revealKind === "whiteboard" ? "whiteboard" : revealKind === "batch" ? "batch" : "";
   const libraryAsset = normalizedAssetId ? whiteboardAssetById(normalizedAssetId) : null;
-  const assetHidden = libraryAsset?.historyHidden === true;
+  const assetTrashed = libraryAsset?.inAssetTrash === true;
   ui.mediaAssetContext = { relativePath: path, revealRelativePath: normalizedRevealPath, revealKind: normalizedRevealKind, assetId: normalizedAssetId, kind: normalizedKind, downloadName: String(downloadName || ""), workspacePath, workspaceKind, documentId, historyNodeId: String(historyNodeId || "") };
   const revealLabel = normalizedRevealKind === "whiteboard"
     ? uiText("打开白板媒体文件夹")
@@ -27211,7 +27941,9 @@ const openMediaAssetContextMenu = (event, relativePath = "", { assetId = "", kin
       `<button type="button" data-media-asset-action="add">${icon("\uE710")}<span>添加到白板</span></button>`,
       `<button type="button" data-media-asset-action="copy">${icon("\uE8C8")}<span>复制</span></button>`,
       `<button type="button" data-media-asset-action="save">${icon("\uE792")}<span>另存为</span></button>`,
-      `<button type="button" class="${assetHidden ? "" : "danger"}" data-media-asset-action="${assetHidden ? "unhide" : "delete"}">${icon(assetHidden ? "\uE777" : "\uE890")}<span>${assetHidden ? "取消隐藏" : "隐藏"}</span></button>`,
+      assetTrashed
+        ? `<button type="button" data-media-asset-action="restore">${icon("\uE777")}<span>恢复</span></button><button type="button" class="danger" data-media-asset-action="permanent-delete">${icon("\uE74D")}<span>彻底删除</span></button>`
+        : `<button type="button" class="danger" data-media-asset-action="delete">${icon("\uE74D")}<span>删除</span></button>`,
     ].join("")
     : [
       normalizedKind ? `<button type="button" data-media-asset-action="save">${icon("\uE792")}<span>另存为</span></button>` : "",
@@ -28455,6 +29187,7 @@ const acceptInlineEdit = (inlineEditId) => {
   snapshotDocument(record.documentId, inlineInstruction, {
     force: true,
     changeSet: historyChangeSet,
+    beforeContent: documentTextFromHtml(beforeHtml),
     afterContent: afterText,
     operations: [{ type: "document.replace_text", documentId: record.documentId }],
   });
@@ -29235,6 +29968,7 @@ const clearNoteEditorRange = () => {
   ui.noteEditorRangeDocumentId = "";
   ui.noteEditorRangeWorkspaceId = "";
   ui.noteEditorSelectionBookmark = null;
+  elements.editor?.classList.remove("note-color-selection-preview");
 };
 
 const noteEditorRangeTextOffsets = (range) => {
@@ -29390,6 +30124,7 @@ const applyNoteEditorColor = (command, value, { clear = false } = {}) => {
   if (!applied || elements.editor.innerHTML === beforeHtml) return false;
   normalizeEditorParagraphBlocks(elements.editor);
   rememberNoteEditorRange();
+  elements.editor.classList.add("note-color-selection-preview");
   syncEditorAfterSelectionFormat();
   syncNoteToolbarState();
   return true;
@@ -30043,6 +30778,7 @@ const handleSelection = ({ finalize = false } = {}) => {
 
 const beginSelectionGesture = (event) => {
   if (event.button !== 0 || event.isPrimary === false || documentPreviewActive()) return;
+  elements.editor.classList.remove("note-color-selection-preview");
   ui.selectionGesturePointerId = event.pointerId;
   ui.selectionRange = null;
   clearSelectionHighlight();
@@ -33999,6 +34735,7 @@ const assistantReplyFor = async (message, requestTarget = null, { conversation =
         changeSet: materialMutation
           ? localPatchResult.changeSet.map((change) => ({ ...change, before: stripHtml(change.before), after: stripHtml(change.after) }))
           : localPatchResult.changeSet,
+        beforeContent: previousDocumentText,
         afterContent: nextDocumentText,
       });
       if (requestTarget?.longFormJobId
@@ -36019,14 +36756,28 @@ const monitorNativeConversation = (runtime, pending) => {
             && closedAgentBrowserSessions.has(String(event.payload?.metadata?.sessionId || ""))) {
             void answerNativeConversationQuestion(conversation.agentQuestion, "取消本次网页读取");
           }
+        } else if (event.type === "task_route") {
+          const hydratedRoute = event.payload?.taskRoute;
+          if (hydratedRoute && typeof hydratedRoute === "object") {
+            pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), ...hydratedRoute };
+            pending.execution.routeReason = hydratedRoute.routeReason || hydratedRoute.reason || pending.execution.routeReason || "";
+          }
+        } else if (event.type === "read_manifest") {
+          pending.execution.documentReadManifest = clone(event.payload || {});
         } else if (event.type === "resource_read") {
           const reads = pending.execution.actualReads ??= [];
           const prior = reads.find(item => item.kind === event.payload.kind && item.id === event.payload.id);
           if (prior) Object.assign(prior, event.payload, { fullText: prior.fullText || event.payload.fullText });
           else reads.push(event.payload);
+        } else if (event.type === "route_read") {
+          const reads = pending.execution.actualRouteReads ??= [];
+          const placementId = String(event.payload.placementId || "");
+          const prior = reads.find((item) => String(item.placementId || "") === placementId && item.kind === event.payload.kind);
+          if (prior) Object.assign(prior, event.payload);
+          else reads.push(event.payload);
         } else if (event.type === "delivery") {
           pending.execution.deliveryTargets = event.payload.targets || [];
-          const routedTask = agentTaskRouteFromDelivery(event.payload);
+          const routedTask = agentTaskRouteFromDelivery(event.payload, pending.execution.taskRoute);
           if (routedTask) pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), ...routedTask };
         } else if (event.type === "delivery_warning") {
           pending.execution.deliveryWarnings = event.payload.warnings || [];
@@ -36058,11 +36809,7 @@ const monitorNativeConversation = (runtime, pending) => {
             : event.payload.success === false ? "操作未完成，Agent 正在处理原因" : "Agent 正在继续处理";
         } else if (["document_saved", "media_saved", "media_job"].includes(event.type)) {
           pending.execution.agentResultReferences ??= [];
-          let resultReference = pending.execution.agentResultReferences.find((entry) => entry.sequence === event.sequence);
-          if (!resultReference) {
-            resultReference = { sequence: event.sequence, type: event.type, ...event.payload };
-            pending.execution.agentResultReferences.push(resultReference);
-          }
+          let resultReference = upsertAgentResultReference(pending, { sequence: event.sequence, type: event.type, ...event.payload });
           if (event.type === "media_job" || event.type === "media_saved") {
             const taskKind = event.payload.channel === "video" ? "video_generation" : "image_generation";
             pending.execution.taskRoute = { ...(pending.execution.taskRoute || {}), mode: "media", taskKind, direct: true };
@@ -36081,13 +36828,11 @@ const monitorNativeConversation = (runtime, pending) => {
               try {
                 const projected = await refreshVerifiedAgentDocuments([event.payload.documentId]);
                 if (!projected) throw new Error("写入回执所属工作区已切换");
-                resultReference.clientProjectionVerified = true;
-                delete resultReference.clientProjectionError;
+                resultReference = markAgentResultProjection(pending, { reference: resultReference, verified: true });
                 delete pending.execution.refreshError;
                 pending.execution.result = "文档已写入并更新目录，Agent 正在继续处理";
               } catch (error) {
-                resultReference.clientProjectionVerified = false;
-                resultReference.clientProjectionError = error.message;
+                resultReference = markAgentResultProjection(pending, { reference: resultReference, verified: false, error: error.message });
                 pending.execution.refreshError = error.message;
                 pending.execution.result = `文档已写入磁盘，但目录同步失败：${error.message}`;
                 showToast(pending.execution.result);
@@ -36101,6 +36846,27 @@ const monitorNativeConversation = (runtime, pending) => {
           }
           await persistNativeConversation(runtime);
         } else if (event.type === "completed") {
+          if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
+            const unverifiedDocumentReferences = (pending.execution.agentResultReferences || []).filter((reference) => (
+              reference?.type === "document_saved"
+              && reference?.trustedDocumentSave === true
+              && reference?.clientProjectionVerified !== true
+              && reference?.documentId
+            ));
+            for (const reference of unverifiedDocumentReferences) {
+              try {
+                const projected = await refreshVerifiedAgentDocuments([reference.documentId]);
+                if (!projected) throw new Error("写入回执所属工作区已切换");
+                markAgentResultProjection(pending, { reference, verified: true });
+              } catch (error) {
+                markAgentResultProjection(pending, { reference, verified: false, error: error.message });
+                pending.execution.deliveryWarnings = [...new Set([
+                  ...(pending.execution.deliveryWarnings || []),
+                  `文档“${reference.title || reference.documentId}”已经写入磁盘，但目录尚未同步：${error.message}`,
+                ])];
+              }
+            }
+          }
           pending.content = event.payload.text;
           pending.execution.deliveryWarnings = event.payload.warnings || pending.execution.deliveryWarnings || [];
         } else if (["failed", "cancelled"].includes(event.type)) {
@@ -36146,7 +36912,9 @@ const monitorNativeConversation = (runtime, pending) => {
       }
       await persistNativeConversation(runtime);
       if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
-        const savedIds = (pending.execution.agentResultReferences || []).filter(item => item.trustedDocumentSave).map(item => item.documentId);
+        const savedIds = (pending.execution.agentResultReferences || [])
+          .filter(item => item.trustedDocumentSave && item.clientProjectionVerified !== true)
+          .map(item => item.documentId);
         if (savedIds.length) await refreshVerifiedAgentDocuments(savedIds).catch(error => {
           pending.execution.refreshError = error.message;
           showToast(`已写入磁盘，但界面刷新失败：${error.message}`);
@@ -36233,7 +37001,11 @@ const executeConversationAgentMessage = async (content, options) => {
   const sourceMessageId = queuedItem?.sourceMessageIdForRun || uid("message");
   if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
   const refs = queuedItem || resolveConversationReferenceContext(conversation);
-  const targetDocumentId = options.inlineEdit?.documentId || "";
+  const explicitNewDocumentRequest = explicitNewDocumentIntent(String(content || ""));
+  const explicitChapterTarget = requestedChapterTarget(String(content || ""));
+  const targetDocumentId = options.inlineEdit?.documentId
+    || explicitChapterTarget?.documentId
+    || (!explicitNewDocumentRequest.create ? taskDocumentAnchor({ instruction: content, activeDocumentId: taskContextSnapshot.activeDocumentId }) : "");
   const currentDocumentId = taskContextSnapshot.activeDocumentId || "";
   const currentDocument = currentDocumentId ? { documentId: currentDocumentId, title: workspaceState.documents[currentDocumentId]?.title || currentDocumentId } : null;
   const profileSettings = queuedItem?.nativeConfiguration
@@ -36246,15 +37018,84 @@ const executeConversationAgentMessage = async (content, options) => {
   const mediaDispatch = normalizeConversationMediaDispatchContract(queuedItem?.mediaDispatch)
     || normalizeConversationMediaDispatchContract(options.mediaDispatch);
   const initialTaskRoute = agentTaskRouteFromMediaDispatch(mediaDispatch);
+  const nativeTaskRoute = initialTaskRoute || (() => {
+    const compiled = buildAdaptiveTaskRoute({
+      text: String(content || ""),
+      authorizationInstruction: String(content || ""),
+      sourceMessageId,
+      targetDocumentId,
+      target: {
+        documentId: targetDocumentId,
+        title: currentDocument?.title || "",
+        managed: true,
+        ambiguous: false,
+      },
+      targetDocumentIds: targetDocumentId ? [targetDocumentId] : [],
+      targetModuleId: workspaceState.documents?.[currentDocumentId]?.moduleId || "",
+      contextDomain: workspaceState.documents?.[currentDocumentId]?.contextDomain || "",
+      hasResources: Boolean(
+        refs.references?.length
+        || refs.workspaceReferences?.length
+        || refs.skillReferences?.length
+        || refs.attachments?.length,
+      ),
+      hasSelection: Boolean(options.inlineEdit),
+      inlineEdit: Boolean(options.inlineEdit),
+      workspaceKind: taskContextSnapshot.workspaceKind, workspacePath: taskContextSnapshot.workspacePath,
+      skillIds: (refs.skillReferences || []).map((skill) => skill?.id || skill?.relativePath || skill?.name || skill).filter(Boolean),
+    }, { executionSurface: "agent" });
+    const targetModule = workspaceState.documents?.[currentDocumentId]?.moduleId || "";
+    const selectedSkillPlacementIds = (refs.skillReferences || [])
+      .map((skill) => skill?.placementId || skill?.slotId || "")
+      .filter(Boolean);
+    return {
+      ...compiled,
+      targetModule: compiled.targetModule || targetModule,
+      activeModule: compiled.activeModule || compiled.targetModule || targetModule,
+      selectedSkillPlacementIds: compiled.selectedSkillPlacementIds || selectedSkillPlacementIds,
+      relationType: compiled.relationType || "",
+      relationRole: compiled.relationRole || "",
+    };
+  })();
+  const nativeDocumentReadManifest = compileNativeAgentDocumentReadManifest({
+    documents: Object.fromEntries(Object.entries(workspaceState.documents || {}).map(([documentId, document]) => [documentId, {
+      ...document,
+      displayCharacterCount: stripHtml(document.html || "").length,
+      moduleId: document.moduleId || withSynchronousWorkspaceState(workspaceState, () => moduleForDocument(documentId)),
+      contextDomain: document.contextDomain || withSynchronousWorkspaceState(workspaceState, () => documentContextDomain(documentId)),
+    }])),
+    targetDocumentId,
+    explicitDocumentIds: (refs.references || []).map(messageReferenceId).filter(Boolean),
+    taskRoute: nativeTaskRoute,
+    contextDomain: workspaceState.documents?.[targetDocumentId]?.contextDomain
+      || withSynchronousWorkspaceState(workspaceState, () => documentContextDomain(targetDocumentId)),
+  });
+  const textTaskExecutionContext = compileTextTaskExecutionContext({
+    taskContextSnapshot: { ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) },
+    sourceMessageId,
+    taskRoute: nativeTaskRoute,
+    targetDocumentId,
+    readManifest: nativeDocumentReadManifest,
+  });
   const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
-    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []) };
+    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
+    taskId: textTaskExecutionContext.taskId, turnContextSnapshot: clone({ ...taskContextSnapshot, taskId: textTaskExecutionContext.taskId }) };
   removeImmediateConversationInstruction(options.immediateInstructionId);
   if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
   const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
     target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
     execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
       conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理",
-      ...(initialTaskRoute ? { taskRoute: initialTaskRoute } : {}) } };
+      taskRoute: clone(nativeTaskRoute),
+      deliverableType: nativeTaskRoute.deliverableType || "",
+      targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
+      selectedModulePlacementId: nativeTaskRoute.selectedModulePlacementId || nativeTaskRoute.targetModulePlacementId || "",
+      selectedSkillPlacementIds: nativeTaskRoute.selectedSkillPlacementIds || [],
+      relationType: nativeTaskRoute.relationType || "",
+      relationRole: nativeTaskRoute.relationRole || "",
+      routeReason: nativeTaskRoute.routeReason || nativeTaskRoute.reason || "",
+      textTaskExecutionContext: clone(textTaskExecutionContext),
+      documentReadManifest: clone(nativeDocumentReadManifest) } };
   taskMessages.push(pending);
   conversation.messages = taskMessages;
   const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,
@@ -36263,6 +37104,17 @@ const executeConversationAgentMessage = async (content, options) => {
   if (conversation.id === state.activeConversationId) clearActiveComposerDraft();
   try {
     await onPersist();
+    // The native Agent reads and writes the canonical workspace on disk. If
+    // the user sends an instruction immediately after editing, the renderer's
+    // debounced save may still be pending. Commit that exact draft before the
+    // Agent starts so document-write-history can preserve it as the complete
+    // pre-overwrite version instead of letting the Agent read an older file.
+    if (workspaceState === state
+      && workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)
+      && (ui.workspaceDirty || ui.workspaceSavePromise)) {
+      const saved = await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+      if (!saved) throw ui.workspaceSaveError ?? new Error("当前文档尚未安全保存，已停止启动 Agent");
+    }
     renderNativeConversation(runtime, true);
     await yieldAfterImmediateInstructionRender();
     const started = await conversationAgentRequest("/api/conversation-agent/start", {
@@ -36277,6 +37129,18 @@ const executeConversationAgentMessage = async (content, options) => {
       previousResults: taskMessages.flatMap((message) => message.execution?.agentResultReferences || []),
       settings: profileSettings, references: refs.references || [], selectedSkills: refs.skillReferences || [], attachments: refs.attachments || [], mediaProfiles,
       mediaDispatch,
+      routingText: String(content || ""),
+      taskRoute: clone(nativeTaskRoute),
+      deliverableType: nativeTaskRoute.deliverableType || "",
+      targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
+      activeModule: nativeTaskRoute.activeModule || nativeTaskRoute.targetModule || "",
+      selectedModulePlacementId: nativeTaskRoute.selectedModulePlacementId || nativeTaskRoute.targetModulePlacementId || "",
+      selectedSkillPlacementIds: nativeTaskRoute.selectedSkillPlacementIds || [],
+      relationType: nativeTaskRoute.relationType || "",
+      relationRole: nativeTaskRoute.relationRole || "",
+      routeReason: nativeTaskRoute.routeReason || nativeTaskRoute.reason || "",
+      textTaskExecutionContext,
+      readManifest: nativeDocumentReadManifest,
     });
     pending.execution.nativeAgentRunId = started.id;
     conversation.nativeAgentRun = { id: started.id, pendingMessageId: pending.id, workspacePath: taskContextSnapshot.workspacePath };
@@ -38917,7 +39781,7 @@ const rollbackToMessage = async (messageId) => {
 const verifiedDocumentRefreshQueues = new Map();
 
 const refreshVerifiedAgentDocumentsNow = async (ids) => {
-  const sourceState = state;
+  const sourceWorkspaceIdentity = workspaceIdentity();
   const workspacePath = state.settings.workspacePath;
   const documentIds = [...new Set((Array.isArray(ids) ? ids : [ids]).map((id) => String(id || "").trim()).filter(Boolean))];
   if (!documentIds.length) return false;
@@ -38929,8 +39793,12 @@ const refreshVerifiedAgentDocumentsNow = async (ids) => {
   }, 15000);
   const loaded = await response.json();
   if (!response.ok || !loaded.ok) throw new Error(loaded.message || '目标文档读取失败');
-  if (state !== sourceState || state.settings.workspacePath !== workspacePath) return false;
+  // Conversation persistence may legitimately replace the in-memory state
+  // object while this read is in flight. Only a real workspace switch makes
+  // the verified projection stale; object identity is not a workspace lock.
+  if (workspaceIdentity() !== sourceWorkspaceIdentity || state.settings.workspacePath !== workspacePath) return false;
   state.customFolders ||= [];
+  let repairedDirectoryProjection = false;
   for (const folder of loaded.state?.customFolders || []) {
     if (!state.customFolders.some(item => item.id === folder.id)) state.customFolders.push(clone(folder));
   }
@@ -38971,15 +39839,26 @@ const refreshVerifiedAgentDocumentsNow = async (ids) => {
         ...(document.workspaceView ? { workspaceView: document.workspaceView } : {}),
         ...(document.contextDomain ? { contextDomain: document.contextDomain } : {}),
       }]);
+      repairedDirectoryProjection = true;
     }
   }
+  // A verified Agent write may land inside a collapsed volume or custom
+  // folder. Expand only the owning folder so the newly written document is
+  // immediately visible in the left directory instead of being represented
+  // only by an updated child count.
+  documentIds.forEach(expandTransferredDocumentFolder);
   ui.documentListRenderKey = "";
   elements.editor.dataset.document = "";
   renderAll();
-  // Persist the repaired directory projection instead of leaving it only in
-  // the live renderer. This is what makes a newly landed Agent document stay
-  // visible after a workspace switch or application restart.
-  await saveWorkspace({ throwOnError: true, forceFullState: true, operationDocumentIds: documentIds });
+  // A trusted Agent transaction has already committed both the document and
+  // its directory row on the server. Re-saving the whole workspace here used
+  // to race with the still-streaming conversation and could report a false
+  // messages/conversations conflict after a successful write. Only legacy or
+  // interrupted workspaces that genuinely lacked the directory row need the
+  // compatibility repair persisted.
+  if (repairedDirectoryProjection) {
+    await saveWorkspace({ throwOnError: true, forceFullState: true, operationDocumentIds: documentIds });
+  }
   return true;
 };
 
@@ -38997,6 +39876,7 @@ const refreshVerifiedAgentDocuments = async (ids) => {
 
 const selectDocument = (documentId) => {
   if (!state.documents[documentId]) return;
+  if (state.activeDocument !== documentId && !openDocumentTab(documentId)) return;
   flushWhiteboardWheelZoom();
   commitWhiteboardViewportGesture();
   if (state.activeDocument !== documentId && ui.whiteboardFind.open) closeWhiteboardFindPanel();
@@ -39005,6 +39885,7 @@ const selectDocument = (documentId) => {
   const previousView = activeViewForModule(previousModule);
   if (ui.searchHighlight?.documentId !== documentId) ui.searchHighlight = null;
   state.activeDocument = documentId;
+  synchronizeDocumentTabState();
   state.activeModule = moduleForDocument(documentId);
   const selectedItem = documentItem(documentId)?.item;
   const selectedView = itemWorkspaceView(state.activeModule, selectedItem);
@@ -39035,6 +39916,9 @@ const selectDocument = (documentId) => {
       || previousModule !== state.activeModule
       || previousView !== selectedView,
   });
+  requestAnimationFrame(() => {
+    if (elements.editorCanvas) elements.editorCanvas.scrollTop = currentDocumentViewState(documentId)?.scrollTop || 0;
+  });
 };
 
 const moduleNavigationDocumentIds = (moduleId) => {
@@ -39053,6 +39937,7 @@ const moduleNavigationDocumentIds = (moduleId) => {
 };
 
 const selectModuleRoot = (moduleId) => {
+  captureActiveDocumentViewState();
   if (state.activeDocument && state.documents[state.activeDocument]) {
     rememberModuleDocument(state.activeDocument, {
       moduleId: state.activeModule,
@@ -39067,7 +39952,13 @@ const selectModuleRoot = (moduleId) => {
   ui.moduleViewMenu = null;
   const viewId = activeViewForModule(moduleId);
   const documentIds = moduleNavigationDocumentIds(moduleId);
-  state.activeDocument = rememberedModuleDocument({ moduleId: presentationModuleId(moduleId), viewId, remembered: state.moduleLastDocuments, documentIds }) || documentIds[0] || null;
+  const nextDocumentId = rememberedModuleDocument({ moduleId: presentationModuleId(moduleId), viewId, remembered: state.moduleLastDocuments, documentIds }) || documentIds[0] || "";
+  if (nextDocumentId) openDocumentTab(nextDocumentId);
+  else {
+    const activeTab = state.documentTabs?.find((tab) => tab.id === state.activeDocumentTabId);
+    if (activeTab) activeTab.documentId = "";
+    state.activeDocument = "";
+  }
   if (state.activeDocument) rememberModuleDocument(state.activeDocument, { moduleId, viewId });
   state.selectedText = "";
   ui.whiteboardEditingNodeId = null;
@@ -39079,6 +39970,9 @@ const selectModuleRoot = (moduleId) => {
   persistNavigationState();
   ui.documentListRenderKey = "";
   renderDocumentActivation();
+  requestAnimationFrame(() => {
+    if (elements.editorCanvas) elements.editorCanvas.scrollTop = currentDocumentViewState(state.activeDocument)?.scrollTop || 0;
+  });
 };
 
 const locationChoiceForFolder = ({ moduleId, viewId, folderId }) => {
@@ -39651,8 +40545,11 @@ const activateProjectState = (nextState, { name, workspacePath, apiKey, workspac
   const baselinePreparationRequired = hasLoadedBaseline && !hasCachedBaselineHashes;
   const initial = createInitialState();
   const localLayout = clone(state.layout ?? PANE_LAYOUT_DEFAULTS);
-  const currentConnectionSettings = withoutTextGenerationConfiguration(state.settings ?? {});
-  delete currentConnectionSettings.workspacePath;
+  const currentSharedSettings = withoutGenerationConfiguration(state.settings ?? {});
+  delete currentSharedSettings.workspacePath;
+  const workspaceSettings = machineGenerationProfiles.exists
+    ? withoutGenerationConfiguration(nextState.settings ?? {})
+    : (nextState.settings ?? {});
   const nextKind = workspaceKind === "notebook" ? "notebook" : "project";
   state = {
     ...initial,
@@ -39664,8 +40561,9 @@ const activateProjectState = (nextState, { name, workspacePath, apiKey, workspac
     projectName: name || nextState.projectName || "未命名",
     settings: applyGenerationRuntimeBindings({
       ...initial.settings,
-      ...(nextState.settings ?? {}),
-      ...currentConnectionSettings,
+      ...workspaceSettings,
+      ...currentSharedSettings,
+      ...(machineGenerationProfiles.exists ? machineGenerationProfiles.settings : {}),
       workspacePath,
       apiKey,
     }, machineGenerationRuntime, storedGenerationSecrets()),
@@ -39741,6 +40639,7 @@ const activateProjectState = (nextState, { name, workspacePath, apiKey, workspac
   ui.workspaceStateChangesPending = false;
   ui.authorCockpitIntegrityScan = { running: false, error: "", issues: 0, resolutions: 0, checkedDocuments: 0, completedAt: "" };
   ui.workspaceRevision = 0;
+  synchronizeDocumentTabState();
   persistActiveWorkspacePointer();
   rememberCurrentWorkspaceState();
   if (markWorkspaceDirty) persist();
@@ -40746,8 +41645,8 @@ const nextUniqueDocumentName = (name, { moduleId = state.activeModule, viewId = 
   const taken = new Set(labels);
   if (!taken.has(base.toLocaleLowerCase())) return base;
   let index = 2;
-  while (taken.has(`${base} ${index}`.toLocaleLowerCase())) index += 1;
-  return `${base} ${index}`;
+  while (taken.has(`${base}（${index}）`.toLocaleLowerCase())) index += 1;
+  return `${base}（${index}）`;
 };
 
 const createDocument = (name, placement = null, { kind = "document", systemGeneratedTitle = false } = {}) => {
@@ -40857,7 +41756,7 @@ const createDocument = (name, placement = null, { kind = "document", systemGener
   };
   state.histories[id] = [];
   if (state.workspaceKind === "notebook") state.moduleItems[moduleId] = sortNotebookChapterItems(state.moduleItems[moduleId], state.documents);
-  state.activeDocument = id;
+  openDocumentTab(id);
   state.moduleViews ??= {};
   if (typeof MODULE_VIEWS !== "undefined" && MODULE_VIEWS[moduleId]) state.moduleViews[moduleId] = treeOptions.workspaceView ?? viewId;
   const conversation = activeConversation();
@@ -41096,10 +41995,8 @@ const deleteCustomFolder = async (folderId) => {
     delete state.volumeHistories[id];
     clearCurrentVersionMetadata({ type: "volume", id });
   }
-  if (!state.documents[state.activeDocument]) {
-    state.activeDocument = Object.keys(state.documents).find((id) => id !== "library-trash") ?? "library-trash";
-    state.activeModule = moduleForDocument(state.activeDocument);
-  }
+  synchronizeDocumentTabState();
+  if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
   elements.editor.dataset.document = "";
   rebuildProjectCompilationStatus();
   updateTrashIndexDocument();
@@ -41160,10 +42057,8 @@ const deleteTreeFolder = async ({ node, moduleId, viewId }) => {
     delete state.volumeHistories[folderId];
     clearCurrentVersionMetadata({ type: "volume", id: folderId });
   });
-  if (!state.documents[state.activeDocument]) {
-    state.activeDocument = Object.keys(state.documents).find((documentId) => documentId !== "library-trash") ?? "library-trash";
-    state.activeModule = moduleForDocument(state.activeDocument);
-  }
+  synchronizeDocumentTabState();
+  if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
   elements.editor.dataset.document = "";
   rebuildProjectCompilationStatus();
   updateTrashIndexDocument();
@@ -41227,10 +42122,8 @@ const deleteManuscriptVolume = async ({ folderId, label }) => {
     delete state.volumeHistories[id];
     clearCurrentVersionMetadata({ type: "volume", id });
   }
-  if (!state.documents[state.activeDocument]) {
-    state.activeDocument = Object.keys(state.documents).find((id) => id !== "library-trash") ?? "library-trash";
-    state.activeModule = moduleForDocument(state.activeDocument);
-  }
+  synchronizeDocumentTabState();
+  if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
   elements.editor.dataset.document = "";
   rebuildProjectCompilationStatus();
   updateTrashIndexDocument();
@@ -41390,24 +42283,9 @@ const deleteDocument = async (documentId) => {
     boundConversationIds: state.conversations.filter((conversation) => conversation.boundDocumentId === documentId).map((conversation) => conversation.id),
     referenceConversationIds: state.conversations.filter((conversation) => conversation.references?.includes(documentId)).map((conversation) => conversation.id),
   }));
-  delete state.documents[documentId];
-  delete state.histories[documentId];
-  if (state.documentConversationBindings) delete state.documentConversationBindings[documentId];
-  for (const [id, items] of Object.entries(state.moduleItems)) state.moduleItems[id] = items.filter(([itemId]) => itemId !== documentId);
+  removeDocumentFromWorkspaceState(documentId);
   removeDirectoryOrderEntries({ documentIds: [documentId] });
-  for (const conversation of state.conversations) {
-    if (conversation.boundDocumentId === documentId) conversation.boundDocumentId = null;
-    conversation.references = (conversation.references ?? []).filter((id) => id !== documentId);
-    synchronizeConversationReferenceContext(conversation, {
-      cleared: !conversation.references?.length
-        && !conversation.workspaceReferences?.length
-        && !conversation.skillReferences?.length
-        && !conversation.attachments?.length,
-    });
-  }
-  const next = itemsForModule(moduleId)[0]?.[0] || Object.keys(state.documents)[0];
-  state.activeDocument = next;
-  state.activeModule = moduleForDocument(next);
+  if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
   elements.editor.dataset.document = "";
   rebuildProjectCompilationStatus();
   updateTrashIndexDocument();
@@ -41455,7 +42333,7 @@ const replaceDocumentText = (documentId, find, replacement, replaceAll = false) 
     documentState.html = applyExactTextEditsToDocumentHtml(documentState.html ?? "", {
       edits: [{ editId: `workspace-replace-${documentId}`, kind: "replace_all_exact", originalText: find, replacementText: replacement, expectedOccurrences }],
     });
-    return { replaced: expectedOccurrences, ...patchResult };
+    return { replaced: expectedOccurrences, beforeContent, ...patchResult };
   }
   const container = document.createElement("div");
   container.innerHTML = documentState.html ?? "";
@@ -41499,6 +42377,7 @@ const replaceDocumentText = (documentId, find, replacement, replaceAll = false) 
   const start = beforeContent.indexOf(find);
   return {
     replaced,
+    beforeContent,
     content: afterContent,
     beforeRevision: contentRevision(beforeContent),
     afterRevision: contentRevision(afterContent),
@@ -41739,10 +42618,10 @@ const createDocumentFromOperation = (operation) => {
   if (state.documents[id]) throw new Error(`“${title}”的目标文档已经存在`);
   const documentTitle = sequencedDocumentKind(id)
     ? freeDocumentTitle({ documentId: id, title, language: state.structureLanguage || "zh-CN" })
-    : title;
+    : nextUniqueDocumentName(title, { moduleId, viewId, treeOptions: options });
   const label = sequencedDocumentKind(id)
     ? sequencedDocumentLabel({ documentId: id, title: documentTitle, language: state.structureLanguage || "zh-CN" })
-    : title;
+    : documentTitle;
   state.moduleItems[moduleId] ??= [];
   state.moduleItems[moduleId].push([id, label, options]);
   state.documents[id] = {
@@ -41782,6 +42661,17 @@ const removeDocumentFromWorkspaceState = (documentId) => {
         && !conversation.attachments?.length,
     });
   }
+  const tabState = removeDocumentFromTabs({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  }, documentId);
+  state.documentTabs = tabState.documentTabs;
+  state.activeDocumentTabId = tabState.activeDocumentTabId;
+  state.activeDocument = tabState.activeDocument || "";
+  state.documentViewStates = tabState.documentViewStates;
 };
 
 const scopeOperationDocumentIds = (operation) => {
@@ -41903,10 +42793,8 @@ const deleteDirectorySelection = async (context) => {
       clearCurrentVersionMetadata({ type: "volume", id });
     }
     removeDirectoryOrderEntries({ documentIds, folderIds: [...customFolderIds] });
-    if (!state.documents[state.activeDocument]) {
-      state.activeDocument = Object.keys(state.documents).find((id) => id !== "library-trash") ?? "library-trash";
-      state.activeModule = moduleForDocument(state.activeDocument);
-    }
+    synchronizeDocumentTabState();
+    if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
     resetDirectorySelection();
     elements.editor.dataset.document = "";
     rebuildProjectCompilationStatus();
@@ -42161,13 +43049,13 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
         changed += 1;
       } else if (operation.type === "document.replace_text") {
         if (processedAtomicTextDocuments.has(operation.documentId)) continue;
+        const beforeContent = stripHtml(state.documents[operation.documentId].html ?? "");
         const atomicOperations = plan.operations.filter((candidate) => candidate.type === "document.replace_text"
           && candidate.documentId === operation.documentId
           && candidate.replaceAll === true
           && !/\r|\n/u.test(candidate.find));
         let patchResult;
         if (atomicOperations.length > 1) {
-          const beforeContent = stripHtml(state.documents[operation.documentId].html ?? "");
           const edits = atomicOperations.map((candidate, index) => ({
             editId: `workspace-replace-${operation.documentId}-${index + 1}`,
             kind: "replace_all_exact",
@@ -42191,6 +43079,7 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
         }
         operationHistoryAnnotations.set(operation.documentId, {
           changeSet: patchResult.changeSet,
+          beforeContent: patchResult.beforeContent ?? beforeContent,
           afterContent: patchResult.content,
         });
       } else if (operation.type === "document.replace_content") {
@@ -42274,9 +43163,8 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
         movedToTrash ||= removed > 0;
       } else if (operation.type === "history.save_document") {
         if (operation.documentId === "library-trash") throw new Error("当前内容不支持版本保存");
-        const beforeCount = state.histories[operation.documentId]?.length ?? 0;
-        snapshotDocument(operation.documentId, "通过对话执行版本保存", { force: true });
-        changed += (state.histories[operation.documentId]?.length ?? 0) > beforeCount ? 1 : 0;
+        const snapshotResult = snapshotDocument(operation.documentId, "通过对话执行版本保存");
+        changed += snapshotResult?.created || snapshotResult?.promoted ? 1 : 0;
       } else if (operation.type === "history.restore") {
         if (!await restoreVersion(operation.versionId, historyScopeFromOperation(operation))) throw new Error("历史版本未能完成本地交换");
         changed += 1;
@@ -42304,10 +43192,8 @@ const applyWorkspaceOperationPlan = async (messageId, { automatic = false, confi
     ensureDocumentTreeMetadata(state);
     rebuildProjectCompilationStatus();
     updateTrashIndexDocument();
-    if (!state.documents[state.activeDocument]) {
-      state.activeDocument = Object.keys(state.documents).find((id) => id !== "library-trash") ?? "library-trash";
-      state.activeModule = moduleForDocument(state.activeDocument);
-    }
+    synchronizeDocumentTabState();
+    if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
     plan.status = "applied";
     plan.appliedAt = nowTime();
     message.content = `已执行 ${changed} 项文档与结构变更。新版本已与写入结果同步保存${movedToTrash ? "，删除内容已进入回收站" : ""}。`;
@@ -42586,8 +43472,8 @@ const restoreTrashDocument = (trashId) => {
   }
   state.trash = state.trash.filter((item) => item.trashId !== entry.trashId);
   if (restoredFolders.length) persistExpandedFolderState();
-  state.activeDocument = documentIds[0] ?? state.activeDocument;
-  state.activeModule = moduleForDocument(state.activeDocument);
+  if (documentIds[0]) openDocumentTab(documentIds[0]);
+  if (state.activeDocument) state.activeModule = moduleForDocument(state.activeDocument);
   elements.editor.dataset.document = "";
   rebuildProjectCompilationStatus();
   updateTrashIndexDocument();
@@ -43407,6 +44293,119 @@ elements.documentList.addEventListener("click", (event) => {
     selectDirectoryToken(row.dataset.directoryToken, { range: event.shiftKey, toggle, additive: event.shiftKey && toggle });
     if (!event.shiftKey && !toggle) selectDocument(row.dataset.document);
   }
+});
+
+let draggedDocumentTabId = "";
+let suppressDocumentTabClick = false;
+
+const clearDocumentTabDragPresentation = () => {
+  elements.documentTabs?.classList.remove("is-reordering");
+  elements.documentTabs?.querySelectorAll(".document-tab.is-dragging").forEach((tab) => tab.classList.remove("is-dragging"));
+  const indicator = elements.documentTabs?.querySelector("[data-document-tab-drop-indicator]");
+  if (indicator) {
+    indicator.hidden = true;
+    indicator.style.left = "";
+  }
+};
+
+const documentTabDropTarget = (event) => {
+  const target = event.target.closest?.("[data-document-tab-id]");
+  if (!target || !draggedDocumentTabId || target.dataset.documentTabId === draggedDocumentTabId) return null;
+  const bounds = target.getBoundingClientRect();
+  return {
+    target,
+    targetTabId: target.dataset.documentTabId,
+    placement: event.clientX < bounds.left + (bounds.width / 2) ? "before" : "after",
+  };
+};
+
+elements.documentTabs?.addEventListener("dragstart", (event) => {
+  const tab = event.target.closest?.("[data-document-tab-id]");
+  if (!tab || event.target.closest?.("[data-document-tab-close]")) {
+    event.preventDefault();
+    return;
+  }
+  draggedDocumentTabId = tab.dataset.documentTabId || "";
+  suppressDocumentTabClick = Boolean(draggedDocumentTabId);
+  tab.classList.add("is-dragging");
+  elements.documentTabs.classList.add("is-reordering");
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", draggedDocumentTabId);
+  }
+});
+
+elements.documentTabs?.addEventListener("dragover", (event) => {
+  const destination = documentTabDropTarget(event);
+  if (!destination) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  const indicator = elements.documentTabs.querySelector("[data-document-tab-drop-indicator]");
+  if (!indicator) return;
+  indicator.hidden = false;
+  indicator.style.left = `${destination.target.offsetLeft + (destination.placement === "after" ? destination.target.offsetWidth : 0)}px`;
+});
+
+elements.documentTabs?.addEventListener("drop", (event) => {
+  const destination = documentTabDropTarget(event);
+  if (!destination) return;
+  event.preventDefault();
+  const next = reorderDocumentTabs({
+    documentTabs: state.documentTabs,
+    activeDocumentTabId: state.activeDocumentTabId,
+    activeDocument: state.activeDocument,
+    documentViewStates: state.documentViewStates,
+    documents: state.documents,
+  }, draggedDocumentTabId, destination.targetTabId, destination.placement);
+  clearDocumentTabDragPresentation();
+  draggedDocumentTabId = "";
+  window.setTimeout(() => { suppressDocumentTabClick = false; }, 0);
+  if (!next.changed) return;
+  applyDocumentTabState(next);
+  persistNavigationState();
+  renderDocumentTabs();
+});
+
+elements.documentTabs?.addEventListener("dragend", () => {
+  draggedDocumentTabId = "";
+  clearDocumentTabDragPresentation();
+  window.setTimeout(() => { suppressDocumentTabClick = false; }, 0);
+});
+
+elements.documentTabs?.addEventListener("click", (event) => {
+  if (suppressDocumentTabClick) {
+    event.preventDefault();
+    return;
+  }
+  const add = event.target.closest("[data-document-tab-add]");
+  if (add) {
+    captureActiveDocumentViewState();
+    const next = openBlankDocumentTab({
+      documentTabs: state.documentTabs,
+      activeDocumentTabId: state.activeDocumentTabId,
+      activeDocument: state.activeDocument,
+      documentViewStates: state.documentViewStates,
+      documents: state.documents,
+    });
+    if (next.limitReached) {
+      showToast("最多打开 8 个标签页");
+      return;
+    }
+    applyDocumentTabState(next);
+    ui.documentPreviewKey = null;
+    elements.editor.dataset.document = "";
+    persistNavigationState();
+    renderDocumentActivation();
+    return;
+  }
+  const close = event.target.closest("[data-document-tab-close]");
+  if (close) {
+    event.stopPropagation();
+    closeDocumentTabById(close.dataset.documentTabClose);
+    return;
+  }
+  const select = event.target.closest("[data-document-tab-select]");
+  if (select) activateDocumentTab(select.dataset.documentTabSelect);
 });
 
 const marqueeRectangle = ({ startX, startY, currentX, currentY }) => ({
@@ -45553,9 +46552,17 @@ elements.taskPanel.addEventListener("click", (event) => {
   if (!conversationId) return;
   loadConversation(conversationId);
   ui.panel = null;
-  elements.editor.dataset.document = "";
   persist();
-  renderAll();
+  // A conversation switch does not mutate the document, whiteboard, model
+  // configuration or workspace directory. Rebuilding the whole application
+  // here made a two-message conversation wait behind every document/editor
+  // render in a large notebook and could freeze the window for many seconds.
+  // Update only the surfaces whose state is scoped to the active conversation.
+  renderTaskPanel();
+  renderMessages();
+  renderContextChips();
+  renderReferencePanel();
+  renderConversationChoicePanel();
 });
 
 elements.globalSearch.addEventListener("input", (event) => {
@@ -45631,6 +46638,14 @@ elements.addDocument.addEventListener("click", () => {
   });
 });
 
+elements.editor.addEventListener("click", (event) => {
+  if (event.target.closest("[data-blank-tab-create]")) {
+    elements.addDocument.click();
+    return;
+  }
+  if (event.target.closest("[data-blank-tab-close]")) closeDocumentTabById(state.activeDocumentTabId);
+});
+
 elements.documentModeButton.addEventListener("click", () => {
   const documentState = state.documents[state.activeDocument];
   if (!documentState || documentState.documentKind === "whiteboard" || state.activeDocument === "library-trash") return;
@@ -45640,11 +46655,30 @@ elements.documentModeButton.addEventListener("click", () => {
   }
   const enteringPreview = !documentPreviewActive();
   ui.documentPreviewKey = enteringPreview ? currentDocumentPreviewKey() : null;
+  state.documentViewStates = updateDocumentViewState(state.documentViewStates, state.activeDocument, {
+    mode: enteringPreview ? "read" : "edit",
+    scrollTop: elements.editorCanvas?.scrollTop || 0,
+  });
+  persistNavigationState();
   hideSelectionToolbar();
   elements.editor.blur();
   renderEditor();
   if (!enteringPreview) requestAnimationFrame(() => elements.editor.focus({ preventScroll: true }));
 });
+
+elements.editorCanvas.addEventListener("scroll", () => {
+  const documentId = String(state.activeDocument || "");
+  if (!documentId || state.documents?.[documentId]?.documentKind === "whiteboard") return;
+  state.documentViewStates = updateDocumentViewState(state.documentViewStates, documentId, {
+    mode: documentPreviewActive() ? "read" : "edit",
+    scrollTop: elements.editorCanvas.scrollTop || 0,
+  });
+  clearTimeout(ui.documentViewStateSaveTimer);
+  ui.documentViewStateSaveTimer = setTimeout(() => {
+    ui.documentViewStateSaveTimer = null;
+    persistNavigationState();
+  }, 260);
+}, { passive: true });
 
 elements.writingTimer.addEventListener("click", (event) => {
   const context = writingTimerContext();
@@ -46048,6 +47082,9 @@ elements.editor.addEventListener("keyup", () => {
   rememberDocumentEditorRange();
   if (activeNoteDocument()) rememberNoteEditorRange();
 });
+elements.editor.addEventListener("keydown", () => {
+  elements.editor.classList.remove("note-color-selection-preview");
+}, { capture: true });
 elements.editor.addEventListener("focus", () => {
   clearEditorNarrativePlaceholder();
   setEditorParagraphMode();
@@ -47235,13 +48272,15 @@ const whiteboardRedoStack = (documentId = state.activeDocument) => {
 const whiteboardCanvasSnapshot = (canvas) => clone(normalizeCanvas(canvas));
 const workspaceAssetsSnapshot = (assets = state.workspaceAssets) => clone(normalizeGenerationAssets(assets));
 const assetHistoryTombstonesSnapshot = (tombstones = state.assetHistoryTombstones) => clone(normalizeAssetHistoryTombstones(tombstones));
-const globalAssetHiddenIdsSnapshot = (values = ui.globalAssetHiddenIds) => [...new Set(values instanceof Set ? values : values || [])]
-  .map(String)
-  .filter(Boolean)
-  .sort();
+const globalAssetHiddenIdsSnapshot = (values = ui.globalAssetTrashRecords) => {
+  const source = values instanceof Map ? [...values.values()] : Array.isArray(values) ? values : [];
+  return source.map((value) => normalizedGlobalAssetTrashRecord(value)).filter(Boolean).sort((left, right) => left.id.localeCompare(right.id));
+};
 const applyGlobalAssetHiddenIdsSnapshot = (values = []) => {
-  ui.globalAssetHiddenIds = new Set(globalAssetHiddenIdsSnapshot(values));
-  persistGlobalAssetHiddenIds(ui.globalAssetHiddenIds);
+  const records = globalAssetHiddenIdsSnapshot(values);
+  ui.globalAssetTrashRecords = new Map(records.map((record) => [record.id, record]));
+  ui.globalAssetHiddenIds = new Set(records.map((record) => record.id));
+  persistGlobalAssetTrashRecords(ui.globalAssetTrashRecords);
 };
 
 const pushWhiteboardHistory = (beforeCanvas, { documentId = state.activeDocument, label = "白板操作", coalesce = false, beforeWorkspaceAssets = null, beforeAssetHistoryTombstones = null, beforeGlobalAssetHiddenIds = null } = {}) => {
@@ -48073,13 +49112,13 @@ elements.whiteboardAssetSort.addEventListener("click", () => {
   ui.whiteboardAssetVisibleLimit = 48;
   renderWhiteboardAssets();
 });
-elements.whiteboardAssetShowHidden.addEventListener("click", () => {
-  ui.whiteboardAssetShowHidden = !ui.whiteboardAssetShowHidden;
+elements.whiteboardAssetShowTrash.addEventListener("click", () => {
+  ui.whiteboardAssetShowTrash = !ui.whiteboardAssetShowTrash;
   resetWhiteboardAssetDeleteMode();
   ui.whiteboardAssetVisibleLimit = 48;
   renderWhiteboardAssets();
 });
-elements.whiteboardAssetBatchActions.addEventListener("click", (event) => {
+elements.whiteboardAssetBatchActions.addEventListener("click", async (event) => {
   const action = event.target.closest("[data-whiteboard-asset-batch-action]")?.dataset.whiteboardAssetBatchAction;
   if (!action) return;
   if (action === "begin") {
@@ -48095,8 +49134,8 @@ elements.whiteboardAssetBatchActions.addEventListener("click", (event) => {
     return;
   }
   if (action === "select-all") {
-    const allAssets = [...(ui.whiteboardAssetShowHidden
-      ? allHistoricalAssets({ includeHidden: true }).filter((asset) => asset.historyHidden)
+    const allAssets = [...(ui.whiteboardAssetShowTrash
+      ? allHistoricalAssets({ includeTrash: true })
       : allHistoricalAssets())].reverse();
     const filteredAssets = filterHistoricalAssets(allAssets, {
       origin: ui.whiteboardAssetOriginFilter,
@@ -48106,12 +49145,26 @@ elements.whiteboardAssetBatchActions.addEventListener("click", (event) => {
     renderWhiteboardAssets();
     return;
   }
+  if (action === "clear-trash") {
+    const trashAssets = allHistoricalAssets({ includeTrash: true });
+    if (!trashAssets.length) return;
+    void permanentlyDeleteAssetsFromHistoryLibrary(trashAssets).then(() => {
+      resetWhiteboardAssetDeleteMode();
+      renderWhiteboardAssets();
+    }).catch((error) => showToast(error.message || "清空资产回收站失败"));
+    return;
+  }
   if (action !== "confirm") return;
   const selectedIds = [...ui.whiteboardAssetSelectedIds].filter((assetId) => whiteboardAssetById(assetId));
   if (!selectedIds.length) return;
   const selectedAssets = selectedIds.map((assetId) => whiteboardAssetById(assetId)).filter(Boolean);
-  if (ui.whiteboardAssetShowHidden) unhideAssetsFromHistoryLibrary(selectedAssets);
-  else hideAssetsFromHistoryLibrary(selectedAssets);
+  try {
+    if (ui.whiteboardAssetShowTrash) await restoreAssetsFromHistoryLibrary(selectedAssets);
+    else await moveAssetsToTrashFromHistoryLibrary(selectedAssets);
+  } catch (error) {
+    showToast(error.message || "资产批量操作失败");
+    return;
+  }
   resetWhiteboardAssetDeleteMode();
   renderWhiteboardAssets();
 });
@@ -48221,12 +49274,17 @@ elements.whiteboardAssetList.addEventListener("click", async (event) => {
       return;
     }
     if (action === "delete") {
-      hideAssetsFromHistoryLibrary(asset);
+      await moveAssetsToTrashFromHistoryLibrary(asset);
       renderWhiteboardAssets();
       return;
     }
-    if (action === "unhide") {
-      unhideAssetsFromHistoryLibrary(asset);
+    if (action === "restore") {
+      await restoreAssetsFromHistoryLibrary(asset);
+      renderWhiteboardAssets();
+      return;
+    }
+    if (action === "permanent-delete") {
+      await permanentlyDeleteAssetsFromHistoryLibrary(asset);
       renderWhiteboardAssets();
     }
   } catch (error) {
@@ -60777,7 +61835,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       ...((displayContent || queuedItem?.runtimeSupplement) ? { modelContent: prompt, runtimeGuidance: true } : {}),
       requestMode: "codex_agent",
       taskRouteMode: taskRoute.mode,
-      routeReason: taskRoute.reason,
+      routeReason: taskRoute.routeReason || taskRoute.reason,
       taskRoute: clone(taskRoute),
       target,
       ...(agentCreativeMutationPlan ? { creativeMutationPlan: clone(agentCreativeMutationPlan) } : {}),
@@ -60999,7 +62057,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
         selectedSkillPlacementIds: (activeReferenceScope.skillReferences ?? []).map((selection) => selection?.placementId || selection?.slotId || "").filter(Boolean),
         relationType: taskRoute.relationType || "",
         relationRole: taskRoute.relationRole || "",
-        routeReason: taskRoute.reason || "",
+        routeReason: taskRoute.routeReason || taskRoute.reason || "",
         workspaceOperation: agentWorkspaceOperationRequested,
         selfRepairAuthorization,
         landing: agentGenerationAndLandingRequested || agentLandingOnlyRequested,
@@ -61188,12 +62246,6 @@ const switchConversationMode = async (provider) => {
   renderCodexAgentPanel();
   return payload;
 };
-
-const codexSubmissionRequiresLogin = () => currentCodexConnectionSelected()
-  && (ui.temporaryCodexSelected || (
-    ui.codexAgent.status?.codexAuthenticated !== true
-    && !(ui.codexAgent.status?.agentEngine === "codex" && ui.codexAgent.status?.authenticated === true)
-  ));
 
 function conversationEffectiveMediaSelection(conversation = activeConversation(), channel = "image") {
   return conversationMediaEffectiveSelection({
@@ -61388,10 +62440,12 @@ const configureConversationMediaDefault = async (content, intent = conversationM
 };
 
 const dispatchComposerContent = (content, {
-  conversationId = "", taskContextSnapshot = null, displayContent = "", mediaDispatch = null,
+  conversationId = "", taskContextSnapshot = null, displayContent = "", mediaDispatch = null, retryContext = null,
 } = {}) => {
   const targetConversationId = String(conversationId || state.activeConversationId || "");
-  const snapshot = taskContextSnapshot ? clone(taskContextSnapshot) : captureTaskContextSnapshot(targetConversationId);
+  const snapshot = clone(retryContext?.sourceMessage
+    ? retryContext.sourceMessage.turnContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(targetConversationId)
+    : taskContextSnapshot || captureTaskContextSnapshot(targetConversationId));
   clearActiveComposerDraft();
   const immediateInstructionId = showImmediateConversationInstruction(displayContent || content);
   dispatchAfterImmediateInstructionPaint(() => {
@@ -61574,32 +62628,6 @@ elements.codexAgentDisconnect.addEventListener("click", disconnectCodex);
 document.querySelector("#codexSettingsLogin").addEventListener("click", startCodexLogin);
 document.querySelector("#codexSettingsDisconnect").addEventListener("click", disconnectCodex);
 
-document.querySelector('[data-agent-permission-surface="quick"]')?.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-agent-permission-mode]");
-  if (!button) return;
-  const previousMode = normalizeAgentPermissionMode(state.settings?.agentPermissionMode);
-  const nextMode = normalizeAgentPermissionMode(button.dataset.agentPermissionMode);
-  document.querySelector('#conversationPermissionMenu').open = false;
-  if (nextMode === previousMode) return;
-  const buttons = [...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')];
-  buttons.forEach((item) => { item.disabled = true; });
-  state.settings = { ...state.settings, agentPermissionMode: nextMode };
-  persist();
-  renderQuickModelSelector();
-  try {
-    ui.codexAgent.status = await requestAgentPermissionModeStatus(nextMode);
-    renderCodexAgentPanel();
-    showToast(`已切换为“${agentPermissionModeInfo(nextMode).label}”；仅影响新任务`);
-  } catch (error) {
-    state.settings = { ...state.settings, agentPermissionMode: previousMode };
-    persist();
-    renderQuickModelSelector();
-    showToast(error.message || "Agent 权限档位切换失败");
-  } finally {
-    buttons.forEach((item) => { item.disabled = false; });
-  }
-});
-
 elements.quickAgentEngine?.addEventListener("change", async (event) => {
   const requestedProfileId = String(event.target.value || "");
   try {
@@ -61611,7 +62639,11 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
     persist();
     renderQuickModelSelector();
     activeAgentProfileSwitchPromise = (async () => {
-      if (activeAgentEngine() === engine) return;
+      // The selected profile was persisted just above, so activeAgentEngine()
+      // already reports the *requested* engine here. Compare against the
+      // core runtime status instead; otherwise switching profiles can leave
+      // the toolbar on OpenCode while the server still runs codex_api.
+      if (String(ui.codexAgent.status?.agentEngine || "") === engine) return;
       const response = await fetch("/api/codex-agent/engine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -70569,7 +71601,10 @@ const renderDreaminaAccountStatus = (profile = null, preferredChannel = "", erro
         : currentStatus.creditSource === "saved" ? "；上次保存" : "";
     const duplicate = currentStatus.duplicateRemarkName ? `；与“${currentStatus.duplicateRemarkName}”重复` : "";
     const accountError = currentStatus.error ? `；${currentStatus.error}` : "";
-    status.textContent = `${dreaminaAccountStateLabel(currentStatus.state)}；账号 ID：${account}${credit}${creditSource}${duplicate}${accountError}`;
+    const generationAccess = currentStatus.cliGenerationEligible === false
+      ? "；当前账号有积分，但未开通即梦 CLI 生成权限"
+      : "";
+    status.textContent = `${dreaminaAccountStateLabel(currentStatus.state)}；账号 ID：${account}${credit}${creditSource}${generationAccess}${duplicate}${accountError}`;
     if (metrics) {
       metrics.hidden = false;
       const metric = (name, value) => {
@@ -70785,6 +71820,7 @@ const refreshCurrentDreaminaCredit = async ({ trigger = null } = {}) => {
       if (existingIndex >= 0) statuses.splice(existingIndex, 1, profile);
       else statuses.push(profile);
       ui.dreaminaAccountStatuses = statuses;
+      ui.dreaminaStatusReadAt.set(`${channel}:${profileId}`, Date.now());
       renderDreaminaAccountStatus(profile, channel);
       renderGenerationConnectionManagers();
       renderWhiteboardGenerationCredit("image");
@@ -71347,6 +72383,10 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
       && elements.dreaminaReverifyDialog.dataset.channel === channel) {
       elements.dreaminaReverifyDialog.close();
     }
+    if (account.cliGenerationEligible === false) {
+      showToast(`即梦配置“${account.remarkName || account.profileId}”实时积分为 ${dreaminaAccountCredit(account) ?? "未取得"}，但厂商未给当前账号开通 Dreamina CLI 生成权限；本次未创建任务、未扣积分。请开通会员后刷新，或切换其他配置。`);
+      return false;
+    }
     const form = channel === "image" ? elements.whiteboardImageForm : channel === "video" ? elements.whiteboardVideoForm : null;
     const estimate = dreaminaCreditEstimateForForm(channel, form, account);
     const required = Math.max(0, Number(estimate?.estimatedCredit) || 0);
@@ -71704,9 +72744,28 @@ const refreshAvailableModels = async () => {
   });
   const result = document.querySelector("#adapterResult");
   if (settings.adapter === "cli") {
+    const selectedRunnerId = String(settings.agentEngine || settings.textAgentEngine || "");
+    if (selectedRunnerId === "workbuddy") {
+      const runnerLabel = agentEngineDescriptor(selectedRunnerId)?.label || AGENT_RUNNER_LABELS[selectedRunnerId] || "外置 Agent";
+      result.textContent = `正在读取 ${runnerLabel} CLI 当前支持的模型…`;
+      const statuses = await hydrateAgentRunnerStatuses({ force: true });
+      if (!requestStillCurrent()) return;
+      const capability = statuses?.[selectedRunnerId] || null;
+      renderModelOptions(settings.provider || "", { allowBlank: true, preferredModel: settings.model || settings.agentModelId || "" });
+      result.textContent = capability?.state === "login_required" || capability?.authenticated === false
+        ? `${runnerLabel} 已安装但尚未登录；请先完成 ${runnerLabel} 登录，再刷新读取当前账号的真实模型目录`
+        : capability?.modelState === "catalog_available" && capability?.models?.length
+          ? `已从 ${capability.version || `${runnerLabel} CLI`} 读取 ${capability.models.length} 个真实支持模型；留空仍可跟随 CLI 默认模型`
+          : capability?.modelState === "verified_runner_default" && capability?.authenticated === true
+            ? `${runnerLabel} CLI 未提供可机器读取的模型目录；已确认可跟随该 CLI 当前默认模型`
+            : `${runnerLabel} 模型状态检查失败${capability?.message ? `：${capability.message}` : ""}`;
+      renderQuickModelSelector();
+      return;
+    }
     if (EXTERNAL_AGENT_RUNNER_IDS.includes(String(settings.agentEngine || settings.textAgentEngine || ""))) {
       renderModelOptions(settings.provider || "", { allowBlank: true, preferredModel: settings.model || settings.agentModelId || "" });
-      result.textContent = "外置 Agent 不强制绑定服务商或模型；已保留当前 CLI 参数，运行时将使用你填写的模型或 CLI 默认模型";
+      const runnerLabel = agentEngineDescriptor(settings.agentEngine || settings.textAgentEngine)?.label || "外置 Agent";
+      result.textContent = `${runnerLabel} 不提供统一的神思模型目录；模型可填写 CLI 支持的别名或完整 ID，留空将使用 ${runnerLabel} 当前默认模型`;
       return;
     }
     if (settings.textAgentEngine === "claude_code") {
@@ -71982,6 +73041,96 @@ elements.startAgentRunnerInstall?.addEventListener("click", async () => {
   }
 });
 
+elements.refreshAgentRunnerInstall?.addEventListener("click", async () => {
+  const runnerId = String(elements.agentRunnerInstallDialog?.dataset.runnerId || "");
+  if (!runnerId) return;
+  elements.refreshAgentRunnerInstall.disabled = true;
+  try {
+    const statuses = await hydrateAgentRunnerStatuses({ force: true });
+    const capability = statuses?.[runnerId];
+    renderAgentRunnerInstallJob({
+      runnerId,
+      status: capability?.installed === true ? "completed" : "idle",
+      state: capability?.state || (capability?.installed === true ? "ready" : "missing"),
+      stage: capability?.installed === true
+        ? capability?.state === "login_required" ? "login_probe" : capability?.ready === true ? "completed" : "model_probe"
+        : "detecting",
+      progress: capability?.installed === true ? 100 : 0,
+      message: capability?.message || (capability?.installed === true
+        ? `${AGENT_RUNNER_LABELS[runnerId] || "Agent"} 已通过版本复检`
+        : `尚未安装 ${AGENT_RUNNER_LABELS[runnerId] || "Agent"}`),
+      capability,
+      error: capability?.error || null,
+      suggestedAction: capability?.error?.suggestedAction || "",
+      officialUrl: capability?.officialUrl || "",
+    });
+  } catch (error) {
+    renderAgentRunnerInstallJob({ runnerId, status: "failed", stage: "executable_resolution", message: error.message || "运行器状态检查失败", error: { summary: error.message || "运行器状态检查失败", detail: error.stack || error.message || "" } });
+  } finally {
+    elements.refreshAgentRunnerInstall.disabled = false;
+  }
+});
+
+elements.loginAgentRunner?.addEventListener("click", async () => {
+  const runnerId = String(elements.agentRunnerInstallDialog?.dataset.runnerId || "");
+  if (runnerId !== "workbuddy") return;
+  elements.agentRunnerInstallDialog.dataset.loginPolling = runnerId;
+  elements.loginAgentRunner.disabled = true;
+  try {
+    const response = await fetch("/api/agent-runners/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "运行器登录窗口启动失败");
+    const capability = agentRunnerCapability(runnerId) || { installed: true };
+    renderAgentRunnerInstallJob({
+      runnerId,
+      status: "completed",
+      state: "authenticating",
+      stage: "login_probe",
+      progress: 100,
+      message: payload.message || `已打开 ${AGENT_RUNNER_LABELS[runnerId]} 登录窗口`,
+      capability: { ...capability, state: "authenticating", authState: "authenticating", ready: false },
+    });
+    await pollAgentRunnerLoginState(runnerId);
+  } catch (error) {
+    const capability = agentRunnerCapability(runnerId) || { installed: true };
+    renderAgentRunnerInstallJob({ runnerId, status: "completed", state: "login_required", stage: "login_probe", message: error.message || "运行器登录窗口启动失败", capability: { ...capability, state: "login_required", authState: "login_required", ready: false }, error: { summary: error.message || "运行器登录窗口启动失败", detail: error.message || "" } });
+  } finally {
+    delete elements.agentRunnerInstallDialog.dataset.loginPolling;
+    elements.loginAgentRunner.disabled = false;
+  }
+});
+
+elements.showAgentRunnerInstallDetails?.addEventListener("click", () => {
+  const detail = String(ui.agentRunnerInstallLastJob?.error?.detail || "").trim();
+  if (!detail) return;
+  elements.agentRunnerInstallDetail.textContent = detail;
+});
+
+elements.terminateAgentRunnerInstall?.addEventListener("click", async () => {
+  const jobId = String(ui.activeAgentRunnerInstallJobId || "");
+  if (!jobId) return;
+  elements.terminateAgentRunnerInstall.disabled = true;
+  try {
+    const response = await fetch("/api/agent-runners/install/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobId }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "终止运行器装配失败");
+    renderAgentRunnerInstallJob(payload.job);
+    ui.activeAgentRunnerInstallJobId = "";
+  } catch (error) {
+    showToast(error.message || "终止运行器装配失败");
+  } finally {
+    elements.terminateAgentRunnerInstall.disabled = false;
+  }
+});
+
 elements.agentRunnerInstallDialog?.addEventListener("close", () => {
   ui.pendingAgentRunnerSelection = "";
 });
@@ -72009,6 +73158,7 @@ agentEngineSelect?.addEventListener("change", (event) => {
   }
   if (capability?.installed === true) {
     event.target.dataset.previousAvailableValue = runnerId;
+    if (runnerId === "workbuddy" && capability?.ready !== true && !elements.agentRunnerInstallDialog?.open) void openAgentRunnerInstallDialog(runnerId);
     return;
   }
   event.stopImmediatePropagation();
@@ -72073,7 +73223,7 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
     document.querySelector("#customModelInput").value = "";
     document.querySelector("#adapterResult").textContent = runnerId === "custom"
       ? "已切换到自定义运行器；请填写 CLI 程序路径和参数模板"
-      : `已切换到 ${AGENT_RUNNER_LABELS[runnerId]}；可直接使用该运行器默认模型，也可手动填写模型 ID`;
+      : `已切换到 ${AGENT_RUNNER_LABELS[runnerId]}；模型由该 CLI 内部管理，留空时使用 CLI 当前默认模型`;
   } else if (event.target.value === "codex") {
     const runner = openCodeRunnerDefaults("codex");
     control("adapter").value = runner.adapter;
@@ -72220,6 +73370,7 @@ elements.settingsForm.addEventListener("submit", async (event) => {
   });
   try {
     await saveGenerationRuntimeForSettings(nextSettings, { confirmed: true });
+    await saveGlobalGenerationProfiles(nextSettings, { confirmed: true });
   } catch (error) {
     ui.settingsSection = "model";
     renderSettingsSection();
@@ -72296,6 +73447,7 @@ const persistVerifiedGenerationChannel = async (channel, { profileId = "" } = {}
     ? protectUnconfirmedOpenCodeActivation(normalizedDraft)
     : normalizedDraft);
   await saveGenerationRuntimeForSettings(nextSettings, { confirmed: true });
+  await saveGlobalGenerationProfiles(nextSettings, { confirmed: true });
   state.settings = applyGenerationRuntimeBindings(
     nextSettings,
     machineGenerationRuntime,
@@ -73308,6 +74460,22 @@ const runDailyCapabilityConnectionChecks = async () => {
   const report = { checkedAt: Date.now(), profileStamp, verificationLevel: "connection", paidRequests: 0, items: [] };
   for (const entry of profiles) {
     const settings = entry.settings;
+    if (["image", "video"].includes(entry.channel) && isDreaminaCliProfile(settings)) {
+      // Dreamina exposes one machine-wide credential slot. A startup catalog
+      // probe switches that slot just like a real task and can therefore race
+      // with a user-initiated generation. Keep startup read-only by using the
+      // persisted account/capability evidence; explicit refresh and generation
+      // preflight still perform a live CLI check for the selected profile.
+      report.items.push({
+        channel: entry.channel,
+        connectionId: settings.id,
+        provider: settings.provider,
+        model: settings.model,
+        status: "skipped",
+        reason: "dreamina_requires_explicit_live_check",
+      });
+      continue;
+    }
     if (settings.adapter === "api" && !settings.apiKey) {
       report.items.push({ channel: entry.channel, connectionId: settings.id, provider: settings.provider, model: settings.model, status: "skipped", reason: "missing_session_credentials" });
       continue;
@@ -73423,7 +74591,11 @@ const bootstrap = async () => {
   await hydrateRecoveryResumePointer();
   await hydrateDesktopGenerationSecrets();
   await hydrateGenerationRuntimeBindings();
-  state.settings = applyGenerationRuntimeBindings(state.settings ?? {}, machineGenerationRuntime, runtimeGenerationSecrets);
+  await hydrateGlobalGenerationProfiles();
+  state.settings = applyGenerationRuntimeBindings({
+    ...(state.settings ?? {}),
+    ...(machineGenerationProfiles.exists ? machineGenerationProfiles.settings : {}),
+  }, machineGenerationRuntime, runtimeGenerationSecrets);
   const emptyWorkspaceAtStartup = storedActiveWorkspace()?.empty === true;
   const hydration = await hydrateWorkspace();
   ui.workspaceHydrating = false;
@@ -73437,6 +74609,27 @@ const bootstrap = async () => {
     return;
   }
   ensureStateSchema();
+  if (machineGenerationProfiles.exists) {
+    // hydrateWorkspace replaces the in-memory state with the selected
+    // workspace snapshot. Reapply the software-global generation registry
+    // afterwards so an older project's embedded connection list cannot hide
+    // Aggregate API, DeepSeek, WorkBuddy or media configurations at startup.
+    state.settings = applyGenerationRuntimeBindings({
+      ...withoutGenerationConfiguration(state.settings ?? {}),
+      ...machineGenerationProfiles.settings,
+    }, machineGenerationRuntime, runtimeGenerationSecrets);
+  }
+  if (!machineGenerationProfiles.exists) {
+    try {
+      await saveGlobalGenerationProfiles(state.settings, { confirmed: true });
+      state.settings = applyGenerationRuntimeBindings({
+        ...withoutGenerationConfiguration(state.settings ?? {}),
+        ...machineGenerationProfiles.settings,
+      }, machineGenerationRuntime, runtimeGenerationSecrets);
+    } catch (error) {
+      console.warn("Global generation profile migration failed:", error.message);
+    }
+  }
   // Rebind DPAPI-backed API credentials before recovery workers need to
   // resume an older media job. The secrets never enter workspace state.
   try {
@@ -73517,6 +74710,11 @@ const bootstrap = async () => {
   mediaRecoveryReconciler.start();
   requestAnimationFrame(() => recoverWhiteboardGenerationJobs());
   scheduleUiBackgroundTask(() => { void runDailyCapabilityConnectionChecks(); }, { delay: 250, timeout: 4_000 });
+  scheduleUiBackgroundTask(() => {
+    void refreshGlobalHistoricalAssets().then(() => pruneExpiredAssetTrash()).catch((error) => {
+      console.warn("Automatic Asset Trash cleanup deferred:", error.message);
+    });
+  }, { delay: 800, timeout: 8_000 });
   if (ui.workspaceRecoveryRestored) {
     try {
       await flushWorkspaceSave({ throwOnError: true });

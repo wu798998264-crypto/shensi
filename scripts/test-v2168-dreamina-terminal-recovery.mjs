@@ -19,8 +19,12 @@ const classified = classifyMediaSubmissionFailure({
   job: { channel: "video", status: "submitting", transientFailures: 27 },
   error: brokerBusy,
 });
-assert.equal(classified.safeAutomaticRetry, true, "凭据槽繁忙不得被有限重试次数误判为最终失败");
+assert.equal(classified.safeAutomaticRetry, false, "凭据槽繁忙不得无限重试并长期占用任务；超过上限必须明确失败");
 assert.equal(classified.submissionUnknown, false, "凭据槽繁忙发生在提交前，不能标记为扣费结果未知");
+assert.equal(classifyMediaSubmissionFailure({
+  job: { channel: "video", status: "submitting", transientFailures: 0 },
+  error: brokerBusy,
+}).safeAutomaticRetry, true, "凭据槽短暂繁忙应先进行有限自动重试");
 assert.deepEqual(
   dreaminaProfileCommandFailure({ code: 75, stderr: "[DREAMINA_PROFILE_BROKER_BUSY] credential slot is busy" }),
   {
@@ -107,6 +111,11 @@ const [runner, worker, drivers, imageBridge, store, app, server, styles] = await
 assert.match(runner, /WaitOne\(\[TimeSpan\]::FromSeconds\(2\)\)/u, "账号凭据槽不能继续阻塞到外层超时");
 assert.match(runner, /DREAMINA_PROFILE_BROKER_BUSY/u, "凭据槽繁忙应返回可识别的未提交状态");
 assert.match(worker, /只有厂商明确返回失败才会结束/u, "已提交任务不能因为长时间排队或轮询超时被标记失败");
+assert.match(worker, /failures > MAX_TRANSIENT_FAILURES[\s\S]{0,500}status: "retry_required"[\s\S]{0,500}请点击“找回结果”继续查询/u, "状态查询连续失败必须停止无限重试，保留原任务并转入人工找回");
+assert.match(worker, /厂商结果已生成，但下载连续 \$\{failures\} 次失败，已停止自动重试/u, "结果下载连续失败必须停止无限重试并保留原任务");
+assert.match(worker, /localLandingBlocked && failureCount > MAX_TRANSIENT_FAILURES[\s\S]{0,500}status: "retry_required"[\s\S]{0,700}重新落盘/u, "本地落盘持续冲突必须进入可恢复状态并释放生成通道");
+assert.match(worker, /MAX_CAPACITY_AUTOMATIC_RETRIES[\s\S]{0,1800}capacityRetryExhaustedAt/u, "厂商并发拒绝只能有限自动重试，耗尽后必须明确终止本地重试");
+assert.doesNotMatch(worker, /status\.providerStatus === "failed" && providerCapacityLimited\(status\)[\s\S]{0,500}providerStatus: "queued"/u, "已有厂商任务明确失败后不得伪装成厂商排队");
 assert.doesNotMatch(worker, /acquireJobLock\("dreamina-cli-global"\)/u, "工作进程不得用任务级锁覆盖厂商查询、下载和卡片回写");
 assert.match(runner, /Global\\ShensiDreaminaCredentialSwitchV1/u, "Windows 配置槽仍必须由单命令互斥保护");
 assert.match(worker, /本任务尚未提交、不会扣积分/u, "未提交的凭据槽等待应明确说明不会扣积分");
@@ -118,6 +127,7 @@ assert.match(imageBridge, /providerQueueLength: queue\.length/u, "图片任务�
 assert.match(imageBridge, /\["1\.5k", "2k", "4k"\]/u, "5.0Pro 必须使用官方支持的 1.5k、2k、4k 分辨率");
 assert.match(store, /automatic_submission_reconciliation/u, "自动找回必须由后台按幂等键核对");
 assert.match(store, /DREAMINA_PRE_SUBMIT_INTERRUPTED/u, "旧版提交前超时应明确标记为未提交");
+assert.match(store, /legacyDreaminaConcurrencyFailure[\s\S]{0,260}!job\.capacityRetryExhaustedAt/u, "已耗尽并发重试的新任务不得被旧迁移逻辑重新复活");
 assert.doesNotMatch(app, /requestMediaProviderTaskId/u, "界面不得再要求用户填写内部任务 ID");
 assert.match(app, /const reopenableChannels = \["text", "image", "video", "audio"\]/u, "已生成卡片应按持久类型重新打开对应操作栏，不依赖瞬时探测");
 assert.match(app, /whiteboardMediaJobIsSupersededByNodeGeneration/u, "旧失败不得覆盖同一卡片的新成功结果");

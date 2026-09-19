@@ -47,8 +47,8 @@ assert.match(appSource, /previewState\.editorViewport = captureAttachmentTextPre
 assert.match(appSource, /if \(editing && previewState\.editorViewport\)[\s\S]{0,420}editor\.style\.height = `\$\{previewState\.editorViewport\.height\}px`/u, "编辑器必须保持阅读态预览窗口的原始高度");
 assert.doesNotMatch(styleSource, /\.attachment-preview-text-editor\s*\{[^}]*height:\s*min\(70vh,\s*680px\)/u, "编辑态不得再用固定高度缩放预览窗口");
 assert.match(styleSource, /\.attachment-preview-content\[data-preview-kind="text"\][\s\S]{0,1800}\.attachment-preview-text-actions\s*\{[\s\S]{0,240}top:\s*8px;[\s\S]{0,120}right:\s*10px;/u, "预览编辑操作必须固定在白色正文表面右上角");
-assert.match(styleSource, /#whiteboardAssetShowHidden\s*\{[\s\S]{0,260}height:\s*34px;[\s\S]{0,180}white-space:\s*nowrap/u, "显示已隐藏按钮必须与同排图标等高且禁止文字堆叠");
-assert.match(appSource, /whiteboard-asset-batch-confirm[\s\S]{0,420}<span>确认<\/span>/u, "批量隐藏最终按钮必须使用简洁的“确认”文案");
+assert.match(styleSource, /#whiteboardAssetShowTrash\s*\{[\s\S]{0,260}height:\s*34px;[\s\S]{0,180}white-space:\s*nowrap/u, "资产回收站按钮必须与同排图标等高且禁止文字堆叠");
+assert.match(appSource, /whiteboard-asset-batch-confirm[\s\S]{0,520}<span>确认<\/span>/u, "批量删除或恢复的最终按钮必须使用简洁的“确认”文案");
 
 assert.match(appSource, /data-preview-skill-reference=/u, "Skill 引用行必须提供独立预览按钮");
 assert.match(appSource, /const previewSkillId =[\s\S]{0,420}await openSkillDetail/u, "Skill 预览必须复用详情窗口且不直接加入引用");

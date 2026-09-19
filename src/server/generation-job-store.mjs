@@ -28,6 +28,7 @@ import {
   requireDreaminaCliProfileId,
 } from "../dreamina-manual-profile-policy.js";
 import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
+import { readDreaminaBrokerLease } from "./dreamina-broker-lease.mjs";
 import { builtInAggregateImageRecoveryJob, legacyAggregateReferencePreflightFailurePatch } from "./media-submission-recovery.mjs";
 
 const JOB_SCHEMA_VERSION = 3;
@@ -618,6 +619,15 @@ const enqueueJobUpdate = (jobId, operation) => {
 
 const preserveStoppedMediaJobState = (current, patch = {}) => {
   const safePatch = scrubSecrets(patch);
+  const replacementTrackingOnly = Boolean(current?.replacementTrackingOnly || safePatch.replacementTrackingOnly);
+  if (replacementTrackingOnly) {
+    return {
+      ...safePatch,
+      desiredAction: "run",
+      resultSuppressed: true,
+      replacementTrackingOnly: true,
+    };
+  }
   const stopped = current?.mode === "server"
     && ["image", "video", "audio"].includes(current?.channel)
     && Boolean(current.userStoppedAt || current.resultSuppressed || safePatch.userStoppedAt || safePatch.resultSuppressed);
@@ -920,6 +930,7 @@ const findPendingMediaJobsByTarget = async ({ channel, target } = {}) => {
     // A stopped, unidentified submission whose reconciliation lease has ended
     // must not remain an invisible card lock forever. Provider-task-backed
     // cancellation still follows the normal single-flight protection below.
+    if (job.resultSuppressed && job.replacementTrackingOnly) continue;
     const dismissedUnidentifiedSubmission = mediaGenerationJobCanBeDismissed(job)
       && Boolean(job.userStoppedAt || job.resultSuppressed || job.desiredAction === "cancel");
     if (dismissedUnidentifiedSubmission) continue;
@@ -954,6 +965,21 @@ const replacementAbandonmentPatch = (job) => {
     };
   }
   const providerMayStillRun = Boolean(job.providerTaskId || job.submissionState !== "not_submitted");
+  if (providerMayStillRun && job.providerTaskId) {
+    return {
+      status: ["downloading", "complete"].includes(String(job.status || "")) ? job.status : "polling",
+      providerStatus: job.providerStatus || "running",
+      desiredAction: "run",
+      resultSuppressed: true,
+      replacementTrackingOnly: true,
+      abandonedAt: now,
+      abandonmentReason: "user_submitted_replacement",
+      retryAllowed: true,
+      nextPollAt: new Date().toISOString(),
+      error: "用户已提交新的生成请求；旧厂商任务将继续后台跟踪并保留结果，但不会回填当前卡片。",
+      heartbeatAt: now,
+    };
+  }
   return {
     status: "cancelled",
     providerStatus: providerMayStillRun ? "cancel_unconfirmed" : "cancelled",
@@ -1160,9 +1186,32 @@ export const createMediaGenerationJob = async ({ channel, target, request, repla
     if (isDreaminaCliSettings(normalizedRequest.settings || {})) {
       const releaseProfileGate = await acquireCapabilitySmokeLock("dreamina-cli-manual-profile-gate");
       try {
+        const requestedProfileId = requireDreaminaCliProfileId(normalizedRequest.settings || {});
+        const brokerLease = await readDreaminaBrokerLease();
+        const brokerLeaseIdentity = brokerLease
+          ? dreaminaProfileIdentityKey({ dreaminaCliProfile: brokerLease.profileId })
+          : "";
+        const brokerLeaseConflicts = brokerLease
+          && brokerLease.profileId !== requestedProfileId
+          && !(profileIdentityKey && brokerLeaseIdentity && profileIdentityKey === brokerLeaseIdentity);
+        if (brokerLeaseConflicts) {
+          const error = jobTransitionError(
+            `即梦通道正被配置“${brokerLease.profileId}”占用；本次任务未创建、未提交厂商，也不会扣费。`,
+            "DREAMINA_PROFILE_SWITCH_BLOCKED",
+            409,
+          );
+          error.details = {
+            activeProfileId: brokerLease.profileId,
+            blockingJobId: brokerLease.jobId || "",
+            blockingChannel: brokerLease.channel || "",
+            blockingCommand: brokerLease.command || "",
+            reason: "physical_credential_slot_busy",
+          };
+          throw error;
+        }
         const decision = dreaminaProfileSwitchDecision({
           jobs: await listDreaminaProfileBlockingJobs(),
-          requestedProfileId: requireDreaminaCliProfileId(normalizedRequest.settings || {}),
+          requestedProfileId,
           requestedCredentialIdentity: profileIdentityKey,
         });
         if (!decision.allowed) {
@@ -1572,7 +1621,9 @@ export const requestMediaGenerationCancel = ({ jobId } = {}) => transitionJob(sa
       heartbeatAt: now,
     };
   }
-  if (!job.providerTaskId && job.status === "queued" && job.submissionState === "not_submitted") {
+  if (!job.providerTaskId
+    && job.submissionState === "not_submitted"
+    && (Number(job.attempt || 0) === 0 || job.safeNoTaskRetry === true)) {
     return {
       status: "cancelled",
       providerStatus: "cancelled",
@@ -1900,6 +1951,7 @@ export const updateMediaGenerationJob = ({ jobId, patch = {} } = {}) => updateJo
 const legacyDreaminaConcurrencyFailure = (job) => job?.mode === "server"
   && job.channel === "video"
   && job.status === "failed"
+  && !job.capacityRetryExhaustedAt
   && normalizedIdentity(job.request?.settings?.adapter) === "cli"
   && ["即梦", "dreamina"].includes(normalizedIdentity(job.request?.settings?.provider))
   && (/ExceedConcurrencyLimit|(?:ret|code)\s*[=:]\s*1310/i.test(String(job.error || ""))

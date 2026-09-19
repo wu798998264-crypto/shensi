@@ -100,6 +100,8 @@ export const OPENAI_MODEL_OPTIONS = [
 // official CLI receives the corresponding modelName. These entries expose
 // the currently published catalog without coupling the text model registry.
 export const LIBTV_IMAGE_MODEL_OPTIONS = [
+  model("lib-image-2.5-s", "Lib Image 2.5 Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("lib-image-2.5-f", "Lib Image 2.5 Fast", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("lib-image-2", "Lib Image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("nebula-ultra", "General image Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("nebula-2-flash", "General image V2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),

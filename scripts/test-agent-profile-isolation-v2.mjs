@@ -149,6 +149,8 @@ assert.match(appSource, /state\.settings\.activeTextAgentConnectionId[\s\S]{0,18
 assert.match(appSource, /activeAgentProfileSwitchPromise = \(async \(\) =>/u, "Agent 配置切换必须登记当前运行器切换事务");
 assert.match(appSource, /await activeAgentProfileSwitchPromise;/u, "紧接配置切换提交的 Agent 任务必须等待运行器切换完成，禁止串到旧运行器");
 assert.match(appSource, /persist\(\);\s*renderQuickModelSelector\(\);\s*activeAgentProfileSwitchPromise/u, "Agent 配置必须先立即保存并刷新选择状态，再执行后台运行器切换");
+assert.match(appSource, /String\(ui\.codexAgent\.status\?\.agentEngine \|\| ""\) === engine/u, "Agent 配置切换必须比较核心运行器真实状态，不能把刚保存的目标配置误判成已经切换完成");
+assert.doesNotMatch(appSource, /activeAgentProfileSwitchPromise = \(async \(\) => \{\s*if \(activeAgentEngine\(\) === engine\) return;/u, "切换事务不得使用已被目标配置更新的 activeAgentEngine 跳过核心运行器切换");
 assert.match(appSource, /elements\.whiteboardTextAgentEngine\.value[\s\S]{0,120}requestedProfileId[\s\S]{0,240}scheduleWhiteboardGenerateControlsRender/u, "卡片旧目录请求返回后不得覆盖新 Agent 配置");
 
 console.log("Agent profile isolation v2 tests passed");

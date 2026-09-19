@@ -11,7 +11,6 @@ const dataRoot = join(runtimeRoot, "data");
 const userDataRoot = join(runtimeRoot, "electron-user");
 const artifactRoot = join(root, "artifacts");
 const screenshotPath = join(artifactRoot, "conversation-agent-native.png");
-const permissionScreenshotPath = join(artifactRoot, "agent-permission-levels.png");
 await mkdir(dataRoot, { recursive: true });
 await mkdir(userDataRoot, { recursive: true });
 await mkdir(artifactRoot, { recursive: true });
@@ -94,10 +93,19 @@ try {
     window.nativeAgentStarts = [];
     window.nativeAgentAnswers = [];
     window.nativeAgentMocks = new Map();
+    window.agentDocumentStateReads = 0;
+    window.agentProjectionFullStateSaves = 0;
     const original = window.fetch.bind(window);
     window.fetch = async (url, init = {}) => {
       const path = String(url);
+      if (path === '/api/workspace/save' && typeof init.body === 'string') {
+        const request = JSON.parse(init.body || '{}');
+        if (request.operationDocumentIds?.includes(window.agentCreatedDocument?.id)) {
+          window.agentProjectionFullStateSaves += 1;
+        }
+      }
       if (path === '/api/workspace/document-state') {
+        window.agentDocumentStateReads += 1;
         const request = JSON.parse(init.body || '{}');
         const target = window.agentCreatedDocument;
         if (target && request.documentIds?.includes(target.id)) return Response.json({ok:true,state:{
@@ -185,32 +193,17 @@ try {
   const currentDocumentTarget = await evaluate(`(() => {const row=document.querySelector('[data-document=library-memo]');return {id:row.dataset.document,title:row.querySelector('.document-label').textContent.trim()};})()`);
   const agentLinkTarget = { id: 'agent-created-article', title: 'Agent 新建文章' };
   await evaluate(`window.agentCreatedDocument=${JSON.stringify(agentLinkTarget)}; true`);
+  await waitFor("document.documentElement.dataset.bootReady === 'true' && !document.querySelector('#quickModelButton')?.disabled", "模型切换器就绪", 45000);
   await evaluate("document.querySelector('#quickModelButton').click(); true");
   await waitFor("document.querySelector('#quickModelPanel')?.hidden === false", "权限快捷面板");
-  await evaluate("document.querySelector('#conversationPermissionLabel').click(); true");
-  assert.equal(await evaluate("document.querySelector('#conversationPermissionMenu').closest('.chat-panel-toolbar') !== null"), true);
   const defaultPermission = await evaluate(`({
-    labels:[...document.querySelectorAll('[data-agent-permission-surface="quick"] [data-agent-permission-mode]')].map((item)=>item.textContent.trim()),
-    selected:document.querySelector('[data-agent-permission-surface="quick"] [data-agent-permission-mode].is-selected')?.dataset.agentPermissionMode,
-    pressed:document.querySelector('[data-agent-permission-surface="quick"] [data-agent-permission-mode="shensi_only"]')?.getAttribute('aria-pressed')
+    summary:document.querySelector('#quickAgentPermissionSummary')?.textContent.trim(),
+    abstractMenu:document.querySelector('[data-agent-permission-surface="quick"]'),
+    abstractButtons:document.querySelectorAll('[data-agent-permission-mode]').length
   })`);
-  assert.deepEqual(defaultPermission.labels, ["仅限神思", "操作需确认", "完全权限"]);
-  assert.equal(defaultPermission.selected, "shensi_only", "新安装必须默认仅限神思");
-  assert.equal(defaultPermission.pressed, "true");
-  const permissionScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  await writeFile(permissionScreenshotPath, Buffer.from(permissionScreenshot.data, "base64"));
-  await cdp("Emulation.setDeviceMetricsOverride", { width: 760, height: 920, deviceScaleFactor: 1, mobile: false });
-  const narrowPermissionLayout = await evaluate(`(() => {
-    const container=document.querySelector('[data-agent-permission-surface="quick"]');
-    const bounds=container.getBoundingClientRect();
-    const buttons=[...container.querySelectorAll('[data-agent-permission-mode]')].map((item)=>item.getBoundingClientRect());
-    return {fits:buttons.every((item)=>item.left>=bounds.left-1&&item.right<=bounds.right+1),overflow:container.scrollWidth-container.clientWidth};
-  })()`);
-  assert.equal(narrowPermissionLayout.fits, true, "窄宽度下三档按钮不得越出面板");
-  assert.ok(narrowPermissionLayout.overflow <= 1, "窄宽度下权限面板不得横向溢出");
-  await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 920, deviceScaleFactor: 1, mobile: false });
-  await evaluate("document.querySelector('[data-agent-permission-mode=approval_required]').click(); true");
-  await waitFor("document.querySelector('[data-agent-permission-mode=approval_required]')?.classList.contains('is-selected') && !document.querySelector('[data-agent-permission-mode=approval_required]')?.disabled", "快捷切换操作需确认");
+  assert.match(defaultPermission.summary, /普通任务默认仅限神思/u);
+  assert.equal(defaultPermission.abstractMenu, null, "普通任务不应显示抽象三档权限菜单");
+  assert.equal(defaultPermission.abstractButtons, 0, "普通任务不应显示三档权限按钮");
   await evaluate("document.querySelector('#closeQuickModel').click(); document.querySelector('#settingsButton').click(); true");
   await waitFor("document.querySelector('#settingsDialog')?.open && document.querySelector('#settingsDialog')?.getAttribute('aria-busy') !== 'true'", "设置窗口", 45000);
   await evaluate("document.querySelector('[data-settings-section=model]').click(); true");
@@ -233,12 +226,11 @@ try {
   assert.equal(modelSettingsLayout.focused, true, "模型设置中可用的输入控件必须可以获得焦点");
   assert.equal(modelSettingsLayout.controls, true, "模型设置可见控件必须可点击");
   await evaluate("document.querySelector('#cancelSettings').click(); document.querySelector('#quickModelButton').click(); true");
-  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false && document.querySelector('[data-agent-permission-mode=approval_required]')?.classList.contains('is-selected')", "权限档位保持在快捷面板");
-  await evaluate("document.querySelector('[data-agent-permission-mode=shensi_only]').click(); true");
-  await waitFor("document.querySelector('[data-agent-permission-mode=shensi_only]')?.classList.contains('is-selected') && !document.querySelector('[data-agent-permission-mode=shensi_only]')?.disabled", "恢复默认权限");
+  await waitFor("document.querySelector('#quickModelPanel')?.hidden === false", "模型快捷面板");
+  assert.match(await evaluate("document.querySelector('#quickAgentPermissionSummary')?.textContent.trim()"), /普通任务默认仅限神思/u);
   await evaluate("document.querySelector('#closeQuickModel').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='不生成视频，只给三份不同视角的候选故事';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
-  await waitFor("window.nativeAgentStarts.length === 1", "统一Agent接受");
+  await waitFor("window.nativeAgentStarts.length === 1 && document.querySelectorAll('[data-native-task-card]').length === 1", "统一Agent接受");
   await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false", "动态选择框");
   const first = await evaluate(`({
     input:document.querySelector('#chatInput').value,
@@ -307,6 +299,10 @@ try {
   await waitFor("document.querySelector('[data-document=memory-snapshot].active')", "切换离开链接目标");
   await evaluate("document.querySelector('[data-open-landed-document]').click(); true");
   await waitFor(`document.querySelector('[data-document].active')?.dataset.document === ${JSON.stringify(agentLinkTarget.id)}`, "点击标题链接跳回文档");
+  await waitFor("[...window.nativeAgentMocks.values()][0].status === 'completed'", "可信写入任务结束");
+  assert.equal(await evaluate("window.agentDocumentStateReads"), 1, "可信写入回执已经同步成功时，任务结束不得重复刷新并触发假冲突");
+  assert.equal(await evaluate("window.agentProjectionFullStateSaves"), 0, "服务端已提交目录行后，前端投影不得再整份保存工作区并与流式对话竞态");
+  assert.doesNotMatch(await evaluate("document.querySelector('#toast')?.textContent || ''"), /界面刷新失败|同一状态：conversations/u);
   await evaluate("if(document.querySelector('#creativeStartWelcomeDialog')?.open)document.querySelector('#dismissCreativeStartWelcome')?.click(); true");
   await delay(350);
   const result = await cdp("Page.captureScreenshot",{format:"png",captureBeyondViewport:false});
@@ -339,9 +335,9 @@ try {
   await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
   assert.equal(await evaluate(`document.querySelector('[data-conversation="${emptyId}"]').closest('.conversation-task-row').classList.contains('active')`), true, '恢复原活动对话');
   assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
-  console.log(JSON.stringify({ok:true,screenshotPath,permissionScreenshotPath,checks:["default shensi-only permission","permission surfaces stay synchronized","narrow permission layout","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click","native Agent failure reason remains visible"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,checks:["ordinary tasks default to shensi-only without an abstract permission menu","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click","native Agent failure reason remains visible"]}));
 } catch (error) {
-  console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent})")));
+  console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent,documentStateReads:window.agentDocumentStateReads,directoryIds:[...document.querySelectorAll('[data-document]')].map(item=>item.dataset.document),activeModuleButton:document.querySelector('[data-module].active')?.dataset.module||'',directoryText:document.querySelector('#documentList')?.innerText||'',manuscriptButtonCount:document.querySelectorAll('[data-module=manuscript]').length,manuscriptItems:typeof state === 'undefined' ? null : state.moduleItems?.manuscript,createdDocument:typeof state === 'undefined' ? null : state.documents?.['agent-created-article'],emptyWorkspaceKind:typeof ui === 'undefined' ? null : ui.emptyWorkspaceKind,workspacePath:typeof state === 'undefined' ? null : state.settings?.workspacePath,workspaceSaveError:typeof ui === 'undefined' ? null : ui.workspaceSaveError?.message,refreshErrors:typeof state === 'undefined' ? [] : state.messages?.filter(message=>message.execution?.refreshError).map(message=>message.execution.refreshError)})")));
   throw error;
 } finally {
   socket.close();

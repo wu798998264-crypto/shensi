@@ -15,12 +15,13 @@ import {
 } from "../media-cli-presets.js";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderPreset } from "../model-presets.js";
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
+import { agentEngineDescriptor } from "../agent-engine-registry.js";
 import { machineLocalDataRoot } from "./app-data.mjs";
 import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
 
 const CHANNELS = new Set(["text", "image", "video", "audio"]);
 const ADAPTERS = new Set(["api", "cli"]);
-const EXTERNAL_CLI_AGENT_ENGINES = new Set(["trae_work", "workbuddy", "custom"]);
+const EXTERNAL_CLI_AGENT_ENGINES = new Set(["workbuddy", "custom"]);
 const PROFILE_ID = /^[a-z0-9][a-z0-9._-]{1,119}$/i;
 const PROFILE_RUNTIME_IDENTITY_FIELDS = Object.freeze([
   "adapter", "provider", "protocol", "baseUrl", "model", "apiKey", "cliPath", "cliArgs",
@@ -629,9 +630,10 @@ export const resolveTrustedGenerationSettings = async ({
   if (!ADAPTERS.has(adapter) || (!provider && !externalCliAgent)) throw runtimeError("生成配置缺少调用方式或服务商");
 
   if (externalCliAgent) {
-    const cliPath = text(candidate.cliPath, 2_048);
+    const descriptor = agentEngineDescriptor(candidate.agentEngine);
+    const cliPath = text(candidate.cliPath, 2_048) || text(descriptor.cliPath, 2_048);
     const cliArgs = text(candidate.cliArgs, 16_384);
-    if (!cliPath) throw runtimeError("外置 Agent 缺少 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED", 409);
+    if (candidate.agentEngine === "custom" && !cliPath) throw runtimeError("外置 Agent 缺少 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED", 409);
     if (candidate.agentEngine === "custom" && !cliArgs) throw runtimeError("自定义运行器缺少 CLI 参数模板", "EXTERNAL_CLI_ARGS_REQUIRED", 409);
     return {
       ...candidate,
@@ -643,6 +645,7 @@ export const resolveTrustedGenerationSettings = async ({
       baseUrl: "",
       cliPath,
       cliArgs,
+      prefixArgs: Array.isArray(candidate.prefixArgs) ? candidate.prefixArgs.filter((item) => typeof item === "string").slice(0, 16) : [],
     };
   }
 
