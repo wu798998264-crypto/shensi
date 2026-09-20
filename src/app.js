@@ -21,7 +21,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.4.7-workbuddy-model-profile";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.4.8-prompt-input";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.4.7-workbuddy-model-profile";
+} from "./generation-profiles.js?v=6.4.8-prompt-input";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -131,7 +131,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.7-workbuddy-model-profile";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.8-prompt-input";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -265,7 +265,7 @@ import {
 import { PANE_LAYOUT_DEFAULTS, constrainPaneWidths, resizePaneWidths } from "./pane-layout.js";
 import { CHAT_COMPOSER_HEIGHT_DEFAULT, CHAT_COMPOSER_HEIGHT_LIMITS, chatComposerHeightRange, clampChatComposerHeight, resizeChatComposerHeight } from "./chat-composer-layout.js";
 import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSession, countInsertedCharacters, formatWritingTimerDuration, normalizeWritingTimerRecord, normalizeWritingTimerStore, pauseWritingMetricsSession, pauseWritingTimer, recordWritingMetricsActivity, setWritingTimerExpanded, startWritingTimer, stopWritingTimer, writingMetricsSnapshot, writingTimerElapsedMs } from "./writing-timer.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.7-workbuddy-model-profile";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.8-prompt-input";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
 import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
@@ -291,7 +291,7 @@ import { createDocumentEditHistory, documentEditHistoryAvailability, rebaseDocum
 import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from "./document-write-transaction.js?v=3.0.10-create-title";
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
-import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.7-workbuddy-model-profile";
+import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.8-prompt-input";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
 import { memoryReviewCandidateEvidence, memoryReviewCandidatesForPlan, memoryReviewUiSummary, toggleRecommendedMemorySelection } from "./memory-review-ui-model.js?v=0.42.14-product-evidence-ux";
@@ -325,7 +325,7 @@ import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
 import { markAgentResultProjection, upsertAgentResultReference } from "./conversation-agent-document-projection.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.7-workbuddy-model-profile";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.8-prompt-input";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -51902,33 +51902,49 @@ const prepareWhiteboardGenerationDialogSwitch = (channel, nodeId) => {
   renderWhiteboardGenerationCollapsedSessions();
 };
 
+let whiteboardGenerationDialogInitializationSequence = 0;
+
 const primeWhiteboardGenerationDialog = (dialog, nodeId, { centered = false } = {}) => {
   cancelWhiteboardCardOpen();
   collapseWhiteboardContextMenu();
   const config = whiteboardGenerationConfigFor(dialog);
+  const initializationToken = String(++whiteboardGenerationDialogInitializationSequence);
   if (config?.form) config.form.dataset.nodeId = nodeId;
   dialog.dataset.anchorNodeId = nodeId;
   dialog.dataset.anchorDocumentId = state.activeDocument;
   dialog.dataset.anchorWorkspaceId = workspaceIdentity();
+  dialog.dataset.initializationToken = initializationToken;
   ui.whiteboardLastGenerationChannel = config?.channel || "text";
   dialog.setAttribute("aria-busy", "true");
   dialog.inert = true;
   if (!dialog.open) dialog.show();
   setWhiteboardGenerationDialogExpanded(dialog, centered, { position: false });
   syncWhiteboardGenerationAnchorLabel(dialog, nodeId);
+  return initializationToken;
 };
 
-const scheduleUiInitializationAfterPaint = (callback, { timeout = 160 } = {}) => {
+const scheduleUiInitializationAfterPaint = (callback, { timeout = 160, hardDeadline = 0 } = {}) => {
+  let completed = false;
   let dispatched = false;
-  let fallbackTimer = null;
+  let dispatchFallbackTimer = null;
+  let hardDeadlineTimer = null;
+  let backgroundTask = null;
+  const run = () => {
+    if (completed) return;
+    completed = true;
+    if (dispatchFallbackTimer !== null) clearTimeout(dispatchFallbackTimer);
+    if (hardDeadlineTimer !== null) clearTimeout(hardDeadlineTimer);
+    cancelUiBackgroundTask(backgroundTask);
+    callback();
+  };
   const dispatch = () => {
-    if (dispatched) return;
+    if (dispatched || completed) return;
     dispatched = true;
-    if (fallbackTimer !== null) {
-      clearTimeout(fallbackTimer);
-      fallbackTimer = null;
+    if (dispatchFallbackTimer !== null) {
+      clearTimeout(dispatchFallbackTimer);
+      dispatchFallbackTimer = null;
     }
-    scheduleUiBackgroundTask(callback, {
+    backgroundTask = scheduleUiBackgroundTask(run, {
       timeout: Math.max(300, timeout),
       // UI initialization is user-requested and should start quickly, while
       // still yielding if a second click/key is already being processed.
@@ -51936,32 +51952,41 @@ const scheduleUiInitializationAfterPaint = (callback, { timeout = 160 } = {}) =>
     });
   };
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(dispatch);
-  // A hidden/throttled window may not receive a paint callback at all. The
-  // dialog is already modal and inert at this point, so leaving initialization
-  // behind an unbounded RAF would make every control in the app appear dead.
-  fallbackTimer = setTimeout(dispatch, Math.max(0, Number(timeout) || 160));
+  // A hidden/throttled window may not receive a paint callback at all. Callers
+  // that expose an inert native surface can additionally request a direct hard
+  // deadline so an unavailable idle callback cannot strand that surface.
+  const normalizedTimeout = Math.max(0, Number(timeout) || 160);
+  dispatchFallbackTimer = setTimeout(dispatch, normalizedTimeout);
+  const normalizedHardDeadline = Math.max(0, Number(hardDeadline) || 0);
+  if (normalizedHardDeadline > 0) {
+    hardDeadlineTimer = setTimeout(run, Math.max(normalizedHardDeadline, normalizedTimeout));
+  }
 };
 
-const releaseWhiteboardGenerationDialogInteractivity = (dialog, nodeId) => {
+const releaseWhiteboardGenerationDialogInteractivity = (dialog, nodeId, initializationToken = "") => {
   if (!dialog?.open || dialog.dataset.anchorNodeId !== String(nodeId || "")) return false;
+  if (initializationToken && dialog.dataset.initializationToken !== String(initializationToken)) return false;
   dialog.removeAttribute("aria-busy");
   dialog.inert = false;
   return true;
 };
 
-const scheduleWhiteboardGenerationInitialization = (dialog, nodeId, callback) => {
+const scheduleWhiteboardGenerationInitialization = (dialog, nodeId, initializationToken, callback) => {
   const documentId = String(dialog?.dataset?.anchorDocumentId || state.activeDocument || "");
   scheduleUiInitializationAfterPaint(() => {
     const current = dialog?.open
       && dialog.dataset.anchorNodeId === String(nodeId || "")
       && dialog.dataset.anchorDocumentId === documentId
+      && dialog.dataset.initializationToken === String(initializationToken || "")
       && state.activeDocument === documentId;
     if (!current) {
       // A stale deferred callback must never leave a native dialog intercepting
       // clicks while inert. A newer card/session owns a different anchor and is
       // intentionally left alone for its own initializer.
-      if (dialog?.open && dialog.dataset.anchorNodeId === String(nodeId || "")) {
-        releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+      if (dialog?.open
+        && dialog.dataset.anchorNodeId === String(nodeId || "")
+        && dialog.dataset.initializationToken === String(initializationToken || "")) {
+        releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
         dialog.close();
       }
       return;
@@ -51970,19 +51995,25 @@ const scheduleWhiteboardGenerationInitialization = (dialog, nodeId, callback) =>
       callback();
     } catch (error) {
       console.error("Whiteboard generation toolbar initialization failed:", error);
-      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
       showToast(`生成操作栏初始化失败：${error.message || "未知错误"}。提示词仍可编辑，请关闭后重试。`);
+    } finally {
+      // Every completed initializer must leave its own session interactive,
+      // even if a future caller forgets to finalize focus/positioning. The
+      // token prevents an older card callback from unlocking a newer session.
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
     }
-  });
+  }, { hardDeadline: 420 });
 };
 
-const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
+const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget, initializationToken = "") => {
   // A card click schedules a delayed open so a drag can still start. When an
   // explicit open has already reached this point, cancel that pending callback;
   // otherwise it can reopen/reinitialize the same form just after the user
   // starts typing and make the first keystrokes appear to be ignored.
   cancelWhiteboardCardOpen();
   collapseWhiteboardContextMenu();
+  if (initializationToken && dialog.dataset.initializationToken !== String(initializationToken)) return;
   ensureWhiteboardGenerationAnchorRoom(nodeId);
   dialog.dataset.anchorNodeId = nodeId;
   dialog.dataset.anchorDocumentId = state.activeDocument;
@@ -52006,10 +52037,16 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
   syncWhiteboardCardGenerationTypeIndicator(nodeId, whiteboardGenerationConfigFor(dialog)?.channel);
   renderWhiteboardGenerationCollapsedSessions();
   renderWhiteboardGenerationTypeMenu(dialog);
+  // Form values, rich prompt markup and references are now initialized. Unlock
+  // synchronously instead of waiting for RAF: native desktop windows can
+  // throttle paint callbacks while restoring or moving between displays.
+  releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
   let finalized = false;
   const finalizeOpen = () => {
     if (finalized) return;
-    if (!dialog.open || dialog.dataset.anchorNodeId !== nodeId) return;
+    if (!dialog.open
+      || dialog.dataset.anchorNodeId !== String(nodeId || "")
+      || (initializationToken && dialog.dataset.initializationToken !== String(initializationToken))) return;
     finalized = true;
     try {
       positionWhiteboardGenerationDialog(dialog, nodeId);
@@ -52027,7 +52064,7 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget) => {
       dialog.scrollTop = 0;
       saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
     } finally {
-      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId);
+      releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
     }
   };
   requestAnimationFrame(finalizeOpen);
@@ -53692,8 +53729,8 @@ const openWhiteboardGenerateDialog = (nodeId, { centered = false } = {}) => {
   // Opening a generation type is an explicit new intent. It reverses a prior
   // Close choice but keeps the saved prompt, so generated cards remain
   // click-to-open after a successful run.
-  primeWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, { centered });
-  scheduleWhiteboardGenerationInitialization(elements.whiteboardGenerateDialog, nodeId, () => {
+  const initializationToken = primeWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, { centered });
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardGenerateDialog, nodeId, initializationToken, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("text", nodeId);
     elements.whiteboardGenerateForm.dataset.nodeId = nodeId;
@@ -53729,7 +53766,7 @@ const openWhiteboardGenerateDialog = (nodeId, { centered = false } = {}) => {
     else if (elements.whiteboardGenerateForm.elements.autoSkills.checked) setWhiteboardAutoSkillStatus("按任务自动引用");
     else setWhiteboardAutoSkillStatus();
     renderWhiteboardGenerationReferences(elements.whiteboardTextReferences, nodeId);
-    showWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, elements.whiteboardGenerateForm.elements.instruction);
+    showWhiteboardGenerationDialog(elements.whiteboardGenerateDialog, nodeId, elements.whiteboardGenerateForm.elements.instruction, initializationToken);
   });
 };
 
@@ -54165,8 +54202,8 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
   }
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
-  primeWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, { centered });
-  scheduleWhiteboardGenerationInitialization(elements.whiteboardImageDialog, nodeId, () => {
+  const initializationToken = primeWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, { centered });
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardImageDialog, nodeId, initializationToken, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("image", nodeId);
     elements.whiteboardImageForm.dataset.nodeId = nodeId;
@@ -54207,7 +54244,7 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
     syncWhiteboardImageCapabilityOptions();
     setWhiteboardImageSettingsPanelOpen(false);
     renderWhiteboardGenerationReferences(elements.whiteboardImageReferences, nodeId);
-    showWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, elements.whiteboardImageForm.elements.prompt);
+    showWhiteboardGenerationDialog(elements.whiteboardImageDialog, nodeId, elements.whiteboardImageForm.elements.prompt, initializationToken);
     renderWhiteboardGenerationCredit("image");
   });
 };
@@ -54526,8 +54563,8 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
   }
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
-  primeWhiteboardGenerationDialog(elements.whiteboardVideoDialog, nodeId, { centered });
-  scheduleWhiteboardGenerationInitialization(elements.whiteboardVideoDialog, nodeId, () => {
+  const initializationToken = primeWhiteboardGenerationDialog(elements.whiteboardVideoDialog, nodeId, { centered });
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardVideoDialog, nodeId, initializationToken, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("video", nodeId);
     elements.whiteboardVideoForm.dataset.nodeId = nodeId;
@@ -54578,6 +54615,7 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
       elements.whiteboardVideoForm.elements.generationMode.value === "smart_multiframe"
         ? elements.whiteboardVideoForm.elements.generationMode
         : elements.whiteboardVideoForm.elements.prompt,
+      initializationToken,
     );
     renderWhiteboardGenerationCredit("video");
     const activeProfile = whiteboardPickerProfile(
@@ -54609,8 +54647,8 @@ const openWhiteboardAudioDialog = (nodeId, { allowUnavailable = false, centered 
   }
   const node = whiteboardNodeById(nodeId);
   if (!node) return;
-  primeWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, { centered });
-  scheduleWhiteboardGenerationInitialization(elements.whiteboardAudioDialog, nodeId, () => {
+  const initializationToken = primeWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, { centered });
+  scheduleWhiteboardGenerationInitialization(elements.whiteboardAudioDialog, nodeId, initializationToken, () => {
     reactivateWhiteboardGenerationIntent(nodeId);
     prepareWhiteboardGenerationDialogSwitch("audio", nodeId);
     const form = elements.whiteboardAudioForm;
@@ -54636,7 +54674,7 @@ const openWhiteboardAudioDialog = (nodeId, { allowUnavailable = false, centered 
     syncWhiteboardAudioSettingsControls();
     setWhiteboardAudioSettingsPanelOpen(false);
     renderWhiteboardGenerationReferences(elements.whiteboardAudioReferences, nodeId);
-    showWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, form.elements.prompt);
+    showWhiteboardGenerationDialog(elements.whiteboardAudioDialog, nodeId, form.elements.prompt, initializationToken);
   });
 };
 

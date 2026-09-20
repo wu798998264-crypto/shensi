@@ -14,13 +14,16 @@ const outputRoot = join(root, "output", "playwright");
 const reportPath = join(outputRoot, "whiteboard-generation-layout-ui.json");
 const electronExecutable = join(root, "node_modules", "electron", "dist", "electron.exe");
 const desktopEntry = join(root, "packaging", "windows", "desktop-app");
+const installedExecutable = String(process.env.SHENSI_TEST_INSTALLED_EXE || "").trim();
 const debugPort = 9381;
 
 await mkdir(dataRoot, { recursive: true });
 await mkdir(userDataRoot, { recursive: true });
 await mkdir(outputRoot, { recursive: true });
 
-const child = spawn(electronExecutable, [`--remote-debugging-port=${debugPort}`, desktopEntry], {
+const child = spawn(installedExecutable || electronExecutable, installedExecutable
+  ? [`--remote-debugging-port=${debugPort}`]
+  : [`--remote-debugging-port=${debugPort}`, desktopEntry], {
   cwd: root,
   env: {
     ...process.env,
@@ -100,6 +103,21 @@ try {
     }
     throw new Error(`等待超时：${label}`);
   };
+  const clickCenter = async (selector) => {
+    const point = await evaluate(`(() => {
+      const node = document.querySelector(${JSON.stringify(selector)});
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(x, y);
+      return { x, y, width: rect.width, height: rect.height, hitClass: hit?.className || "" };
+    })()`);
+    assert.ok(point?.width > 2 && point?.height > 2, `未找到可点击的生成描述区：${selector} ${JSON.stringify(point)}`);
+    await cdp("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    await cdp("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    return point;
+  };
   const capture = async (name) => {
     const path = join(outputRoot, `whiteboard-generation-expanded-${name}.png`);
     const screenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
@@ -172,6 +190,28 @@ try {
     if (!payload.ok || !payload.project?.workspacePath) throw new Error(payload.message || '隔离作品创建失败');
     return payload.project;
   })()`);
+  await evaluate(`(async () => {
+    const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
+    const headers = { 'content-type': 'application/json', 'x-shensi-session': token };
+    const current = await fetch('/api/generation/profile-settings', { headers }).then((response) => response.json());
+    const imageProfile = {
+      id: 'image-layout-interaction-test', name: '图片交互隔离测试', remarkName: '图片交互隔离测试',
+      adapter: 'cli', provider: 'OpenAI', protocol: 'images', model: 'gpt-image-2.5',
+      cliPath: 'shensi-openai-image', cliArgs: '', timeoutMs: '660000',
+    };
+    const settings = { ...(current.settings || {}) };
+    settings.imageConnections = [
+      ...(Array.isArray(settings.imageConnections) ? settings.imageConnections.filter((item) => item.id !== imageProfile.id) : []),
+      imageProfile,
+    ];
+    settings.activeImageConnectionId = imageProfile.id;
+    const saved = await fetch('/api/generation/profile-settings', {
+      method: 'POST', headers,
+      body: JSON.stringify({ confirmed: true, expectedRevision: current.revision ?? 0, settings }),
+    }).then((response) => response.json());
+    if (!saved.ok) throw new Error(saved.message || '隔离图片配置保存失败');
+    return true;
+  })()`);
   const sourceIds = Array.from({ length: 7 }, (_, index) => `layout-source-${index + 1}`);
   const assetDirectory = join(created.workspacePath, "assets");
   await mkdir(assetDirectory, { recursive: true });
@@ -188,6 +228,7 @@ try {
     canvas: {
       nodes: [
         { id: "layout-target", type: "text", kind: "text", name: "生成目标", text: "", x: 260, y: 180, width: 260, height: 170, color: "default" },
+        { id: "layout-target-2", type: "text", kind: "text", name: "快速切换目标", text: "", x: 620, y: 180, width: 260, height: 170, color: "default" },
         ...sourceIds.map((id, index) => ({
           id, type: "file", kind: "image", name: `参考图 ${index + 1}`, text: "",
           file: `assets/layout-${index + 1}.svg`, mimeType: "image/svg+xml",
@@ -235,7 +276,31 @@ try {
     return true;
   })()`);
   await waitFor("document.querySelector('#whiteboardGenerateDialog')?.open === true", "文本生成操作栏");
+  await waitFor("document.querySelector('#whiteboardGenerateDialog')?.inert === false", "文本生成操作栏解除不可交互状态");
   await waitFor(`document.querySelectorAll('#whiteboardGenerateDialog [data-generation-reference-role="upstream"]').length === ${sourceIds.length}`, "七项参考呈现");
+  await evaluate("document.activeElement?.blur?.(); true");
+  const placeholderBeforeFocus = await evaluate(`(() => {
+    const editor = document.querySelector('#whiteboardGenerateDialog .whiteboard-generation-inline-mentions');
+    const pseudo = getComputedStyle(editor, '::before');
+    return { content: pseudo.content, userSelect: pseudo.userSelect || pseudo.webkitUserSelect };
+  })()`);
+  assert.notEqual(placeholderBeforeFocus.content, "none", "空白描述区失焦时应显示灰色提示");
+  assert.equal(placeholderBeforeFocus.userSelect, "none", "灰色提示文字不得被选中");
+  await clickCenter("#whiteboardGenerateDialog .whiteboard-generation-inline-mentions");
+  const placeholderAfterFocus = await evaluate(`(() => {
+    const editor = document.querySelector('#whiteboardGenerateDialog .whiteboard-generation-inline-mentions');
+    return { focused: document.activeElement === editor, content: getComputedStyle(editor, '::before').content };
+  })()`);
+  assert.equal(placeholderAfterFocus.focused, true, `点击描述区后必须出现输入焦点：${JSON.stringify(placeholderAfterFocus)}`);
+  assert.equal(placeholderAfterFocus.content, "none", "描述区获得焦点后必须隐藏灰色提示");
+  await cdp("Input.insertText", { text: "文本真实入口输入" });
+  const textEntryState = await evaluate(`(() => {
+    const form = document.querySelector('#whiteboardGenerateForm');
+    const editor = form.querySelector('.whiteboard-generation-inline-mentions');
+    return { focused: document.activeElement === editor, editorText: editor.innerText, sourceValue: form.elements.instruction.value };
+  })()`);
+  assert.match(textEntryState.editorText, /文本真实入口输入/u, `真实键盘输入必须进入可见描述区：${JSON.stringify(textEntryState)}`);
+  assert.match(textEntryState.sourceValue, /文本真实入口输入/u, `真实键盘输入必须同步提交字段：${JSON.stringify(textEntryState)}`);
   await evaluate(`(() => {
     const editor = document.querySelector('#whiteboardGenerateDialog .whiteboard-generation-inline-mentions');
     editor.textContent = '根据上游参考继续生成内容，保持人物、场景与叙事顺序一致。';
@@ -269,6 +334,38 @@ try {
   const paths = { text: await capture("text") };
   const layouts = { text: await measure(dialogs.text[0]) };
 
+  await evaluate(`(() => {
+    document.querySelector('#whiteboardGenerateDialog')?.close();
+    const card = document.querySelector('[data-canvas-node="layout-target"]');
+    const rect = card.getBoundingClientRect();
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
+    document.querySelector('[data-whiteboard-action="toggle-generate"]').click();
+    document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-image"]').click();
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#whiteboardImageDialog')?.open === true", "真实生成图片入口");
+  await waitFor("document.querySelector('#whiteboardImageDialog')?.inert === false && !document.querySelector('#whiteboardImageDialog')?.hasAttribute('aria-busy')", "图片生成操作栏解除不可交互状态");
+  await evaluate(`(() => {
+    const openImageFor = (nodeId) => {
+      const card = document.querySelector('[data-canvas-node="' + nodeId + '"]');
+      const rect = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
+      const direct = document.querySelector('[data-whiteboard-direct-generation]');
+      if (direct && direct.hidden === false && /图片/u.test(direct.textContent || '')) direct.click();
+      else {
+        document.querySelector('[data-whiteboard-action="toggle-generate"]').click();
+        document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-image"]').click();
+      }
+    };
+    openImageFor('layout-target-2');
+    openImageFor('layout-target');
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#whiteboardImageDialog')?.dataset.anchorNodeId === 'layout-target' && document.querySelector('#whiteboardImageDialog')?.inert === false && !document.querySelector('#whiteboardImageDialog')?.hasAttribute('aria-busy')", "图片弹窗快速切换卡片后恢复交互");
+  await clickCenter("#whiteboardImageDialog .whiteboard-generation-inline-mentions");
+  await cdp("Input.insertText", { text: "图片真实入口输入" });
+  await waitFor("document.querySelector('#whiteboardImageForm').elements.prompt.value.includes('图片真实入口输入')", "图片真实入口描述区输入");
+
   for (const channel of ["image", "video", "audio"]) {
     const [dialogId, formId, referencesId] = dialogs[channel];
     await evaluate(`(() => {
@@ -291,10 +388,32 @@ try {
       const editor = form.querySelector('.whiteboard-generation-inline-mentions');
       if (editor) editor.textContent = '';
       dialog.showModal();
-      if (!dialog.classList.contains('is-expanded')) dialog.querySelector('[data-whiteboard-generation-expand]').click();
       return true;
     })()`);
-    await waitFor(`document.querySelector('#${dialogId}')?.open === true && document.querySelector('#${dialogId}')?.classList.contains('is-expanded')`, `${channel} 操作栏展开`);
+    await waitFor(`document.querySelector('#${dialogId}')?.open === true`, `${channel} 操作栏打开`);
+    const editorSelector = `#${dialogId} .whiteboard-generation-inline-mentions`;
+    const hit = await clickCenter(editorSelector);
+    await cdp("Input.insertText", { text: `${channel}真实键盘输入` });
+    await waitFor(`document.querySelector('#${formId}').elements.prompt.value.includes(${JSON.stringify(`${channel}真实键盘输入`)})`, `${channel} 描述区真实输入`);
+    const inputState = await evaluate(`(() => {
+      const dialog = document.querySelector('#${dialogId}');
+      const editor = dialog?.querySelector('.whiteboard-generation-inline-mentions');
+      return {
+        focused: document.activeElement === editor,
+        editable: editor?.getAttribute('contenteditable'),
+        inert: dialog?.inert === true,
+        pointerEvents: getComputedStyle(editor).pointerEvents,
+        userSelect: getComputedStyle(editor).userSelect,
+        text: editor?.innerText || '',
+      };
+    })()`);
+    assert.equal(inputState.focused, true, `${channel} 描述区点击后必须获得光标：${JSON.stringify({ hit, inputState })}`);
+    assert.equal(inputState.editable, "true", `${channel} 描述区必须保持可编辑`);
+    assert.equal(inputState.inert, false, `${channel} 弹窗不得残留 inert`);
+    assert.equal(inputState.pointerEvents, "auto", `${channel} 描述区不得屏蔽鼠标事件`);
+    assert.match(inputState.text, new RegExp(`${channel}真实键盘输入`, "u"));
+    await evaluate(`document.querySelector('#${dialogId} [data-whiteboard-generation-expand]').click(); true`);
+    await waitFor(`document.querySelector('#${dialogId}')?.classList.contains('is-expanded')`, `${channel} 操作栏展开`);
     await evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
     layouts[channel] = await measure(dialogId);
     paths[channel] = await capture(channel);

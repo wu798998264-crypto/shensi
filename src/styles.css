@@ -7559,10 +7559,12 @@ textarea.whiteboard-find-textarea-source::selection {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
 }
 
-.whiteboard-generation-inline-mentions:empty::before {
+.whiteboard-generation-inline-mentions:empty:not(:focus)::before {
   color: var(--text-muted);
   content: attr(data-placeholder);
   pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .whiteboard-generation-inline-mention {
