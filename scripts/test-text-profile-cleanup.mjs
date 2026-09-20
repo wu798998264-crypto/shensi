@@ -55,6 +55,7 @@ assert.deepEqual(normalized.textConnections.map((profile) => profile.id), [
   "text-default",
   "text-claude-code-deepseek",
   "text-public-agent",
+  "text-workbuddy-cli",
 ]);
 assert.equal(normalized.activeTextConnectionId, "text-claude-code-deepseek");
 assert.equal(normalized.activeTextChatConnectionId, "text-claude-code-deepseek");
@@ -66,6 +67,10 @@ assert.equal(normalizedDeepSeek.remarkName, "DeepSeek Agent");
 assert.equal(normalizedDeepSeek.apiKey, "deepseek-test-secret");
 assert.equal(normalizedDeepSeek.model, "deepseek/deepseek-v4-pro", "DeepSeek 服务商不得保留 GPT 模型 ID");
 assert.equal(normalizedDeepSeek.agentModelId, "deepseek/deepseek-v4-pro", "DeepSeek Agent 模型必须与服务商匹配");
+const workBuddy = normalized.textConnections.find((profile) => profile.id === "text-workbuddy-cli");
+assert.equal(workBuddy?.agentEngine, "workbuddy");
+assert.equal(workBuddy?.model, "", "WorkBuddy 模型由实时 CLI 目录选择，默认不得写死模型");
+assert.equal(workBuddy?.agentModelId, "", "WorkBuddy 默认模型不得伪造成其他运行器的模型");
 const preservedImage = normalized.imageConnections.find((profile) => profile.id === imageSentinel.id);
 assert.equal(preservedImage?.name, imageSentinel.name);
 assert.equal(preservedImage?.baseUrl, imageSentinel.baseUrl);

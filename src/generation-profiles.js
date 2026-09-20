@@ -101,7 +101,7 @@ export const TEXT_CODEX_CLI_PROFILE_VERSION = 1;
 export const PROVIDER_MODEL_ISOLATION_VERSION = 1;
 export const AGGREGATE_IMAGE_API_PROFILE_VERSION = 1;
 export const VIDEO_PROFILE_CLEANUP_VERSION = 1;
-export const TEXT_PROFILE_CLEANUP_VERSION = 3;
+export const TEXT_PROFILE_CLEANUP_VERSION = 4;
 
 const PROFILE_KEYS = {
   text: { list: "textConnections", active: "activeTextConnectionId" },
@@ -198,6 +198,32 @@ const BUILT_IN_GPT_CHAT_CLI = {
   executionMode: "agent",
   executionModes: ["agent"],
   agentEngine: "codex",
+};
+
+// WorkBuddy is a runner-managed text Agent.  Keep a concrete profile in the
+// global text configuration so it is available in both Settings and the
+// quick-generation picker even when an older workspace never persisted one.
+// The model intentionally stays empty: the live WorkBuddy capability probe is
+// the only source of selectable models and an empty value follows the CLI's
+// verified default without sending `--model ""`.
+const BUILT_IN_WORKBUDDY_AGENT_PROFILE = {
+  id: "text-workbuddy-cli",
+  name: "WorkBuddy Agent",
+  remarkName: "WorkBuddy Agent",
+  adapter: "cli",
+  provider: "",
+  protocol: "",
+  baseUrl: "",
+  model: "",
+  agentModelId: "",
+  chatModelId: "",
+  cliPath: "codebuddy",
+  cliArgs: "-p {prompt} --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config",
+  executionMode: "agent",
+  executionModes: ["agent"],
+  agentEngine: "workbuddy",
+  credentialSource: "runner_login",
+  systemManaged: true,
 };
 
 const PUBLIC_TEXT_PROVIDER_PRESET = getProviderPreset("免费模型");
@@ -678,6 +704,39 @@ const ensureBuiltInGptChatCliProfile = (profiles, secrets = {}, disabledProfileI
   return [
     ...profiles,
     normalizedProfile("text", { ...BUILT_IN_GPT_CHAT_CLI, id }, profiles.length, secrets),
+  ];
+};
+
+const ensureBuiltInWorkBuddyAgentProfile = (profiles) => {
+  const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_WORKBUDDY_AGENT_PROFILE.id);
+  if (existingIndex >= 0) {
+    const existing = profiles[existingIndex];
+    const managed = normalizedProfile("text", {
+      ...BUILT_IN_WORKBUDDY_AGENT_PROFILE,
+      ...existing,
+      id: BUILT_IN_WORKBUDDY_AGENT_PROFILE.id,
+      name: BUILT_IN_WORKBUDDY_AGENT_PROFILE.name,
+      remarkName: BUILT_IN_WORKBUDDY_AGENT_PROFILE.remarkName,
+      systemManaged: true,
+      adapter: "cli",
+      provider: "",
+      protocol: "",
+      baseUrl: "",
+      cliPath: existing.cliPath || BUILT_IN_WORKBUDDY_AGENT_PROFILE.cliPath,
+      cliArgs: existing.cliArgs || BUILT_IN_WORKBUDDY_AGENT_PROFILE.cliArgs,
+      model: String(existing.model || "").trim(),
+      agentModelId: String(existing.agentModelId || existing.model || "").trim(),
+      chatModelId: "",
+      executionMode: "agent",
+      executionModes: ["agent"],
+      agentEngine: "workbuddy",
+      credentialSource: "runner_login",
+    }, existingIndex, {});
+    return profiles.map((profile, index) => index === existingIndex ? managed : profile);
+  }
+  return [
+    ...profiles,
+    normalizedProfile("text", BUILT_IN_WORKBUDDY_AGENT_PROFILE, profiles.length, {}),
   ];
 };
 
@@ -1212,6 +1271,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
         secrets.text ?? {},
         disabledBuiltInTextProfileIds,
       );
+      profiles = ensureBuiltInWorkBuddyAgentProfile(profiles);
       const openCodeCollapse = collapseLegacyDeepSeekOpenCodeProfiles(profiles);
       profiles = openCodeCollapse.profiles;
       const remapOpenCodeId = (value) => openCodeCollapse.aliases.get(String(value || "").trim()) || value;

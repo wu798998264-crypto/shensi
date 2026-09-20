@@ -21,6 +21,8 @@ assert.match(
   "WorkBuddy 模型选择器不得借用其他文字运行器的当前模型",
 );
 assert.match(app, /if \(ui\.agentRunnerStatusPromise\) return ui\.agentRunnerStatusPromise;/u, "并发的运行器刷新必须复用同一次真实 CLI 探测");
+assert.match(app, /ui\.agentRunners = payload\.runners/u, "运行器状态必须写入统一能力缓存");
+assert.match(app, /renderQuickModelSelector\(\);\s*renderCodexAgentPanel\(\);/u, "WorkBuddy 真实目录刷新后设置页和生成区必须同步更新");
 assert.match(app, /const runnerInstalled = externalRunnerCapability\?\.installed \?\? status\.installed;/u, "外置运行器状态必须采用实时探测结果，不能残留旧 Agent 状态误报未安装");
 assert.match(
   app,

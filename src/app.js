@@ -7164,6 +7164,11 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
         preferredModel: profileModel,
       });
     }
+    // The quick Agent picker is a second visible surface for the same runner.
+    // Refresh it after the real CLI catalogue arrives; otherwise it keeps the
+    // initial empty/preset list until the user changes another control.
+    renderQuickModelSelector();
+    renderCodexAgentPanel();
     if (select && selectedRunnerId !== "custom" && AGENT_RUNNER_LABELS[selectedRunnerId] && ui.agentRunners?.[selectedRunnerId]?.installed === false
       && !elements.agentRunnerInstallDialog?.open) {
       select.value = select.dataset.previousAvailableValue || "";
