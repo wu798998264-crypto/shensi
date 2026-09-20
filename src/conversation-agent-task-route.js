@@ -1,3 +1,4 @@
+import { sanitizeConversationOutput, sanitizeUserFacingError } from "./conversation-output-guard.js";
 const text = (value) => String(value ?? "").trim();
 
 const uniqueText = (values = []) => [...new Set((Array.isArray(values) ? values : [])
@@ -20,23 +21,26 @@ export const nativeAgentTerminalPresentation = ({
   resultWarnings = [],
 } = {}) => {
   const normalizedStatus = text(status).toLowerCase();
-  const warnings = uniqueText([...pendingWarnings, ...resultWarnings]);
+  const warnings = uniqueText([...pendingWarnings, ...resultWarnings]
+    .map((warning) => sanitizeConversationOutput(warning)));
   const partial = text(partialText);
   if (normalizedStatus === "completed") {
+    const visibleFinalText = sanitizeConversationOutput(finalText) || sanitizeConversationOutput(partial) || "Agent 已完成任务。";
     return {
       status: warnings.length ? "soft_warning" : "complete",
-      content: text(finalText) || partial || "Agent 已完成任务。",
+      content: visibleFinalText,
       error: "",
       result: warnings.length ? "结果已交付；部分验收项未完成" : "Agent 执行完成",
       warnings,
     };
   }
-  const issue = text(error) || text(finalText) || "Agent 未返回具体失败原因";
+  const issue = sanitizeUserFacingError(text(error) || text(finalText) || "Agent 未返回具体失败原因", { fallback: "Agent 未返回具体失败原因" });
   const label = terminalIssueLabel(normalizedStatus);
   const issueLine = `${label}：${issue}`;
+  const visiblePartial = sanitizeConversationOutput(partial);
   return {
     status: normalizedStatus || "failed",
-    content: partial && !partial.includes(issue) ? `${partial}\n\n${issueLine}` : partial || issueLine,
+    content: visiblePartial && !visiblePartial.includes(issue) ? `${visiblePartial}\n\n${issueLine}` : visiblePartial || issueLine,
     error: issue,
     result: issueLine,
     warnings,
