@@ -83,7 +83,6 @@ try {
   await cdp("Runtime.enable");
   await cdp("Page.enable");
   await cdp("Emulation.setDeviceMetricsOverride", { width: 1440, height: 940, deviceScaleFactor: 1, mobile: false });
-  await waitFor("document.documentElement.dataset.bootReady === 'true'", "应用启动");
   await evaluate(`(() => {
     const nativeFetch = window.fetch.bind(window);
     window.__simulatedRunnerInstalled = false;
@@ -109,6 +108,10 @@ try {
     };
     return true;
   })()`);
+  // The product now warms runner status during bootstrap. Install the fetch
+  // simulation before waiting for boot so that this test exercises the same
+  // early-request path instead of racing a real CLI probe.
+  await waitFor("document.documentElement.dataset.bootReady === 'true'", "应用启动");
   await evaluate(`document.querySelector('#settingsButton').click(); true`);
   await waitFor("document.querySelector('#settingsDialog')?.open", "设置窗口");
   await evaluate(`document.querySelector('[data-settings-section="model"]').click(); true`);

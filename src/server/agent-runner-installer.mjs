@@ -10,6 +10,17 @@ const JOB_TTL_MS = 30 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 12 * 60 * 1000;
 const MAX_PROCESS_OUTPUT = 12_000;
 const MAX_MODEL_CATALOG_OUTPUT = 64_000;
+const RUNNER_PROBE_CACHE_TTL_MS = 45_000;
+const runnerProbeCache = new Map();
+const runnerProbeInFlight = new Map();
+const probeFunctionIds = new WeakMap();
+let nextProbeFunctionId = 1;
+
+const probeFunctionIdentity = (value) => {
+  if (typeof value !== "function") return "none";
+  if (!probeFunctionIds.has(value)) probeFunctionIds.set(value, String(nextProbeFunctionId++));
+  return probeFunctionIds.get(value);
+};
 
 export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
   codex: Object.freeze({
@@ -180,7 +191,7 @@ const runnerCapabilityError = ({ runnerId, stage, code, summary, detail, retryab
   suggestedAction,
 });
 
-export const detectKnownAgentRunnerInstallation = async ({
+const detectKnownAgentRunnerInstallationUncached = async ({
   runnerId,
   cwd = process.cwd(),
   environment = process.env,
@@ -334,6 +345,47 @@ export const detectKnownAgentRunnerInstallation = async ({
       suggestedAction: clean(error?.suggestedAction),
     } };
   }
+};
+
+/**
+ * A settings refresh and the first Agent turn can arrive together.  Reusing
+ * the same short-lived, read-only probe avoids launching WorkBuddy twice
+ * (version + login/model catalogue) before the first prompt is sent.  `force`
+ * remains available for explicit refresh/login actions.
+ */
+export const detectKnownAgentRunnerInstallation = async (options = {}) => {
+  const {
+    runnerId = "",
+    machineRoot = "",
+    environment = process.env,
+    resolveLaunch = resolveKnownAgentRunnerLaunch,
+    runProcess = runAgentRunnerInstallerProcess,
+    force = false,
+    cache = true,
+  } = options;
+  if (!cache || force) {
+    if (force) {
+      const prefix = `${clean(runnerId)}|${clean(machineRoot || process.cwd())}|${probeFunctionIdentity(resolveLaunch)}|${probeFunctionIdentity(runProcess)}`;
+      runnerProbeCache.delete(prefix);
+      runnerProbeInFlight.delete(prefix);
+    }
+    return detectKnownAgentRunnerInstallationUncached(options);
+  }
+  const key = `${clean(runnerId)}|${clean(machineRoot || process.cwd())}|${probeFunctionIdentity(resolveLaunch)}|${probeFunctionIdentity(runProcess)}`;
+  const cached = runnerProbeCache.get(key);
+  if (cached && Date.now() - cached.checkedAt < RUNNER_PROBE_CACHE_TTL_MS) return cached.value;
+  const pending = runnerProbeInFlight.get(key);
+  if (pending) return pending;
+  const request = detectKnownAgentRunnerInstallationUncached(options)
+    .then((value) => {
+      runnerProbeCache.set(key, { checkedAt: Date.now(), value });
+      return value;
+    })
+    .finally(() => {
+      if (runnerProbeInFlight.get(key) === request) runnerProbeInFlight.delete(key);
+    });
+  runnerProbeInFlight.set(key, request);
+  return request;
 };
 
 export const startKnownAgentRunnerLogin = async ({

@@ -22,6 +22,9 @@ assert.match(
 );
 assert.match(app, /if \(ui\.agentRunnerStatusPromise\) return ui\.agentRunnerStatusPromise;/u, "并发的运行器刷新必须复用同一次真实 CLI 探测");
 assert.match(app, /const incoming = payload\.runners && typeof payload\.runners === "object" \? payload\.runners : \{\};[\s\S]{0,1600}ui\.agentRunners = incoming/u, "运行器状态必须写入统一能力缓存");
+assert.match(app, /WORKBUDDY_CAPABILITY_CACHE_KEY/u, "WorkBuddy 模型目录必须有本机非敏感缓存");
+assert.match(app, /restoreWorkBuddyCapabilityCache/u, "设置页首次渲染必须恢复最近一次已确认的 WorkBuddy 目录");
+assert.match(app, /hydrateAgentRunnerStatuses\(\{ force: true \}\)/u, "启动阶段必须后台预热运行器目录，不能等用户打开设置后才开始检查");
 assert.match(app, /Transient model-catalog probe failure|transient model-catalog probe failure/u, "WorkBuddy 模型目录瞬时失败时必须保留上次确认的模型");
 assert.match(app, /renderQuickModelSelector\(\);\s*renderCodexAgentPanel\(\);/u, "WorkBuddy 真实目录刷新后设置页和生成区必须同步更新");
 assert.match(app, /const runnerInstalled = externalRunnerCapability\?\.installed \?\? status\.installed;/u, "外置运行器状态必须采用实时探测结果，不能残留旧 Agent 状态误报未安装");
@@ -39,6 +42,7 @@ assert.match(
 assert.match(app, /runnerId === "custom"[\s\S]{0,220}手动配置/u);
 assert.match(app, /option\.disabled = false;/u, "运行器下拉选项不得因探测或装配状态被锁死");
 assert.match(app, /const checking = !capability;/u, "WorkBuddy 初次探测期间必须区分检查中状态");
+assert.match(app, /select\.disabled = !checking && \(!models\.length && !readyDefault\)/u, "模型探测期间不得把原生模型选择器锁死");
 assert.match(app, /if \(checking\) \{[\s\S]{0,220}正在读取 .*模型目录/u, "WorkBuddy 初次探测期间应显示真实检查状态而不是误报未安装");
 assert.match(server, /runExternalCliAgent/u);
 assert.match(server, /resolveExternalCliAgentSettings/u);

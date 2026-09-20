@@ -432,6 +432,7 @@ import { STRUCTURE_WORKSPACE_VERSION, importedDocumentMatchesStructuredSlot, str
 import { planWhiteboardSkillRoute } from "./whiteboard-skill-route.js";
 import { inspectWhiteboardTaskClarity } from "./whiteboard-task-clarity.js?v=0.2.0-skill-aware";
 import { normalizeWhiteboardGenerationPreferences, rememberWhiteboardGenerationPreference } from "./whiteboard-generation-preference.js?v=5.2.5-legacy-image-retry";
+import { restoreWorkBuddyCapabilityCache, workBuddyCapabilityCacheEntry } from "./agent-runner-capability-cache.js";
 
 const STORAGE_KEY = "shensi-studio-state-v6";
 const LEGACY_STORAGE_KEY = "shensi-studio-state-v5";
@@ -439,6 +440,7 @@ const SECRET_KEY = "shensi-studio-api-key";
 const IMAGE_SECRET_KEY = "shensi-studio-image-api-key";
 const GENERATION_SECRETS_KEY = "shensi-generation-profile-secrets-v1";
 const CAPABILITY_PROBE_SESSION_KEY = "shensi-capability-probes-v1";
+const WORKBUDDY_CAPABILITY_CACHE_KEY = "shensi-workbuddy-capability-cache-v1";
 const PUBLIC_TEXT_CAPABILITY_PROBE_KEY = "shensi-public-text-capability-probes-v1";
 const TEXT_CAPABILITY_PROBE_KEY = "shensi-text-capability-probes-v2";
 const PANE_LAYOUT_KEY = "shensi-pane-layout-v1";
@@ -1291,6 +1293,31 @@ const storedCapabilityProbeSession = () => {
 
 const initialCapabilityProbeSession = storedCapabilityProbeSession();
 
+const storedWorkBuddyCapability = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(WORKBUDDY_CAPABILITY_CACHE_KEY) || "null");
+    return restoreWorkBuddyCapabilityCache(value);
+  } catch {
+    return null;
+  }
+};
+
+const persistWorkBuddyCapability = (capability) => {
+  const entry = workBuddyCapabilityCacheEntry({ ...capability, cachedAt: new Date().toISOString() });
+  if (!entry) return false;
+  try {
+    localStorage.setItem(WORKBUDDY_CAPABILITY_CACHE_KEY, JSON.stringify(entry));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const initialAgentRunnerCapabilities = (() => {
+  const workbuddy = storedWorkBuddyCapability();
+  return workbuddy ? { workbuddy } : {};
+})();
+
 let globalUiPreferences = normalizedUiPreferences(storedUiPreferences());
 const persistUiPreferences = ({ preserveStoredThemeSelection = false } = {}) => {
   try {
@@ -1711,7 +1738,10 @@ let ui = {
   localOpenCode: null,
   genericOpenCode: null,
   managedOpenCode: null,
-  agentRunners: {},
+  // Restore only the last verified WorkBuddy model catalogue so the model
+  // selector is usable on the first paint.  A background probe below remains
+  // authoritative and replaces this stale view when it returns.
+  agentRunners: initialAgentRunnerCapabilities,
   agentRunnerStatusPromise: null,
   pendingAgentRunnerSelection: "",
   activeAgentRunnerInstallJobId: "",
@@ -6409,7 +6439,11 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
     customInput.value = "";
     customInput.placeholder = "";
     customInput.title = "";
-    select.disabled = checking || (!models.length && !readyDefault);
+    // Do not make the native picker inert while the first probe is running.
+    // It may show the honest "正在读取" placeholder, but the user can open it
+    // immediately and cached/confirmed options are never hidden behind a
+    // disabled control.
+    select.disabled = !checking && (!models.length && !readyDefault);
     if (checking) {
       select.innerHTML = `<option value="">正在读取 ${escapeHtml(runnerLabel)} 模型目录…</option>`;
     } else if (!installed) {
@@ -7148,7 +7182,8 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
   // invocation, so concurrent probes can make an otherwise healthy runner time
   // out and briefly erase its model list.
   if (ui.agentRunnerStatusPromise) return ui.agentRunnerStatusPromise;
-  if (!force && Object.keys(ui.agentRunners || {}).length) {
+  const hasStaleCapability = Object.values(ui.agentRunners || {}).some((capability) => capability?.modelCatalogStale === true);
+  if (!force && Object.keys(ui.agentRunners || {}).length && !hasStaleCapability) {
     syncAgentRunnerOptions();
     return ui.agentRunners;
   }
@@ -7164,6 +7199,11 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     // intentionally hides the stale list until the user logs in again.
     const workBuddy = incoming.workbuddy;
     const previousWorkBuddy = previous.workbuddy;
+    if (workBuddy?.authenticated === true && Array.isArray(workBuddy.models) && workBuddy.models.length > 0) {
+      persistWorkBuddyCapability(workBuddy);
+    } else if (workBuddy?.state === "login_required" || workBuddy?.authState === "login_required" || workBuddy?.installed === false) {
+      try { localStorage.removeItem(WORKBUDDY_CAPABILITY_CACHE_KEY); } catch {}
+    }
     if (workBuddy && (!Array.isArray(workBuddy.models) || workBuddy.models.length === 0)
       && Array.isArray(previousWorkBuddy?.models) && previousWorkBuddy.models.length > 0
       && workBuddy.state !== "login_required" && workBuddy.authState !== "login_required"
@@ -74917,6 +74957,12 @@ const bootstrap = async () => {
   // waiting for the slower project/notebook directory refresh. This keeps a
   // refresh from hiding an already-saved candidate behind unrelated startup IO.
   renderAll();
+  // Warm the external runner catalogue while the workspace finishes its
+  // background hydration.  The settings page can therefore reuse the result
+  // instead of blocking its first model interaction on a cold WorkBuddy CLI.
+  void hydrateAgentRunnerStatuses({ force: true }).catch((error) => {
+    console.warn("Agent runner startup warm-up failed:", error.message);
+  });
   // The hydrated workspace is now safe to use. Account discovery, provider
   // reconciliation, workspace enumeration and update checks may legitimately
   // take longer (or wait on an external process), but they must never keep the

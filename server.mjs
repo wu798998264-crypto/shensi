@@ -1466,7 +1466,7 @@ const detectAgentRunner = async (runnerId, { force = false } = {}) => {
     message: "自定义运行器需要在当前文字配置中填写 CLI 程序路径和参数模板",
   };
   if (runnerId === "workbuddy") {
-    return detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), persist: true });
+    return detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), persist: true, force });
   }
   const capability = runnerId === "codex"
     ? await detectLocalCodex({ cwd: root, includeModels: false })
@@ -1533,7 +1533,7 @@ const agentRunnerInstallManager = createAgentRunnerInstallManager({
   onInstalled: async (runnerId, { result } = {}) => {
     resetLocalCapabilityCache(runnerId);
     if (runnerId === "workbuddy") {
-      await detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), installSource: result?.method || "", persist: true });
+      await detectKnownAgentRunnerInstallation({ runnerId, cwd: root, environment: process.env, machineRoot: machineLocalDataRoot(), installSource: result?.method || "", persist: true, force: true });
     }
   },
 });
