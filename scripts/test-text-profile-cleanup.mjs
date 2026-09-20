@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 
 import {
   cleanupLegacyTextProfiles,
+  createGenerationProfile,
   normalizeGenerationProfiles,
   pruneRetiredTextProfileSecrets,
   TEXT_PROFILE_CLEANUP_VERSION,
+  upsertGenerationProfile,
 } from "../src/generation-profiles.js";
 
 const profiles = [
@@ -69,8 +71,46 @@ assert.equal(normalizedDeepSeek.model, "deepseek/deepseek-v4-pro", "DeepSeek 服
 assert.equal(normalizedDeepSeek.agentModelId, "deepseek/deepseek-v4-pro", "DeepSeek Agent 模型必须与服务商匹配");
 const workBuddy = normalized.textConnections.find((profile) => profile.id === "text-workbuddy-cli");
 assert.equal(workBuddy?.agentEngine, "workbuddy");
+assert.equal(workBuddy?.systemManaged, false, "WorkBuddy 自动补入项不得被标记为灰色系统保护配置");
 assert.equal(workBuddy?.model, "", "WorkBuddy 模型由实时 CLI 目录选择，默认不得写死模型");
 assert.equal(workBuddy?.agentModelId, "", "WorkBuddy 默认模型不得伪造成其他运行器的模型");
+
+const editableWorkBuddy = normalizeGenerationProfiles({
+  textConnections: [{
+    id: "text-workbuddy-cli",
+    name: "我的 WorkBuddy",
+    remarkName: "我的运行器",
+    adapter: "cli",
+    provider: "DeepSeek",
+    protocol: "chat_completions",
+    baseUrl: "https://example.invalid/v1",
+    model: "deepseek/deepseek-v4-pro",
+    agentModelId: "deepseek/deepseek-v4-pro",
+    agentEngine: "opencode",
+    credentialSource: "opencode",
+    cliPath: "my-opencode",
+    cliArgs: "run {prompt} --model {model}",
+  }],
+});
+const preservedWorkBuddy = editableWorkBuddy.textConnections.find((profile) => profile.id === "text-workbuddy-cli");
+assert.equal(preservedWorkBuddy?.name, "我的 WorkBuddy");
+assert.equal(preservedWorkBuddy?.remarkName, "我的运行器");
+assert.equal(preservedWorkBuddy?.agentEngine, "opencode", "手动切换运行器后不得被归一化回 WorkBuddy");
+assert.equal(preservedWorkBuddy?.provider, "DeepSeek");
+assert.equal(preservedWorkBuddy?.model, "deepseek/deepseek-v4-pro");
+assert.equal(preservedWorkBuddy?.cliPath, "my-opencode");
+assert.equal(preservedWorkBuddy?.systemManaged, false);
+const savedEditableWorkBuddy = upsertGenerationProfile(editableWorkBuddy, "text", preservedWorkBuddy, { activate: true });
+const savedWorkBuddy = savedEditableWorkBuddy.textConnections.find((profile) => profile.id === "text-workbuddy-cli");
+assert.equal(savedWorkBuddy?.agentEngine, "opencode", "保存 WorkBuddy 条目时不得重新写回 WorkBuddy 运行器");
+assert.equal(savedWorkBuddy?.cliPath, "my-opencode", "保存 WorkBuddy 条目时必须保留用户的 CLI 路径");
+
+const textDraft = createGenerationProfile("text", { draft: true });
+assert.equal(textDraft.temperature, "0.7", "新建文字配置应提供安全温度默认值");
+assert.equal(textDraft.maxOutputTokens, "4000", "新建文字配置应提供安全输出上限默认值");
+assert.equal(textDraft.timeoutMs, "120000", "新建文字配置应提供安全超时默认值");
+assert.equal(textDraft.provider, "", "新建文字配置仍应由用户选择服务商");
+assert.equal(textDraft.model, "", "新建文字配置仍不应伪造模型");
 const preservedImage = normalized.imageConnections.find((profile) => profile.id === imageSentinel.id);
 assert.equal(preservedImage?.name, imageSentinel.name);
 assert.equal(preservedImage?.baseUrl, imageSentinel.baseUrl);

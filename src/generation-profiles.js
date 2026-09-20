@@ -223,7 +223,10 @@ const BUILT_IN_WORKBUDDY_AGENT_PROFILE = {
   executionModes: ["agent"],
   agentEngine: "workbuddy",
   credentialSource: "runner_login",
-  systemManaged: true,
+  // Auto-provision this entry for older workspaces, but keep it editable.
+  // The WorkBuddy runner contract is re-normalized from agentEngine on save;
+  // locking this profile prevented users from choosing another runner.
+  systemManaged: false,
 };
 
 const PUBLIC_TEXT_PROVIDER_PRESET = getProviderPreset("免费模型");
@@ -711,26 +714,36 @@ const ensureBuiltInWorkBuddyAgentProfile = (profiles) => {
   const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_WORKBUDDY_AGENT_PROFILE.id);
   if (existingIndex >= 0) {
     const existing = profiles[existingIndex];
+    // This entry is provisioned so older workspaces can discover WorkBuddy,
+    // but it is not a protected/system-owned connection.  Keep every field
+    // the user selected in Settings; only fill values that are genuinely
+    // missing from an old profile.  In particular, do not force the profile
+    // back to WorkBuddy/CLI on every normalization pass: that used to make a
+    // manual switch to another runner appear to save, then silently revert.
+    const selectedAgentEngine = String(existing.agentEngine || BUILT_IN_WORKBUDDY_AGENT_PROFILE.agentEngine).trim()
+      || BUILT_IN_WORKBUDDY_AGENT_PROFILE.agentEngine;
+    const selectedCredentialSource = String(existing.credentialSource || "").trim()
+      || (selectedAgentEngine === "workbuddy" ? BUILT_IN_WORKBUDDY_AGENT_PROFILE.credentialSource : "");
     const managed = normalizedProfile("text", {
       ...BUILT_IN_WORKBUDDY_AGENT_PROFILE,
       ...existing,
       id: BUILT_IN_WORKBUDDY_AGENT_PROFILE.id,
-      name: BUILT_IN_WORKBUDDY_AGENT_PROFILE.name,
-      remarkName: BUILT_IN_WORKBUDDY_AGENT_PROFILE.remarkName,
-      systemManaged: true,
-      adapter: "cli",
-      provider: "",
-      protocol: "",
-      baseUrl: "",
+      systemManaged: false,
+      adapter: existing.adapter || BUILT_IN_WORKBUDDY_AGENT_PROFILE.adapter,
+      provider: Object.hasOwn(existing, "provider") ? existing.provider : BUILT_IN_WORKBUDDY_AGENT_PROFILE.provider,
+      protocol: Object.hasOwn(existing, "protocol") ? existing.protocol : BUILT_IN_WORKBUDDY_AGENT_PROFILE.protocol,
+      baseUrl: Object.hasOwn(existing, "baseUrl") ? existing.baseUrl : BUILT_IN_WORKBUDDY_AGENT_PROFILE.baseUrl,
       cliPath: existing.cliPath || BUILT_IN_WORKBUDDY_AGENT_PROFILE.cliPath,
       cliArgs: existing.cliArgs || BUILT_IN_WORKBUDDY_AGENT_PROFILE.cliArgs,
       model: String(existing.model || "").trim(),
       agentModelId: String(existing.agentModelId || existing.model || "").trim(),
-      chatModelId: "",
-      executionMode: "agent",
-      executionModes: ["agent"],
-      agentEngine: "workbuddy",
-      credentialSource: "runner_login",
+      chatModelId: Object.hasOwn(existing, "chatModelId") ? existing.chatModelId : "",
+      executionMode: existing.executionMode || "agent",
+      executionModes: Array.isArray(existing.executionModes) && existing.executionModes.length
+        ? existing.executionModes
+        : ["agent"],
+      agentEngine: selectedAgentEngine,
+      credentialSource: selectedCredentialSource,
     }, existingIndex, {});
     return profiles.map((profile, index) => index === existingIndex ? managed : profile);
   }
@@ -919,7 +932,13 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
 };
 
 const normalizeOpenCodeProfileLabel = (profile = {}) => {
-  if (profile.agentEngine !== "opencode" || profile.provider !== "DeepSeek") return profile;
+  // WorkBuddy is an auto-provisioned but user-editable row.  If a user
+  // deliberately points that row at OpenCode/DeepSeek, its custom name is
+  // still part of the user's configuration and must not be rewritten by the
+  // legacy DeepSeek label migration.
+  if (profile.id === BUILT_IN_WORKBUDDY_AGENT_PROFILE.id
+    || profile.agentEngine !== "opencode"
+    || profile.provider !== "DeepSeek") return profile;
   const oldLabel = /^(?:OpenCode\+DeepSeek|DeepSeek(?:\s+(?:Agent|CLI))?(?:\s*[·+]\s*OpenCode(?:\s+CLI)?)?)$/iu;
   return {
     ...profile,
@@ -936,6 +955,7 @@ const LEGACY_REMOVED_TEXT_PROFILE_IDS = new Set([
 
 const deepSeekAgentProfile = (profile = {}) => profile.provider === "DeepSeek"
   && profile.adapter === "cli"
+  && profile.id !== BUILT_IN_WORKBUDDY_AGENT_PROFILE.id
   && (["opencode", "deepseek_opencode", "claude_code"].includes(String(profile.agentEngine || "").trim())
     || ["opencode", DEEPSEEK_OPENCODE_CLI_ALIAS].includes(String(profile.cliPath || "").trim()));
 
@@ -1238,7 +1258,20 @@ export const createGenerationProfile = (channel, overrides = {}) => {
   const id = String(overrides.id || `${channel}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`);
   if (overrides.draft === true) {
     const blank = Object.fromEntries(Object.keys(DEFAULTS[channel]).map((key) => [key, ""]));
-    return normalizedProfile(channel, { ...blank, ...overrides, id, draft: true }, 0);
+    const safeDraftDefaults = channel === "text"
+      ? {
+        reasoningEffort: "",
+        speedMode: DEFAULTS.text.speedMode,
+        temperature: DEFAULTS.text.temperature,
+        maxOutputTokens: DEFAULTS.text.maxOutputTokens,
+        timeoutMs: DEFAULTS.text.timeoutMs,
+      }
+      : channel === "image"
+        ? { timeoutMs: DEFAULTS.image.timeoutMs }
+        : channel === "video"
+          ? { timeoutMs: DEFAULTS.video.timeoutMs }
+          : { timeoutMs: DEFAULTS.audio.timeoutMs };
+    return normalizedProfile(channel, { ...blank, ...safeDraftDefaults, ...overrides, id, draft: true }, 0);
   }
   return normalizedProfile(channel, { ...DEFAULTS[channel], ...overrides, id }, 0);
 };
@@ -1820,7 +1853,9 @@ export const removeGenerationProfile = (settings = {}, channel, profileId) => {
   const next = normalizeGenerationProfiles(settings);
   if (next[keys.list].length <= 1) return next;
   const removedProfile = next[keys.list].find((profile) => profile.id === profileId);
-  if (channel === "text" && (removedProfile?.systemManaged === true || removedProfile?.id === BUILT_IN_PUBLIC_TEXT_PROFILE.id)) {
+  if (channel === "text" && (removedProfile?.systemManaged === true
+    || removedProfile?.id === BUILT_IN_PUBLIC_TEXT_PROFILE.id
+    || removedProfile?.id === BUILT_IN_WORKBUDDY_AGENT_PROFILE.id)) {
     return next;
   }
   next[keys.list] = next[keys.list].filter((profile) => profile.id !== profileId);
