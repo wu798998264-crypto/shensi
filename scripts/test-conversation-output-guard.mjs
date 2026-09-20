@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sanitizeConversationOutput, sanitizeUserFacingError } from "../src/conversation-output-guard.js";
+import { sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../src/conversation-output-guard.js";
 import { nativeAgentTerminalPresentation } from "../src/conversation-agent-task-route.js";
 import { parseExternalCliOutput } from "../src/server/external-cli-agent-runner.mjs";
 import { createConversationAgentService } from "../src/server/conversation-agent-service.mjs";
@@ -28,6 +28,17 @@ const parsed = parseExternalCliOutput([
   JSON.stringify({ type: "result", text: leaked }),
 ].join("\n"));
 assert.equal(sanitizeConversationOutput(parsed.text), visible, "外置 CLI 最终文本必须使用同一输出边界");
+
+const workBuddyRouteLeak = `${JSON.stringify({
+  routes: [{ placementId: "template:shensi>place:template:short-fiction", kind: "group", name: "短篇小说模组" }],
+  autoLoadedSkills: [{ placementId: "slot:writer", name: "短篇小说主笔", text: "internal skill body" }],
+  selectedPlacement: { placementId: "slot:writer", pathNames: ["Skill 面板", "短篇小说模组", "短篇小说主笔"] },
+})}\n\n这是正常回答。`;
+assert.equal(sanitizeWorkBuddyConversationOutput(workBuddyRouteLeak), "这是正常回答。", "WorkBuddy 路由对象不得泄露到用户回答");
+assert.doesNotMatch(sanitizeWorkBuddyConversationOutput(workBuddyRouteLeak), /routes|autoLoadedSkills|placementId|internal skill body/iu);
+assert.equal(sanitizeConversationOutput(workBuddyRouteLeak), workBuddyRouteLeak.trim(), "通用输出边界不能受 WorkBuddy 专用规则影响");
+assert.equal(sanitizeWorkBuddyConversationOutput('{"routes":[{"placementId":"x"}],"autoLoadedSkills":[{"name":"x"}', { final: false }), "", "流式未闭合的 WorkBuddy 路由对象不得提前显示");
+assert.equal(sanitizeWorkBuddyConversationOutput('{"routes":[{"placementId":"x"}],"autoLoadedSkills":[{"name":"x"}'), "", "WorkBuddy 最终不应显示截断的内部路由对象");
 
 const terminal = nativeAgentTerminalPresentation({ status: "completed", text: leaked, resultWarnings: ["Parameter validation failed for tool mcp__shensi__interaction_delivery"] });
 assert.equal(terminal.content, visible);
@@ -64,4 +75,3 @@ try {
 }
 
 console.log("Conversation output boundary, CLI parsing and terminal presentation passed");
-

@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.5.0-output-boundary";
+} from "./generation-profiles.js?v=6.6.0-output-boundary";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -20520,7 +20520,7 @@ const renderImmediateConversationInstructions = () => {
     .map((instruction) => {
       const collapsible = userMessageNeedsCollapse(instruction.content);
       return `<section class="message user-message" data-immediate-instruction="${escapeHtml(instruction.id)}" data-dispatch-state="preparing">
-        <header><span class="avatar user-avatar">${icon("\uE77B")}</span><strong>你</strong><time>${escapeHtml(instruction.time)}</time><span class="queue-position">已发送 · 正在准备</span></header>
+        <header><span class="avatar user-avatar">${icon("\uE77B")}</span><strong>你</strong><time>${escapeHtml(instruction.time)}</time><span class="queue-position">已发送 · 正在路由</span></header>
         <div class="message-bubble"><div class="user-message-content${collapsible ? " is-collapsible" : ""}">${escapeHtml(instruction.content)}</div></div>
       </section>`;
     }).join("");
@@ -20664,7 +20664,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
         : 0;
       if (inheritedReferenceCount && !resources.length) resources.push(`<span class="message-resource reference inherited-reference" title="沿用上一轮仍处于启用状态的引用上下文">持续引用 ${inheritedReferenceCount} 项</span>`);
       return `<section class="message user-message" data-message="${message.id}"${preparing ? ' data-dispatch-state="preparing"' : ""}>
-        <header><span class="avatar user-avatar">${icon("\uE77B")}</span><strong>你</strong><time>${message.time}</time>${preparing ? `<span class="queue-position">已发送 · 正在准备</span>` : message.conversationChoiceInstruction ? `<span class="queue-position">选项指令</span>` : message.runtimeGuidance ? `<span class="queue-position">运行中引导</span>` : ""}</header>
+        <header><span class="avatar user-avatar">${icon("\uE77B")}</span><strong>你</strong><time>${message.time}</time>${preparing ? `<span class="queue-position">已发送 · 正在路由</span>` : message.conversationChoiceInstruction ? `<span class="queue-position">选项指令</span>` : message.runtimeGuidance ? `<span class="queue-position">运行中引导</span>` : ""}</header>
         ${editing ? `<form class="message-edit-form" data-message-edit-form="${message.id}">
           <textarea rows="3" aria-label="编辑问题">${escapeHtml(ui.editingMessageDraft)}</textarea>
           <div><button class="icon-button bare small" type="button" data-cancel-message-edit="${message.id}" title="取消编辑">${icon("\uE711", "取消编辑")}</button><button class="icon-button bare small" type="submit" title="创建新分支并发送">${icon("\uE724", "创建新分支并发送")}</button></div>
@@ -36946,6 +36946,13 @@ const monitorNativeConversation = (runtime, pending) => {
           const prior = reads.find((item) => String(item.placementId || "") === placementId && item.kind === event.payload.kind);
           if (prior) Object.assign(prior, event.payload);
           else reads.push(event.payload);
+          const routeKind = String(event.payload.kind || "");
+          if (routeKind === "panel_route") pending.execution.result = "正在路由";
+          else {
+            const title = String(event.payload.title || "").trim();
+            const label = /group_route/iu.test(routeKind) ? "正在读取模组路由" : /module_route/iu.test(routeKind) ? "正在读取模块路由" : "正在读取路由";
+            pending.execution.result = title ? `${label}：${title}` : label;
+          }
         } else if (event.type === "delivery") {
           pending.execution.deliveryTargets = event.payload.targets || [];
           const routedTask = agentTaskRouteFromDelivery(event.payload, pending.execution.taskRoute);
@@ -36955,6 +36962,11 @@ const monitorNativeConversation = (runtime, pending) => {
           pending.execution.result = event.payload.message || "结果已交付，部分验收项未完成";
         } else if (event.type === "progress") {
           pending.execution.result = event.payload.message;
+        } else if (event.type === "resource_read") {
+          if (String(event.payload.kind || "") === "skill") {
+            const title = String(event.payload.title || "").trim();
+            pending.execution.result = title ? `正在读取 Skill：${title}` : "正在读取 Skill";
+          }
         } else if (event.type === "text_delta") {
           pending.streamText = (pending.streamText || "") + event.payload.text;
           pending.execution.result = "Agent 正在生成回答";
@@ -36976,7 +36988,7 @@ const monitorNativeConversation = (runtime, pending) => {
         } else if (event.type === "tool") {
           const name = String(event.payload.name || "");
           pending.execution.result = event.payload.phase === "started"
-            ? name === "documents.write" ? "正在保存文档" : name === "interaction.delivery" ? "正在核对成果归档" : name.startsWith("skills.") ? "正在查阅创作技能" : name.startsWith("documents.") ? "正在查阅文档" : "Agent 正在处理"
+            ? name === "documents.write" ? "正在保存文档" : name === "interaction.delivery" ? "正在核对成果归档" : name.startsWith("skills.") ? "正在读取 Skill" : name.startsWith("documents.") ? "正在查阅文档" : "Agent 正在处理"
             : event.payload.success === false ? "操作未完成，Agent 正在处理原因" : "Agent 正在继续处理";
         } else if (["document_saved", "media_saved", "media_job"].includes(event.type)) {
           pending.execution.agentResultReferences ??= [];
@@ -37256,7 +37268,7 @@ const executeConversationAgentMessage = async (content, options) => {
   const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
     target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
     execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
-      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "Agent 正在处理",
+      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "正在路由",
       taskRoute: clone(nativeTaskRoute),
       deliverableType: nativeTaskRoute.deliverableType || "",
       targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
@@ -60703,7 +60715,7 @@ const syncCodexAgentExecutionFromStatus = (status = ui.codexAgent.status || {}) 
       result: activeRun
         ? codexAgentPhaseLabel(activeRun.phase)
         : pendingStart || localPreparation
-          ? "指令已发送，正在准备任务"
+          ? "正在路由"
           : pending.execution?.result || `正在启动 ${activeAgentLabel()}`,
     };
     if (conversation.id === state.activeConversationId) activePending = pending;
@@ -62226,7 +62238,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
         status: "running",
         strength: "agent",
         progressPercent: 1,
-        result: "指令已发送，正在准备任务",
+        result: "正在路由",
         targetLabel: "本地项目",
         conversationId: conversation.id,
         sourceMessageId: userMessage.id,

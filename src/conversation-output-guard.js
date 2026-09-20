@@ -141,6 +141,105 @@ export const sanitizeConversationOutput = (value = "", { final = true } = {}) =>
     .trim();
 };
 
+// WorkBuddy can occasionally echo the controlled Shensi context it received
+// (routes, placements and auto-loaded Skills) before its actual answer. This
+// boundary is deliberately runner-specific so other providers and user prose
+// mentioning routes or Skills remain untouched.
+const internalRouteKeySet = new Set([
+  "routes", "routeBundle", "routeContext", "autoLoadedSkills", "loadedSkills",
+  "selectedPlacement", "upperParticipation", "taskRoute", "placementId",
+]);
+
+const collectObjectKeys = (value, keys = new Set(), depth = 0, seen = new Set()) => {
+  if (!value || typeof value !== "object" || depth > 5 || seen.has(value)) return keys;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) collectObjectKeys(item, keys, depth + 1, seen);
+    return keys;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (internalRouteKeySet.has(key)) keys.add(key);
+    collectObjectKeys(child, keys, depth + 1, seen);
+  }
+  return keys;
+};
+
+const isInternalRouteObject = (value) => {
+  if (!value || typeof value !== "object") return false;
+  const keys = collectObjectKeys(value);
+  const has = (...names) => names.every((name) => keys.has(name));
+  return has("routes", "autoLoadedSkills")
+    || has("routes", "loadedSkills")
+    || has("routes", "routeContext")
+    || has("routes", "taskRoute")
+    || has("routes", "selectedPlacement")
+    || has("routeBundle", "loadedSkills")
+    || has("routeBundle", "autoLoadedSkills")
+    || has("routeBundle", "routeContext")
+    || has("autoLoadedSkills", "selectedPlacement")
+    || has("selectedPlacement", "routeContext")
+    || has("taskRoute", "selectedPlacement")
+    || (keys.has("placementId") && (keys.has("routeContext") || keys.has("selectedPlacement")));
+};
+
+const jsonObjectEnd = (source, start) => {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < source.length; index += 1) {
+    const character = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return index + 1;
+      if (depth < 0) return -1;
+    }
+  }
+  return -1;
+};
+
+const likelyInternalRoutePrefix = (value) => /(?:["'](?:routes|routeBundle|routeContext|autoLoadedSkills|loadedSkills|selectedPlacement|taskRoute|placementId)["']\s*:)/u.test(String(value || ""));
+
+export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true } = {}) => {
+  let source = sanitizeConversationOutput(value, { final });
+  if (!source) return "";
+  const removals = [];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] !== "{") continue;
+    const end = jsonObjectEnd(source, index);
+    if (end < 0) {
+      const tail = source.slice(index);
+      if (likelyInternalRoutePrefix(tail)) return source.slice(0, index).trim();
+      continue;
+    }
+    const candidate = source.slice(index, end);
+    let parsed;
+    try { parsed = JSON.parse(candidate); } catch { continue; }
+    if (!isInternalRouteObject(parsed)) continue;
+    removals.push([index, end]);
+    index = end - 1;
+  }
+  for (let index = removals.length - 1; index >= 0; index -= 1) {
+    const [start, end] = removals[index];
+    source = `${source.slice(0, start)}${source.slice(end)}`;
+  }
+  return source
+    .replace(/```(?:json)?\s*```/giu, "")
+    .replace(/[ \t]+\n/gu, "\n")
+    .replace(/\n{3,}/gu, "\n\n")
+    .trim();
+};
+
 const INTERNAL_ERROR_PATTERNS = [
   /Parameter validation failed/iu,
   /Expected parameter schema/iu,

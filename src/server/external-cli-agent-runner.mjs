@@ -6,7 +6,7 @@ import { resolveRunnerLaunch } from "./agent-runner-launch.mjs";
 import { deepSeekAgentContextText } from "./deepseek-opencode-agent-runner.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
-import { sanitizeConversationOutput, sanitizeUserFacingError } from "../conversation-output-guard.js";
+import { sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -321,6 +321,9 @@ export const runExternalCliAgent = async ({
   const task = clean(prompt);
   if (!task) throw errorForRunner(runner, `${runnerLabel(runner)} 没有收到任务指令`, "EXTERNAL_CLI_PROMPT_REQUIRED");
   if (!nativeHost?.url) throw errorForRunner(runner, `${runnerLabel(runner)} 缺少神思 MCP 工具入口`, "EXTERNAL_CLI_MCP_REQUIRED");
+  const sanitizeExternalOutput = (value, options = {}) => runner === "workbuddy"
+    ? sanitizeWorkBuddyConversationOutput(value, options)
+    : sanitizeConversationOutput(value, options);
   let executable = clean(cliPath) || defaultCliPath(runner);
   let resolvedPrefixArgs = Array.isArray(prefixArgs) ? prefixArgs.map(clean).filter(Boolean).slice(0, 16) : [];
   const defaultCommand = defaultCliPath(runner);
@@ -450,7 +453,7 @@ export const runExternalCliAgent = async ({
       };
       const emitDeltas = () => {
         const parsed = parseExternalCliOutput(stdout);
-        const next = uniqueAppend(emittedText, sanitizeConversationOutput(parsed.text, { final: false }));
+        const next = uniqueAppend(emittedText, sanitizeExternalOutput(parsed.text, { final: false }));
         emittedText = next.text;
         if (next.delta) onEvent?.({
           type: "text",
@@ -499,7 +502,7 @@ export const runExternalCliAgent = async ({
           finish(errorForRunner(runner, `${runnerLabel(runner)} 返回错误：${sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))}`));
           return;
         }
-        const text = sanitizeConversationOutput(parsed.text || emittedText);
+        const text = sanitizeExternalOutput(parsed.text || emittedText);
         if (!text.trim()) {
           finish(errorForRunner(runner, `${runnerLabel(runner)} 已结束，但没有返回可用文本`, "EXTERNAL_CLI_RESPONSE_EMPTY"));
           return;
