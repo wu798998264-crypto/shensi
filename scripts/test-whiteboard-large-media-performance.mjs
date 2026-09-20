@@ -49,5 +49,15 @@ assert.match(styles, /\.whiteboard-edge-flow \{[\s\S]{0,420}opacity: 0;[\s\S]{0,
   "静止连线不得永久运行流光动画");
 assert.match(styles, /\.whiteboard-edge-group:is\(\.selected, :hover\) \.whiteboard-edge-flow \{[\s\S]{0,320}animation: whiteboard-edge-flow/u,
   "选中或悬停连线仍应提供方向动画反馈");
+assert.match(app, /const whiteboardForegroundRelationState = \(canvas\)[\s\S]{0,1800}selectedNodeIds\.has\(edge\.fromNode\)[\s\S]{0,200}selectedNodeIds\.has\(edge\.toNode\)/u,
+  "选中卡片必须提升它的直接上下游连线");
+assert.match(app, /data-foreground-canvas-edge=[\s\S]{0,2400}whiteboard-edge-foreground-layer/u,
+  "活动关系必须使用独立的前景连线层");
+assert.match(app, /foregroundRelation\.nodeIds\.has\(node\.id\)[\s\S]{0,1800}relation-active/u,
+  "活动连线两端卡片必须进入关系前景层");
+assert.match(app, /foregroundGroup:[\s\S]{0,4000}\[group, foregroundGroup\]\.filter\(Boolean\)/u,
+  "拖拽卡片时基础连线和前景连线必须同步更新");
+assert.match(styles, /\.whiteboard-edge-layer \{[\s\S]{0,120}z-index: 0;[\s\S]{0,500}\.whiteboard-edge-foreground-layer \{[\s\S]{0,120}z-index: 4;[\s\S]{0,500}\.whiteboard-card\.relation-active \{[\s\S]{0,80}z-index: 5;/u,
+  "连线层级必须满足普通连线低于卡片、活动连线高于无关卡片、关系端点最高");
 
 console.log("large whiteboard media performance contract passed");

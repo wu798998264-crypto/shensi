@@ -4312,7 +4312,7 @@ textarea.whiteboard-find-textarea-source::selection {
 
 .whiteboard-card.focused,
 .whiteboard-card.selected {
-  z-index: 5;
+  z-index: 6;
   outline: 2px solid var(--text);
   outline-offset: 3px;
 }
@@ -4607,11 +4607,46 @@ textarea.whiteboard-find-textarea-source::selection {
 
 .whiteboard-edge-layer {
   position: absolute;
+  z-index: 0;
   inset: 0 auto auto 0;
   width: 1px;
   height: 1px;
   overflow: visible;
   pointer-events: none;
+}
+
+.whiteboard-edge-foreground-layer {
+  position: absolute;
+  z-index: 4;
+  inset: 0 auto auto 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.whiteboard-card.relation-active {
+  z-index: 5;
+}
+
+.whiteboard-card.relation-active:is(.selected, .focused) {
+  z-index: 6;
+}
+
+.whiteboard-edge-foreground-layer .whiteboard-edge {
+  stroke: var(--review);
+  stroke-width: 3;
+  marker-end: url(#whiteboardForegroundArrow);
+}
+
+.whiteboard-edge-foreground-layer marker path {
+  fill: var(--review);
+}
+
+.whiteboard-edge-foreground-layer .whiteboard-edge-flow {
+  stroke-width: 4;
+  opacity: 1;
+  animation: whiteboard-edge-flow 1.45s linear infinite;
 }
 
 .whiteboard-edge-hit {

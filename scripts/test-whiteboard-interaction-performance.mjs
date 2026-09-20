@@ -197,7 +197,13 @@ try {
     }));
     state.documents[documentId] = {
       title: '大型白板点击性能', moduleId: 'manuscript', documentKind: 'whiteboard', updatedAt: '现在',
-      canvas: { nodes, edges: [], assets: [], viewport: { x: 290, y: 130, zoom: 0.22 }, settings: { snapToGrid: true, gridSize: 20 } },
+      canvas: {
+        nodes,
+        edges: [{ id: 'relation-edge-1', fromNode: 'perf-card-130', toNode: 'perf-card-131', fromSide: 'right', toSide: 'left' }],
+        assets: [],
+        viewport: { x: 290, y: 130, zoom: 0.22 },
+        settings: { snapToGrid: true, gridSize: 20 },
+      },
     };
     state.documents[plainDocumentId] = {
       title: '普通文档点击性能', moduleId: 'manuscript', documentKind: 'document', updatedAt: '现在',
@@ -286,6 +292,27 @@ try {
     return { text: card?.innerText?.trim() || '', placeholder: card?.querySelector('textarea')?.placeholder || '' };
   })()`);
   assert.deepEqual(emptyPlainCard, { text: "", placeholder: "" }, "空白普通卡片必须保持纯白板表面，不得显示卡片类型或编辑提示");
+  await clickCenter('[data-canvas-node="perf-card-130"]');
+  await waitFor("document.querySelector('[data-foreground-canvas-edge=\"relation-edge-1\"]') && document.querySelector('[data-canvas-node=\"perf-card-131\"]')?.classList.contains('relation-active')", "活动上下游关系进入前景层");
+  const relationLayering = await evaluate(`(() => {
+    const z = (selector) => Number(getComputedStyle(document.querySelector(selector)).zIndex || 0);
+    return {
+      baseEdge: z('.whiteboard-edge-layer'),
+      unrelatedCard: z('[data-canvas-node="perf-card-132"]'),
+      foregroundEdge: z('.whiteboard-edge-foreground-layer'),
+      endpointCard: z('[data-canvas-node="perf-card-131"]'),
+      selectedCard: z('[data-canvas-node="perf-card-130"]'),
+      foregroundEdges: document.querySelectorAll('[data-foreground-canvas-edge="relation-edge-1"]').length,
+    };
+  })()`);
+  assert.deepEqual(relationLayering, {
+    baseEdge: 0,
+    unrelatedCard: 1,
+    foregroundEdge: 4,
+    endpointCard: 5,
+    selectedCard: 6,
+    foregroundEdges: 1,
+  }, `活动关系图层顺序错误：${JSON.stringify(relationLayering)}`);
   const startupResponsiveness = await evaluate("window.__shensiStartupResponsiveness");
   const panPoint = await evaluate(`(() => { const rect = document.querySelector('#whiteboardEditor').getBoundingClientRect(); return { x: rect.left + rect.width * 0.72, y: rect.top + rect.height * 0.78 }; })()`);
   await evaluate(`(() => {

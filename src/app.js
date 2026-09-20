@@ -21,7 +21,7 @@ import { SCRIPT_DOMAIN, contextDocumentAllowed, isScriptDomain, normalizeContext
 import { blankDirectoryFolderId, buildDocumentTree, buildNotebookDocumentTree, buildReferenceModuleNode, documentCreationOptions, documentDeleteAllowed, documentLocationChoices, documentLocationId, documentRenameTitle, documentWorkspaceView, ensureDocumentTreeMetadata, findDocumentFolder, folderDeleteAllowed, localizeSystemDocumentTitle, manuscriptVolumeDeleteSelection, materializeNotebookFolder, newDocumentTreeOptions, resolveFolderLocationChoice, systemDocumentTitleParts } from "./document-tree.js?v=1.1.2-workspace-view-routing";
 import { CREATIVE_CONTRACT_DOCUMENT_ID, applyCreativeContractCandidate, creativeContractDocumentPatch, normalizeCreativeContract } from "./creative-contract.js?v=1.1.1-fixed-layout";
 import { creativeContractObservationProposal, mergeCreativeContractObservation } from "./creative-contract-observation.js?v=1.0.0";
-import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.4.4-workbuddy-tool-access";
+import { purgeObsoleteWorkspaceCompatibility } from "./obsolete-workspace-compatibility.js?v=6.4.5-whiteboard-foreground-relations";
 import { creativeGuidancePersistentContractKey, persistentCreativeGuidanceContract } from "./creative-guidance-persistence.js?v=1.0.0-original-drama-contract";
 import { creativeGuidanceChoiceContinuation, creativeGuidanceSessionMessages, latestCreativeGuidanceSessionState } from "./creative-guidance-session.js?v=5.4.11-guided-dialogue-continuation";
 import { agentDecisionResolutionForAnswer, agentDecisionResolutionForOption, isAgentDecision, normalizeAgentDecisionResolution } from "./agent-decision-ui.js";
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.4.4-workbuddy-tool-access";
+} from "./generation-profiles.js?v=6.4.5-whiteboard-foreground-relations";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -131,7 +131,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.4-workbuddy-tool-access";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.5-whiteboard-foreground-relations";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -265,7 +265,7 @@ import {
 import { PANE_LAYOUT_DEFAULTS, constrainPaneWidths, resizePaneWidths } from "./pane-layout.js";
 import { CHAT_COMPOSER_HEIGHT_DEFAULT, CHAT_COMPOSER_HEIGHT_LIMITS, chatComposerHeightRange, clampChatComposerHeight, resizeChatComposerHeight } from "./chat-composer-layout.js";
 import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSession, countInsertedCharacters, formatWritingTimerDuration, normalizeWritingTimerRecord, normalizeWritingTimerStore, pauseWritingMetricsSession, pauseWritingTimer, recordWritingMetricsActivity, setWritingTimerExpanded, startWritingTimer, stopWritingTimer, writingMetricsSnapshot, writingTimerElapsedMs } from "./writing-timer.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.4-workbuddy-tool-access";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.5-whiteboard-foreground-relations";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
 import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
@@ -291,7 +291,7 @@ import { createDocumentEditHistory, documentEditHistoryAvailability, rebaseDocum
 import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from "./document-write-transaction.js?v=3.0.10-create-title";
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
-import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.4-workbuddy-tool-access";
+import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.5-whiteboard-foreground-relations";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
 import { memoryReviewCandidateEvidence, memoryReviewCandidatesForPlan, memoryReviewUiSummary, toggleRecommendedMemorySelection } from "./memory-review-ui-model.js?v=0.42.14-product-evidence-ux";
@@ -325,7 +325,7 @@ import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
 import { markAgentResultProjection, upsertAgentResultReference } from "./conversation-agent-document-projection.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.4-workbuddy-tool-access";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.5-whiteboard-foreground-relations";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -17543,6 +17543,71 @@ const whiteboardStableNodeRenderSignature = (node) => {
   return signature;
 };
 
+const whiteboardForegroundRelationState = (canvas) => {
+  const normalized = normalizeCanvas(canvas);
+  const nodeIds = new Set(normalized.nodes.map((node) => node.id));
+  const selectedNodeIds = ui.whiteboardSelectedDocumentId === state.activeDocument
+    ? new Set([...ui.whiteboardSelectedNodeIds].filter((id) => nodeIds.has(id)))
+    : new Set();
+  if (ui.whiteboardFocusedNodeId && nodeIds.has(ui.whiteboardFocusedNodeId)) {
+    selectedNodeIds.add(ui.whiteboardFocusedNodeId);
+  }
+  const selectedEdgeIds = ui.whiteboardSelectedEdgeDocumentId === state.activeDocument
+    ? new Set(ui.whiteboardSelectedEdgeIds ?? [])
+    : new Set();
+  const edges = normalized.edges.filter((edge) => selectedEdgeIds.has(edge.id)
+    || selectedNodeIds.has(edge.fromNode)
+    || selectedNodeIds.has(edge.toNode));
+  const relationNodeIds = new Set();
+  for (const edge of edges) {
+    relationNodeIds.add(edge.fromNode);
+    relationNodeIds.add(edge.toNode);
+  }
+  return { edges, nodeIds: relationNodeIds, selectedEdgeIds };
+};
+
+const syncWhiteboardForegroundRelationLayer = (documentState = state.documents[state.activeDocument]) => {
+  const surface = elements.whiteboardSurface;
+  if (!surface) return { edges: [], nodeIds: new Set(), selectedEdgeIds: new Set() };
+  if (!documentState || documentState.documentKind !== "whiteboard") {
+    surface.querySelector(":scope > .whiteboard-edge-foreground-layer")?.remove();
+    surface.querySelectorAll(":scope > .whiteboard-card.relation-active")
+      .forEach((card) => card.classList.remove("relation-active"));
+    return { edges: [], nodeIds: new Set(), selectedEdgeIds: new Set() };
+  }
+  const relation = whiteboardForegroundRelationState(documentState.canvas);
+  const canvas = normalizeCanvas(documentState.canvas);
+  const nodeMap = new Map(canvas.nodes.map((node) => [node.id, node]));
+  const markup = relation.edges.map((edge, index) => {
+    const fromNode = nodeMap.get(edge.fromNode);
+    const toNode = nodeMap.get(edge.toNode);
+    if (!fromNode || !toNode) return "";
+    const path = whiteboardEdgePath(whiteboardNodeSidePoint(fromNode, edge.fromSide), whiteboardNodeSidePoint(toNode, edge.toSide));
+    const selected = relation.selectedEdgeIds.has(edge.id);
+    return `<g class="whiteboard-edge-group foreground ${selected ? "selected" : ""}" data-foreground-canvas-edge="${escapeHtml(edge.id)}"><path class="whiteboard-edge whiteboard-foreground-edge" d="${path}"></path><path class="whiteboard-edge-flow" d="${path}" pathLength="100" style="--whiteboard-flow-delay:-${(index % 8) * 0.17}s"></path></g>`;
+  }).join("");
+  let layer = surface.querySelector(":scope > .whiteboard-edge-foreground-layer");
+  if (!markup) {
+    layer?.remove();
+  } else {
+    const layerMarkup = `<defs><marker id="whiteboardForegroundArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z"></path></marker></defs>${markup}`;
+    const renderKey = whiteboardCardRenderSignature({ documentId: state.activeDocument, markup: layerMarkup });
+    if (!layer) {
+      const edgeLayer = surface.querySelector(":scope > .whiteboard-edge-layer");
+      edgeLayer?.insertAdjacentHTML("afterend", `<svg class="whiteboard-edge-foreground-layer" aria-hidden="true">${layerMarkup}</svg>`);
+      layer = surface.querySelector(":scope > .whiteboard-edge-foreground-layer");
+      if (layer) layer.dataset.whiteboardRenderKey = renderKey;
+    } else if (layer.dataset.whiteboardRenderKey !== renderKey) {
+      layer.innerHTML = layerMarkup;
+      layer.dataset.whiteboardRenderKey = renderKey;
+    }
+  }
+  surface.querySelectorAll(":scope > .whiteboard-card").forEach((card) => {
+    card.classList.toggle("relation-active", relation.nodeIds.has(card.dataset.canvasNode));
+  });
+  return relation;
+};
+
 const syncWhiteboardMediaCardSection = (card, replacement, selector, beforeSelector) => {
   const current = card.querySelector(`:scope > ${selector}`);
   const next = replacement.querySelector(`:scope > ${selector}`);
@@ -17866,6 +17931,7 @@ const renderWhiteboard = (documentState) => {
     const current = generationDraftByNode.get(entry.nodeId);
     if (!current || entry.updatedAt > current.updatedAt) generationDraftByNode.set(entry.nodeId, entry);
   }
+  const foregroundRelation = whiteboardForegroundRelationState(documentState.canvas);
   const edgeMarkup = documentState.canvas.edges.map((edge, index) => {
     const fromNode = nodeMap.get(edge.fromNode);
     const toNode = nodeMap.get(edge.toNode);
@@ -18069,6 +18135,7 @@ const renderWhiteboard = (documentState) => {
         ? `<div class="whiteboard-web-card" title="已读取网页正文；拖拽移动，双击或右键可修改链接"><span class="whiteboard-web-icon">${icon("\uE774")}</span><strong>${escapeHtml(whiteboardWebTitle(visibleNode))}</strong><small>${escapeHtml(visibleNode.webSnapshot ? `${visibleNode.webSnapshot.pages?.length || 1} 页 · ${visibleNode.webSnapshot.contentCharacters || visibleNode.webSnapshot.text?.length || 0} 字` : visibleNode.url)}</small><a class="whiteboard-web-open" href="${escapeHtml(visibleNode.url)}" target="_blank" rel="noopener noreferrer" title="打开网页" aria-label="打开 ${escapeHtml(whiteboardWebTitle(visibleNode))}">${icon("\uE8A7")}</a></div>`
         : textEditor;
     const selected = ui.whiteboardSelectedDocumentId === state.activeDocument && ui.whiteboardSelectedNodeIds.has(node.id);
+    const relationActive = foregroundRelation.nodeIds.has(node.id);
     const usesFourCornerResize = ["image", "video", "audio"].includes(visibleNode.kind) || (visibleNode.type === "text" && visibleNode.kind !== "web");
     const resizeHandles = lowDetail
       ? ""
@@ -18082,7 +18149,7 @@ const renderWhiteboard = (documentState) => {
     const compositeProcessButton = !lowDetail && compositeManifest
       ? `<button class="whiteboard-long-video-process-trigger" type="button" data-composite-long-video-process="${escapeHtml(node.id)}" title="查看每个分段的提示词、参考、状态和积分"><span>${escapeHtml(compositeManifest.status === "complete" ? "生成过程" : `${Number(compositeManifest.completedSegments) || 0}/${compositeManifest.segments?.length || 0}`)}</span>${icon("\uE9D9", "生成过程")}</button>`
       : "";
-    const markup = `<article class="whiteboard-card ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
+    const markup = `<article class="whiteboard-card ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${relationActive ? "relation-active" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
       ${generatedNodeTitle}
       ${kindMarkup}
       ${generationTypeIndicator}
@@ -18098,6 +18165,7 @@ const renderWhiteboard = (documentState) => {
       id: node.id,
       node,
       selected,
+      relationActive,
       focused: ui.whiteboardFocusedNodeId === node.id,
       mediaIdentity: visibleMediaIdentity,
       signature: whiteboardCardRenderSignature({ stableNode: whiteboardStableNodeRenderSignature(node), candidate, editing, generating, lowDetail, activeVideo, generationElapsedDismissed, pendingGenerationType, visibleText: lowDetail ? "" : visibleText, visibleKind: visibleNode.kind, visibleFile: visibleNode.file || "", cardOrigin }),
@@ -18116,6 +18184,7 @@ const renderWhiteboard = (documentState) => {
     edgeLayer.innerHTML = edgeLayerMarkup;
     edgeLayer.dataset.whiteboardRenderKey = edgeLayerRenderKey;
   }
+  syncWhiteboardForegroundRelationLayer(documentState);
   const existingCards = new Map([...elements.whiteboardSurface.querySelectorAll(":scope > [data-canvas-node]")].map((card) => [card.dataset.canvasNode, card]));
   if (useProgressiveRender) {
     elements.whiteboardSurface.classList.add("progressive-rendering");
@@ -18162,6 +18231,7 @@ const renderWhiteboard = (documentState) => {
     }
     card.classList.toggle("selected", record.selected);
     card.classList.toggle("focused", record.focused);
+    card.classList.toggle("relation-active", record.relationActive);
     if (useProgressiveRender) card.classList.add("progressive-ready");
     if (card !== cursor) elements.whiteboardSurface.insertBefore(card, cursor?.isConnected ? cursor : null);
     cursor = card.nextElementSibling;
@@ -48248,6 +48318,7 @@ const selectWhiteboardNodes = (nodeIds = []) => {
   for (const id of previousEdgeIds) {
     elements.whiteboardSurface.querySelector(`[data-canvas-edge="${CSS.escape(id)}"]`)?.classList.remove("selected");
   }
+  syncWhiteboardForegroundRelationLayer();
   renderWhiteboardMultiSelection(activeWhiteboardDocument());
   if (ui.whiteboardFind.open) renderWhiteboardFindPanel();
 };
@@ -48281,6 +48352,7 @@ const selectWhiteboardEdges = (edgeIds = []) => {
     elements.whiteboardSurface.querySelector(`[data-canvas-edge="${CSS.escape(id)}"]`)
       ?.classList.toggle("selected", nextEdgeIds.has(id));
   }
+  syncWhiteboardForegroundRelationLayer();
   renderWhiteboardMultiSelection(activeWhiteboardDocument());
 };
 
@@ -49806,6 +49878,7 @@ const createWhiteboardConnectedEdgePreview = (canvas, nodeIds = []) => {
       .map((edge) => ({
         edge,
         group: elements.whiteboardSurface.querySelector(`[data-canvas-edge="${CSS.escape(edge.id)}"]`),
+        foregroundGroup: elements.whiteboardSurface.querySelector(`[data-foreground-canvas-edge="${CSS.escape(edge.id)}"]`),
       }))
       .filter((record) => record.group),
   };
@@ -49830,10 +49903,14 @@ const updateWhiteboardConnectedEdgePreview = (drag) => {
   }
   for (const record of preview.edges) {
     const { edge } = record;
-    let { group } = record;
+    let { group, foregroundGroup } = record;
     if (!group?.isConnected) {
       group = elements.whiteboardSurface.querySelector(`[data-canvas-edge="${CSS.escape(edge.id)}"]`);
       record.group = group;
+    }
+    if (!foregroundGroup?.isConnected) {
+      foregroundGroup = elements.whiteboardSurface.querySelector(`[data-foreground-canvas-edge="${CSS.escape(edge.id)}"]`);
+      record.foregroundGroup = foregroundGroup;
     }
     if (!group) continue;
     const fromNode = overrides.get(edge.fromNode) ?? preview.nodesById.get(edge.fromNode);
@@ -49843,7 +49920,9 @@ const updateWhiteboardConnectedEdgePreview = (drag) => {
       whiteboardNodeSidePoint(fromNode, edge.fromSide),
       whiteboardNodeSidePoint(toNode, edge.toSide),
     );
-    for (const pathElement of group.querySelectorAll("path")) pathElement.setAttribute("d", path);
+    for (const targetGroup of [group, foregroundGroup].filter(Boolean)) {
+      for (const pathElement of targetGroup.querySelectorAll("path")) pathElement.setAttribute("d", path);
+    }
   }
 };
 
