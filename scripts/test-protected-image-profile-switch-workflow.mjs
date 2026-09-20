@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [runner, policy, agents, imageBridge, videoBridge, oauth] = await Promise.all([
+const [runner, policy, goldenLine2, agents, imageBridge, videoBridge, oauth] = await Promise.all([
   readFile(new URL("./run-protected-image-profile-switch-acceptance.cjs", import.meta.url), "utf8"),
   readFile(new URL("../docs/protected-capabilities/dreamina-image-profile-switch.md", import.meta.url), "utf8"),
+  readFile(new URL("../docs/protected-capabilities/whiteboard-image-generation-golden-baseline-line-2.md", import.meta.url), "utf8"),
   readFile(new URL("../AGENTS.md", import.meta.url), "utf8"),
   readFile(new URL("../src/cli/dreamina-image-cli.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/cli/dreamina-video-cli.mjs", import.meta.url), "utf8"),
@@ -58,8 +59,22 @@ assert.match(policy, /修改前必须请示/u);
 assert.match(policy, /不得重复扣费/u);
 assert.match(policy, /短剧最前线/u);
 assert.match(policy, /兼容独立 CLI/u);
+assert.match(goldenLine2, /白板图片生成黄金基线二线/u);
+assert.match(goldenLine2, /聚合 API 不是即梦凭证锁的一部分，可以与一个即梦配置同时生成/u,
+  "黄金基线二线必须允许聚合 API 与即梦并行");
+assert.match(goldenLine2, /不同即梦配置共用唯一凭证锁，必须严格串行/u,
+  "黄金基线二线不得放宽跨即梦配置串行");
+assert.match(goldenLine2, /卡片左上角必须持续显示当前状态/u,
+  "黄金基线二线必须保护生成状态全程可见");
+assert.match(goldenLine2, /只有用户点击对应卡片才自动隐藏/u,
+  "成功状态不得在回写完成时自动消失");
+assert.match(goldenLine2, /任何失败都必须在原卡片显示中文原因、收费风险和可执行入口/u,
+  "图片失败不得静默结束");
+assert.match(goldenLine2, /文件大小和 SHA-256 回读一致、卡片回写复核通过/u,
+  "黄金基线二线必须保留完整产物验收");
 assert.match(agents, /受保护能力：跨配置串行生图/u);
 assert.match(agents, /编辑前都必须单独向用户请示/u);
+assert.match(agents, /白板图片生成黄金基线二线/u);
 assert.match(agents, /npm run test:protected-image-profile-switch/u);
 
 console.log("Protected aggregate/Dreamina serial image profile-switch workflow contract passed");
