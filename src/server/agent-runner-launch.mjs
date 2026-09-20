@@ -34,6 +34,17 @@ const pathDirectories = (environment = process.env) => clean(environment.PATH ||
   .map((item) => item.replace(/^"|"$/gu, "").trim())
   .filter(Boolean);
 
+// WorkBuddy desktop installations are not always registered under the usual
+// Windows locations.  Keep the user-configured root first, then the known
+// desktop root used by the current installer, so a missing PATH entry cannot
+// make an already-installed CLI look uninstalled.
+const workBuddyConfiguredRoots = ({ environment = process.env } = {}) => [
+  clean(environment.SHENSI_WORKBUDDY_ROOT),
+  clean(environment.WORKBUDDY_ROOT),
+].filter(Boolean);
+
+const workBuddyFallbackRoots = () => ["E:\\workbady\\WorkBuddy"];
+
 const knownRunnerLaunchCandidates = ({ runnerId, environment = process.env, homeDirectory = homedir() } = {}) => {
   const directories = pathDirectories(environment);
   const localAppData = clean(environment.LOCALAPPDATA) || join(homeDirectory, "AppData", "Local");
@@ -45,6 +56,11 @@ const knownRunnerLaunchCandidates = ({ runnerId, environment = process.env, home
       { executable: join(directory, "codebuddy.exe"), prefixArgs: [] },
       { executable: process.execPath, prefixArgs: [join(directory, "node_modules", "@tencent-ai", "codebuddy-code", "bin", "codebuddy")] },
     ]),
+    ...[...workBuddyConfiguredRoots({ environment }), ...workBuddyFallbackRoots()].map((root) => ({
+      executable: process.execPath,
+      prefixArgs: [join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy")],
+      installSource: "workbuddy_desktop",
+    })),
     { executable: join(localAppData, "codebuddy", "bin", "codebuddy.exe"), prefixArgs: [] },
     { executable: join(homeDirectory, "AppData", "Local", "codebuddy", "bin", "codebuddy.exe"), prefixArgs: [] },
     ...[
@@ -85,6 +101,7 @@ const workBuddyDesktopLaunchCandidates = async ({
   const programFiles = clean(environment.ProgramFiles) || "C:\\Program Files";
   const programFilesX86 = clean(environment["ProgramFiles(x86)"]) || "C:\\Program Files (x86)";
   const roots = [
+    ...workBuddyConfiguredRoots({ environment }),
     join(localAppData, "Programs", "WorkBuddy"),
     join(programFiles, "WorkBuddy"),
     join(programFilesX86, "WorkBuddy"),
@@ -104,6 +121,10 @@ const workBuddyDesktopLaunchCandidates = async ({
       }
     }
   }
+  // Keep the known non-standard desktop root after registry results so a
+  // registered installation remains the first choice when several accounts
+  // exist, while still covering machines where WorkBuddy was unpacked there.
+  roots.push(...workBuddyFallbackRoots());
   return [...new Set(roots.map((root) => resolve(root)))].map((root) => ({
     executable: nodeExecutable,
     prefixArgs: [join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy")],

@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.4.8-prompt-input";
+} from "./generation-profiles.js?v=6.4.9-prompt-input";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -6400,6 +6400,7 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
       ? capability.models.map((model) => String(model || "").trim()).filter(Boolean)
       : [];
     const installed = capability?.installed === true;
+    const checking = !capability;
     const loginRequired = capability?.state === "login_required" || capability?.authState === "login_required";
     const readyDefault = capability?.modelState === "verified_runner_default" && capability?.authState === "authenticated";
     const invalidCurrent = current && !models.includes(current);
@@ -6408,8 +6409,10 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
     customInput.value = "";
     customInput.placeholder = "";
     customInput.title = "";
-    select.disabled = !models.length && !readyDefault;
-    if (!installed) {
+    select.disabled = checking || (!models.length && !readyDefault);
+    if (checking) {
+      select.innerHTML = `<option value="">正在读取 ${escapeHtml(runnerLabel)} 模型目录…</option>`;
+    } else if (!installed) {
       select.innerHTML = `<option value="">安装 ${escapeHtml(runnerLabel)} 后读取模型</option>`;
     } else if (loginRequired) {
       select.innerHTML = `<option value="">请先登录 ${escapeHtml(runnerLabel)}，登录后自动读取模型</option>`;
@@ -7153,7 +7156,28 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     const response = await fetch(`/api/agent-runners/status${force ? "?force=true" : ""}`);
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.message || "Agent 运行器状态读取失败");
-    ui.agentRunners = payload.runners && typeof payload.runners === "object" ? payload.runners : {};
+    const incoming = payload.runners && typeof payload.runners === "object" ? payload.runners : {};
+    const previous = ui.agentRunners && typeof ui.agentRunners === "object" ? ui.agentRunners : {};
+    // A transient model-catalog probe failure must not erase the last
+    // confirmed WorkBuddy choices.  Keep them visible while marking the
+    // catalogue stale; a confirmed login-required result still wins and
+    // intentionally hides the stale list until the user logs in again.
+    const workBuddy = incoming.workbuddy;
+    const previousWorkBuddy = previous.workbuddy;
+    if (workBuddy && (!Array.isArray(workBuddy.models) || workBuddy.models.length === 0)
+      && Array.isArray(previousWorkBuddy?.models) && previousWorkBuddy.models.length > 0
+      && workBuddy.state !== "login_required" && workBuddy.authState !== "login_required"
+      && previousWorkBuddy.authState === "authenticated") {
+      incoming.workbuddy = {
+        ...workBuddy,
+        models: [...previousWorkBuddy.models],
+        modelState: "catalog_available",
+        modelCatalogChecked: true,
+        modelCatalogStale: true,
+        message: workBuddy.message || "WorkBuddy 模型目录暂时无法刷新，已保留上次确认的模型",
+      };
+    }
+    ui.agentRunners = incoming;
     syncAgentRunnerOptions();
     const select = document.querySelector("#textAgentEngineSelect");
     const selectedRunnerId = String(select?.value || "");
@@ -51903,23 +51927,89 @@ const prepareWhiteboardGenerationDialogSwitch = (channel, nodeId) => {
 };
 
 let whiteboardGenerationDialogInitializationSequence = 0;
+const whiteboardGenerationDialogRecoveryTimers = new WeakMap();
+
+// A generation popover is temporarily inert while its prompt, references and
+// provider controls are restored.  The restoration is asynchronous because it
+// can involve a render pass, so closing/reopening the same native <dialog>
+// must explicitly clear the old lifecycle state.  Otherwise Chromium can keep
+// the reused dialog's subtree inert even though the popover looks open.
+const resetWhiteboardGenerationDialogInteractivity = (dialog, { clearInitialization = false } = {}) => {
+  if (!dialog) return;
+  dialog.removeAttribute("aria-busy");
+  dialog.inert = false;
+  if (clearInitialization) {
+    delete dialog.dataset.initializationToken;
+    delete dialog.dataset.initializationStartedAt;
+  }
+};
+
+const clearWhiteboardGenerationDialogRecoveryTimer = (dialog) => {
+  const timer = whiteboardGenerationDialogRecoveryTimers.get(dialog);
+  if (timer) clearTimeout(timer);
+  whiteboardGenerationDialogRecoveryTimers.delete(dialog);
+};
+
+const scheduleWhiteboardGenerationDialogRecovery = (dialog, initializationToken) => {
+  clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+  const timer = setTimeout(() => {
+    whiteboardGenerationDialogRecoveryTimers.delete(dialog);
+    if (!dialog?.open || dialog.dataset.initializationToken !== String(initializationToken || "")) return;
+    // The normal initializer has a shorter hard deadline.  This is a last
+    // resort for a throttled/paused renderer, not a second initialization path.
+    if (dialog.inert || dialog.hasAttribute("aria-busy")) {
+      resetWhiteboardGenerationDialogInteractivity(dialog);
+      dialog.querySelectorAll(".whiteboard-generation-inline-mentions").forEach((editor) => {
+        editor.setAttribute("contenteditable", "true");
+        editor.tabIndex = 0;
+      });
+    }
+  }, 900);
+  whiteboardGenerationDialogRecoveryTimers.set(dialog, timer);
+};
+
+const recoverWhiteboardGenerationDialogForInteraction = (dialog, editor = null) => {
+  if (!dialog?.open) return false;
+  const startedAt = Number(dialog.dataset.initializationStartedAt || 0);
+  const stale = (dialog.inert || dialog.hasAttribute("aria-busy"))
+    && (!startedAt || Date.now() - startedAt >= 700);
+  if (stale) {
+    clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+    resetWhiteboardGenerationDialogInteractivity(dialog);
+  }
+  const target = editor?.isConnected
+    ? editor
+    : dialog.querySelector(".whiteboard-generation-inline-mentions");
+  if (target?.isConnected) {
+    target.setAttribute("contenteditable", "true");
+    target.tabIndex = 0;
+  }
+  return stale;
+};
 
 const primeWhiteboardGenerationDialog = (dialog, nodeId, { centered = false } = {}) => {
   cancelWhiteboardCardOpen();
   collapseWhiteboardContextMenu();
   const config = whiteboardGenerationConfigFor(dialog);
   const initializationToken = String(++whiteboardGenerationDialogInitializationSequence);
+  clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+  // Clear a previous session before installing the new token.  This is safe
+  // for an already-open dialog because the new session immediately reinstates
+  // its own busy/inert state below.
+  resetWhiteboardGenerationDialogInteractivity(dialog, { clearInitialization: true });
   if (config?.form) config.form.dataset.nodeId = nodeId;
   dialog.dataset.anchorNodeId = nodeId;
   dialog.dataset.anchorDocumentId = state.activeDocument;
   dialog.dataset.anchorWorkspaceId = workspaceIdentity();
   dialog.dataset.initializationToken = initializationToken;
+  dialog.dataset.initializationStartedAt = String(Date.now());
   ui.whiteboardLastGenerationChannel = config?.channel || "text";
   dialog.setAttribute("aria-busy", "true");
   dialog.inert = true;
   if (!dialog.open) dialog.show();
   setWhiteboardGenerationDialogExpanded(dialog, centered, { position: false });
   syncWhiteboardGenerationAnchorLabel(dialog, nodeId);
+  scheduleWhiteboardGenerationDialogRecovery(dialog, initializationToken);
   return initializationToken;
 };
 
@@ -51966,8 +52056,8 @@ const scheduleUiInitializationAfterPaint = (callback, { timeout = 160, hardDeadl
 const releaseWhiteboardGenerationDialogInteractivity = (dialog, nodeId, initializationToken = "") => {
   if (!dialog?.open || dialog.dataset.anchorNodeId !== String(nodeId || "")) return false;
   if (initializationToken && dialog.dataset.initializationToken !== String(initializationToken)) return false;
-  dialog.removeAttribute("aria-busy");
-  dialog.inert = false;
+  clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+  resetWhiteboardGenerationDialogInteractivity(dialog);
   return true;
 };
 
@@ -58173,6 +58263,10 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
     startWhiteboardGenerationHeaderDrag(event, dialog);
   });
   dialog.addEventListener("click", (event) => {
+    recoverWhiteboardGenerationDialogForInteraction(
+      dialog,
+      event.target.closest?.(".whiteboard-generation-inline-mentions"),
+    );
     if (!event.target.closest("[data-whiteboard-generation-add-reference], [data-whiteboard-generation-reference-add-menu]")) {
       setWhiteboardGenerationReferenceAddMenuOpen(dialog.querySelector(".whiteboard-generation-references"), false);
     }
@@ -58189,11 +58283,25 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
       return;
     }
   });
+  dialog.addEventListener("focusin", (event) => {
+    recoverWhiteboardGenerationDialogForInteraction(
+      dialog,
+      event.target.closest?.(".whiteboard-generation-inline-mentions"),
+    );
+  });
+  dialog.addEventListener("pointerdown", (event) => {
+    recoverWhiteboardGenerationDialogForInteraction(
+      dialog,
+      event.target.closest?.(".whiteboard-generation-inline-mentions"),
+    );
+  }, true);
   dialog.addEventListener("close", () => {
     // The native close event is queued. When this same workbench has already
     // reopened, the event belongs to its previous lifecycle and must not clear
     // the new session's menus or anchor state.
     if (dialog.open) return;
+    clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+    resetWhiteboardGenerationDialogInteractivity(dialog, { clearInitialization: true });
     setWhiteboardGenerationReferenceAddMenuOpen(dialog.querySelector(".whiteboard-generation-references"), false);
     closeWhiteboardGenerationMentionMenu(form);
   });
@@ -58857,6 +58965,8 @@ whiteboardGenerationDialogs().forEach((dialog) => {
   });
   dialog.addEventListener("close", () => {
     if (dialog.open) return;
+    clearWhiteboardGenerationDialogRecoveryTimer(dialog);
+    resetWhiteboardGenerationDialogInteractivity(dialog, { clearInitialization: true });
     saveWhiteboardGenerationDraft(dialog, { active: false, open: false });
     delete dialog.dataset.anchorNodeId;
     delete dialog.dataset.anchorDocumentId;

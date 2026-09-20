@@ -57,6 +57,23 @@ const resolvedWorkBuddyDesktop = await resolveRunnerLaunch({
 assert.equal(resolvedWorkBuddyDesktop.executable, workBuddyNode);
 assert.deepEqual(resolvedWorkBuddyDesktop.prefixArgs, [workBuddyDesktopScript], "已登录的 WorkBuddy 桌面 CLI 必须优先于陈旧 npm CLI");
 assert.equal(resolvedWorkBuddyDesktop.installSource, "workbuddy_desktop");
+
+const configuredWorkBuddyRoot = join(workBuddyResolverRoot, "configured", "WorkBuddy");
+const configuredWorkBuddyScript = join(configuredWorkBuddyRoot, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy");
+await mkdir(join(configuredWorkBuddyRoot, "resources", "app.asar.unpacked", "cli", "bin"), { recursive: true });
+await writeFile(configuredWorkBuddyScript, "configured desktop cli");
+const resolvedConfiguredWorkBuddy = await resolveRunnerLaunch({
+  runnerId: "workbuddy",
+  environment: { SHENSI_WORKBUDDY_ROOT: configuredWorkBuddyRoot, LOCALAPPDATA: join(workBuddyResolverRoot, "missing-local"), PATH: "" },
+  homeDirectory: join(workBuddyResolverRoot, "missing-home"),
+  machineRoot: join(workBuddyResolverRoot, "missing-machine"),
+  registry: {},
+  registryQuery: async () => ({ stdout: "", stderr: "" }),
+  platform: "win32",
+  nodeExecutable: workBuddyNode,
+});
+assert.equal(resolvedConfiguredWorkBuddy.executable, workBuddyNode, "用户配置的 WorkBuddy 根目录必须可直接发现");
+assert.deepEqual(resolvedConfiguredWorkBuddy.prefixArgs, [configuredWorkBuddyScript], "WorkBuddy 非标准安装目录必须解析到桌面 CLI 脚本");
 await rm(workBuddyResolverRoot, { recursive: true, force: true });
 
 const workBuddyHelp = "--model <model>  Currently supported: (hy3, glm-5.2, deepseek-v4-pro, deepseek-v4-flash)";

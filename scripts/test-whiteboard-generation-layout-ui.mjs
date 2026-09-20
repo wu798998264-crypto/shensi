@@ -301,6 +301,74 @@ try {
   })()`);
   assert.match(textEntryState.editorText, /文本真实入口输入/u, `真实键盘输入必须进入可见描述区：${JSON.stringify(textEntryState)}`);
   assert.match(textEntryState.sourceValue, /文本真实入口输入/u, `真实键盘输入必须同步提交字段：${JSON.stringify(textEntryState)}`);
+
+  const openTextFromCard = async (nodeId, { closeImmediately = false } = {}) => {
+    await evaluate(`(() => {
+      const card = document.querySelector('[data-canvas-node="${nodeId}"]');
+      const rect = card.getBoundingClientRect();
+      card.dispatchEvent(new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true, button: 2,
+        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      }));
+      // Always choose the text entry explicitly.  A card may remember a
+      // previous image/video channel, so the one-click direct action is not a
+      // stable text-test route.
+      document.querySelector('[data-whiteboard-action="toggle-generate"]').click();
+      document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-text"]').click();
+      if (${closeImmediately ? "true" : "false"}) document.querySelector('#whiteboardGenerateDialog')?.close();
+      return true;
+    })()`);
+  };
+
+  // Closing during deferred initialization used to leave the reused native
+  // dialog inert.  Reopen immediately, then exercise the same surface many
+  // times to catch the long-session regression reported by desktop users.
+  await evaluate("document.querySelector('#whiteboardGenerateDialog')?.close(); true");
+  await openTextFromCard("layout-target", { closeImmediately: true });
+  await delay(20);
+  await openTextFromCard("layout-target");
+  await waitFor("document.querySelector('#whiteboardGenerateDialog')?.open === true && document.querySelector('#whiteboardGenerateDialog')?.inert === false && !document.querySelector('#whiteboardGenerateDialog')?.hasAttribute('aria-busy')", "初始化中关闭后重新打开文本操作栏");
+  for (let cycle = 0; cycle < 4; cycle += 1) {
+    await evaluate(`(() => {
+      const form = document.querySelector('#whiteboardGenerateForm');
+      const editor = form?.querySelector('.whiteboard-generation-inline-mentions');
+      if (editor) editor.textContent = '';
+      if (form?.elements?.instruction) form.elements.instruction.value = '';
+      document.querySelector('#whiteboardGenerateDialog')?.close();
+      return true;
+    })()`);
+    await delay(cycle % 4 === 0 ? 5 : 18);
+    await openTextFromCard(cycle % 2 ? "layout-target-2" : "layout-target");
+    await waitFor("document.querySelector('#whiteboardGenerateDialog')?.open === true && document.querySelector('#whiteboardGenerateDialog')?.inert === false && !document.querySelector('#whiteboardGenerateDialog')?.hasAttribute('aria-busy')", `长期循环 ${cycle + 1} 次解除交互锁`);
+    await clickCenter("#whiteboardGenerateDialog .whiteboard-generation-inline-mentions");
+    await cdp("Input.insertText", { text: `循环输入${cycle + 1}` });
+    const cycleState = await evaluate(`(() => {
+      const dialog = document.querySelector('#whiteboardGenerateDialog');
+      const form = document.querySelector('#whiteboardGenerateForm');
+      const editor = form?.querySelector('.whiteboard-generation-inline-mentions');
+      return {
+        open: dialog?.open === true,
+        inert: dialog?.inert === true,
+        busy: dialog?.hasAttribute('aria-busy') === true,
+        focused: document.activeElement === editor,
+        editable: editor?.getAttribute('contenteditable'),
+        sourceValue: form?.elements?.instruction?.value || '',
+      };
+    })()`);
+    assert.equal(cycleState.open, true, `循环 ${cycle + 1} 操作栏必须保持打开`);
+    assert.equal(cycleState.inert, false, `循环 ${cycle + 1} 不得残留 inert：${JSON.stringify(cycleState)}`);
+    assert.equal(cycleState.busy, false, `循环 ${cycle + 1} 不得残留 aria-busy：${JSON.stringify(cycleState)}`);
+    assert.equal(cycleState.focused, true, `循环 ${cycle + 1} 描述区必须可获得光标：${JSON.stringify(cycleState)}`);
+    assert.equal(cycleState.editable, "true", `循环 ${cycle + 1} 描述区必须保持可编辑`);
+    assert.match(cycleState.sourceValue, new RegExp(`循环输入${cycle + 1}`, "u"));
+  }
+  // Restore the reference-rich fixture card before collecting the visual
+  // layout snapshot; the alternating stress loop intentionally opens a card
+  // without upstream references on every other iteration.
+  await evaluate("document.querySelector('#whiteboardGenerateDialog')?.close(); true");
+  await delay(10);
+  await openTextFromCard("layout-target");
+  await waitFor("document.querySelector('#whiteboardGenerateDialog')?.open === true && document.querySelector('#whiteboardGenerateDialog')?.inert === false && !document.querySelector('#whiteboardGenerateDialog')?.hasAttribute('aria-busy')", "循环验收后恢复带参考文本操作栏");
   await evaluate(`(() => {
     const editor = document.querySelector('#whiteboardGenerateDialog .whiteboard-generation-inline-mentions');
     editor.textContent = '根据上游参考继续生成内容，保持人物、场景与叙事顺序一致。';
