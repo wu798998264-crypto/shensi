@@ -289,21 +289,15 @@ try {
   // Empty-workspace startup already opens the workspace list. Do not toggle it
   // closed when the desired surface is visible; populated startup opens it on
   // demand. This keeps the acceptance flow deterministic in both states.
-  await evaluate(`(() => {
-    const emptyCreate = document.querySelector('[data-create-empty-workspace]');
-    if (emptyCreate) emptyCreate.click();
-    else {
-      if (document.querySelector('#projectMenu')?.hidden !== false) document.querySelector('#projectButton').click();
-      document.querySelector('#newWorkspaceButton')?.click();
-    }
-    return true;
-  })()`);
-  await waitFor("document.querySelector('#textDialog')?.open || document.querySelector('#projectButton')?.textContent.includes('未命名')", "新建作品入口");
-  await evaluate(`(() => {
-    if (document.querySelector('#textDialog')?.open) return true;
-    document.querySelector('#projectButton')?.click();
-    return true;
-  })()`);
+  const emptyWorkspaceCreateAvailable = await evaluate("Boolean(document.querySelector('[data-create-empty-workspace]'))");
+  if (emptyWorkspaceCreateAvailable) {
+    await evaluate("document.querySelector('[data-create-empty-workspace]')?.click(); true");
+  } else {
+    const projectMenuOpen = await evaluate("document.querySelector('#projectMenu')?.hidden === false");
+    if (!projectMenuOpen) await evaluate("document.querySelector('#projectButton')?.click(); true");
+    await waitFor("document.querySelector('#newWorkspaceButton')", "作品菜单打开");
+    await evaluate("document.querySelector('#newWorkspaceButton')?.click(); true");
+  }
   await waitFor("document.querySelector('#textDialog')?.open", "新建作品对话框");
   await evaluate(`(() => { const input = document.querySelector('#textDialogInput'); input.value = '主界面验收作品'; input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#textDialogForm').requestSubmit(); return true; })()`);
   await waitFor("document.querySelector('#projectButton')?.textContent.includes('主界面验收作品')", "指定作品创建并打开", 30_000);
