@@ -8289,7 +8289,10 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/workspace/load" && request.method === "POST") {
     const body = await readJsonBody(request);
     const temporary = isTemporaryNotebookPath(body.workspacePath);
-    const cached = temporary ? null : cachedWorkspaceLoad(body.workspacePath);
+    // Conflict recovery can arrive immediately after a background writer.
+    // Allow the caller to bypass the short UI warm-load cache so destructive
+    // operations rebase against the actual latest disk state.
+    const cached = temporary || body.fresh === true ? null : cachedWorkspaceLoad(body.workspacePath);
     if (cached) {
       return sendJson(response, 200, {
         ok: true,

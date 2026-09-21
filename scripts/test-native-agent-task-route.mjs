@@ -7,6 +7,7 @@ import {
   nativeAgentTaskWayLabel,
   nativeAgentTerminalPresentation,
 } from "../src/conversation-agent-task-route.js";
+import { requestsCurrentDocument, taskDocumentAnchor } from "../src/workspace-conversation-policy.js";
 
 assert.equal(nativeAgentTaskWayLabel({ execution: { strength: "native_agent" } }), "Agent 执行", "缺少真实分类时不得回退成创作引导");
 assert.equal(nativeAgentTaskWayLabel({ execution: { taskRoute: { mode: "creative_guidance" } }, guided: true }), "创作引导");
@@ -58,6 +59,10 @@ assert.match(failed.result, /^任务失败：[\s\S]*usage_limit_reached/u);
 assert.deepEqual(failed.warnings, ["先前验收提示"], "空的终态警告数组不得清除已记录提示");
 assert.equal(nativeAgentLifecycleStageLabel({ status: "failed" }), "任务失败");
 
+assert.equal(requestsCurrentDocument("再写一篇写入到当前文档中。"), true, "写入到当前文档必须被识别为当前目标语义");
+assert.equal(taskDocumentAnchor({ instruction: "再写一篇写入到当前文档中。", activeDocumentId: "chapter-7" }), "chapter-7", "当前文档语义必须冻结为发送时的文档 ID");
+assert.equal(requestsCurrentDocument("请写一篇悬疑短篇，只在对话中给我看。"), false, "普通创作请求不得因为出现‘一篇’就绑定当前文档");
+
 const completedWithWarning = nativeAgentTerminalPresentation({
   status: "completed",
   text: "正式结果",
@@ -81,11 +86,18 @@ assert.match(serverSource, /let taskRoute = suppliedTaskRoute\s*\?[\s\S]{0,520}\
 assert.match(serverSource, /const agentActiveModule = String\(body\.activeModule \|\| body\.targetModuleId \|\| body\.targetModule \|\| taskRoute\.targetModule/u, "目标模块必须从结构化合同贯穿到运行时");
 assert.match(serverSource, /const agentDeliverableType = String\(body\.deliverableType \|\| taskRoute\.deliverableType/u, "交付类型必须从结构化合同贯穿到运行时");
 assert.match(serverSource, /prompt:\s*agentSemanticAuthority \|\| suppliedTaskRoute \? "" : routingText/u, "结构化路由存在时不得再用原始文字重复猜测 Skill 语义");
-assert.match(appSource, /const nativeTaskRoute = initialTaskRoute \|\| \(\(\) => \{[\s\S]{0,2600}buildAdaptiveTaskRoute\(/u, "原生对话入口必须编译统一结构化任务路由");
+assert.ok(
+  /const nativeTaskRoute = initialTaskRoute \|\| \(\(\) => \{[\s\S]{0,2600}buildAdaptiveTaskRoute\(/u.test(appSource)
+    || /let nativeTaskRoute = null;[\s\S]{0,400}nativeTaskRoute = initialTaskRoute \|\| \(\(\) => \{[\s\S]{0,2600}buildAdaptiveTaskRoute\(/u.test(appSource),
+  "原生对话入口必须编译统一结构化任务路由",
+);
 assert.match(appSource, /const createDocumentFromOperation = \(operation\) => \{[\s\S]{0,1800}nextUniqueDocumentName\(title, \{ moduleId, viewId, treeOptions: options \}\)/u, "Agent 创建文档必须按目录作用域追加同名数字后缀");
 assert.match(appSource, /event\.type === "route_read"[\s\S]{0,420}actualRouteReads/u, "原生 Agent 必须保存三级路由真实读取记录");
 assert.match(appSource, /event\.type === "task_route"[\s\S]{0,500}pending\.execution\.taskRoute/u, "任务卡必须接收服务端补全后的真实 placementId 路由");
 assert.match(appSource, /<dt>能力路由<\/dt>[\s\S]{0,120}capabilityRouteSummary/u, "任务卡必须向用户显示实际能力路由摘要");
+assert.match(appSource, /const nativeTargetCandidates = \[[\s\S]{0,900}message\.target[\s\S]{0,900}execution\.taskRoute\?\.targetDocumentId/u, "任务卡在正式写入回执前必须显示冻结的目标文档");
+assert.doesNotMatch(appSource, /<dt>.*正典模式|<dt>.*审阅层级/u, "任务卡不得显示难懂的正典模式和审阅层级术语");
+assert.match(appSource, /pending\.execution\.error = pending\.content[\s\S]{0,220}pending\.execution\.result = "任务启动失败"/u, "启动失败不得把‘正在路由’误显示为失败原因");
 assert.match(conversationServiceSource, /const structuredTaskRoute = bindStructuredTaskRoutePlacements\([\s\S]{0,2800}本轮结构化任务路由是宿主编译的权威选择/u, "原生 Agent 服务必须绑定真实 placementId 并强调结构化路由优先级");
 
 console.log("Native Agent task route and task-card labels passed");

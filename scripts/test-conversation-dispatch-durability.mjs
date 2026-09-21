@@ -56,6 +56,9 @@ import { ensureConversationDispatchDurability } from "../src/conversation-dispat
 }
 
 const app = readFileSync(new URL("../src/app.js", import.meta.url), "utf8");
+const nativeDispatch = app.slice(app.indexOf("const executeConversationAgentMessage = async"), app.indexOf("const sendMessage = async"));
+assert.match(nativeDispatch, /const pending = \{[\s\S]{0,900}result: "正在路由"[\s\S]{0,900}renderNativeConversation(?:Immediately)?\(runtime, true\)[\s\S]{0,500}const initialTaskRoute/u,
+  "路由编译前必须先显示最小任务卡并标记为正在路由");
 assert.match(app, /await onPersist\(\)[\s\S]{0,600}renderNativeConversation\(runtime, true\)[\s\S]{0,250}yieldAfterImmediateInstructionRender[\s\S]{0,250}conversationAgentRequest\("\/api\/conversation-agent\/start"/u,
   "Agent 对话应先把用户消息和任务卡显示出来，再启动模型");
 const nativePersistence = app.slice(app.indexOf("const persistNativeConversation ="), app.indexOf("const renderNativeConversation ="));

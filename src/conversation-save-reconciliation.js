@@ -193,12 +193,12 @@ export const freezeConversationSaveState = (state = {}) => ({
 // The submitted state is the common baseline. Messages or queue entries added
 // while an older request is in flight can coexist with a reply persisted by
 // another writer; true edits to the same field remain explicit conflicts.
-export const reconcileConversationSave = ({ current = {}, submitted = {}, persisted = {} } = {}) => {
+export const reconcileConversationSave = ({ current = {}, submitted = {}, persisted = {}, stateConflictResolutions = {} } = {}) => {
   const next = { ...persisted };
   const conflicts = [];
   const hasConversations = [current, submitted, persisted].some((value) => Array.isArray(value.conversations));
   let mergedConversations = null;
-  if (hasConversations) {
+  if (hasConversations && !Object.hasOwn(stateConflictResolutions, "conversations")) {
     const merged = mergeConversationList({
       baseline: submitted.conversations,
       current: current.conversations,
@@ -218,6 +218,10 @@ export const reconcileConversationSave = ({ current = {}, submitted = {}, persis
 
   if (!mergedConversations) {
     for (const key of CONVERSATION_SAVE_KEYS.filter((value) => value !== "conversations")) {
+      if (Object.hasOwn(stateConflictResolutions, key)) {
+        next[key] = stateConflictResolutions[key];
+        continue;
+      }
       const localChanged = !equal(current[key], submitted[key]);
       const remoteChanged = !equal(persisted[key], submitted[key]);
       if (!localChanged && remoteChanged) continue;
@@ -236,6 +240,7 @@ export const reconcileConversationSave = ({ current = {}, submitted = {}, persis
       else conflicts.push(key);
     }
   }
+  for (const [key, value] of Object.entries(stateConflictResolutions ?? {})) next[key] = value;
   return { ok: conflicts.length === 0, state: next, conflictKeys: [...new Set(conflicts)] };
 };
 
@@ -264,8 +269,8 @@ export const reconcileConversationSaveAfterConflict = ({
   });
 };
 
-export const reconcileWorkspaceSave = ({ current, submitted, persisted }) => {
-  const conversations = reconcileConversationSave({ current, submitted, persisted });
+export const reconcileWorkspaceSave = ({ current, submitted, persisted, stateConflictResolutions = {} }) => {
+  const conversations = reconcileConversationSave({ current, submitted, persisted, stateConflictResolutions });
   if (!conversations.ok) return { ...conversations, conflictStateKeys: conversations.conflictKeys, conflictDocumentIds: [] };
   return { ok: true, state: { ...persisted, ...conversations.state }, conflictKeys: [] };
 };

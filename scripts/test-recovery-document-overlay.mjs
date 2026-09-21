@@ -100,6 +100,56 @@ try {
   assert.equal(restored.documents["chapter-2"].html, "<p>不应被覆盖</p>");
   assert.equal(restored.documents["chapter-deleted"], undefined);
 
+  const canonicalConversation = {
+    activeConversationId: "conversation-new",
+    conversations: [
+      {
+        id: "conversation-old",
+        title: "旧对话",
+        messages: [{ id: "message-done", role: "assistant", content: "已完成回复", pending: false, execution: { status: "completed", endedAt: 20 } }],
+      },
+      {
+        id: "conversation-new",
+        title: "最新对话",
+        messages: [{ id: "message-latest", role: "user", content: "最新指令", pending: false }],
+      },
+    ],
+    messages: [{ id: "message-latest", role: "user", content: "最新指令", pending: false }],
+  };
+  const mergedConversationState = restoreRecoveryState({
+    canonicalState: canonicalConversation,
+    checkpoint: {
+      stateMode: "overlay-v1",
+      state: {
+        activeConversationId: "conversation-old",
+        conversations: [
+          {
+            id: "conversation-old",
+            title: "旧对话",
+            messages: [{ id: "message-done", role: "assistant", content: "旧的等待中回复", pending: true, execution: { status: "running" } }],
+          },
+        ],
+        messages: [{ id: "message-done", role: "assistant", content: "旧的等待中回复", pending: true, execution: { status: "running" } }],
+      },
+    },
+  });
+  assert.deepEqual(
+    mergedConversationState.conversations.map((conversation) => conversation.id),
+    ["conversation-old", "conversation-new"],
+    "旧恢复检查点不得删除 canonical 中后来创建的对话",
+  );
+  assert.equal(mergedConversationState.activeConversationId, "conversation-new", "活动对话不得被旧恢复检查点回退");
+  assert.equal(mergedConversationState.messages[0].id, "message-latest", "顶层消息镜像必须跟随合并后的活动对话");
+  assert.equal(mergedConversationState.conversations[0].messages[0].content, "已完成回复", "已完成 canonical 回复不得被旧 pending 检查点覆盖");
+  const legacyFullState = restoreRecoveryState({
+    canonicalState: canonicalConversation,
+    checkpoint: {
+      stateMode: "full-v1",
+      state: { conversations: [{ id: "conversation-legacy", messages: [{ id: "legacy-message", role: "user", content: "旧版本保留", pending: false }] }] },
+    },
+  });
+  assert.deepEqual(legacyFullState.conversations.map((conversation) => conversation.id), ["conversation-old", "conversation-new", "conversation-legacy"], "旧 full-v1 检查点也必须采用并集合并");
+
   const committed = await commitWorkspaceRecoveryCheckpoint({ workspacePath, clientId, revision: 7 });
   assert.equal(committed.dirty, false);
   assert.equal(committed.stateMode, "document-overlay-v2");

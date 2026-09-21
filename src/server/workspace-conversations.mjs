@@ -6,21 +6,32 @@ const listWorkspaces = async (appRoot) => [
   ...(await listWorkspaceNotebooks({ appRoot })).map((item) => ({ ...item, workspaceKind: "notebook" })),
 ];
 
+const conversationEpoch = (conversation = {}) => {
+  const explicit = Math.max(Number(conversation?.updatedAtEpoch) || 0, Number(conversation?.createdAtEpoch) || 0);
+  if (explicit > 0) return explicit;
+  const match = String(conversation?.id || "").match(/^conversation-(\d{10,})/u);
+  return match ? Number(match[1]) || 0 : 0;
+};
+
 export const workspaceConversationEntries = ({ workspace, state = {} }) => (state.conversations || [])
   .filter((conversation) => conversation?.id)
-  .map((conversation) => {
+  .map((conversation, index) => {
     const owner = conversationWorkspaceOwner(conversation, { ...workspace, workspaceName: workspace.name || state.projectName });
     return {
       id: conversation.id,
       title: conversation.title || "新对话",
       updatedAt: conversation.updatedAt || conversation.createdAt || "",
+      updatedAtEpoch: conversationEpoch(conversation),
       messageCount: (conversation.messages || []).length,
       owner,
       storageWorkspacePath: workspace.workspacePath,
       storageWorkspaceKind: workspace.workspaceKind,
       key: JSON.stringify([workspace.workspaceKind, workspace.workspacePath, conversation.id]),
+      _order: index,
     };
-  });
+  })
+  .sort((left, right) => (right.updatedAtEpoch - left.updatedAtEpoch) || (left._order - right._order))
+  .map(({ _order, ...entry }) => entry);
 
 export const listWorkspaceConversations = async ({ appRoot }) => {
   const workspaces = await listWorkspaces(appRoot);

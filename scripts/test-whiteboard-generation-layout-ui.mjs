@@ -257,7 +257,7 @@ try {
   activeWorkspace.resumeRevision = Date.now() + 60_000;
   await cdp("Page.addScriptToEvaluateOnNewDocument", { source: `localStorage.setItem('shensi-active-workspace-v1', ${JSON.stringify(JSON.stringify(activeWorkspace))});` });
   await cdp("Page.reload", { ignoreCache: true });
-  await waitFor("document.documentElement.dataset.bootReady === 'true' && document.querySelector('[data-canvas-node=\"layout-target\"]')", "隔离白板恢复");
+  await waitFor("document.documentElement?.dataset.bootReady === 'true' && document.querySelector('[data-canvas-node=\"layout-target\"]')", "隔离白板恢复");
 
   await evaluate(`(() => {
     const card = document.querySelector('[data-canvas-node="layout-target"]');
@@ -301,6 +301,38 @@ try {
   })()`);
   assert.match(textEntryState.editorText, /文本真实入口输入/u, `真实键盘输入必须进入可见描述区：${JSON.stringify(textEntryState)}`);
   assert.match(textEntryState.sourceValue, /文本真实入口输入/u, `真实键盘输入必须同步提交字段：${JSON.stringify(textEntryState)}`);
+
+  // A provider/card refresh can force the mention renderer to rebuild while
+  // this editor has focus. Exceeding the prompt cap uses that same forced
+  // rebuild path; the real keyboard must still have a caret afterwards.
+  await evaluate(`(() => {
+    const form = document.querySelector('#whiteboardGenerateForm');
+    const editor = form.querySelector('.whiteboard-generation-inline-mentions');
+    editor.focus();
+    editor.textContent = '强制刷新前的描述' + '长'.repeat(7000);
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    const selection = document.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: '长' }));
+    return true;
+  })()`);
+  await evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+  const forcedRefreshState = await evaluate(`(() => {
+    const form = document.querySelector('#whiteboardGenerateForm');
+    const editor = form.querySelector('.whiteboard-generation-inline-mentions');
+    return {
+      focused: document.activeElement === editor,
+      editable: editor.getAttribute('contenteditable'),
+      sourceLength: form.elements.instruction.value.length,
+    };
+  })()`);
+  assert.equal(forcedRefreshState.focused, true, `强制刷新后描述区必须保留光标：${JSON.stringify(forcedRefreshState)}`);
+  assert.equal(forcedRefreshState.editable, 'true', `强制刷新后描述区必须保持可编辑：${JSON.stringify(forcedRefreshState)}`);
+  await cdp("Input.insertText", { text: "刷新后真实输入" });
+  await waitFor("document.querySelector('#whiteboardGenerateForm').elements.instruction.value.includes('刷新后真实输入')", "强制刷新后的真实键盘输入");
 
   const openTextFromCard = async (nodeId, { closeImmediately = false } = {}) => {
     await evaluate(`(() => {

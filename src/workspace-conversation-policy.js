@@ -31,7 +31,15 @@ export const taskConversationMetadata = (conversation = {}, workspace = {}) => (
     } : {}),
 });
 
-export const requestsCurrentDocument = (instruction = "") => /(?:当前|正在|刚打开|新打开|选中的).{0,12}(?:文档|正文|文件|笔记|章节)|(?:这篇|这份|这个).{0,6}(?:打开的)?(?:文档|正文|文件|笔记)/u.test(text(instruction));
+// Resolve phrases that refer to the document the user is looking at when the
+// instruction is sent.  Keep this semantic and bounded: it must not turn an
+// ordinary conversation into a write target, but common variants such as
+// “写入到当前打开的文档” must be equivalent to “当前文档”.
+export const requestsCurrentDocument = (instruction = "") => {
+  const source = text(instruction).normalize("NFKC");
+  if (!source) return false;
+  return /(?:当前|正在|刚打开|新打开|选中的|本次打开的|当前打开的)(?:.{0,16})(?:文档|正文|文件|笔记|章节)|(?:这篇|这份|这个)(?:.{0,8})(?:打开的)?(?:文档|正文|文件|笔记)|(?:写入|写到|追加到|保存到|放入|覆盖|更新)(?:.{0,8})(?:当前|正在|刚打开|新打开|选中的|本次打开的)(?:.{0,8})(?:文档|正文|文件|笔记|章节)/u.test(source);
+};
 
 export const taskDocumentAnchor = ({ instruction = "", activeDocumentId = "", targetDocumentId = "" } = {}) => (
   text(targetDocumentId) || (requestsCurrentDocument(instruction) ? text(activeDocumentId) : "")

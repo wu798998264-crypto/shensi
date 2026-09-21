@@ -86,4 +86,64 @@ const workBuddyResultPromise = runExternalCliAgent({
 const workBuddyResult = await workBuddyResultPromise;
 assert.equal(workBuddyResult.text, "这是 WorkBuddy 的正常回答。", "WorkBuddy 最终结果不得包含内部路由 JSON");
 
+// WorkBuddy may report a recoverable DeferExecuteTool/MCP error and then
+// continue with a valid assistant answer.  The runner must preserve that
+// answer so the conversation service can perform its normal delivery checks;
+// a single provider-side tool error is not a terminal process failure.
+const recoverableErrorChild = new EventEmitter();
+recoverableErrorChild.stdout = new PassThrough();
+recoverableErrorChild.stderr = new PassThrough();
+recoverableErrorChild.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+recoverableErrorChild.kill = () => { recoverableErrorChild.emit("close", 1); };
+const recoverableErrorResult = await runExternalCliAgent({
+  engine: "workbuddy",
+  prompt: "测试 WorkBuddy 可恢复工具错误",
+  cwd: process.cwd(),
+  cliPath: "fake-workbuddy",
+  cliArgs: "run --prompt-file {promptFile}",
+  nativeHost: { url: "http://127.0.0.1:43123/mcp", headers: {}, toolNames: [] },
+  agentPermissionMode: "shensi_only",
+  spawnProcess: () => {
+    process.nextTick(() => {
+      recoverableErrorChild.stdout.write(`${JSON.stringify({ type: "error", error: { code: "TOOL_FAILED", message: "interaction_delivery 参数校验失败" } })}\n`);
+      recoverableErrorChild.stdout.write(`${JSON.stringify({ type: "message", delta: "工具错误已恢复，正文仍然有效。" })}\n`);
+      recoverableErrorChild.stdout.end();
+      recoverableErrorChild.stderr.end();
+      recoverableErrorChild.emit("close", 0);
+    });
+    return recoverableErrorChild;
+  },
+});
+assert.equal(recoverableErrorResult.text, "工具错误已恢复，正文仍然有效。", "WorkBuddy 可恢复工具错误后必须保留最终正文");
+
+// The same recovery rule applies when a desktop CLI exits non-zero after
+// streaming its answer.  The answer is retained as a warning-bearing result;
+// only an empty response is a terminal external-runner failure.
+const nonZeroAfterTextChild = new EventEmitter();
+nonZeroAfterTextChild.stdout = new PassThrough();
+nonZeroAfterTextChild.stderr = new PassThrough();
+nonZeroAfterTextChild.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+nonZeroAfterTextChild.kill = () => { nonZeroAfterTextChild.emit("close", 1); };
+const nonZeroAfterTextResult = await runExternalCliAgent({
+  engine: "workbuddy",
+  prompt: "测试 WorkBuddy 非零退出码恢复",
+  cwd: process.cwd(),
+  cliPath: "fake-workbuddy",
+  cliArgs: "run --prompt-file {promptFile}",
+  nativeHost: { url: "http://127.0.0.1:43123/mcp", headers: {}, toolNames: [] },
+  agentPermissionMode: "shensi_only",
+  spawnProcess: () => {
+    process.nextTick(() => {
+      nonZeroAfterTextChild.stdout.write(`${JSON.stringify({ type: "message", delta: "退出前已经完成的正文。" })}\n`);
+      nonZeroAfterTextChild.stderr.write("recoverable bridge warning");
+      nonZeroAfterTextChild.stdout.end();
+      nonZeroAfterTextChild.stderr.end();
+      nonZeroAfterTextChild.emit("close", 1);
+    });
+    return nonZeroAfterTextChild;
+  },
+});
+assert.equal(nonZeroAfterTextResult.text, "退出前已经完成的正文。", "非零退出码但已有正文时必须保留正文");
+assert.match(nonZeroAfterTextResult.runnerWarnings?.join("\n") || "", /退出码为 1/u);
+
 console.log(JSON.stringify({ ok: true, parser: "jsonl", fakeRunner: result.executionRuntime }, null, 2));

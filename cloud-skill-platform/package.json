@@ -1,0 +1,10 @@
+{
+  "name": "shensi-cloud-skill-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node ../scripts/test-cloud-skill-platform.mjs"
+  }
+}

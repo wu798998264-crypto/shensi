@@ -8,8 +8,8 @@ import { dreaminaConfigSyncProposal, applyDreaminaConfigSync } from "./dreamina-
 import { dreaminaProfileSwitchMessage } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
 import { candidateBatchCoversRequestedTargets, mergeAgentExecutionTaskRoute } from "./agent-task-route-merge.js?v=5.4.11-semantic-contract-lock";
 import { mediaResultLifecycleStage } from "./media-result-lifecycle.js?v=3.0.10";
-import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.6-generation-phases";
-import { whiteboardProviderIsDirectGeneration, whiteboardProviderQueueVisible } from "./whiteboard-progress.js?v=5.2.6-generation-phases";
+import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationResultReady, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.7-result-ready";
+import { whiteboardProviderIsDirectGeneration, whiteboardProviderQueueVisible } from "./whiteboard-progress.js?v=5.2.7-result-ready";
 import { aggregateCustomApiCapabilityStatus, classifyCustomApiCapabilityFailure, customApiCapabilitySyncChannels, CUSTOM_API_CAPABILITY_CHANNELS } from "./custom-api-capabilities.js";
 import { dreaminaFailureDiagnosis, dreaminaFailureDisplayText, dreaminaFailureRequiresAccountVerification } from "./dreamina-failure.js?v=1.0.0-structured-failure";
 import { createTextConnectionTestGuard } from "./text-connection-test-guard.js?v=5.2.5-legacy-image-retry";
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.6.0-output-boundary";
+} from "./generation-profiles.js?v=6.9.0-output-boundary";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -330,7 +330,7 @@ import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryT
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
 import { appendChangedSettingsHistories, deleteSettingsHistoryVersion, normalizeSettingsHistories, restoreSettingsHistoryVersion } from "./settings-history.js";
-import { compactRecoveryState, restoreRecoveryState } from "./recovery-checkpoint.js?v=0.42.0-data-recovery";
+import { compactRecoveryState, restoreRecoveryState } from "./recovery-checkpoint.js?v=0.42.1-conversation-recovery-merge";
 import { shouldRefreshLocalSession } from "./local-session-retry.js";
 import { fullTextImportDocumentTitle, fullTextImportInstructionRequested } from "./full-text-import-contract.js";
 import { enrichWhiteboardPromptClipboardSegments, whiteboardPromptClipboardText } from "./whiteboard-prompt-clipboard.js";
@@ -4579,11 +4579,11 @@ const fetchWorkspaceRequest = async (input, init = {}, timeoutMs = 20_000) => {
   }
 };
 
-const fetchWorkspacePayload = async (workspacePath, endpoint = "/api/workspace/load") => {
+const fetchWorkspacePayload = async (workspacePath, endpoint = "/api/workspace/load", { fresh = false } = {}) => {
   const response = await fetchWorkspaceRequest(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspacePath }),
+    body: JSON.stringify({ workspacePath, ...(fresh ? { fresh: true } : {}) }),
   }, endpoint === "/api/workspace/load" ? 30_000 : 15_000);
   const payload = await response.json();
   if (!response.ok || !payload.ok) throw new Error(payload.message || "工作区加载失败");
@@ -4802,10 +4802,16 @@ const saveWorkspaceAfterConflict = async ({
   baselineStateHashes = null,
   submittedConversationState = null,
   currentStateProvider = null,
+  preserveStateKeys = [],
 }) => {
   let lastConflict = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const latest = await fetchWorkspacePayload(workspacePath);
+    // Conflict recovery must never use the short-lived workspace load cache.
+    // A background Agent save can advance conversations immediately before a
+    // destructive directory operation receives 409; rebasing against the
+    // cached pre-save snapshot recreates the old false messages/conversations
+    // conflict even though the delete itself is unrelated to that state.
+    const latest = await fetchWorkspacePayload(workspacePath, "/api/workspace/load", { fresh: true });
     if (!latest.state) throw new Error("作品最新状态无法读取，已保留当前恢复检查点");
     // A save may receive 409 because of a stale savedAt or a short writer
     // race even when the canonical state stamp did not advance. In that case
@@ -4835,6 +4841,15 @@ const saveWorkspaceAfterConflict = async ({
         .filter((key) => Object.hasOwn(conversationPlan.state, key))
         .map((key) => [key, conversationPlan.state[key]]))
       : {};
+    // Destructive directory operations do not edit conversation content. If
+    // an Agent progress save lands while the delete is in flight, the remote
+    // conversation state is authoritative for this operation and must not
+    // turn an otherwise unrelated document delete into a workspace conflict.
+    // Keep this opt-in so ordinary content edits still receive strict
+    // three-way conflict detection.
+    for (const key of preserveStateKeys ?? []) {
+      if (Object.hasOwn(latest.state ?? {}, key)) stateConflictResolutions[key] = clone(latest.state[key]);
+    }
     const plan = rebaseWorkspaceConflict({
       baselineDocumentHashes: baselineDocumentHashes || ui.workspaceDocumentHashes,
       baselineStateHashes: baselineStateHashes || ui.workspaceBaselineStateHashes,
@@ -4893,7 +4908,7 @@ const clearScheduledWorkspaceSave = () => {
   ui.workspaceSaveIdleTask = null;
 };
 
-const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, forceFullState = false, operationDocumentIds = null, operationVerification = null } = {}) => {
+const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, forceFullState = false, operationDocumentIds = null, operationVerification = null, preserveStateKeys = [] } = {}) => {
   clearScheduledWorkspaceSave();
   if (ui.workspaceHydrationBlocked) {
     const error = ui.workspaceSaveError ?? new Error("工作区尚未安全加载，已阻止写入");
@@ -4925,13 +4940,13 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
     const saved = await pendingSave;
     const pendingError = ui.workspaceSaveError;
     if (!saved && recoverConflict && isWorkspaceStateConflict(pendingError)) {
-      return saveWorkspace({ throwOnError, recoverConflict: true, forceFullState, operationDocumentIds, operationVerification });
+      return saveWorkspace({ throwOnError, recoverConflict: true, forceFullState, operationDocumentIds, operationVerification, preserveStateKeys });
     }
     if (!saved && throwOnError) throw ui.workspaceSaveError ?? new Error("保存失败");
     if (saved && forceFullState) {
       if (workspaceIdentity() !== pendingIdentity) throw new Error("正文历史保存期间工作区已切换，已停止替换落盘");
       if (ui.workspaceSavePromise === pendingSave) await new Promise((resolve) => setTimeout(resolve, 0));
-      return saveWorkspace({ throwOnError, recoverConflict, forceFullState: true, operationDocumentIds, operationVerification });
+      return saveWorkspace({ throwOnError, recoverConflict, forceFullState: true, operationDocumentIds, operationVerification, preserveStateKeys });
     }
     return saved;
   }
@@ -5076,12 +5091,21 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
           currentStateProvider: () => workspaceIdentity() === identity
             ? stateForWorkspace({ compilationStatusReady: true })
             : null,
+          preserveStateKeys,
         });
         payload = rebased.payload;
         persistedState = rebased.persistedState;
         if (workspaceIdentity() === identity) {
           const current = stateForWorkspace({ compilationStatusReady: true });
-          const next = reconcileWorkspaceSave({ current, submitted: conflictWorkspaceState, persisted: persistedState });
+          const preserveResolutions = Object.fromEntries((preserveStateKeys ?? [])
+            .filter((key) => Object.hasOwn(persistedState ?? {}, key))
+            .map((key) => [key, clone(persistedState[key])]));
+          const next = reconcileWorkspaceSave({
+            current,
+            submitted: conflictWorkspaceState,
+            persisted: persistedState,
+            stateConflictResolutions: preserveResolutions,
+          });
           if (!next.ok) throw createWorkspaceStateConflictError("保存期间工作区继续变化，当前修改已保留，未回退", next);
           adoptRebasedWorkspaceState(next.state);
         }
@@ -10443,7 +10467,9 @@ const syncNoteFullscreenState = () => {
   const active = elements.workspace.classList.contains("editor-fullscreen-active");
   syncNoteToolbarLayout();
   if (elements.whiteboardFullscreenButton) {
-    const label = active ? "退出全屏编辑（F11）" : "全屏编辑（F11）";
+    const preview = elements.editorCanvas?.classList.contains("document-preview-mode");
+    const modeLabel = preview ? "阅读" : "编辑";
+    const label = active ? `退出全屏${modeLabel}（F11）` : `全屏${modeLabel}（F11）`;
     elements.whiteboardFullscreenButton.title = label;
     elements.whiteboardFullscreenButton.setAttribute("aria-label", label);
     elements.whiteboardFullscreenButton.setAttribute("aria-pressed", String(active));
@@ -13699,7 +13725,7 @@ const beginWhiteboardGenerationCandidate = ({ nodeId, workspacePath, documentId,
     createdAt,
     elapsedMs: measurementActive && sameJob
       ? monotonicElapsedMs({ previous: existing?.elapsedMs, incoming: candidate.elapsedMs, startedAt })
-      : measurementActive ? Math.max(0, Number(candidate.elapsedMs) || 0) : 0,
+      : Math.max(0, Number(candidate.elapsedMs) || 0),
     progressPercent: sameJob ? monotonicProgress(existing.progressPercent, initialProgress, { minimum: 1, maximum: 100 }) : initialProgress,
     displayProgressPercent: sameJob && Number.isFinite(Number(existing?.displayProgressPercent))
       ? Number(existing.displayProgressPercent)
@@ -13763,6 +13789,13 @@ const stopWhiteboardGenerationCandidate = (candidateKey, { remove = false, compl
   if (remove) cancelWhiteboardProgressDisplay(candidateKey);
   else if (candidate && complete) scheduleWhiteboardProgressDisplay(candidateKey);
   return elapsedMs;
+};
+
+const whiteboardTextGenerationFailureActions = (candidate) => {
+  if (!candidate || candidate.channel !== "text" || !["failed", "retry_required"].includes(String(candidate.status || ""))) return "";
+  const nodeId = String(candidate.nodeId || "").trim();
+  if (!nodeId) return "";
+  return `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-generation-retry="${escapeHtml(nodeId)}" title="重新打开生成操作栏，保留原提示词后重试">${icon("\uE768", "重新生成")}<span>重新生成</span></button></div>`;
 };
 
 const whiteboardGenerationJobTarget = ({ workspaceKind = state.workspaceKind, workspacePath = state.settings.workspacePath, documentId = state.activeDocument, nodeId } = {}) => ({
@@ -14747,6 +14780,8 @@ const waitForWhiteboardGenerationJob = (jobId, candidateKey) => waitForGeneratio
       providerProgressPercent: job.providerProgressPercent,
       automaticRecoveryInProgress: job.automaticRecoveryInProgress === true,
       progressPercent: Number(job.progressPercent) || 1,
+      resultReady: whiteboardJobHasVerifiedMediaResult(job),
+      ...(job.result?.attachment?.relativePath ? { attachment: job.result.attachment } : {}),
       connectionInterrupted: false,
       error: mediaGenerationErrorText(job),
       elapsedMs: Math.max(0, Date.now() - generationJobInteractionStartedAt(job)),
@@ -14776,6 +14811,17 @@ const generationJobElapsedMs = (job) => {
   const startedAt = generationJobInteractionStartedAt(job);
   const elapsed = endedAt - startedAt;
   return Number.isFinite(elapsed) && elapsed > 0 ? elapsed : 1;
+};
+
+const whiteboardJobHasVerifiedMediaResult = (job = {}) => {
+  const channel = String(job?.channel || "").trim().toLowerCase();
+  if (channel !== "image") return false;
+  const attachment = job?.result?.attachment || job?.attachment || {};
+  const relativePath = String(attachment.relativePath || "").trim();
+  const sha256 = String(attachment.sha256 || job?.landingReceipt?.sha256 || "").trim();
+  const mimeType = String(attachment.mimeType || "").trim().toLowerCase();
+  if (!relativePath || !sha256) return false;
+  return mimeType.startsWith("image/");
 };
 
 const normalizedMediaRelativePath = (value = "") => String(value || "")
@@ -15510,11 +15556,12 @@ const finalizeWhiteboardCompletedCandidate = (job) => {
   });
   if (!whiteboardCandidateBelongsToJob(candidateKey, job?.id)) return false;
   const candidate = ui.whiteboardCandidates.get(candidateKey);
+  const resultReady = whiteboardGenerationResultReady(candidate) || whiteboardJobHasVerifiedMediaResult(job);
   const elapsedMs = Math.max(
     1,
     Number(candidate?.elapsedMs) || 0,
-    Number(candidate?.startedAt) > 0 ? Date.now() - Number(candidate.startedAt) : 0,
-    generationJobElapsedMs(job),
+    resultReady ? 0 : Number(candidate?.startedAt) > 0 ? Date.now() - Number(candidate.startedAt) : 0,
+    resultReady ? Number(job?.elapsedMs) || 0 : generationJobElapsedMs(job),
   );
   whiteboardGenerationCompletionTimes.delete(String(job.id));
   whiteboardGenerationCompletionTimes.set(String(job.id), elapsedMs);
@@ -15538,6 +15585,8 @@ const updateWhiteboardCompletedApplyStage = (job, cardApplyStage) => {
     status: "complete",
     progressPercent: 100,
     providerProgressPercent: 100,
+    resultReady: whiteboardJobHasVerifiedMediaResult(job),
+    ...(job.result?.attachment?.relativePath ? { attachment: job.result.attachment } : {}),
     cardApplyStage,
     cardApplyFailed: false,
   });
@@ -15878,6 +15927,8 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
     providerStatus: job.providerStatus || "",
     providerQueuePosition: job.providerQueuePosition ?? null,
     providerQueueLength: job.providerQueueLength ?? null,
+    resultReady: whiteboardJobHasVerifiedMediaResult(job),
+    ...(job.result?.attachment?.relativePath ? { attachment: job.result.attachment } : {}),
     error: mediaGenerationErrorText(job),
   });
 };
@@ -18033,15 +18084,17 @@ const renderWhiteboard = (documentState) => {
     const editing = ui.whiteboardEditingNodeId === node.id;
     const candidate = whiteboardCandidateFor(node.id);
     const durableMediaCandidate = ["image", "video", "audio"].includes(candidate?.channel);
+    const candidateResultReady = Boolean(candidate && whiteboardGenerationResultReady(candidate));
     const candidateAutomaticRecovery = candidate?.automaticRecoveryInProgress === true;
     const candidateConnecting = Boolean(candidate && whiteboardGenerationConnectionPhase(candidate));
-    const candidateInterrupted = Boolean(candidate && (durableMediaCandidate
+    const candidateInterrupted = Boolean(candidate && !candidateResultReady && (durableMediaCandidate
       ? !candidateConnecting && !MEDIA_JOB_ACTIVE_STATUSES.has(candidate.status) && candidate.status !== "complete" && !candidateAutomaticRecovery
         : ["retry_required", "failed"].includes(candidate.status)));
     const candidateApplyFailed = candidate?.cardApplyFailed === true;
     const candidateActive = Boolean(candidate && !candidateApplyFailed
       && (durableMediaCandidate ? candidateConnecting || MEDIA_JOB_ACTIVE_STATUSES.has(candidate.status) || candidateAutomaticRecovery : !candidateInterrupted));
-    const candidateApplying = Boolean(candidate && ["saving", "verifying"].includes(candidate.cardApplyStage));
+    const candidateApplying = Boolean(candidate && ["saving", "verifying"].includes(candidate.cardApplyStage)
+      && !whiteboardGenerationResultReady(candidate));
     const generating = Boolean(candidateActive || candidateApplying || ui.whiteboardGeneratingNodeId === node.id || ui.whiteboardSmartSplitNodeIds.has(node.id));
     const visibleNode = ["image", "video", "audio"].includes(candidate?.kind) && candidate.attachment?.relativePath
       ? {
@@ -18141,12 +18194,15 @@ const renderWhiteboard = (documentState) => {
     const providerQueueLabel = whiteboardProviderQueueVisible(candidate)
       ? `${uiText("厂商排队")}${queueLength !== null && queueLength > 0 ? ` · ${uiText("共")} ${queueLength.toLocaleString()} ${uiText("人")}` : ""}${queuePosition !== null && queuePosition > 0 ? ` · ${uiText("当前第")} ${queuePosition.toLocaleString()} ${uiText("位")}` : ""}`
       : "";
+    const generationResultReady = candidateResultReady;
     const generationStatusLabel = candidateApplyFailed
       ? uiText("结果已生成，卡片回填失败")
       : candidate?.cardApplyStage === "saving"
       ? uiText("生成完成，正在保存")
       : candidate?.cardApplyStage === "verifying"
         ? uiText("结果已保存，正在回读卡片")
+      : generationResultReady
+        ? uiText("图片已生成，正在回写卡片")
       : candidateConnecting
       ? durableMediaCandidate ? mediaGenerationPhaseText(candidate) : uiText("正在连接生成服务")
       : candidate?.connectionInterrupted
@@ -18154,16 +18210,18 @@ const renderWhiteboard = (documentState) => {
       : candidateInterrupted
         ? durableMediaCandidate
           ? `${mediaGenerationPhaseText(candidate)}${candidate.error ? `：${String(candidate.error).slice(0, 120)}` : ""}`
-          : uiText("连接中断，需重新生成")
+          : `${uiText("生成失败")}：${String(candidate.error || "生成连接中断，原提示词已保留，请重新生成。").slice(0, 160)}`
       : candidate
         ? durableMediaCandidate ? providerQueueLabel || mediaGenerationPhaseText(candidate) : uiText(candidate.status === "complete" ? "生成成功" : "正在生成")
       : completedGenerationStatusVisible ? uiText("生成成功") : "";
     const generationMeasurementActive = Boolean(candidate && whiteboardGenerationMeasurementActive(candidate));
     const generationMeasurementStarted = Boolean(candidate && Number(candidate.startedAt) > 0);
     const visibleGenerationProgress = Boolean(candidate && whiteboardGenerationProgressActive(candidate) && whiteboardProgressTarget(candidate) !== null);
-    const generationMetrics = candidate && (generationMeasurementActive || (candidateInterrupted && generationMeasurementStarted))
+    const generationMetrics = candidate && (generationMeasurementActive || generationResultReady || (candidateInterrupted && generationMeasurementStarted))
       ? candidateInterrupted
         ? `<span class="whiteboard-generation-metrics interrupted"><time>${escapeHtml(formatWhiteboardGenerationDuration(candidate.elapsedMs))}</time></span>`
+        : generationResultReady
+          ? `<span class="whiteboard-generation-metrics complete"><span>${escapeHtml(uiText("生成用时"))}</span><time>${escapeHtml(formatWhiteboardGenerationDuration(candidate.elapsedMs))}</time></span>`
         : `<span class="whiteboard-generation-metrics">${visibleGenerationProgress ? `<b>${whiteboardDisplayedProgress(candidate)}%</b>` : ""}<time>${escapeHtml(formatWhiteboardGenerationDuration(candidate.elapsedMs))}</time></span>`
       : completedGenerationStatusVisible
         ? `<span class="whiteboard-generation-metrics complete"><span>${escapeHtml(uiText("总用时"))}</span><time>${escapeHtml(formatWhiteboardGenerationDuration(completedGenerationElapsedMs))}</time></span>`
@@ -18228,7 +18286,8 @@ const renderWhiteboard = (documentState) => {
       ${compositeProcessButton}
       ${content}
       ${imageEditButton}
-      ${candidateApplyFailed ? `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="reapply" data-media-job-id="${escapeHtml(candidate.jobId || "")}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button></div>` : candidate ? mediaGenerationActionMarkup({ jobId: candidate.jobId, status: candidate.status, availableActions: candidate.availableActions, desiredAction: candidate.desiredAction, providerErrorCode: candidate.providerErrorCode, error: candidate.error, providerTaskId: candidate.providerTaskId, submissionState: candidate.submissionState }, { compact: true }) : ""}
+      ${whiteboardTextGenerationFailureActions(candidate)}
+      ${candidateApplyFailed ? `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="reapply" data-media-job-id="${escapeHtml(candidate.jobId || "")}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button></div>` : candidate && !generationResultReady ? mediaGenerationActionMarkup({ jobId: candidate.jobId, status: candidate.status, availableActions: candidate.availableActions, desiredAction: candidate.desiredAction, providerErrorCode: candidate.providerErrorCode, error: candidate.error, providerTaskId: candidate.providerTaskId, submissionState: candidate.submissionState }, { compact: true }) : ""}
       ${lowDetail ? "" : `<button class="whiteboard-node-handle input" type="button" data-canvas-handle="input" title="${escapeHtml(uiText("输入节点：接收直接上游信息"))}" aria-label="${escapeHtml(uiText("输入节点：接收直接上游信息"))}"></button>
       <button class="whiteboard-node-handle output" type="button" data-canvas-handle="output" title="${escapeHtml(uiText("输出节点：连接下游卡片"))}" aria-label="${escapeHtml(uiText("输出节点：连接下游卡片"))}"></button>`}
       ${resizeHandles}
@@ -19032,7 +19091,9 @@ const renderEditor = () => {
   const temporaryEditPromotionAvailable = state.temporaryNotebook === true && documentState.externalMarkdown === true;
   const previewAvailable = (!forcedPreview || temporaryEditPromotionAvailable) && !isWhiteboard && state.activeDocument !== "library-trash";
   const previewMode = forcedPreview || (previewAvailable && documentPreviewActive());
-  elements.whiteboardFullscreenButton.hidden = previewMode && !isAuthorCockpitModule(module.id);
+  // 阅读模式与编辑模式共用同一个编辑区全屏入口。此前这里在阅读模式
+  // 隐藏按钮，导致阅读只能退出回编辑模式后才能全屏。
+  elements.whiteboardFullscreenButton.hidden = false;
   renderDocumentModeButton({ available: previewAvailable, previewMode });
   // Notes and editable project documents share the same rich-text surface.
   // Keep the toolbar hidden only for whiteboards, previews, and non-document views.
@@ -19041,6 +19102,7 @@ const renderEditor = () => {
   syncNoteToolbarLayout();
   elements.editorCanvas.classList.toggle("note-document-active", isNoteDocument);
   elements.editorCanvas.classList.toggle("document-preview-mode", previewMode);
+  syncNoteFullscreenState();
   if (!isWhiteboard) {
     const markdownUpgrade = upgradeLegacyStructuredMarkdownInHtml(documentState.html);
     if (markdownUpgrade.changed) documentState.html = markdownUpgrade.html;
@@ -19672,15 +19734,6 @@ const renderExecutionProcess = (message) => {
       ...(contextDependencyReport.warnings ?? []).map((warning) => warning.kind === "native_fallback_without_read" ? "原生回退（未读取资料）" : "自动发现资料缺口"),
     ].filter(Boolean).join("；")
     : "";
-  const taskCanonMode = String(execution.taskRoute?.canonMode || execution.taskRoute?.taskPolicy?.canonMode || "");
-  const taskCanonModeLabel = ({
-    strict: "严格正典",
-    advisory: "建议参考",
-    alternate: "平行版本",
-    rewrite_canon: "重写正典",
-  })[taskCanonMode] || "";
-  const taskReviewTier = String(execution.taskRoute?.reviewTier || execution.taskRoute?.taskPolicy?.reviewTier || "");
-  const taskReviewTierLabel = ({ none: "无需制品审阅", basic: "基础完整性、revision 与媒体检查", full: "完整审阅与连续性检查" })[taskReviewTier] || "";
   const intentTaskTypeLabel = ({
     writing: "写作",
     planning: "规划",
@@ -19812,10 +19865,28 @@ const renderExecutionProcess = (message) => {
     ? `计划 ${nativePlannedReadEntries.length} 份 · 已实际读取 ${nativeActualDocumentReads.length} 份 · 全文 ${nativeFullDocumentReads.length} 份`
     : "";
   const nativeDeliveryTargets = nativeAgentExecution ? (execution.deliveryTargets || []) : [];
-  const nativeTargetText = nativeDeliveryTargets
-    .map((item) => item.title || item.documentId)
-    .filter(Boolean)
-    .join("、");
+  // A task card is visible before the first documents.write event.  Showing
+  // only deliveryTargets therefore made a semantically resolved “当前文档”
+  // look like “未命名” while routing was still in progress.  Use the frozen
+  // message target and compiled route as read-only display fallbacks; actual
+  // writes still require the trusted delivery receipt.
+  const nativeTargetCandidates = [
+    ...nativeDeliveryTargets,
+    message.target,
+    execution.taskRoute?.targetDocumentId ? {
+      documentId: execution.taskRoute.targetDocumentId,
+      title: state.documents?.[execution.taskRoute.targetDocumentId]?.title || "",
+    } : null,
+    ...(Array.isArray(execution.taskRoute?.intentEnvelope?.targetDocumentIds)
+      ? execution.taskRoute.intentEnvelope.targetDocumentIds.map((documentId) => ({
+        documentId,
+        title: state.documents?.[documentId]?.title || "",
+      }))
+      : []),
+  ].filter((item) => item && (item.title || item.documentId));
+  const nativeTargetText = [...new Set(nativeTargetCandidates
+    .map((item) => item.title || state.documents?.[item.documentId]?.title || item.documentId)
+    .filter(Boolean))].join("、");
   const capabilityNodeLabels = {
     "group:novel": "长篇小说模组", "group:short-fiction": "短篇小说模组", "group:public-account": "公众号文章模组",
     "group:short-drama": "短剧剧本模组", "group:short-video": "短视频剧本模组", "group:prompt-engineering": "提示词工程模组",
@@ -19872,8 +19943,6 @@ const renderExecutionProcess = (message) => {
         : `<div><dt>读取文档</dt><dd>${escapeHtml(actualReadDocumentCount ? `已实际读取 ${actualReadDocumentCount} 份（完整清单见下方）` : executionDocumentSummary(execution))}</dd></div>`}
       ${contextCoverageText ? `<div><dt>创作依据</dt><dd>${escapeHtml(contextCoverageText)}</dd></div>` : ""}
       ${contextDependencySummary ? `<div><dt>资料缺口</dt><dd>${escapeHtml(contextDependencySummary)}</dd></div>` : ""}
-      ${taskCanonModeLabel ? `<div><dt>${escapeHtml(uiText("正典模式"))}</dt><dd>${escapeHtml(taskCanonModeLabel)}</dd></div>` : ""}
-      ${taskReviewTierLabel ? `<div><dt>${escapeHtml(uiText("审阅层级"))}</dt><dd>${escapeHtml(taskReviewTierLabel)}</dd></div>` : ""}
       ${execution.attachmentSummary ? `<div><dt>随附文件</dt><dd>${escapeHtml(execution.attachmentSummary)}（已随本条消息发送）</dd></div>` : ""}
       ${adaptiveEvidenceSummary ? `<div><dt>自适应取证</dt><dd>${escapeHtml(adaptiveEvidenceSummary)}</dd></div>` : ""}
       ${execution.webSearchEnabled ? `<div><dt>联网搜索</dt><dd>${execution.webSearchUsed ? "已搜索并读取网络来源" : pending ? "已开启，正在按任务需要检索" : "已开启，模型判断本题无需检索"}</dd></div>` : ""}
@@ -36900,6 +36969,17 @@ const renderNativeConversation = (runtime, forceScrollToBottom = false) => {
   }, 80);
 };
 
+// Preflight can be synchronous for a large workspace.  The first task-card
+// paint must therefore bypass the normal 80ms coalescing timer; otherwise the
+// route compiler can occupy the renderer before Chromium gets a chance to
+// display "正在路由".
+const renderNativeConversationImmediately = (runtime, forceScrollToBottom = false) => {
+  if (!runtime || !workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) return;
+  if (runtime.conversation.id !== state.activeConversationId) return;
+  mergeAgentRuntimeConversationState(state, runtime);
+  renderConversationIfActive(runtime.conversation.id, { forceScrollToBottom });
+};
+
 const monitorNativeConversation = (runtime, pending) => {
   const runId = pending.execution.nativeAgentRunId;
   if (nativeConversationMonitors.has(runId)) return nativeConversationMonitors.get(runId);
@@ -37186,10 +37266,24 @@ const executeConversationAgentMessage = async (content, options) => {
   const refs = queuedItem || resolveConversationReferenceContext(conversation);
   const explicitNewDocumentRequest = explicitNewDocumentIntent(String(content || ""));
   const explicitChapterTarget = requestedChapterTarget(String(content || ""));
+  // “当前文档” is a semantic target, not a request for the Agent to guess
+  // from conversation history.  Prefer the frozen turn snapshot; the
+  // workspace state is only a same-send fallback for a tab switch that has
+  // painted but has not finished writing the snapshot yet.
+  const currentDocumentRequested = requestsCurrentDocument(String(content || ""));
+  const activeDocumentIdAtSend = String(
+    taskContextSnapshot?.activeDocumentId
+      || (currentDocumentRequested
+        ? workspaceState?.activeDocument
+          || (workspaceState === state && workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)
+            ? state.activeDocument
+            : "")
+        : ""),
+  );
   const targetDocumentId = options.inlineEdit?.documentId
     || explicitChapterTarget?.documentId
-    || (!explicitNewDocumentRequest.create ? taskDocumentAnchor({ instruction: content, activeDocumentId: taskContextSnapshot.activeDocumentId }) : "");
-  const currentDocumentId = taskContextSnapshot.activeDocumentId || "";
+    || (!explicitNewDocumentRequest.create ? taskDocumentAnchor({ instruction: content, activeDocumentId: activeDocumentIdAtSend }) : "");
+  const currentDocumentId = activeDocumentIdAtSend;
   const currentDocument = currentDocumentId ? { documentId: currentDocumentId, title: workspaceState.documents[currentDocumentId]?.title || currentDocumentId } : null;
   const profileSettings = queuedItem?.nativeConfiguration
     ? applyGenerationRuntimeBindings(queuedItem.nativeConfiguration, machineGenerationRuntime, storedGenerationSecrets())
@@ -37200,8 +37294,38 @@ const executeConversationAgentMessage = async (content, options) => {
   };
   const mediaDispatch = normalizeConversationMediaDispatchContract(queuedItem?.mediaDispatch)
     || normalizeConversationMediaDispatchContract(options.mediaDispatch);
-  const initialTaskRoute = agentTaskRouteFromMediaDispatch(mediaDispatch);
-  const nativeTaskRoute = initialTaskRoute || (() => {
+  // Commit the smallest useful task card before any synchronous route or
+  // document-manifest compilation.  The user must see that the instruction
+  // was accepted even when a large workspace makes preflight take a moment.
+  const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
+    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
+    taskId: String(taskContextSnapshot.taskId || sourceMessageId),
+    turnContextSnapshot: clone({ ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) }) };
+  removeImmediateConversationInstruction(options.immediateInstructionId);
+  if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
+  const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
+    target: targetDocumentId ? {
+      documentId: targetDocumentId,
+      title: workspaceState.documents[targetDocumentId]?.title || targetDocumentId,
+      moduleId: workspaceState.documents[targetDocumentId]?.moduleId || "",
+    } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
+    execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
+      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "正在路由" } };
+  taskMessages.push(pending);
+  conversation.messages = taskMessages;
+  const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,
+    workspaceScope: taskContextSnapshot, pendingId: pending.id, requestId: sourceMessageId, taskContextSnapshot });
+  consumeConversationComposerReferences(conversation);
+  if (conversation.id === state.activeConversationId) clearActiveComposerDraft();
+  renderNativeConversationImmediately(runtime, true);
+  await yieldAfterImmediateInstructionRender();
+
+  let nativeTaskRoute = null;
+  let nativeDocumentReadManifest = null;
+  let textTaskExecutionContext = null;
+  try {
+    const initialTaskRoute = agentTaskRouteFromMediaDispatch(mediaDispatch);
+    nativeTaskRoute = initialTaskRoute || (() => {
     const compiled = buildAdaptiveTaskRoute({
       text: String(content || ""),
       authorizationInstruction: String(content || ""),
@@ -37239,8 +37363,8 @@ const executeConversationAgentMessage = async (content, options) => {
       relationType: compiled.relationType || "",
       relationRole: compiled.relationRole || "",
     };
-  })();
-  const nativeDocumentReadManifest = compileNativeAgentDocumentReadManifest({
+    })();
+    nativeDocumentReadManifest = compileNativeAgentDocumentReadManifest({
     documents: Object.fromEntries(Object.entries(workspaceState.documents || {}).map(([documentId, document]) => [documentId, {
       ...document,
       displayCharacterCount: stripHtml(document.html || "").length,
@@ -37252,52 +37376,55 @@ const executeConversationAgentMessage = async (content, options) => {
     taskRoute: nativeTaskRoute,
     contextDomain: workspaceState.documents?.[targetDocumentId]?.contextDomain
       || withSynchronousWorkspaceState(workspaceState, () => documentContextDomain(targetDocumentId)),
-  });
-  const textTaskExecutionContext = compileTextTaskExecutionContext({
+    });
+    textTaskExecutionContext = compileTextTaskExecutionContext({
     taskContextSnapshot: { ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) },
     sourceMessageId,
     taskRoute: nativeTaskRoute,
     targetDocumentId,
     readManifest: nativeDocumentReadManifest,
+    });
+  } catch (error) {
+    pending.pending = false;
+    pending.content = String(error?.message || "任务路由准备失败");
+    pending.execution.status = "failed";
+    pending.execution.error = pending.content;
+    pending.execution.result = "路由失败，未启动模型";
+    await persistNativeConversation(runtime).catch(() => {});
+    renderNativeConversationImmediately(runtime, true);
+    return { dispatchAccepted: false, reason: error?.code || "agent_route_prepare_failed" };
+  }
+  Object.assign(pending.execution, {
+    taskRoute: clone(nativeTaskRoute),
+    deliverableType: nativeTaskRoute.deliverableType || "",
+    targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
+    selectedModulePlacementId: nativeTaskRoute.selectedModulePlacementId || nativeTaskRoute.targetModulePlacementId || "",
+    selectedSkillPlacementIds: nativeTaskRoute.selectedSkillPlacementIds || [],
+    relationType: nativeTaskRoute.relationType || "",
+    relationRole: nativeTaskRoute.relationRole || "",
+    routeReason: nativeTaskRoute.routeReason || nativeTaskRoute.reason || "",
+    textTaskExecutionContext: clone(textTaskExecutionContext),
+    documentReadManifest: clone(nativeDocumentReadManifest),
   });
-  const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
-    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
-    taskId: textTaskExecutionContext.taskId, turnContextSnapshot: clone({ ...taskContextSnapshot, taskId: textTaskExecutionContext.taskId }) };
-  removeImmediateConversationInstruction(options.immediateInstructionId);
-  if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
-  const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
-    target: targetDocumentId ? { documentId: targetDocumentId } : null, nativeInlineEdit: options.inlineEdit ? clone(options.inlineEdit) : null,
-    execution: { status: "running", strength: "native_agent", sourceMessageId, requestId: sourceMessageId,
-      conversationId: conversation.id, startedAt: Date.now(), progressPercent: 1, result: "正在路由",
-      taskRoute: clone(nativeTaskRoute),
-      deliverableType: nativeTaskRoute.deliverableType || "",
-      targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
-      selectedModulePlacementId: nativeTaskRoute.selectedModulePlacementId || nativeTaskRoute.targetModulePlacementId || "",
-      selectedSkillPlacementIds: nativeTaskRoute.selectedSkillPlacementIds || [],
-      relationType: nativeTaskRoute.relationType || "",
-      relationRole: nativeTaskRoute.relationRole || "",
-      routeReason: nativeTaskRoute.routeReason || nativeTaskRoute.reason || "",
-      textTaskExecutionContext: clone(textTaskExecutionContext),
-      documentReadManifest: clone(nativeDocumentReadManifest) } };
-  taskMessages.push(pending);
-  conversation.messages = taskMessages;
-  const runtime = registerAgentTaskRuntime({ conversation, messages: taskMessages, workspaceState,
-    workspaceScope: taskContextSnapshot, pendingId: pending.id, requestId: sourceMessageId, taskContextSnapshot });
-  consumeConversationComposerReferences(conversation);
-  if (conversation.id === state.activeConversationId) clearActiveComposerDraft();
+  renderNativeConversation(runtime, true);
   try {
-    await onPersist();
     // The native Agent reads and writes the canonical workspace on disk. If
     // the user sends an instruction immediately after editing, the renderer's
     // debounced save may still be pending. Commit that exact draft before the
     // Agent starts so document-write-history can preserve it as the complete
     // pre-overwrite version instead of letting the Agent read an older file.
+    const hasUnsavedDocumentWork = ui.workspaceDocumentChangesUnknown
+      || ui.workspaceDirtyDocumentIds.size > 0
+      || whiteboardGenerationDraftNeedsRecoveryCheckpoint();
     if (workspaceState === state
       && workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)
-      && (ui.workspaceDirty || ui.workspaceSavePromise)) {
+      && hasUnsavedDocumentWork) {
       const saved = await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
       if (!saved) throw ui.workspaceSaveError ?? new Error("当前文档尚未安全保存，已停止启动 Agent");
     }
+    await onPersist();
+    // Keep a second paint checkpoint after persistence for slow workspaces;
+    // the first paint above is what makes the task card appear before routing.
     renderNativeConversation(runtime, true);
     await yieldAfterImmediateInstructionRender();
     const started = await conversationAgentRequest("/api/conversation-agent/start", {
@@ -37331,7 +37458,14 @@ const executeConversationAgentMessage = async (content, options) => {
     await persistNativeConversation(runtime);
     return monitorNativeConversation(runtime, pending);
   } catch (error) {
-    pending.pending = false; pending.content = error.message; pending.execution.status = "failed";
+    pending.pending = false;
+    pending.content = String(error?.message || "任务启动失败");
+    pending.execution.status = "failed";
+    // Keep the terminal card from reusing the initial “正在路由” status as
+    // the failure reason.  The actual startup error must remain visible and
+    // must not poison the next independent instruction.
+    pending.execution.error = pending.content;
+    pending.execution.result = "任务启动失败";
     await persistNativeConversation(runtime).catch(() => {});
     renderNativeConversation(runtime);
     return { dispatchAccepted: false, reason: error.code || "agent_start_failed" };
@@ -37340,12 +37474,18 @@ const executeConversationAgentMessage = async (content, options) => {
 
 const sendMessage = async (content, options = {}) => {
   if (ui.conversationPreview && !options.queuedItem) return false;
-  const taskRuntime = typeof agentTaskRuntimeFor === "function"
+  const taskRuntimeCandidate = typeof agentTaskRuntimeFor === "function"
     ? agentTaskRuntimeFor({ conversationId: options.conversationId })
     : null;
   const submittedTaskContextSnapshot = options.queuedItem?.taskContextSnapshot
     || options.taskContextSnapshot
     || captureTaskContextSnapshot(options.conversationId);
+  // A conversation ID is only unique inside its workspace. Never reuse a
+  // stale runtime from another opened work/笔记本 when a new turn carries a
+  // different frozen workspace snapshot.
+  const taskRuntime = agentTaskRuntimeMatchesSnapshot(taskRuntimeCandidate, submittedTaskContextSnapshot)
+    ? taskRuntimeCandidate
+    : null;
   // The composer intentionally yields once so the immediate instruction can
   // paint. During that turn the user may switch works. Resolve the workspace
   // captured at send time before looking up the conversation; otherwise a
@@ -37395,7 +37535,11 @@ const sendMessage = async (content, options = {}) => {
     const workspace = options.taskContextSnapshot || {};
     if (taskWorkspaceState === state
       && workspaceTargetIsActive(workspace.workspaceKind, workspace.workspacePath)) {
-      persist();
+      // Conversation/task-card updates are state-only. Marking them as an
+      // unknown document edit forced the next instruction to flush the whole
+      // workspace and made a stale conversation conflict block every new
+      // conversation. Keep document saves and conversation saves separate.
+      persistWorkspaceStateOnly({ saveDelay: 180 });
       return true;
     }
     return savePinnedConversationCompletion({
@@ -42188,7 +42332,7 @@ const deleteCustomFolder = async (folderId) => {
   persist();
   renderAll();
   try {
-    await saveWorkspace({ throwOnError: true });
+    await saveWorkspace({ throwOnError: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
     showToast(`文件夹“${record.label}”已移入回收站`);
     return true;
   } catch (error) {
@@ -42249,7 +42393,7 @@ const deleteTreeFolder = async ({ node, moduleId, viewId }) => {
   persist();
   renderAll();
   try {
-    await saveWorkspace({ throwOnError: true, forceFullState: true });
+    await saveWorkspace({ throwOnError: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
     showToast(`文件夹“${node.label}”已移入回收站`);
     return true;
   } catch (error) {
@@ -42315,7 +42459,7 @@ const deleteManuscriptVolume = async ({ folderId, label }) => {
   persist();
   renderAll();
   try {
-    await saveWorkspace({ throwOnError: true });
+    await saveWorkspace({ throwOnError: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
     showToast(`分卷“${label}”已移入回收站`);
     return true;
   } catch (error) {
@@ -42439,7 +42583,7 @@ const deleteDocument = async (documentId) => {
     persist();
     renderAll();
     try {
-      await saveWorkspace({ throwOnError: true, forceFullState: true });
+      await saveWorkspace({ throwOnError: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
       showToast(`“${orphan.title}”已移入回收站`);
       return true;
     } catch (error) {
@@ -42476,7 +42620,7 @@ const deleteDocument = async (documentId) => {
   persist();
   renderAll();
   try {
-    await saveWorkspace({ throwOnError: true, forceFullState: true });
+    await saveWorkspace({ throwOnError: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
     showToast(`“${documentState.title}”已移入回收站`);
     return true;
   } catch (error) {
@@ -49841,6 +49985,17 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     if (card && event.detail === 1) scheduleWhiteboardCardOpen(card.dataset.canvasNode);
     return;
   }
+  const textGenerationRetry = event.target.closest("[data-whiteboard-generation-retry]");
+  if (textGenerationRetry) {
+    event.preventDefault();
+    event.stopPropagation();
+    const nodeId = String(textGenerationRetry.dataset.whiteboardGenerationRetry || "").trim();
+    if (nodeId && whiteboardNodeById(nodeId)) {
+      setWhiteboardAutoOpenDisabled(nodeId, false);
+      openWhiteboardGenerateDialog(nodeId);
+    }
+    return;
+  }
   const mediaAction = event.target.closest("[data-media-job-action][data-media-job-id]");
   if (mediaAction) {
     event.preventDefault();
@@ -52209,9 +52364,13 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget, initializat
       releaseWhiteboardGenerationDialogInteractivity(dialog, nodeId, initializationToken);
     }
   };
+  // Finish the first positioning/focus pass before the initializer returns.
+  // Releasing inert earlier creates a short window where the surface looks
+  // open but a fast click still targets the old position and loses the caret.
+  // Keep the later passes as idempotent corrections for a throttled renderer
+  // or a reference tray that changes size after the first paint.
+  finalizeOpen();
   requestAnimationFrame(finalizeOpen);
-  // Chromium can throttle RAF while restoring/minimizing a desktop window.
-  // The fallback guarantees the prompt editor cannot stay inert forever.
   setTimeout(finalizeOpen, 180);
 };
 
@@ -53370,6 +53529,20 @@ const renderWhiteboardGenerationInlineMentions = (form, { force = false } = {}) 
     syncWhiteboardRichPromptValue(form);
     return;
   }
+  // A forced reference refresh can arrive while the user is typing (for
+  // example after a failed generation or a late upstream-card update).  The
+  // editor must remain the same logical editing surface: rebuilding its
+  // mention chips otherwise detaches Chromium's native Range and makes the
+  // caret appear to disappear.  Capture the logical offsets before replacing
+  // the children and restore them immediately after the replacement.
+  const preservedFocus = force && document.activeElement === tray;
+  // Chromium may briefly expose an empty/detached Range while an asynchronous
+  // reference refresh is replacing the mention chips.  The last confirmed
+  // logical offsets are more reliable than that transient native Range and
+  // keep the caret visible after a failed generation or late card update.
+  const preservedSelection = preservedFocus
+    ? whiteboardRichPromptSelectionOffsets(tray) || form._whiteboardRichPromptSelectionOffsets || null
+    : null;
   const { upstream: sourceUpstream } = whiteboardGenerationSources(activeWhiteboardDocument()?.canvas, form.dataset.nodeId);
   const rawUpstream = whiteboardGenerationNodesForForm(form, sourceUpstream);
   migrateWhiteboardGenerationPromptReferenceSequence(form, rawUpstream);
@@ -53428,6 +53601,22 @@ const renderWhiteboardGenerationInlineMentions = (form, { force = false } = {}) 
   markup += escapeHtml(input.value.slice(cursor)).replace(/\n/g, "<br>");
   tray.innerHTML = markup;
   updateWhiteboardGenerationPromptCounts(form);
+  if (preservedFocus && preservedSelection) {
+    placeWhiteboardRichPromptSelectionAtOffsets(form, preservedSelection, { focus: true });
+    // A native dialog can restore focus to itself after innerHTML is replaced
+    // (notably after a provider failure re-renders the card).  Restore only
+    // when focus did not move to another actionable control; never steal a
+    // deliberate click from a button or menu.
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      const dialog = form.closest("dialog");
+      const safeToRestore = dialog?.open
+        && (active === document.body || active === document.documentElement || active === dialog || !active);
+      if (safeToRestore && document.activeElement !== tray) {
+        placeWhiteboardRichPromptSelectionAtOffsets(form, preservedSelection, { focus: true });
+      }
+    });
+  }
 };
 
 const insertWhiteboardGenerationMention = (form, nodeId) => {
@@ -56761,10 +56950,26 @@ elements.whiteboardGenerateForm.addEventListener("submit", async (event) => {
       retryCompletedWhiteboardGenerationApply(durableJob, { beforeCanvas });
       showToast("文字已经生成，正在自动重试写入卡片；不会重新调用模型");
     } else {
-      if (durableJob?.id) await failWhiteboardGenerationJob(durableJob.id, error.message, true).catch(() => null);
-      stopWhiteboardGenerationCandidate(candidateKey, { remove: true });
-      if (state.activeDocument === sourceDocumentId && state.settings.workspacePath === sourceWorkspacePath) renderWhiteboard(activeWhiteboardDocument());
-      showToast(`生成失败：${error.message}`);
+      let failedJob = null;
+      if (durableJob?.id) {
+        failedJob = await failWhiteboardGenerationJob(durableJob.id, error.message, true).catch(() => null);
+      }
+      if (failedJob) {
+        // Keep the failed task on its originating card. Removing the candidate
+        // here made a real provider/model error look like a silent failure and
+        // discarded the only retry entry point.
+        showInterruptedWhiteboardGenerationJob(failedJob);
+      } else {
+        updateWhiteboardGenerationCandidate(candidateKey, {
+          status: "failed",
+          progressPercent: 100,
+          elapsedMs: Math.max(1, Date.now() - Number(submissionFeedback.startedAt || Date.now())),
+          error: String(error?.message || "生成失败").slice(0, 500),
+          availableActions: {},
+        });
+        if (state.activeDocument === sourceDocumentId && state.settings.workspacePath === sourceWorkspacePath) renderWhiteboard(activeWhiteboardDocument());
+      }
+      showToast(`生成失败：${error.message || "未知原因"}。失败原因和重新生成入口已保留在原卡片。`);
     }
   } finally {
     if (durableHeartbeat) clearInterval(durableHeartbeat);
@@ -58342,10 +58547,22 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
     );
   });
   dialog.addEventListener("pointerdown", (event) => {
-    recoverWhiteboardGenerationDialogForInteraction(
-      dialog,
-      event.target.closest?.(".whiteboard-generation-inline-mentions"),
-    );
+    const editor = event.target.closest?.(".whiteboard-generation-inline-mentions");
+    recoverWhiteboardGenerationDialogForInteraction(dialog, editor);
+    // Chromium normally focuses a contenteditable after pointerdown.  A
+    // generation surface can be repositioned or synchronously re-rendered in
+    // the same turn, though, which leaves the click visible but drops the
+    // caret.  Restore focus at the dialog boundary before the canvas handler
+    // sees the event; do not move a live selection so users can keep editing
+    // the same range after a redraw.
+    if (editor?.isConnected && !dialog.inert && document.activeElement !== editor) {
+      const selection = document.getSelection();
+      const hasLiveSelection = selection?.rangeCount
+        && editor.contains(selection.anchorNode)
+        && editor.contains(selection.focusNode);
+      editor.focus({ preventScroll: true });
+      if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(editor.closest("form"), { focus: false });
+    }
   }, true);
   dialog.addEventListener("close", () => {
     // The native close event is queued. When this same workbench has already
@@ -60259,6 +60476,14 @@ const agentTaskRuntimeFor = ({ conversationId = "", turnId = "", messageId = "",
   )) ?? null;
 };
 
+const agentTaskRuntimeMatchesSnapshot = (runtime, snapshot) => {
+  if (!runtime || !snapshot) return false;
+  const runtimeScope = runtime.workspaceScope || {};
+  const snapshotKind = snapshot.workspaceKind === "notebook" ? "notebook" : "project";
+  return runtimeScope.workspaceKind === snapshotKind
+    && normalizedWorkspacePath(runtimeScope.workspacePath) === normalizedWorkspacePath(snapshot.workspacePath);
+};
+
 const registerAgentTaskRuntime = ({ conversation, messages, workspaceState, workspaceScope, pendingId = "", requestId = "", turnId = "", taskContextSnapshot = null } = {}) => {
   if (!conversation?.id || !workspaceState) return null;
   const existing = ui.agentTaskRuntimes.get(conversation.id) ?? null;
@@ -61780,8 +62005,11 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
         && String(state.settings?.workspacePath || "").toLowerCase() === String(workspacePath || "").toLowerCase()
   );
   const submittedTaskContextSnapshot = queuedItem?.taskContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(conversationId);
-  const existingRuntime = typeof agentTaskRuntimeFor === "function"
+  const existingRuntimeCandidate = typeof agentTaskRuntimeFor === "function"
     ? agentTaskRuntimeFor({ conversationId })
+    : null;
+  const existingRuntime = agentTaskRuntimeMatchesSnapshot(existingRuntimeCandidate, submittedTaskContextSnapshot)
+    ? existingRuntimeCandidate
     : null;
   const submittedWorkspaceState = !existingRuntime
     && !taskWorkspaceIsActive(

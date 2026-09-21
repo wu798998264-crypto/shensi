@@ -98,6 +98,21 @@ assert.equal(result.agentRuntime.permissionMode, "shensi_only");
 assert.equal(requested.url, "https://api.openai.com/v1/responses");
 assert.match(requested.options.headers.authorization, /^Bearer test-key$/u);
 const body = JSON.parse(requested.options.body);
+
+const capacityRuntime = createCodexApiAgentRuntime({
+  fetchImpl: async () => ({
+    ok: false,
+    status: 400,
+    text: async () => JSON.stringify({ error: { message: "Selected model is at capacity. Please try a different model." } }),
+  }),
+});
+await assert.rejects(
+  capacityRuntime.runStage({ settings: profile, prompt: "容量测试", sessionId: "capacity-session", stage: "agent" }),
+  (error) => error?.code === "CODEX_API_MODEL_CAPACITY"
+    && error.message === "聚合 API 当前模型繁忙或容量不足，请切换模型后重试。",
+  "上游模型容量错误必须转换为可操作的中文原因，不能误报为路由或落盘失败",
+);
+capacityRuntime.close();
 assert.equal(body.model, "gpt-5-codex");
 assert.equal(body.reasoning.effort, "high");
 assert.equal(body.service_tier, "fast");

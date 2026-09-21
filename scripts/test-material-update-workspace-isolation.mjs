@@ -28,7 +28,7 @@ async function sourceWindow(marker, count = 180) {
   return collected.join("\n");
 }
 
-const inspectionRouting = await sourceWindow("const executeConversationAgentMessage =", 60);
+const inspectionRouting = await sourceWindow("const executeConversationAgentMessage =", 180);
 assert.match(inspectionRouting, /workspaceState, taskContextSnapshot/u,
   "资料检查与其他 Agent 任务必须继承发送时工作区快照");
 assert.match(inspectionRouting, /workspaceKind: taskContextSnapshot\.workspaceKind, workspacePath: taskContextSnapshot\.workspacePath/u,

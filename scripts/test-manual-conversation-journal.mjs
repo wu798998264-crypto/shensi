@@ -11,6 +11,16 @@ assert.equal(state.activeConversationId,'manual');
 state.conversations[0].messages.push({content:'newer'});
 restoreManualConversations(storage,state);
 assert.equal(state.conversations[0].messages[0].content,'newer');
+const canonicalState = {
+  ...state,
+  activeConversationId: 'latest',
+  conversations: [
+    { id: 'latest', title: '最新对话', messages: [{ content: '最新内容' }] },
+    ...state.conversations,
+  ],
+};
+restoreManualConversations(storage, canonicalState);
+assert.equal(canonicalState.activeConversationId, 'latest', '旧的 localStorage 活动指针不得覆盖规范工作区当前对话');
 const other = {...state,settings:{workspacePath:'C:/other'},conversations:[]};
 restoreManualConversations(storage,other);
 assert.equal(other.conversations.length,0);

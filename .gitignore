@@ -9,6 +9,8 @@
 !/index.html
 !/server.mjs
 !/cloud-core.mjs
+!/cloud-skill-platform/
+!/cloud-skill-platform/**
 !/update-config.example.json
 !/src/
 !/scripts/
@@ -23,6 +25,10 @@
 /docs/*
 !/docs/protected-capabilities/
 !/docs/agent-runtime-refactor.md
+!/docs/plans/
+/docs/plans/*
+!/docs/plans/2026-09-21-cloud-skill-platform-design.md
+!/docs/plans/2026-09-21-cloud-skill-platform-implementation.md
 
 # Secrets, personal content, generated state and build output at every depth.
 **/.env
@@ -76,3 +82,4 @@
 **/*.mp3
 **/*.bak
 **/*.tmp
+!/cloud-skill-platform/.env.example

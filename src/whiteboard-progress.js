@@ -59,6 +59,16 @@ export const whiteboardMediaProviderAccepted = (candidate = {}) => {
     || timestampMilliseconds(current.submittedAt) !== null;
 };
 
+// A verified local attachment means the provider generation itself has
+// finished. Card persistence/readback may still be pending, but the
+// generation stopwatch must no longer present that bookkeeping as provider
+// generation time. The durable job remains active until card readback passes.
+export const whiteboardGenerationResultReady = (candidate = {}) => {
+  const current = candidate && typeof candidate === "object" ? candidate : {};
+  if (!current.resultReady && !current.result?.attachment?.relativePath && !current.attachment?.relativePath) return false;
+  return String(current.channel || "") === "image";
+};
+
 export const whiteboardGenerationConnectionPhase = (candidate = {}) => {
   const current = candidate && typeof candidate === "object" ? candidate : {};
   const channel = String(current.channel || "text");
@@ -74,6 +84,7 @@ export const whiteboardGenerationConnectionPhase = (candidate = {}) => {
 export const whiteboardGenerationMeasurementActive = (candidate = {}) => {
   const current = candidate && typeof candidate === "object" ? candidate : {};
   if (current.cardApplyFailed === true) return false;
+  if (whiteboardGenerationResultReady(current)) return false;
   // Provider completion is not the end of the user-visible task. Keep the
   // timer alive while the saved result is being written back and verified on
   // the originating card, then freeze it only after readback succeeds.
@@ -89,6 +100,7 @@ export const whiteboardGenerationMeasurementActive = (candidate = {}) => {
 export const whiteboardGenerationProgressActive = (candidate = {}) => {
   const current = candidate && typeof candidate === "object" ? candidate : {};
   if (current.cardApplyFailed === true) return false;
+  if (whiteboardGenerationResultReady(current)) return false;
   if (String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase()
     === "DREAMINA_PROVIDER_SESSION_RESTORE_PENDING") return false;
   const channel = String(current.channel || "text");

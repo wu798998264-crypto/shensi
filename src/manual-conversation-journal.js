@@ -25,5 +25,11 @@ export const restoreManualConversations = (storage, state) => {
   for (const record of Object.values(entry.records || {})) {
     if (!deleted.has(record.id) && !state.conversations.some((item) => item.id === record.id)) state.conversations.unshift(record);
   }
-  if (state.conversations.some((item) => item.id === entry.activeId)) state.activeConversationId = entry.activeId;
+  // The journal only protects a just-created conversation while the canonical
+  // workspace save is in flight.  It is not authoritative once the workspace
+  // already has a valid active conversation; otherwise an old localStorage
+  // pointer can reopen an earlier chat after restart and make history entries
+  // appear to show the same conversation.
+  const currentActiveExists = state.conversations.some((item) => item.id === state.activeConversationId);
+  if (!currentActiveExists && state.conversations.some((item) => item.id === entry.activeId)) state.activeConversationId = entry.activeId;
 };

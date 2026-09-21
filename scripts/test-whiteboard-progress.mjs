@@ -11,6 +11,7 @@ import {
   whiteboardGenerationProgressActive,
   whiteboardGenerationProgressTarget,
   whiteboardGenerationStartedAt,
+  whiteboardGenerationResultReady,
   whiteboardMediaProviderAccepted,
   whiteboardProviderIsDirectGeneration,
   whiteboardProviderQueueVisible,
@@ -95,13 +96,23 @@ assert.equal(whiteboardGenerationMeasurementActive({ channel: "text", status: "c
 assert.equal(whiteboardGenerationProgressActive({ channel: "text", status: "connecting" }), false, "文本连接阶段不得显示百分比");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "text", status: "streaming", jobId: "text-job" }), true, "文本模型请求开始后必须显示生成进度和耗时");
 assert.equal(whiteboardGenerationProgressActive({ channel: "text", status: "streaming", jobId: "text-job" }), true, "文本流式生成阶段必须显示百分比");
-assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete", cardApplyStage: "saving" }), true, "厂商完成后的卡片保存阶段必须继续累计总耗时");
+const verifiedImageResult = {
+  channel: "image",
+  status: "complete",
+  cardApplyStage: "saving",
+  resultReady: true,
+  attachment: { relativePath: "assets/result.png" },
+};
+assert.equal(whiteboardGenerationResultReady(verifiedImageResult), true, "已取得图片附件时必须识别为结果已就绪");
+assert.equal(whiteboardGenerationMeasurementActive(verifiedImageResult), false, "图片结果返回后生成计时必须冻结，保存阶段不能继续冒充生成");
+assert.equal(whiteboardGenerationProgressActive(verifiedImageResult), false, "图片结果返回后不得继续显示生成进度");
+assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete", cardApplyStage: "saving" }), true, "尚未取得附件时卡片保存阶段仍需继续累计总耗时");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "text", status: "complete", cardApplyStage: "verifying" }), true, "文字回读确认阶段也必须继续累计总耗时");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete" }), false, "回读完成后计时必须冻结，不能继续增长");
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
-assert.match(app, /whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted \} from "\.\/whiteboard-progress\.js\?v=5\.2\.6-generation-phases"/u);
+assert.match(app, /whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationResultReady, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted \} from "\.\/whiteboard-progress\.js\?v=5\.2\.7-result-ready"/u);
 assert.doesNotMatch(app, /totalSeconds\.toFixed\(1\).*秒/u, "卡片与任务卡生成耗时不得再显示小数秒");
 assert.match(app, /normalizedPatch\.progressPercent = monotonicProgress\(/u);
 assert.match(app, /normalizedPatch\.elapsedMs = monotonicElapsedMs\(/u);
@@ -114,7 +125,7 @@ assert.match(app, /displayProgressPercent:[\s\S]{0,180}\? Number\(existing\.disp
 assert.match(app, /scheduleWhiteboardProgressDisplay\(candidateKey\)/u);
 assert.match(app, /visibleGenerationProgress = Boolean\(candidate && whiteboardGenerationProgressActive\(candidate\) && whiteboardProgressTarget\(candidate\) !== null\)/u);
 assert.match(app, /candidateConnecting[\s\S]{0,180}正在连接生成服务/u, "连接阶段必须显示连接文案而不是正在生成");
-assert.match(app, /candidate && \(generationMeasurementActive \|\| \(candidateInterrupted && generationMeasurementStarted\)\)/u, "连接和排队阶段必须保留总耗时指标");
+assert.match(app, /candidate && \(generationMeasurementActive \|\| generationResultReady \|\| \(candidateInterrupted && generationMeasurementStarted\)\)/u, "连接、排队和已返回结果的卡片必须保留准确耗时指标");
 assert.match(app, /厂商排队[\s\S]{0,220}当前第/u, "厂商排队必须明确显示当前位置语义");
 assert.match(app, /厂商排队[\s\S]{0,220}共/u, "厂商排队必须明确显示总人数语义");
 assert.match(app, /const beginWhiteboardSubmissionFeedback[\s\S]{0,520}status: "connecting"/u, "点击生成后必须立即建立卡片状态与计时");
@@ -138,6 +149,18 @@ assert.match(app, /completedResultPendingApply[\s\S]{0,520}retryCompletedWhitebo
 assert.match(app, /candidate && !candidateApplyFailed[\s\S]{0,240}candidateApplying/u, "卡片回填失败后不得继续显示为生成中或转圈");
 assert.match(app, /candidateApplyFailed[\s\S]{0,180}结果已生成，卡片回填失败/u, "回填失败必须保留明确可见状态");
 assert.match(app, /data-media-job-action="reapply"[\s\S]{0,240}重新回填/u, "回填失败卡片必须提供仅使用既有结果的重新回填按钮");
+assert.match(app, /visibleAttentionState = \["failed", "waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"\]/u,
+  "明确失败与待处理状态必须持续映射回原白板卡片，不能在恢复时静默移除");
+assert.match(app, /candidateInterrupted[\s\S]{0,360}mediaGenerationPhaseText\(candidate\)[\s\S]{0,160}candidate\.error/u,
+  "失败卡片必须展示中文阶段和厂商返回的真实原因");
+assert.match(app, /candidate && !generationResultReady \? mediaGenerationActionMarkup/u,
+  "失败或待处理卡片必须保留重新生成、找回或停止等真实操作入口");
+assert.match(app, /let failedJob = null;[\s\S]{0,420}showInterruptedWhiteboardGenerationJob\(failedJob\)/u,
+  "文字生成失败后必须保留持久任务和原卡片失败状态，不能直接删除候选卡片");
+assert.match(app, /const whiteboardTextGenerationFailureActions = \(candidate\)[\s\S]{0,420}data-whiteboard-generation-retry/u,
+  "文字生成失败卡片必须提供重新打开操作栏的入口");
+assert.match(app, /生成失败[^`]{0,80}candidate\.error/u,
+  "文字生成失败卡片必须显示真实错误原因，而不是只显示连接中断");
 assert.match(app, /for \(const option of executionModeSelect\.options\)[\s\S]{0,220}option\.disabled = false/u, "模型设置的 Chat、Agent 与双模式必须始终可选");
 assert.doesNotMatch(app, /executionModeSelect\.value = modeValueForCapabilities/u, "能力探针不得再自动改写用户选择的使用模式");
 assert.match(app, /const selectedExecutionMode = control\("textExecutionMode"\)\.value[\s\S]{0,2200}control\("textExecutionMode"\)\.value = selectedExecutionMode/u, "切换 Agent 运行器后必须恢复用户明确选择的模式");

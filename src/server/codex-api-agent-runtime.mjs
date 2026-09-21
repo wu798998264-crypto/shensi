@@ -10,9 +10,16 @@ const safeJson = async (response) => {
   let payload = null;
   try { payload = raw ? JSON.parse(raw) : null; } catch {}
   if (!response.ok) {
-    const detail = text(payload?.error?.message || payload?.message || raw).slice(0, 600);
-    const error = new Error(`神思运行器 API 请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
-    error.code = response.status === 401 ? "CODEX_API_UNAUTHORIZED"
+    const rawDetail = text(payload?.error?.message || payload?.message || raw).slice(0, 600);
+    const capacityLimited = /(?:selected model.*capacity|model.*at capacity|capacity.*(?:model|available)|模型.*容量|容量.*模型|当前模型.*繁忙)/iu.test(rawDetail);
+    const detail = capacityLimited
+      ? "聚合 API 当前模型繁忙或容量不足，请切换模型后重试。"
+      : rawDetail;
+    const error = new Error(capacityLimited
+      ? detail
+      : `神思运行器 API 请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
+    error.code = capacityLimited ? "CODEX_API_MODEL_CAPACITY"
+      : response.status === 401 ? "CODEX_API_UNAUTHORIZED"
       : response.status === 403 ? "CODEX_API_FORBIDDEN"
         : response.status === 429 ? "CODEX_API_RATE_LIMITED" : "CODEX_API_REQUEST_FAILED";
     error.statusCode = response.status;

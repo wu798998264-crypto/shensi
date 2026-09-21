@@ -368,11 +368,11 @@ const nativeConversationSource = appSource.slice(
 assert.match(nativeConversationSource, /conversationAgentRequest\("\/api\/conversation-agent\/start"/u,
   "所有普通文字请求必须统一进入原生 Agent");
 assert.match(appSource, /contractDocument\.externalContentChanged === true/u);
-assert.match(nativeConversationSource, /const targetDocumentId = options\.inlineEdit\?\.documentId[\s\S]{0,240}taskDocumentAnchor\(\{ instruction: content, activeDocumentId: taskContextSnapshot\.activeDocumentId \}\)/u,
+assert.match(nativeConversationSource, /const targetDocumentId = options\.inlineEdit\?\.documentId[\s\S]{0,420}taskDocumentAnchor\(\{ instruction: content, activeDocumentId: activeDocumentIdAtSend \}\)/u,
   "普通任务不默认绑定当前文档，只有局部编辑、明确章节或明确指代当前文档时才冻结目标");
 assert.match(nativeConversationSource, /!explicitNewDocumentRequest\.create/u,
   "明确新建文档时不得沿用当前文档锚点");
-assert.match(nativeConversationSource, /const currentDocumentId = taskContextSnapshot\.activeDocumentId/u, "当前文档仅用于指代");
+assert.match(nativeConversationSource, /const currentDocumentId = activeDocumentIdAtSend/u, "当前文档仅用于指代");
 assert.doesNotMatch(nativeConversationSource, /crossFormatRoute|isExplicitCrossFormatInstruction/u,
   "跨格式任务不得再由普通对话本地关键词路由抢先指定目标");
 assert.match(appSource, /const landed = hasVerifiedLandingReceipt\(reply\);[\s\S]{0,900}landingStatus: verificationPending \? reply\.engineExecution\.status : landed \? "committed" : "failed"/u,

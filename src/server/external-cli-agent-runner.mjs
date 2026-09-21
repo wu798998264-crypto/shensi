@@ -492,19 +492,46 @@ export const runExternalCliAgent = async ({
           finish(Object.assign(errorForRunner(runner, `${runnerLabel(runner)} 任务已停止`, "EXTERNAL_CLI_ABORTED"), { name: "AbortError" }));
           return;
         }
-        if (Number(code) !== 0) {
-          finish(errorForRunner(runner, `${runnerLabel(runner)} 退出码 ${code}：${redactAgentError(stderr || stdout || "没有错误输出", [apiKey])}`));
-          return;
-        }
         const parsed = parseExternalCliOutput(stdout);
         emitDeltas();
-        if (parsed.error) {
-          finish(errorForRunner(runner, `${runnerLabel(runner)} 返回错误：${sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))}`));
+        const text = sanitizeExternalOutput(parsed.text || emittedText);
+        if (Number(code) !== 0) {
+          // WorkBuddy can exit non-zero after a recoverable MCP/bridge error
+          // even though it has already emitted a complete assistant answer.
+          // Keep that answer and let the conversation service validate the
+          // actual document/media delivery instead of replacing it with a
+          // generic failed task card. A process that produced no usable text
+          // remains a genuine runner failure.
+          if (runner !== "workbuddy" || !text.trim()) {
+            finish(errorForRunner(runner, `${runnerLabel(runner)} 退出码 ${code}：${redactAgentError(stderr || stdout || "没有错误输出", [apiKey])}`));
+            return;
+          }
+          finish(null, {
+            text: text.trim(),
+            sessionId: parsed.sessionId,
+            actualProvider: parsed.actualProvider || clean(provider),
+            actualModel: parsed.actualModel || clean(model),
+            executionRuntime: `${runner}_agent`,
+            executionSourceReceipt,
+            permissionMode: accessMode,
+            runnerWarnings: [`${runnerLabel(runner)} 在返回正文后退出码为 ${code}；正文已保留，交付结果仍按实际回执核验。`],
+          });
           return;
         }
-        const text = sanitizeExternalOutput(parsed.text || emittedText);
         if (!text.trim()) {
-          finish(errorForRunner(runner, `${runnerLabel(runner)} 已结束，但没有返回可用文本`, "EXTERNAL_CLI_RESPONSE_EMPTY"));
+          const detail = parsed.error
+            ? `：${sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))}`
+            : "";
+          finish(errorForRunner(runner, `${runnerLabel(runner)} 已结束，但没有返回可用文本${detail}`, "EXTERNAL_CLI_RESPONSE_EMPTY"));
+          return;
+        }
+        // Some external CLIs emit recoverable tool/MCP error events before
+        // continuing with a normal assistant answer.  A parsed error must
+        // not discard a usable final response or turn the whole task into a
+        // failed run; the conversation service will still enforce document,
+        // media and delivery receipts after this response returns.
+        if (runner !== "workbuddy" && parsed.error) {
+          finish(errorForRunner(runner, `${runnerLabel(runner)} 返回错误：${sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))}`));
           return;
         }
         finish(null, {
@@ -515,6 +542,7 @@ export const runExternalCliAgent = async ({
           executionRuntime: `${runner}_agent`,
           executionSourceReceipt,
           permissionMode: accessMode,
+          ...(parsed.error ? { runnerWarnings: [sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))] } : {}),
         });
       });
       timer = setTimeout(() => {

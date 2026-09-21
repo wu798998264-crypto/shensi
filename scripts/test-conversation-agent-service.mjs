@@ -169,6 +169,39 @@ try {
   const restarted = createConversationAgentService({ appRoot: root, storageRoot: join(root, 'sessions') });
   assert.equal((await restarted.status(a.id)).text, '我的其他想法');
 
+  // A runner may return a usable answer together with a recoverable provider
+  // warning.  That warning must remain visible without converting the whole
+  // conversation run into a failed terminal state, so a later user question
+  // starts from a normal completed turn.
+  const warningService = createConversationAgentService({
+    appRoot: root,
+    storageRoot: join(root, 'runner-warning-sessions'),
+    skillCatalog: async () => [],
+    readRoute: async () => 'route',
+    run: async ({ workspaceToolRuntime }) => {
+      await workspaceToolRuntime.invoke({ namespace: 'interaction', tool: 'delivery', arguments: {
+        mode: 'conversation', taskType: 'general_qa', routingMode: 'general',
+        routingReason: '普通问答不需要面板 Skill', documentIds: [],
+      } });
+      return { text: 'WorkBuddy 已返回正文。', runnerWarnings: ['WorkBuddy 在返回正文后退出码为 1；正文已保留'] };
+    },
+  });
+  const warningRun = await warningService.start({
+    ...request,
+    conversationId: 'runner-warning',
+    sourceMessageId: 'runner-warning-user',
+    messages: [{ role: 'user', content: '回答一个普通问题' }],
+  });
+  let warningStatus;
+  for (let index = 0; index < 300; index += 1) {
+    warningStatus = await warningService.status(warningRun.id);
+    if (["completed", "failed"].includes(warningStatus.status)) break;
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  assert.equal(warningStatus.status, 'completed', warningStatus.error);
+  assert.equal(warningStatus.text, 'WorkBuddy 已返回正文。');
+  assert.match(warningStatus.deliveryWarnings.join('\n'), /退出码为 1/u);
+
   const interruptedStorage = join(root, 'interrupted-sessions');
   const orphaned = createConversationAgentService({ appRoot: root, storageRoot: interruptedStorage, skillCatalog: async () => [], readRoute: async () => 'route', run: async () => new Promise(() => {}) });
   const orphan = await orphaned.start({ ...request, conversationId: 'conv-orphan', sourceMessageId: 'orphan-message' });

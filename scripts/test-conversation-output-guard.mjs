@@ -40,6 +40,35 @@ assert.equal(sanitizeConversationOutput(workBuddyRouteLeak), workBuddyRouteLeak.
 assert.equal(sanitizeWorkBuddyConversationOutput('{"routes":[{"placementId":"x"}],"autoLoadedSkills":[{"name":"x"}', { final: false }), "", "流式未闭合的 WorkBuddy 路由对象不得提前显示");
 assert.equal(sanitizeWorkBuddyConversationOutput('{"routes":[{"placementId":"x"}],"autoLoadedSkills":[{"name":"x"}'), "", "WorkBuddy 最终不应显示截断的内部路由对象");
 
+const workBuddyToolAndSchemaLeak = `{"error":"本轮已经读取面板能力分支，必须真实读取对应 Skill 后以 skills 方式交付；不能改报为通用问答","code":"TOOL_FAILED"}
+
+"type": "object",
+"required": ["mode", "documentIds"],
+"properties": {
+  "mode": {"type": "string"},
+  "routingMode": {"type": "string"}
+},
+"additionalProperties": false
+}
+
+能。刚才我实际读了三层，结果是真实返回的：`;
+const workBuddyClean = sanitizeWorkBuddyConversationOutput(workBuddyToolAndSchemaLeak);
+assert.equal(workBuddyClean, "能。刚才我实际读了三层，结果是真实返回的：", "WorkBuddy 工具错误和裸 Schema 不得泄露到回答");
+assert.doesNotMatch(workBuddyClean, /TOOL_FAILED|routingMode|additionalProperties|properties|mcp__shensi__/iu);
+assert.equal(sanitizeWorkBuddyConversationOutput('{"error":"本轮已经读取面板能力分支","code":"TOOL_FAILED"}', { final: false }), "", "WorkBuddy 流式工具错误不得提前显示");
+
+const workBuddyDocumentReceipt = JSON.stringify({
+  documentId: "note-1789954929811",
+  title: "回声稿",
+  moduleId: "manuscript",
+  status: "committed",
+  verified: true,
+  receipt: { operation: "documents.write" },
+});
+assert.equal(sanitizeWorkBuddyConversationOutput(`${workBuddyDocumentReceipt}\n\n正文已写入。`), "正文已写入。", "WorkBuddy 成功写入回执不得泄露到对话");
+assert.equal(sanitizeWorkBuddyConversationOutput(workBuddyDocumentReceipt), "本轮操作已完成。", "只有成功工具回执时应显示简洁完成提示");
+assert.equal(sanitizeWorkBuddyConversationOutput(workBuddyDocumentReceipt, { final: false }), "", "成功工具回执在流式阶段不得提前显示");
+
 const terminal = nativeAgentTerminalPresentation({ status: "completed", text: leaked, resultWarnings: ["Parameter validation failed for tool mcp__shensi__interaction_delivery"] });
 assert.equal(terminal.content, visible);
 assert.deepEqual(terminal.warnings, [], "原始工具协议错误不得进入任务卡警告");

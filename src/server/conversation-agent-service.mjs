@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { normalizeTextTaskExecutionContext } from "../text-task-execution-context.js";
-import { hasInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError } from "../conversation-output-guard.js";
+import { hasInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
 const laneFor = (request) => keyFor({ ...request, branchId: "conversation-lane" });
@@ -398,12 +398,15 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
   };
   const execute = async (entry, request) => {
     const { record, controller } = entry;
+    const sanitizeAgentText = (value, options = {}) => request.settings?.agentEngine === "workbuddy"
+      ? sanitizeWorkBuddyConversationOutput(value, options)
+      : sanitizeConversationOutput(value, options);
     let textBuffer = "", textTimer = null;
     let internalStreamDetected = false;
     const flushText = () => {
       clearTimeout(textTimer); textTimer = null;
       if (!textBuffer) return Promise.resolve();
-      const text = sanitizeConversationOutput(textBuffer, { final: false }); textBuffer = "";
+      const text = sanitizeAgentText(textBuffer, { final: false }); textBuffer = "";
       if (!text) return Promise.resolve();
       return event(entry, "text_delta", { text });
     };
@@ -537,16 +540,23 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null, taskRoute: structuredTaskRoute, textTaskExecutionContext, deliverableType: structuredTaskRoute?.deliverableType || request.deliverableType || "", targetModule: structuredTaskRoute?.targetModule || request.targetModule || request.activeModule || "", selectedModulePlacementId: structuredTaskRoute?.selectedModulePlacementId || "", selectedSkillPlacementIds: structuredTaskRoute?.selectedSkillPlacementIds || [], relationType: structuredTaskRoute?.relationType || "", relationRole: structuredTaskRoute?.relationRole || "", routeReason: structuredTaskRoute?.routeReason || structuredTaskRoute?.reason || "" }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "本轮结构化任务路由", text: routeContractText }, ...(textTaskExecutionContext ? [{ name: "本轮统一文字任务执行合同", text: JSON.stringify(textTaskExecutionContext, null, 2) }] : []), ...preloadedDocuments.contextBlocks, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
       let result = await run(runOptions);
       const deliveryReviewWarnings = [];
+      const runnerWarnings = [];
+      const collectRunnerWarnings = (value) => {
+        if (!Array.isArray(value?.runnerWarnings)) return;
+        runnerWarnings.push(...value.runnerWarnings.map((warning) => sanitizeUserFacingError(warning)).filter(Boolean));
+      };
+      collectRunnerWarnings(result);
       // Reconcile conversation-only delivery against the original user request,
       // not the writer's self-declared mode. This stays semantic, never keyword-routed.
       if (tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
         await event(entry, "progress", { message: "正在核对成果归档" });
-        const previousText = sanitizeConversationOutput(result.text || "");
+        const previousText = sanitizeAgentText(result.text || "");
         try {
           const checked = await run({ ...runOptions, deliveryReview: true,
             onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
             prompt: JSON.stringify({ originalTask: runOptions.prompt, result: previousText, delivery: tools.deliveryStatus(), instruction: "请独立复核原始用户要求和本轮成果是否一致。真实图片或视频任务必须声明media并调用media.generate，不能只返回提示词或文字声称已生成。用户要求制作自检、质检或审稿报告时，应保存到编译报告集合中的具体报告文档；不修改被检查正文不等于不保存报告。只有用户明确只在对话交付、普通问答或未采用候选，才保持conversation。选择面板能力来实际执行创作、规划、自检或专项处理后必须真实调用 skills.read；只读取面板、模组或模块路由不等于读取 Skill。但 taskRoute.capabilityInspectionOnly=true 时属于路由结构核验，只读取用户要求的路由即可，不得额外读取无关 Skill。确实无需 Skill 的通用问答或路由检查，重新调用 interaction.delivery，声明 routingMode=general 并给出基于完整任务语义的 routingReason。若需要归档，先声明正确交付类型并完成对应工具调用；只凭检索片段不能声称全文自检或已加载Skill。若原先conversation确实正确，原样返回本轮成果，不添加核验闲话。不要重复已验收写入或媒体任务。" }) });
           result = { ...checked, text: checked.text || previousText };
+          collectRunnerWarnings(checked);
         } catch (error) {
           deliveryReviewWarnings.push(`交付复核未完成：${sanitizeUserFacingError(redactedErrorMessage(error, request.settings.apiKey))}`);
           result = { ...result, text: previousText };
@@ -560,12 +570,13 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;
         await event(entry, "progress", { message: "Agent 正在核对并完成交付" });
-        const previousText = sanitizeConversationOutput(result.text || "");
+        const previousText = sanitizeAgentText(result.text || "");
         try {
           const repaired = await run({ ...runOptions,
             onToolEvent: (data) => data.phase === "text_delta" ? undefined : runOptions.onToolEvent(data),
             prompt: JSON.stringify({ originalTask: runOptions.prompt, previousResponse: previousText, delivery, instruction: "继续同一任务，根据原始用户要求核对交付。若 routing.complete=false，先根据面板路由选择真实分支，读取对应模组/模块路由并调用 skills.read；只读路由不能代替读取 Skill。但 taskRoute.capabilityInspectionOnly=true 时只需核验用户要求的路由结构，不得为了验收额外读取无关 Skill。确实无需 Skill 的通用问答或路由检查，应调用 interaction.delivery 声明 routingMode=general，并提供基于完整任务语义的 routingReason。随后声明真实任务类型和交付方式；要求保存的内容必须用 documents 工具完成并验收，真实图片或视频必须用 media.generate 完成下载验收。不要重复已成功的操作，不要凭文字声称已保存、已生成或已读取 Skill。" }) });
           result = { ...repaired, text: repaired.text || previousText };
+          collectRunnerWarnings(repaired);
         } catch (error) {
           deliveryReviewWarnings.push(`交付补救未完成：${sanitizeUserFacingError(redactedErrorMessage(error, request.settings.apiKey))}`);
           result = { ...result, text: previousText };
@@ -574,6 +585,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       }
       const finalDelivery = tools.deliveryStatus?.();
       const deliveryWarnings = [...new Set([
+        ...runnerWarnings,
         ...deliveryReviewWarnings,
         ...(!finalDelivery?.declared ? ["本轮没有完成交付方式声明"] : []),
         ...(finalDelivery?.warnings || []),
@@ -594,7 +606,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           delivery: finalDelivery,
         });
       }
-      record.text = sanitizeConversationOutput(result.text || "");
+      record.text = sanitizeAgentText(result.text || "");
       await flushText();
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");

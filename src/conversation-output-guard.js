@@ -210,9 +210,105 @@ const jsonObjectEnd = (source, start) => {
 
 const likelyInternalRoutePrefix = (value) => /(?:["'](?:routes|routeBundle|routeContext|autoLoadedSkills|loadedSkills|selectedPlacement|taskRoute|placementId)["']\s*:)/u.test(String(value || ""));
 
+const isWorkBuddyToolErrorObject = (value) => {
+  const candidate = String(value || "").trim();
+  if (!candidate.startsWith("{") || !candidate.endsWith("}")) return false;
+  try {
+    const parsed = JSON.parse(candidate);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    const errorText = String(parsed.error || parsed.message || "");
+    const code = String(parsed.code || "").toUpperCase();
+    return /^(?:TOOL_FAILED|TOOL_ERROR|MCP_ERROR)$/u.test(code)
+      || (Boolean(parsed.error) && /(?:skill|面板|路由|交付|工具|通用问答|schema|参数)/iu.test(errorText));
+  } catch {
+    return false;
+  }
+};
+
+// WorkBuddy may serialize a successful Shensi MCP result into the assistant
+// message instead of keeping it as a tool event.  These objects are transport
+// receipts, not user-facing prose.  Keep this detector deliberately narrow so
+// ordinary JSON written by a user is not removed from other providers (or from
+// WorkBuddy when it has no Shensi receipt shape).
+const internalToolResultKeys = new Set([
+  "documentId", "documentIds", "moduleId", "workspacePath", "receipt",
+  "verified", "committed", "committedHistory", "status", "operationId",
+  "historyVersionId", "savedDocument", "writeReceipt", "toolName", "revision",
+  "contentHash", "relativePath", "contentRef", "resultAssetId",
+]);
+
+const isInternalToolResultObject = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = new Set(Object.keys(value));
+  const hasIdentity = keys.has("documentId") || keys.has("documentIds") || keys.has("operationId");
+  const hasReceipt = [...internalToolResultKeys].some((key) => keys.has(key));
+  const hasToolName = keys.has("toolName") && /(?:documents?\.|interaction\.|media\.)/iu.test(String(value.toolName || ""));
+  return (hasIdentity && hasReceipt) || hasToolName;
+};
+
+const workBuddySchemaStart = (line = "") => /^\s*["'](?:type|required|properties)["']\s*:/u.test(String(line));
+const workBuddySchemaLine = (line = "") => /^\s*["'](?:type|required|properties|additionalProperties|items|enum|const|description|mode|taskType|routingMode|routingReason|documentIds|mediaChannels)["']\s*:/u.test(String(line))
+  || /^\s*[\[\]{},]+\s*,?\s*$/u.test(String(line))
+  || /^\s*["'][A-Za-z_][A-Za-z0-9_.-]*["']\s*,?\s*$/u.test(String(line));
+
 export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true } = {}) => {
   let source = sanitizeConversationOutput(value, { final });
   if (!source) return "";
+  const lines = source.split(/\r?\n/gu);
+  const visibleLines = [];
+  let sawToolError = false;
+  let droppingSchema = false;
+  let schemaSawAdditionalProperties = false;
+  let removedToolResult = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (isWorkBuddyToolErrorObject(trimmed)) {
+      sawToolError = true;
+      continue;
+    }
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (isInternalToolResultObject(parsed)) {
+          removedToolResult = true;
+          continue;
+        }
+      } catch { /* The embedded-object pass below handles non-line JSON. */ }
+    }
+    if (sawToolError && !droppingSchema && workBuddySchemaStart(line)) {
+      droppingSchema = true;
+      schemaSawAdditionalProperties = false;
+      continue;
+    }
+    if (droppingSchema) {
+      schemaSawAdditionalProperties ||= /["']additionalProperties["']\s*:/u.test(line);
+      if (schemaSawAdditionalProperties && /^\s*\}\s*,?\s*$/u.test(line)) {
+        droppingSchema = false;
+        schemaSawAdditionalProperties = false;
+      }
+      // The leaked schema is a line-oriented fragment rather than a valid
+      // JSON object in some WorkBuddy versions.  Before the final closing
+      // brace, consume the fragment even when individual enum/string lines do
+      // not look like property declarations.
+      else if (workBuddySchemaLine(line) || !trimmed) continue;
+      else {
+        droppingSchema = false;
+        schemaSawAdditionalProperties = false;
+        visibleLines.push(line);
+      }
+      continue;
+    }
+    if (sawToolError && trimmed && !workBuddySchemaStart(line)) sawToolError = false;
+    visibleLines.push(line);
+  }
+  source = visibleLines.join("\n");
+  // During streaming an incomplete tool-error object must not flash in the
+  // chat.  Once the provider completes a real answer, the normal final pass
+  // below retains that answer.
+  if (!final && /^\s*\{\s*["'](?:error|code)["']\s*:/u.test(source) && !source.includes("\n")) return "";
+  if (sawToolError) source = source.replace(/^\s*```(?:json)?\s*$/gimu, "");
+  const standaloneFences = source.match(/^\s*```(?:json)?\s*$/gimu) || [];
+  if (standaloneFences.length === 1) source = source.replace(/^\s*```(?:json)?\s*$/gimu, "");
   const removals = [];
   for (let index = 0; index < source.length; index += 1) {
     if (source[index] !== "{") continue;
@@ -225,7 +321,8 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
     const candidate = source.slice(index, end);
     let parsed;
     try { parsed = JSON.parse(candidate); } catch { continue; }
-    if (!isInternalRouteObject(parsed)) continue;
+    if (!isInternalRouteObject(parsed) && !isInternalToolResultObject(parsed)) continue;
+    removedToolResult ||= isInternalToolResultObject(parsed);
     removals.push([index, end]);
     index = end - 1;
   }
@@ -233,11 +330,17 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
     const [start, end] = removals[index];
     source = `${source.slice(0, start)}${source.slice(end)}`;
   }
-  return source
+  source = source
     .replace(/```(?:json)?\s*```/giu, "")
     .replace(/[ \t]+\n/gu, "\n")
     .replace(/\n{3,}/gu, "\n\n")
     .trim();
+  // A successful tool-only turn is still a successful turn.  Give the user a
+  // concise confirmation while never exposing the internal receipt.  Route
+  // objects alone do not receive this fallback because they are not evidence
+  // that an operation completed.
+  if (final && removedToolResult && !source) return "本轮操作已完成。";
+  return source;
 };
 
 const INTERNAL_ERROR_PATTERNS = [
