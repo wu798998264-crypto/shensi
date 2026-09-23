@@ -37,11 +37,11 @@ export const scanSkillPackage = (bytes) => {
   };
 };
 
-export const prepareSkillSubmission = ({ body, bytes, owner }) => {
+export const prepareSkillSubmission = ({ body, bytes, owner, scanOverride = null, objectKey = "" }) => {
   const metadata = metadataFromSource(bytes);
   const skillId = normalizeSkillId(body.skillId || metadata.id || `${owner.id}.skill`);
   const version = normalizeVersion(body.version || metadata.version);
-  const scan = scanSkillPackage(bytes);
+  const scan = scanOverride || scanSkillPackage(bytes);
   return {
     id: createId("skill"),
     skillId,
@@ -59,7 +59,7 @@ export const prepareSkillSubmission = ({ body, bytes, owner }) => {
       bytesBase64: bytes.toString("base64url"),
       sha256: sha256(bytes),
       sizeBytes: bytes.length,
-      objectKey: `skills/${skillId}/${version}.pkg`,
+      objectKey: objectKey || `skills/${skillId}/${version}.pkg`,
       publishedAt: 0,
       uploadedAt: Date.now(),
     }],

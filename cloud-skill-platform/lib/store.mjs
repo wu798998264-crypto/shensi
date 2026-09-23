@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 
-const emptyState = () => ({
+export const emptyState = () => ({
   schemaVersion: 1,
   users: [],
   sessions: [],
@@ -11,6 +11,11 @@ const emptyState = () => ({
   quotaAccounts: [],
   quotaLedger: [],
   auditLogs: [],
+});
+
+export const normalizeState = (value) => ({
+  ...emptyState(),
+  ...(value && typeof value === "object" ? value : {}),
 });
 
 const atomicWrite = async (target, value) => {
@@ -35,7 +40,7 @@ export class JsonStore {
   async init() {
     try {
       const parsed = JSON.parse(await readFile(this.filePath, "utf8"));
-      this.state = { ...emptyState(), ...(parsed && typeof parsed === "object" ? parsed : {}) };
+      this.state = normalizeState(parsed);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       this.state = emptyState();
@@ -65,4 +70,3 @@ export const createMemoryStore = async () => {
   await store.init();
   return store;
 };
-

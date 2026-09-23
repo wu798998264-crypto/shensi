@@ -9,9 +9,38 @@ export const normalizeEmail = (value) => {
   return email;
 };
 
+// 神思账号可以使用邮箱或由用户选择的账号名（后台管理员也可以使用纯数字账号）。
+// 账号值只作为登录标识，不会被当作邮箱发送或用于密码恢复通知。
+export const normalizeAccount = (value) => {
+  const account = String(value ?? "").trim().toLowerCase();
+  if (!account || account.length > 120 || /[\u0000-\u001f\u007f\s]/u.test(account)) throw new Error("请输入有效的神思账号");
+  if (!/^[a-z0-9][a-z0-9._:@+-]{2,119}$/u.test(account)) throw new Error("账号只能包含字母、数字和常用符号，长度为 3 到 120");
+  return account;
+};
+
+export const normalizeSecurityQuestion = (value) => {
+  const question = String(value ?? "").trim().replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, 200);
+  if (question.length < 4) throw new Error("密保问题至少需要 4 个字符");
+  return question;
+};
+
+export const normalizeSecurityAnswer = (value) => {
+  const answer = String(value ?? "").normalize("NFKC").trim().replace(/[\u0000-\u001f\u007f]/gu, "");
+  if (answer.length < 2 || answer.length > 200) throw new Error("密保答案需要为 2 到 200 个字符");
+  return answer;
+};
+
 export const normalizeDisplayName = (value) => {
   const name = String(value ?? "").trim().replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, MAX_DISPLAY_NAME);
   return name || "神思用户";
+};
+
+export const normalizeRecoveryContact = (value) => {
+  const contact = String(value ?? "").trim().toLowerCase();
+  const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(contact);
+  const phone = /^\+?[0-9][0-9 -]{5,19}$/u.test(contact);
+  if (!email && !phone) throw new Error("请输入有效的手机号或邮箱");
+  return contact.replace(phone ? /[ -]/gu : /$^/gu, "");
 };
 
 export const normalizeSkillId = (value) => {

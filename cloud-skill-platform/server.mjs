@@ -1,21 +1,31 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { JsonStore } from "./lib/store.mjs";
+import { createPostgresStore } from "./lib/postgres-store.mjs";
+import { createProductionDependencies } from "./lib/production-dependencies.mjs";
 import {
-  bearerToken, createId, createOpaqueToken, hashPassword, hashToken, publicUser, sessionExpiry, verifyPassword,
+  bearerToken, createId, createOpaqueToken, hashPassword, hashRecoveryAnswer, hashToken, publicUser, sessionExpiry, verifyPassword, verifyRecoveryAnswer,
 } from "./lib/security.mjs";
 import { adjustQuota, ensureQuotaAccount, refundQuota, reserveQuota, settleQuota } from "./lib/quota.mjs";
 import {
-  artifactFromSkill, catalogItems, ensureSigningKey, findPublishedArtifact, prepareSkillSubmission, publicArtifact, publicSkill,
+  artifactFromSkill, catalogItems, ensureSigningKey, findPublishedArtifact, prepareSkillSubmission, publicArtifact, publicSkill, scanSkillPackage,
 } from "./lib/skills.mjs";
 import {
-  decodeUpload, normalizeDisplayName, normalizeEmail, publicError,
+  decodeUpload, normalizeAccount, normalizeDisplayName, normalizeRecoveryContact, normalizeSecurityAnswer, normalizeSecurityQuestion, publicError,
 } from "./lib/validation.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const defaultDataPath = resolve(process.env.SHENSI_CLOUD_DATA || join(root, "data", "state.json"));
 const defaultSigningKeyPath = resolve(process.env.SHENSI_CLOUD_SIGNING_KEY || join(root, "data", "signing-key.json"));
+const adminHtmlPath = join(root, "admin.html");
+const adminCssPath = join(root, "admin.css");
+const adminJsPath = join(root, "admin.js");
+// This account is reserved for the fixed 神思后台管理 bootstrap identity.
+// Its password is never stored in source; deployment must provide it through
+// SHENSI_CLOUD_BOOTSTRAP_ADMIN_PASSWORD on the server only.
+const RESERVED_BOOTSTRAP_ADMIN_ACCOUNT = "798998264";
 
 const json = (response, status, payload, headers = {}) => {
   if (response.writableEnded) return;
@@ -73,16 +83,32 @@ const cookieToken = (request) => {
 };
 
 const bootstrapAdmin = async (store) => {
-  const email = String(process.env.SHENSI_CLOUD_BOOTSTRAP_ADMIN_EMAIL || "").trim().toLowerCase();
+  const account = RESERVED_BOOTSTRAP_ADMIN_ACCOUNT;
   const password = String(process.env.SHENSI_CLOUD_BOOTSTRAP_ADMIN_PASSWORD || "");
-  if (!email || !password || store.state.users.some((user) => user.role === "admin")) return;
-  const passwordHash = await hashPassword(password);
+  // Never overwrite an existing password unless the deployment explicitly
+  // supplies the bootstrap secret. This lets upgrades preserve the fixed
+  // account while still repairing legacy records that were created as users.
+  const passwordHash = password ? await hashPassword(password) : "";
   await store.transact((state) => {
-    const user = { id: createId("user"), email, displayName: "神思管理员", role: "admin", status: "active", passwordHash, createdAt: Date.now(), updatedAt: Date.now() };
-    state.users.push(user);
-    state.memberships.push({ id: createId("membership"), userId: user.id, tier: "admin", status: "active", units: 0, expiresAt: 0, updatedAt: Date.now() });
+    const user = state.users.find((entry) => (entry.account || entry.email) === account && entry.status !== "deleted") || {
+      id: createId("user"), account, email: "", displayName: "神思管理员", role: "admin", status: "active", systemManaged: true, passwordHash: "", createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    user.account = account;
+    user.email = "";
+    user.displayName = "神思管理员";
+    user.role = "admin";
+    user.status = "active";
+    user.systemManaged = true;
+    if (passwordHash) user.passwordHash = passwordHash;
+    user.updatedAt = Date.now();
+    if (!state.users.includes(user)) state.users.push(user);
+    if (!state.memberships.some((entry) => entry.userId === user.id)) state.memberships.push({ id: createId("membership"), userId: user.id, tier: "admin", status: "active", units: 0, expiresAt: 0, updatedAt: Date.now() });
     ensureQuotaAccount(state, user.id);
   });
+};
+
+const normalizeBootstrapAccount = () => {
+  return RESERVED_BOOTSTRAP_ADMIN_ACCOUNT;
 };
 
 const publicMembership = (membership) => membership ? ({
@@ -94,13 +120,88 @@ const publicMembership = (membership) => membership ? ({
 
 const sessionCookie = (token, rememberMe = true) => `shensi_session=${encodeURIComponent(token)}; Max-Age=${rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 
+const staticAsset = async (response, path, contentType) => {
+  const content = await readFile(path);
+  response.writeHead(200, {
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Content-Type": contentType,
+    "Content-Length": content.length,
+  });
+  response.end(content);
+};
+
 export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingKeyPath = defaultSigningKeyPath, publicBaseUrl = "", store: suppliedStore } = {}) => {
-  const store = suppliedStore || await new JsonStore(dataPath).init();
+  const production = String(process.env.SHENSI_CLOUD_ENV || "development") === "production";
+  const postgresUrl = String(process.env.SHENSI_CLOUD_DATABASE_URL || "").trim();
+  const store = suppliedStore || (production && postgresUrl
+    ? await createPostgresStore({ connectionString: postgresUrl, ssl: String(process.env.SHENSI_CLOUD_POSTGRES_SSL || "false") === "true" })
+    : await new JsonStore(dataPath).init());
+  const productionDependencies = production && !suppliedStore && postgresUrl
+    ? await createProductionDependencies({ environment: process.env })
+    : null;
   await bootstrapAdmin(store);
   const signingKey = await ensureSigningKey(signingKeyPath);
   const allowedOrigins = new Set(String(process.env.SHENSI_CLOUD_ALLOWED_ORIGINS || "https://hexing.studio,https://skill.hexing.studio,http://127.0.0.1:4280")
     .split(",").map((item) => item.trim()).filter(Boolean));
   const baseUrl = String(publicBaseUrl || process.env.SHENSI_CLOUD_PUBLIC_URL || "").replace(/\/$/u, "");
+  let readinessCache = null;
+  let readinessAt = 0;
+  const readiness = async () => {
+    if (!production) return { ready: true, postgres: true, redis: true, objectStorage: true, malwareScanner: true, artifactSigning: true };
+    if (readinessCache && Date.now() - readinessAt < 10_000) return readinessCache;
+    const details = productionDependencies
+      ? await productionDependencies.health({ store, signingKey })
+      : { postgres: false, redis: false, objectStorage: false, malwareScanner: false, artifactSigning: Boolean(signingKey.privateKeyPem && signingKey.publicKeyPem) };
+    readinessCache = { ...details, ready: Object.values(details).every(Boolean) };
+    readinessAt = Date.now();
+    return readinessCache;
+  };
+  const requireProductionReady = async () => {
+    const state = await readiness();
+    if (!state.ready) fail("云端安全依赖尚未全部就绪，Skill 上传和发布已保持关闭", 503);
+    return state;
+  };
+  const RETENTION = {
+    unpublished: 15 * 24 * 60 * 60 * 1000,
+    audit: 30 * 24 * 60 * 60 * 1000,
+  };
+  let cleanupFlight = null;
+  const cleanupRetention = () => {
+    if (cleanupFlight) return cleanupFlight;
+    cleanupFlight = (async () => {
+      const now = Date.now();
+      const expiredObjects = store.state.skills.flatMap((skill) => (skill.versions || [])
+        .filter((version) => skill.status === "unpublished" && Number(version.purgeAfter) > 0 && Number(version.purgeAfter) <= now && version.objectKey)
+        .map((version) => version.objectKey));
+      const removedObjects = new Set();
+      if (productionDependencies) {
+        for (const objectKey of expiredObjects) {
+          if (await productionDependencies.objects.remove(objectKey).catch(() => false)) removedObjects.add(objectKey);
+        }
+      } else {
+        for (const objectKey of expiredObjects) removedObjects.add(objectKey);
+      }
+      await store.transact((state) => {
+        state.auditLogs = state.auditLogs.filter((entry) => Number(entry.createdAt) >= now - RETENTION.audit);
+        for (const skill of state.skills) {
+          for (const version of skill.versions || []) {
+            if (!removedObjects.has(version.objectKey)) continue;
+            version.objectKey = "";
+            version.bytesBase64 = "";
+            version.artifact = null;
+            version.purgedAt = now;
+          }
+        }
+      });
+    })().finally(() => { cleanupFlight = null; });
+    return cleanupFlight;
+  };
+  const cleanupTimer = setInterval(() => { void cleanupRetention().catch(() => {}); }, 60 * 60 * 1000);
+  cleanupTimer.unref?.();
 
   const currentUser = (request) => {
     const token = bearerToken(request) || cookieToken(request);
@@ -123,13 +224,18 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
   };
 
   const register = async (body) => {
-    const email = normalizeEmail(body.email);
+    const account = normalizeAccount(body.account || body.email);
+    const email = account.includes("@") ? account : String(body.email || "").trim().toLowerCase();
     const passwordHash = await hashPassword(body.password);
     const displayName = normalizeDisplayName(body.displayName);
+    const recoveryContact = normalizeRecoveryContact(body.contact || body.email);
+    const securityQuestion = normalizeSecurityQuestion(body.securityQuestion);
+    const securityAnswerHash = await hashRecoveryAnswer(normalizeSecurityAnswer(body.securityAnswer));
+    if (account === RESERVED_BOOTSTRAP_ADMIN_ACCOUNT) fail("该账号由神思后台管理固定使用，不能注册", 409);
     let user;
     await store.transact((state) => {
-      if (state.users.some((entry) => entry.email === email && entry.status !== "deleted")) fail("该邮箱已注册", 409);
-      user = { id: createId("user"), email, displayName, role: "user", status: "active", passwordHash, createdAt: Date.now(), updatedAt: Date.now() };
+      if (state.users.some((entry) => (entry.account || entry.email) === account && entry.status !== "deleted")) fail("该账号已注册", 409);
+      user = { id: createId("user"), account, email: recoveryContact.includes("@") ? recoveryContact : "", phone: recoveryContact.includes("@") ? "" : recoveryContact, recoveryContact, displayName, securityQuestion, securityAnswerHash, role: "user", status: "active", passwordHash, createdAt: Date.now(), updatedAt: Date.now() };
       state.users.push(user);
       state.memberships.push({ id: createId("membership"), userId: user.id, tier: "free", status: "active", units: 0, expiresAt: 0, updatedAt: Date.now() });
       ensureQuotaAccount(state, user.id);
@@ -145,28 +251,80 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
   };
 
   const login = async (body) => {
-    const email = normalizeEmail(body.email);
-    const user = store.state.users.find((entry) => entry.email === email && entry.status === "active");
+    const account = normalizeAccount(body.account || body.email);
+    const user = store.state.users.find((entry) => (entry.account || entry.email) === account && entry.status === "active");
     if (!user || !(await verifyPassword(body.password, user.passwordHash))) fail("邮箱或密码不正确", 401);
     const token = await issueSession(user.id, Boolean(body.rememberMe));
     return { user: publicUser(user), token };
   };
 
+  const recoveryQuestion = async (body) => {
+    const account = normalizeAccount(body.account || body.email);
+    const user = store.state.users.find((entry) => (entry.account || entry.email) === account && entry.status !== "deleted");
+    if (!user || user.role === "admin" || user.systemManaged === true) fail("账号不存在或不支持自助找回", 404);
+    if (!user.securityQuestion) fail("该账号尚未设置密保问题，请联系管理员", 409);
+    return { account: user.account || user.email, question: user.securityQuestion };
+  };
+
+  const recoverPassword = async (body) => {
+    const account = normalizeAccount(body.account || body.email);
+    const user = store.state.users.find((entry) => (entry.account || entry.email) === account && entry.status === "active");
+    if (!user || user.role === "admin" || user.systemManaged === true || !user.securityAnswerHash) fail("账号或密保信息不正确", 400);
+    const answer = normalizeSecurityAnswer(body.securityAnswer);
+    if (!(await verifyRecoveryAnswer(answer, user.securityAnswerHash))) fail("账号或密保信息不正确", 400);
+    const passwordHash = await hashPassword(body.newPassword);
+    await store.transact((state) => {
+      const target = state.users.find((entry) => entry.id === user.id);
+      target.passwordHash = passwordHash;
+      target.updatedAt = Date.now();
+      for (const session of state.sessions.filter((entry) => entry.userId === user.id)) session.revokedAt = Date.now();
+    });
+    return { ok: true, message: "密码已重置，请使用新密码登录" };
+  };
+
   const handle = async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const headers = corsHeaders(request, allowedOrigins);
+    void cleanupRetention().catch(() => {});
     if (request.method === "OPTIONS") return json(response, 204, {}, { ...headers, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" });
     try {
       if (url.pathname === "/health" && request.method === "GET") {
-        const local = String(process.env.SHENSI_CLOUD_ENV || "development") !== "production";
+        const local = !production;
+        const status = await readiness();
         return json(response, 200, {
-          ok: true, connected: true, service: "shensi-skill-marketplace", version: "0.1.0", ready: local,
-          postgres: local || process.env.SHENSI_CLOUD_POSTGRES_READY === "true",
-          objectStorage: local || process.env.SHENSI_CLOUD_OBJECT_STORAGE_READY === "true",
-          malwareScanner: local || process.env.SHENSI_CLOUD_MALWARE_SCANNER_READY === "true",
-          artifactSigning: true, signedCatalog: true,
+          ok: true, connected: true, service: "shensi-skill-marketplace", version: "0.1.0", ready: status.ready,
+          postgres: status.postgres,
+          redis: status.redis,
+          objectStorage: status.objectStorage,
+          malwareScanner: status.malwareScanner,
+          artifactSigning: status.artifactSigning, signedCatalog: true,
           production: !local,
-          message: local ? "开发/测试存储已启用；生产部署前必须接入 PostgreSQL、OSS 和恶意文件扫描。" : "生产服务依赖项已由部署配置声明。",
+          message: local ? "开发/测试存储已启用；生产部署前必须接入 PostgreSQL、Redis、OSS 和 ClamAV。" : (status.ready ? "生产服务依赖项已通过真实探针。" : "生产服务依赖项未全部通过真实探针，上传与发布保持关闭。"),
+        }, headers);
+      }
+      if (url.pathname === "/admin" || url.pathname === "/admin/") {
+        return staticAsset(response, adminHtmlPath, "text/html; charset=utf-8");
+      }
+      if (url.pathname === "/admin/styles.css") {
+        return staticAsset(response, adminCssPath, "text/css; charset=utf-8");
+      }
+      if (url.pathname === "/admin/app.js") {
+        return staticAsset(response, adminJsPath, "text/javascript; charset=utf-8");
+      }
+      if (url.pathname === "/v1/client-config" && request.method === "GET") {
+        return json(response, 200, {
+          connected: true,
+          marketplaceUrl: baseUrl || `${url.protocol}//${url.host}`,
+          adminUrl: `${baseUrl || `${url.protocol}//${url.host}`}/admin`,
+          publicKeyPem: signingKey.publicKeyPem,
+          capabilities: {
+            catalog: true,
+            download: true,
+            accountLogin: true,
+            accountRegistration: true,
+            adminConsole: true,
+            publish: (await readiness()).ready,
+          },
         }, headers);
       }
       if (url.pathname === "/v1/catalog" && request.method === "GET") {
@@ -182,7 +340,9 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
       if (segments[0] === "v1" && segments[1] === "artifacts" && segments[4] === "content" && request.method === "GET") {
         const found = findPublishedArtifact(store.state, segments[2], segments[3]);
         if (!found) return json(response, 404, { ok: false, message: "Skill 制品不存在" }, headers);
-        const bytes = Buffer.from(found.versionRecord.bytesBase64, "base64url");
+        const bytes = productionDependencies
+          ? await productionDependencies.objects.read(found.versionRecord.objectKey)
+          : Buffer.from(found.versionRecord.bytesBase64, "base64url");
         response.writeHead(200, { ...headers, "Cache-Control": "public, max-age=31536000, immutable", "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Content-Type-Options": "nosniff" });
         return response.end(bytes);
       }
@@ -190,6 +350,14 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const body = await bodyJson(request);
         const result = await register(body);
         return json(response, 201, result, { ...headers, "Set-Cookie": sessionCookie(result.token, Boolean(body.rememberMe)) });
+      }
+      if (url.pathname === "/v1/auth/recovery-question" && request.method === "POST") {
+        const body = await bodyJson(request);
+        return json(response, 200, await recoveryQuestion(body), headers);
+      }
+      if (url.pathname === "/v1/auth/recover" && request.method === "POST") {
+        const body = await bodyJson(request);
+        return json(response, 200, await recoverPassword(body), headers);
       }
       if (url.pathname === "/v1/auth/login" && request.method === "POST") {
         const body = await bodyJson(request);
@@ -216,10 +384,44 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const owner = requireUser(request);
         const body = await bodyJson(request);
         const bytes = decodeUpload(body);
-        const submission = prepareSkillSubmission({ body, bytes, owner });
-        await store.transact((state) => state.skills.push(submission));
+        let submission;
+        if (production) {
+          await requireProductionReady();
+          if (!productionDependencies) fail("生产上传服务未配置真实存储、Redis 和 ClamAV", 503);
+          await productionDependencies.redis.limit(owner.id, { maximum: 10, windowSeconds: 60 });
+          const staticScan = scanSkillPackage(bytes);
+          const malwareScan = staticScan.status === "passed"
+            ? await productionDependencies.scanner.scan(bytes)
+            : { status: "blocked", findings: [], scanner: "clamav-skipped", detail: "静态安全规则已拒绝该上传" };
+          const scan = {
+            status: staticScan.status === "passed" && malwareScan.status === "passed" ? "passed" : "blocked",
+            findings: [...new Set([...(staticScan.findings || []), ...(malwareScan.findings || [])])],
+            scanner: "static-v1+clamav",
+          };
+          submission = prepareSkillSubmission({ body, bytes, owner, scanOverride: scan, objectKey: "" });
+          submission.versions[0].bytesBase64 = "";
+          if (scan.status === "passed") {
+            submission.versions[0].objectKey = await productionDependencies.objects.stage({
+              skillId: submission.skillId,
+              version: submission.versions[0].version,
+              bytes,
+            });
+          } else {
+            submission.status = "rejected";
+            submission.versions[0].objectKey = "";
+            submission.rejectedAt = Date.now();
+          }
+        } else {
+          submission = prepareSkillSubmission({ body, bytes, owner });
+        }
+        try {
+          await store.transact((state) => state.skills.push(submission));
+        } catch (error) {
+          if (production && submission.versions[0]?.objectKey) await productionDependencies.objects.remove(submission.versions[0].objectKey).catch(() => {});
+          throw error;
+        }
         await audit({ actorUserId: owner.id, action: "skill.upload", targetType: "skill", targetId: submission.id, detail: { skillId: submission.skillId, status: submission.status } });
-        return json(response, 201, { skill: publicSkill(submission), scan: submission.scan, message: submission.status === "quarantined" ? "上传已隔离，等待处理" : "上传成功，等待管理员审核" }, headers);
+        return json(response, 201, { skill: publicSkill(submission), scan: submission.scan, message: submission.status === "rejected" || submission.status === "quarantined" ? "上传未通过安全检查，临时文件已清理" : "上传成功，等待管理员审核" }, headers);
       }
       if (url.pathname === "/v1/membership" && request.method === "GET") {
         const user = requireUser(request);
@@ -264,29 +466,46 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const skill = store.state.skills.find((entry) => entry.id === segments[3] || entry.skillId === segments[3]);
         if (!skill) return json(response, 404, { ok: false, message: "Skill 不存在" }, headers);
         if (segments[4] === "review" && request.method === "POST") {
+          if (production) await requireProductionReady();
           const body = await bodyJson(request);
           const decision = String(body.decision || "");
           if (!["approve", "reject"].includes(decision)) fail("审核决定无效");
           if (decision === "approve" && skill.scan.status !== "passed") fail("自动检查未通过，不能发布", 409);
           const versionRecord = skill.versions.at(-1);
           if (decision === "approve") {
-            const artifact = await artifactFromSkill({ skill: { ...skill, publisherRole: skill.ownerUserId === actor.id ? "user" : "user" }, versionRecord, signingKey });
-            await store.transact((state) => {
-              const target = state.skills.find((entry) => entry.id === skill.id);
-              target.status = "published";
-              target.updatedAt = Date.now();
-              target.review = { decision, reason: String(body.reason || "").slice(0, 500), reviewerUserId: actor.id, reviewedAt: Date.now() };
-              target.versions.at(-1).publishedAt = Date.now();
-              target.versions.at(-1).artifact = artifact;
-            });
+            const stagedKey = versionRecord.objectKey;
+            let publishedKey = stagedKey;
+            if (production) {
+              if (!stagedKey.startsWith("quarantine/")) fail("Skill 隔离制品不存在，不能发布", 409);
+              publishedKey = await productionDependencies.objects.publish({ skillId: skill.skillId, version: versionRecord.version, sha256: versionRecord.sha256, objectKey: stagedKey });
+            }
+            try {
+              const artifact = await artifactFromSkill({ skill: { ...skill, publisherRole: "user" }, versionRecord: { ...versionRecord, objectKey: publishedKey }, signingKey });
+              await store.transact((state) => {
+                const target = state.skills.find((entry) => entry.id === skill.id);
+                target.status = "published";
+                target.updatedAt = Date.now();
+                target.review = { decision, reason: String(body.reason || "").slice(0, 500), reviewerUserId: actor.id, reviewedAt: Date.now() };
+                target.versions.at(-1).publishedAt = Date.now();
+                target.versions.at(-1).purgeAfter = 0;
+                target.versions.at(-1).objectKey = publishedKey;
+                target.versions.at(-1).artifact = artifact;
+              });
+              if (production && stagedKey !== publishedKey) await productionDependencies.objects.remove(stagedKey).catch(() => {});
+            } catch (error) {
+              if (production && publishedKey !== stagedKey) await productionDependencies.objects.remove(publishedKey).catch(() => {});
+              throw error;
+            }
           } else {
-            await store.transact((state) => { const target = state.skills.find((entry) => entry.id === skill.id); target.status = "rejected"; target.updatedAt = Date.now(); target.review = { decision, reason: String(body.reason || "").slice(0, 500), reviewerUserId: actor.id, reviewedAt: Date.now() }; });
+            if (production && skill.versions.at(-1)?.objectKey) await productionDependencies.objects.remove(skill.versions.at(-1).objectKey);
+            await store.transact((state) => { const target = state.skills.find((entry) => entry.id === skill.id); target.status = "rejected"; target.updatedAt = Date.now(); target.rejectedAt = Date.now(); target.review = { decision, reason: String(body.reason || "").slice(0, 500), reviewerUserId: actor.id, reviewedAt: Date.now() }; target.versions.at(-1).objectKey = ""; target.versions.at(-1).bytesBase64 = ""; });
           }
           await audit({ actorUserId: actor.id, action: `skill.${decision}`, targetType: "skill", targetId: skill.id, detail: { reason: String(body.reason || "").slice(0, 500) } });
           return json(response, 200, { skill: publicSkill(store.state.skills.find((entry) => entry.id === skill.id)) }, headers);
         }
         if (segments[4] === "unpublish" && request.method === "POST") {
-          await store.transact((state) => { const target = state.skills.find((entry) => entry.id === skill.id); target.status = "unpublished"; target.updatedAt = Date.now(); });
+          if (production) await requireProductionReady();
+          await store.transact((state) => { const target = state.skills.find((entry) => entry.id === skill.id); target.status = "unpublished"; target.updatedAt = Date.now(); for (const version of target.versions || []) version.purgeAfter = Date.now() + RETENTION.unpublished; });
           await audit({ actorUserId: actor.id, action: "skill.unpublish", targetType: "skill", targetId: skill.id });
           return json(response, 200, { ok: true }, headers);
         }
@@ -296,6 +515,10 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const actor = requireAdmin(request);
         const index = store.state.skills.findIndex((entry) => entry.id === segments[3] || entry.skillId === segments[3]);
         if (index < 0) return json(response, 404, { ok: false, message: "Skill 不存在" }, headers);
+        if (production) {
+          await requireProductionReady();
+          for (const version of store.state.skills[index].versions || []) if (version.objectKey) await productionDependencies.objects.remove(version.objectKey);
+        }
         await store.transact((state) => state.skills.splice(index, 1));
         await audit({ actorUserId: actor.id, action: "skill.delete", targetType: "skill", targetId: segments[3] });
         return json(response, 200, { ok: true }, headers);
@@ -337,7 +560,9 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const body = await bodyJson(request);
         const status = ["active", "suspended", "banned"].includes(String(body.status)) ? String(body.status) : "";
         if (!status) fail("账号状态无效");
-        if (!store.state.users.some((entry) => entry.id === segments[3])) fail("目标用户不存在", 404);
+        const targetUser = store.state.users.find((entry) => entry.id === segments[3]);
+        if (!targetUser) fail("目标用户不存在", 404);
+        if (targetUser.systemManaged === true || targetUser.account === RESERVED_BOOTSTRAP_ADMIN_ACCOUNT) fail("神思后台管理固定账号不可停用或修改", 403);
         await store.transact((state) => { const target = state.users.find((entry) => entry.id === segments[3]); target.status = status; target.updatedAt = Date.now(); });
         await audit({ actorUserId: actor.id, action: "user.status", targetType: "user", targetId: segments[3], detail: { status } });
         return json(response, 200, { user: publicUser(store.state.users.find((entry) => entry.id === segments[3])) }, headers);
@@ -352,7 +577,7 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
       return json(response, Number(error?.statusCode) || 400, { ok: false, message: publicError(error) }, headers);
     }
   };
-  return { store, signingKey, handler: handle, close: () => {} };
+  return { store, signingKey, handler: handle, close: () => clearInterval(cleanupTimer) };
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

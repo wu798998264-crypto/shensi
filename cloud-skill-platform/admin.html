@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <title>神思后台管理</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section id="authView" class="auth-view">
+        <div class="auth-brand">
+          <span class="brand-mark">思</span>
+          <div>
+            <p class="eyebrow">SHENSI SKILL MARKETPLACE</p>
+            <h1>神思后台管理</h1>
+            <p>登录后管理账号、审核 Skill、查看额度和操作记录。</p>
+          </div>
+        </div>
+        <div class="auth-card">
+          <div class="auth-tabs" role="tablist" aria-label="后台登录"><button class="tab is-active" data-auth-mode="login" role="tab" aria-selected="true">管理员登录</button></div>
+          <form id="authForm" novalidate>
+            <label>后台账号<input id="authAccount" type="text" autocomplete="username" required placeholder="请输入后台账号" /></label>
+            <label>密码<input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="至少 8 个字符" /></label>
+            <label class="checkbox-row"><input id="rememberMe" type="checkbox" checked /> 保持登录 30 天</label>
+            <button class="primary-button" type="submit" id="authSubmit">登录神思后台管理</button>
+            <p class="form-message" id="authMessage" role="status"></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="adminView" class="admin-view" hidden>
+        <header class="topbar">
+          <div class="brand-lockup"><span class="brand-mark small">思</span><div><p class="eyebrow">SKILL MARKETPLACE</p><strong>运营管理台</strong></div></div>
+          <div class="topbar-actions"><span id="adminIdentity" class="identity"></span><button class="ghost-button" id="logoutButton" type="button">退出登录</button></div>
+        </header>
+        <div id="adminMessage" class="banner" role="status" hidden></div>
+        <section class="overview-grid" id="overviewCards"></section>
+        <div class="content-grid">
+          <section class="panel wide-panel">
+            <div class="panel-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>Skill 审核队列</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
+            <div class="table-wrap"><table><thead><tr><th>名称</th><th>作者</th><th>版本</th><th>状态</th><th>安全检查</th><th>操作</th></tr></thead><tbody id="skillsTable"></tbody></table></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">ACCOUNT CONTROL</p><h2>账号管理</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
+            <div class="table-wrap"><table><thead><tr><th>账号</th><th>角色</th><th>状态</th><th>额度</th><th>操作</th></tr></thead><tbody id="usersTable"></tbody></table></div>
+          </section>
+          <section class="panel">
+            <div class="panel-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>最近操作</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
+            <ol class="audit-list" id="auditList"></ol>
+          </section>
+        </div>
+      </section>
+    </main>
+    <script src="./app.js" defer></script>
+  </body>
+</html>
