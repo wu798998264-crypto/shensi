@@ -13,6 +13,7 @@ import {
   openCodePermissionServerAuth,
   replyToOpenCodePermission,
 } from "./opencode-permission-bridge.mjs";
+import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -103,6 +104,7 @@ export const runOpenCodeAgent = async ({
   allowNetwork = false,
   contextBlocks = [],
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  isWaitingForUser = () => false,
   environment = process.env,
   launchResolver = resolveLocalOpenCodeLaunch,
   signal = null,
@@ -259,12 +261,13 @@ export const runOpenCodeAgent = async ({
     let actualModel = "";
     let settled = false;
     let aborted = false;
+    let effectiveTimeout = null;
     const permissionMonitorController = new AbortController();
     const finish = (error, value) => {
       if (settled) return;
       settled = true;
       permissionMonitorController.abort();
-      clearTimeout(timer);
+      effectiveTimeout?.clear();
       signal?.removeEventListener?.("abort", abort);
       if (error) rejectRun(error);
       else resolveRun(value);
@@ -339,11 +342,15 @@ export const runOpenCodeAgent = async ({
         permissionMode: accessMode,
       });
     });
-    const timer = setTimeout(() => {
-      child.kill();
-      finish(new Error(`OpenCode Agent 调用超过 ${Math.round(timeoutMs / 1000)} 秒，已停止`));
-    }, Math.max(30_000, Math.min(3_600_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)));
-    timer.unref?.();
+    effectiveTimeout = createEffectiveAgentTimeout({
+      timeoutMs,
+      isWaitingForUser,
+      onTimeout: ({ reason, timeoutMs: activeTimeoutMs }) => {
+        try { child.kill(); } catch {}
+        const suffix = reason === "waiting_timeout" ? "等待用户决定超过上限" : "调用超过有效执行时限";
+        finish(new Error(`OpenCode Agent ${suffix}（${Math.round(activeTimeoutMs / 1000)} 秒），已停止`));
+      },
+    });
       child.stdin.end();
     });
   } finally {

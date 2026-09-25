@@ -47,10 +47,11 @@ for (const [instruction, deliverableType] of [
   ["我想写一套视频提示词", "visual_prompt"],
 ]) {
   const guidanceRoute = buildAdaptiveTaskRoute({ instruction, text: instruction, sourceMessageId: `guidance-${deliverableType}` }, { executionSurface: "chat" });
-  assert.equal(guidanceRoute.mode, "creative_guidance", `只有创作意图时必须先进入引导：${instruction}`);
+  assert.equal(guidanceRoute.mode, "creative", `只有创作意图时应保留创作边界并由面板选择模块：${instruction}`);
+  assert.equal(guidanceRoute.panelRouteDelegated, true, `软件不得为 Agent 预选引导或主笔：${instruction}`);
   assert.equal(guidanceRoute.deliverableType, deliverableType);
-  assert.equal(guidanceRoute.taskPolicy.action, "analyze", "创作引导本轮不得提前生成正文");
-  assert.equal(guidanceRoute.taskPolicy.commitDisposition, "no_artifact", "创作引导本轮不得提前落盘");
+  assert.equal(guidanceRoute.taskPolicy.action, "discuss", "面板尚未选择模块前不得提前生成正文");
+  assert.equal(guidanceRoute.taskPolicy.commitDisposition, "no_artifact", "面板尚未选择模块前不得提前落盘");
 }
 
 for (const [instruction, deliverableType, routeMode = "creative"] of [

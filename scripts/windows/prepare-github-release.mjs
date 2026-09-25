@@ -15,6 +15,7 @@ const updateConfig = JSON.parse(await readFile(join(repositoryRoot, "update-conf
 const version = String(packageMetadata.version || "");
 const buildId = String(releaseBuild.buildId || "");
 
+if (!/^\d\.\d\.\d$/u.test(version)) throw new Error("正式版本号必须由三个单数字段组成；例如 7.7.9 的下一版应进位为 7.8.0");
 if (releaseBuild.publishable !== true) throw new Error("当前构建未标记为可发布");
 if (releaseBuild.version !== version) throw new Error("release-build.json 与 package.json 版本不一致");
 if (!/^[1-9]\d{16}$/.test(buildId)) throw new Error("正式发布 buildId 必须是 17 位时间戳");

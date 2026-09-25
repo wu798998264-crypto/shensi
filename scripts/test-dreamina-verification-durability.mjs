@@ -215,6 +215,12 @@ try {
     "官方 CLI 明确返回未登录时必须转为结构化需核验错误");
   assert.match(app, /account\?\.statusReadUnavailable[\s\S]{0,800}已保存的核验身份保持有效/u,
     "已有身份的账号状态读取故障不得诱导用户重复核验");
+  assert.match(app, /const dreaminaAccountHasDurableIdentity = \(account = null\)[\s\S]{0,420}expectedUserId \|\| account\.verifiedUserId[\s\S]{0,260}verifiedAt[\s\S]{0,260}mismatch.*duplicate.*invalid/u,
+    "持久账号身份存在且没有明确冲突时必须优先于临时状态");
+  assert.match(app, /dreaminaAccountRequiresVerification = \(account = null\)[\s\S]{0,360}dreaminaAccountHasDurableIdentity\(account\)/u,
+    "启动状态短暂显示未绑定时不得因为已有持久核验身份重复弹窗");
+  assert.match(app, /account\?\.state === "verified" \|\| dreaminaAccountHasDurableIdentity\(account\)/u,
+    "生成前账号门禁必须复用持久核验身份，而不是只接受瞬时 verified 状态");
   assert.match(app, /statusReadError && !account[\s\S]{0,800}这不能证明账号失效/u,
     "无缓存状态时的读取故障也不得伪装成账号失效");
   assert.match(app, /const existingAccount = \(ui\.dreaminaAccountStatuses[\s\S]{0,300}renderDreaminaAccountStatus\(existingAccount/u,

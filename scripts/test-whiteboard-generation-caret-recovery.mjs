@@ -18,5 +18,9 @@ assert.match(app, /const safeToRestore = dialog\?\.open[\s\S]{0,180}active === d
   "光标恢复不得抢走用户已经点击的按钮或菜单焦点");
 assert.match(app, /editor\?\.addEventListener\("input", \(event\) => \{[\s\S]{0,240}syncWhiteboardRichPromptValue\(form\)/u,
   "恢复后的输入必须继续同步到隐藏提交字段");
+assert.match(app, /editor\?\.addEventListener\("click", \(event\) => \{[\s\S]{0,520}placeWhiteboardGenerationReferenceDropCaret\(editor, event\.clientX, event\.clientY\)/u,
+  "点击重绘后的提示词文字时必须按实际点击坐标恢复光标，而不是固定跳到末尾");
+assert.match(app, /(?:let|const) hasLiveSelection =[\s\S]{0,320}editor\.focus\(\{ preventScroll: true \}\);[\s\S]{0,800}if \(hasLiveSelection\) rememberWhiteboardRichPromptSelection/u,
+  "捕获 pointerdown 时不得抢先把用户光标强行放到末尾");
 
 console.log("whiteboard generation caret recovery contract passed");

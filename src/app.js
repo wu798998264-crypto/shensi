@@ -80,7 +80,7 @@ import {
   whiteboardConnectionReferenceLimits,
   supportedSpeedModes,
   webSearchMode,
-} from "./model-presets.js?v=1.1.1-deepseek-v4-flash-0731";
+} from "./model-presets.js?v=7.5.9-libtv-reference-ratios";
 import {
   addDeepSeekOpenCodeProfile,
   activeGenerationProfile,
@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=6.9.0-output-boundary";
+} from "./generation-profiles.js?v=8.0.0-guidance-continuation";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -131,7 +131,7 @@ import { conversationRollbackPatch, persistableStateWithoutEphemeralConversation
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
-import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=6.4.8-prompt-input";
+import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, agentTaskWritePresentation, nativeAgentLifecycleStageLabel, nativeAgentTaskWayLabel, nativeAgentTerminalPresentation } from "./conversation-agent-task-route.js?v=7.5.9-write-presentation";
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
@@ -154,12 +154,13 @@ import { buildInlineSelectionPrompt, inlineContextDocumentIds, inlineContextPosi
 import { applyAnchoredTextEdit, createAnchoredTextEditContract, resolveAnchoredTextEdit, textContentFingerprint } from "./anchored-text-edit.js";
 import { contextualInsertionRequested, documentMutationOutputInstruction, inferContextualInsertionEditPlan, inferContextualReplacementEditPlan, inferExactReplacementEditPlan, patchesFromDocumentEditPlan, terminalContinuationRequested } from "./document-edit-plan.js";
 import { applyDocumentPatchPlan } from "./document-patch-engine.js";
-import { renderHistoryDiff, resolveHistoryDiffInput } from "./history-diff.js";
+import { historyDiffIsFullReplacement, renderHistoryDiff, resolveHistoryDiffInput } from "./history-diff.js";
 import { collectRelatedDocumentHistory, prepareRelatedDocumentRestore } from "./related-history.js";
 import { landingReceiptPresentation, verifiedLandingDocumentLinksForManifest, verifiedLandingManifestReceipt, verifyLandingDelivery } from "./landing-document-links.js?v=2.89-derived-receipt";
 import { createConversationTrashEntry, createFileTrashEntry, createHistoryTrashEntry, createTreeTrashEntry, daysUntilTrashExpiry, pruneTrashEntries, purgeTrashPayloadsFromState, trashPreviewDocument } from "./trash.js";
 import { buildDeletedContentRecoveryContext, deletedContentSearchEntries } from "./deleted-content-access.js";
 import { directoryDeletionDocumentIds, orphanTreeReferenceTrashPayload } from "./orphan-tree-reference.js";
+import { directoryOrderWithPlacement, directoryRootDropIntent } from "./directory-drop.js";
 import { findActivityBlockIndex } from "./activity-navigation.js";
 import { batchBaseChapterNumber, candidateTargetDocumentId, chapterNumberValue, explicitlyDefersCandidateLanding, explicitlyRequestsBoundDocument, isGenerationAndLandingRequest, isLandingRequest, isLocalWriteCapabilityQuestion, requestedChapterBatch, requestedChapterTarget, stripCandidateChapterHeading } from "./chapter-target.js?v=1.1.3-direct-replace";
 import { analyzeBatchLanding, analyzeSmartLandingPath, associatedDocumentId, automaticLandingDecision, candidateLandingShouldBeDeferred, continuationDestinationIntent, conversationAssociationDisplayDocumentId, conversationAssociationRoutingAnchorId, conversationAutoAssociationEnabled, createTurnContextSnapshot, explicitNewDocumentIntent, requestsMultipleCandidates, resolveTurnAssociationChange, shouldAutoCreateDocument, splitLabeledCandidateVariants, toggleConversationDocumentAssociation } from "./automatic-landing-policy.js?v=1.1.6-fixed-conversation-binding";
@@ -227,6 +228,7 @@ import { creativeGuidanceDepthPrompt } from "./pending-decision-policy.js";
 import { indexCanBeReadForStage } from "./index-policy.js";
 import { noteToolbarControlFullyVisible, noteToolbarControlKey, noteToolbarDuplicateAssignment } from "./note-toolbar-overflow.js";
 import { stripInternalAssistantProtocol } from "./assistant-visible-content.js";
+import { hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeWorkBuddyConversationOutput } from "./conversation-output-guard.js";
 import { modelPickerDisplayName } from "./public-model-catalog.js?v=5.4.10-performance";
 import { classifyPublicTextCapabilityFailure, describePublicTextCapabilityFailure, publicTextFailureIsRequestSpecific } from "./public-text-capability-evidence.js";
 import { expandMultilineParagraphHtml, formatClipboardPlainText, joinParagraphFragment, proseParagraphs, stripMatchingLeadingHeadingHtml } from "./prose-format.js";
@@ -252,7 +254,7 @@ import { effectiveSequencedDocumentNumber, freeDocumentTitle, normalizePastedDoc
 import { cardHistoryViewModel, canDeleteCardHistoryVersion } from "./whiteboard-card-history.js";
 import { genericLandingDocumentTitle, landingDocumentTitle, leadingFormalDocumentTitle, leadingSequencedDocumentTitle } from "./document-landing-title.js?v=2.19.7-continuation-title";
 import { materializeNotebookDeliverable, notebookDestinationForDeliverable, standaloneDocumentParts } from "./notebook-deliverable.js";
-import { consumeConversationComposerReferences, conversationComposerReferenceScope, conversationComposerReferencesPending, conversationReferenceMessageSnapshot, ensureConversationReferenceContext, markConversationComposerReferencesPending, removeConversationAttachmentReference, resolveConversationReferenceContext, synchronizeConversationReferenceContext } from "./conversation-reference-policy.js";
+import { consumeConversationComposerAttachments, consumeConversationComposerReferences, conversationComposerReferenceScope, conversationComposerReferencesPending, conversationReferenceMessageSnapshot, ensureConversationReferenceContext, markConversationComposerReferencesPending, removeConversationAttachmentReference, resolveConversationReferenceContext, synchronizeConversationReferenceContext } from "./conversation-reference-policy.js";
 import { normalizeDocumentConversationBindings, unbindConversation } from "./conversation-document-binding.js?v=1.0.1-fixed-conversation-routing";
 import { conversationBelongsToWorkspace, conversationWorkspaceKey, taskConversationMetadata, taskDocumentAnchor, requestsCurrentDocument, rememberedModuleDocument, taskScopedConversationMessages } from "./workspace-conversation-policy.js";
 import {
@@ -265,10 +267,10 @@ import {
 import { PANE_LAYOUT_DEFAULTS, constrainPaneWidths, resizePaneWidths } from "./pane-layout.js";
 import { CHAT_COMPOSER_HEIGHT_DEFAULT, CHAT_COMPOSER_HEIGHT_LIMITS, chatComposerHeightRange, clampChatComposerHeight, resizeChatComposerHeight } from "./chat-composer-layout.js";
 import { GLOBAL_WRITING_TIMER_ID, WRITING_TIMER_STATUS, beginWritingMetricsSession, countInsertedCharacters, formatWritingTimerDuration, normalizeWritingTimerRecord, normalizeWritingTimerStore, pauseWritingMetricsSession, pauseWritingTimer, recordWritingMetricsActivity, setWritingTimerExpanded, startWritingTimer, stopWritingTimer, writingMetricsSnapshot, writingTimerElapsedMs } from "./writing-timer.js";
-import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=6.4.8-prompt-input";
+import { agentRouteUsesShensi, agentRouteUsesWorkspaceAgent, blockingCreativeContextIds, buildAdaptiveTaskRoute, canonicalNovelChapterRequestTarget, contextualCreativeRepairFollowup, continuesPriorCreativeTask, creativeContextRequiredIds, creativeDeliverableType, explicitCurrentDocumentRequest, freshNovelOpeningTarget, generalDocumentContextIds, hasExplicitCreativeProductionIntent, hasExplicitFormalAssetWriteIntent, hasProjectTerminology, hasSubstantiveInlineCreativeSource, isEntityProfileQuery, isExplicitDirectCreationRequest, isExplicitFreshCreativeStart, isReadOnlyProjectQuery, isWholeProjectContextRequest, usesStandaloneCreativeContext } from "./request-routing.js?v=7.7.9-panel-routing";
 import { normalizeNotebookNarrativeRelationships, notebookNarrativeSequenceNumber, notebookSameWorkDocumentIds } from "./notebook-work-scope.js?v=2.18.7-smart-notebook-routing";
 import { materializeFixedSlotBindings } from "./fixed-slot-bindings.js";
-import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=0.43.0-capability-relation-layout";
+import { CAPABILITY_RELATION_TYPES, capabilityRoleLabel, capabilityTemplateNode, capabilityTemplateNodeIsVisible, capabilityTemplateTopology, capabilityTemplateVisibleItems, isKernelManagedCapabilityNode, normalizeCapabilityTemplate, pruneCapabilityTemplateEmptySlots, removeCapabilityTemplateNode, removeCapabilityTemplateSlot, reorderCapabilityTemplateMember, swapCapabilityTemplateMembers, validateCapabilityTemplate } from "./capability-template.js?v=7.7.9-panel-semantic-guidance";
 import { compileManagedRouteBundle } from "./managed-route-document.js";
 import { SKILL_CAPABILITY_CATEGORIES, resolveSkillCapabilitiesFromCategories, skillCapabilityCategoryIds, skillCapabilityCategoryLabels } from "./skill-capability-categories.js?v=0.36.35-skill-categories";
 import { compatibleTriggerDeclaration } from "./skill-trigger.js?v=0.43.0-import-compatibility";
@@ -325,7 +327,7 @@ import { workspaceSaveRequest } from "./workspace-request.js";
 import { createWorkspaceStateConflictError, isWorkspaceStateConflict, rebaseWorkspaceConflict, workspaceDocumentHashes as documentSaveHashes, workspaceStateHashes } from "./workspace-conflict.js";
 import { CONVERSATION_SAVE_KEYS, freezeConversationSaveState, preserveConversationReferences, reconcileConversationSaveAfterConflict, reconcileWorkspaceSave } from "./conversation-save-reconciliation.js";
 import { markAgentResultProjection, upsertAgentResultReference } from "./conversation-agent-document-projection.js";
-import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=6.4.8-prompt-input";
+import { applyConversationMediaResultToWorkspace, conversationMediaResultPresent, conversationMediaTimingNeedsRepair, createSerializedWorkspaceGenerationWriter, mediaGenerationActionPresentation, mediaGenerationPollDelayMs, mediaGenerationPollErrorIsTerminal, mediaRecoveryJobBlocksOperation, mediaRecoveryPromptCandidates, recoverUnknownMediaSubmission, shouldPromoteMediaGenerationResult, whiteboardMediaJobHoldsCard, whiteboardMediaJobIsSupersededByNodeGeneration, whiteboardMediaJobMayClearCandidate } from "./media-generation-coordination.js?v=7.5.9-startup-recovery-baseline";
 import { createMediaRecoveryReconciler, fetchMediaRecoveryJobs, isMediaRecoveryTransportError } from "./media-recovery-reconciler.js?v=0.47.0-fast-bounded-recovery";
 import { filterHistoricalAssets, historicalAssetSelection, normalizeHistoricalAssetFilters, toggleFilteredAssetSelection } from "./whiteboard-asset-ui-model.js";
 import { assetNeedsWorkspaceMaterialization, conversationAttachmentUploadAsset, historicalAssetSourceIdentity, mergeGlobalHistoricalAssets } from "./global-history-assets.js";
@@ -336,6 +338,32 @@ import { fullTextImportDocumentTitle, fullTextImportInstructionRequested } from 
 import { enrichWhiteboardPromptClipboardSegments, whiteboardPromptClipboardText } from "./whiteboard-prompt-clipboard.js";
 
 let SHENSI_SESSION_TOKEN = document.querySelector('meta[name="shensi-session-token"]')?.content || "";
+
+// External runners can echo host routing/tool protocol while they are
+// producing a normal answer.  Keep the streaming surface behind the same
+// user-visible boundary as the durable server result.  The WorkBuddy-specific
+// pass is selected only when an internal marker is actually present so normal
+// JSON, code samples, and proposed solutions remain untouched.
+const sanitizeAgentDisplayText = (value = "", { final = false } = {}) => {
+  const source = String(value ?? "");
+  return hasWorkBuddyInternalConversationMarker(source)
+    ? sanitizeWorkBuddyConversationOutput(source, { final })
+    : sanitizeConversationOutput(source, { final });
+};
+
+// Raw runner text is intentionally kept outside the persisted message model.
+// Re-sanitize the complete stream on every delta so a protocol marker split
+// across transport chunks cannot lose the context needed by the guard.
+const agentDisplayRawStreams = new Map();
+const appendAgentDisplayRawText = (message, delta = "") => {
+  const key = String(message?.id || "");
+  const next = `${agentDisplayRawStreams.get(key) || ""}${String(delta || "")}`;
+  if (key) agentDisplayRawStreams.set(key, next);
+  return next;
+};
+const agentDisplayRawText = (message) => agentDisplayRawStreams.get(String(message?.id || "")) || "";
+const clearAgentDisplayRawText = (message) => agentDisplayRawStreams.delete(String(message?.id || ""));
+
 const nativeFetch = window.fetch.bind(window);
 let sessionRefreshFlight = null;
 const refreshShensiSessionToken = async () => {
@@ -422,6 +450,7 @@ import {
   updateCanvasTextNode,
   updateCanvasViewport,
   duplicateCanvasNodeBelow,
+  duplicateCanvasNodeRight,
   isUnusableWhiteboardGenerationText,
   whiteboardGenerationResult,
   whiteboardGenerationSources,
@@ -1758,6 +1787,7 @@ let ui = {
     polling: false,
     activeTurnId: "",
     pendingMessageId: "",
+    stopRequested: false,
     trace: [],
     diff: "",
     documentDirectory: "",
@@ -1790,8 +1820,11 @@ let ui = {
   selectionStyleMenuOpen: false,
   inlineEdits: new Map(),
   whiteboardDrag: null,
+  whiteboardCandidateRenderFrame: 0,
+  whiteboardCandidateRenderPending: new Map(),
   whiteboardViewportGesture: null,
   whiteboardViewportGestureTimer: null,
+  whiteboardViewportDeferredRender: false,
   whiteboardWheelZoom: null,
   whiteboardWheelZoomFrame: 0,
   whiteboardSurfaceHideTask: null,
@@ -1928,6 +1961,7 @@ let ui = {
   skillMarketplaceAssetType: "",
   account: {
     authenticated: false,
+    token: "",
     loginMode: "password",
     membershipTab: "plans",
     profile: { nickname: "神思用户", accountId: "--" },
@@ -2018,6 +2052,10 @@ const markUiInteraction = () => {
 
 document.addEventListener("pointerdown", markUiInteraction, { capture: true, passive: true });
 document.addEventListener("keydown", markUiInteraction, { capture: true });
+document.addEventListener("wheel", markUiInteraction, { capture: true, passive: true });
+document.addEventListener("pointermove", () => {
+  if (ui.whiteboardDrag || ui.paneDrag || ui.chatComposerDrag) markUiInteraction();
+}, { capture: true, passive: true });
 
 const cancelUiBackgroundTask = (task) => {
   if (!task) return;
@@ -3526,6 +3564,11 @@ const ensureStateSchema = () => {
       updatedAt: `今天 ${nowTime()}`,
     }];
   }
+  state.generationAttemptRecoveryLedger = state.generationAttemptRecoveryLedger
+    && typeof state.generationAttemptRecoveryLedger === "object"
+    && !Array.isArray(state.generationAttemptRecoveryLedger)
+      ? state.generationAttemptRecoveryLedger
+      : {};
   try { restoreManualConversations(localStorage, state); } catch (error) { console.warn("Conversation journal recovery failed", error.message); }
   state.activeConversationId ||= state.conversations[0]?.id;
   for (const conversation of state.conversations) {
@@ -3554,6 +3597,16 @@ const ensureStateSchema = () => {
     conversation.contextCompressionSignature ??= "";
     conversation.contextCompressionStatus ??= null;
     conversation.intentTarget ??= null;
+    if (conversation.agentQuestion?.kind === "native_agent"
+      && conversation.agentQuestion?.decisionKind !== "agent_permission"
+      && conversation.agentQuestion?.allowFreeText !== false
+      && conversation.agentQuestion?.presentation !== "browser_login") {
+      // `submitting` belonged to the old live callback and could be persisted
+      // by a crash. Ordinary choices are durable conversation turns now, so a
+      // stale transient flag must never leave the restored confirm button disabled.
+      delete conversation.agentQuestion.submitting;
+      conversation.agentQuestion.durable = true;
+    }
     conversation.lastSuccessfulMediaConnectionIds = conversation.lastSuccessfulMediaConnectionIds && typeof conversation.lastSuccessfulMediaConnectionIds === "object"
       ? conversation.lastSuccessfulMediaConnectionIds
       : {};
@@ -4598,7 +4651,7 @@ const loadWorkspaceSwitchTarget = async ({ workspaceKind, workspacePath }) => {
   clearTimeout(ui.workspacePrefetchTimer);
   ui.workspacePrefetchTimer = null;
   const pendingPrefetch = ui.workspacePrefetches.get(key);
-  if (pendingPrefetch) await pendingPrefetch;
+  if (!ui.workspaceStateCache.has(key) && pendingPrefetch) await pendingPrefetch;
   const cached = ui.workspaceStateCache.get(key);
   if (cached) {
     ui.workspaceStateCache.delete(key);
@@ -4715,6 +4768,9 @@ const prefetchWorkspaceState = ({ workspaceKind, workspacePath }) => {
   const operation = fetchWorkspacePayload(workspacePath)
     .then((payload) => {
       if (!payload.state) return false;
+      // A newer save/activation may have populated this entry while the warm
+      // read was in flight. Never replace it with an older prefetched state.
+      if (ui.workspaceStateCache.has(key)) return true;
       cacheWorkspaceState({ workspaceKind, workspacePath, workspaceState: payload.state, stateStamp: payload.stateStamp, prepared: false });
       return true;
     })
@@ -4836,10 +4892,19 @@ const saveWorkspaceAfterConflict = async ({
           persisted: latest.state,
         })
       : null;
-    const stateConflictResolutions = conversationPlan?.ok
+    // Conversation/task state is append-heavy and may be written by the
+    // foreground and a background runner in the same turn.  If a strict
+    // three-way plan cannot align an old baseline, preserve both timelines and
+    // let the document conflict detector continue to protect real content.
+    const conversationResolutionState = conversationPlan?.ok
+      ? conversationPlan.state
+      : submittedConversationSnapshot
+        ? preserveConversationReferences(localState, latest.state)
+        : null;
+    const stateConflictResolutions = conversationResolutionState
       ? Object.fromEntries(CONVERSATION_SAVE_KEYS
-        .filter((key) => Object.hasOwn(conversationPlan.state, key))
-        .map((key) => [key, conversationPlan.state[key]]))
+        .filter((key) => Object.hasOwn(conversationResolutionState, key))
+        .map((key) => [key, conversationResolutionState[key]]))
       : {};
     // Destructive directory operations do not edit conversation content. If
     // an Agent progress save lands while the delete is in flight, the remote
@@ -5215,6 +5280,7 @@ const flushWorkspaceSave = async ({ throwOnError = false, recoverConflict = true
   const recoveryRequired = (
     ui.workspaceDocumentChangesUnknown
     || ui.workspaceDirtyDocumentIds.size > 0
+    || ui.workspaceStateChangesPending
     || whiteboardGenerationDraftNeedsRecoveryCheckpoint()
   );
   let recoveryError = null;
@@ -5297,6 +5363,9 @@ const recoveryCheckpointPayload = () => {
   const recoveryDocumentIds = !ui.workspaceDocumentChangesUnknown
     ? [...ui.workspaceDirtyDocumentIds]
     : null;
+  const conversationOnlyRecovery = Array.isArray(recoveryDocumentIds)
+    && recoveryDocumentIds.length === 0
+    && ui.workspaceStateChangesPending;
   const recoveryState = Array.isArray(recoveryDocumentIds)
     ? recoveryDocumentIds.length
       ? compactRecoveryState(
@@ -5304,10 +5373,23 @@ const recoveryCheckpointPayload = () => {
           { documentIds: recoveryDocumentIds },
         )
       // Whiteboard prompt/reference drafts have their own payload. When no
-      // workspace document changed, an empty overlay protects the draft without
-      // cloning the complete workspace merely to satisfy the checkpoint shape.
+      // workspace document changed and this is not a conversation-state save,
+      // keep the overlay empty instead of cloning the complete workspace.
       : compactRecoveryState({})
     : compactRecoveryState(stateForWorkspace());
+  if (conversationOnlyRecovery) {
+    Object.assign(recoveryState, compactRecoveryState({
+      conversations: clone(state.conversations ?? []),
+      activeConversationId: state.activeConversationId,
+      messages: clone(state.messages ?? []),
+      snapshots: clone(state.snapshots ?? {}),
+      isolatedBranches: clone(state.isolatedBranches ?? []),
+      currentCandidate: state.currentCandidate ?? "",
+      currentCandidateTarget: clone(state.currentCandidateTarget ?? null),
+      currentCandidateMemoryUpdate: clone(state.currentCandidateMemoryUpdate ?? null),
+      currentCandidateAuthorization: clone(state.currentCandidateAuthorization ?? null),
+    }));
+  }
   return {
     workspaceKind: state.workspaceKind,
     workspacePath: state.settings.workspacePath,
@@ -5574,6 +5656,7 @@ const persistWorkspaceStateOnly = ({ saveDelay = 260 } = {}) => {
   ui.workspaceDirty = true;
   ui.workspaceStateChangesPending = true;
   ui.workspaceRevision += 1;
+  scheduleRecoveryCheckpoint();
   setAutoSaveState("saving");
   clearTimeout(ui.saveTimer);
   ui.saveTimer = setTimeout(() => {
@@ -5899,6 +5982,12 @@ const hydrateWorkspace = async () => {
 };
 
 const isTextGenerationModel = (slug = "") => !/(embedding|moderation|transcri|tts|realtime|audio|image|sora|veo|banana|ocr|video)/i.test(slug);
+const isSelectableTextModel = (item = {}) => {
+  const modelId = typeof item === "string" ? item : item?.slug || item?.id || item?.name;
+  const capabilities = Array.isArray(item?.capabilities) ? item.capabilities : [];
+  return isTextGenerationModel(modelId)
+    && !capabilities.some((capability) => /(?:image|video|audio)_generation|(?:^|[_-])(?:image|video|audio)(?:$|[_-])/i.test(String(capability || "")));
+};
 const isImageGenerationModel = (slug = "") => /(?:image|imagen|cogview|nano[-_ ]?banana)/i.test(slug);
 const isVideoGenerationModel = (slug = "") => !/sora/i.test(slug) && /(?:video|veo|seedance|kling|wan|hailuo|vidu|runway)/i.test(slug);
 const isAudioGenerationModel = (slug = "") => /(?:audio|tts|text[-_ ]?to[-_ ]?speech|speech|voice|music|suno|eleven)/i.test(slug);
@@ -6206,9 +6295,9 @@ const modelAllowedByMediaProbe = (probe, model, { channel = "", profile = null }
 
 const modelOptionsForProvider = (providerId = state.settings.provider, adapter = state.settings.adapter) => {
   const merged = new Map(getProviderModelOptions(providerId)
-    .filter((item) => isTextGenerationModel(item.slug) && !item.capabilities?.some((capability) => ["image_generation", "video_generation"].includes(capability)))
+    .filter(isSelectableTextModel)
     .map((item) => [item.slug, item]));
-  const dynamicModels = dynamicModelsForChannel(providerId, adapter).filter((item) => isTextGenerationModel(item.slug));
+  const dynamicModels = dynamicModelsForChannel(providerId, adapter).filter(isSelectableTextModel);
   for (const item of dynamicModels) {
     const existing = merged.get(item.slug);
     merged.set(item.slug, { ...existing, ...item, label: modelPickerDisplayName(item) || existing?.label || item.slug });
@@ -6223,13 +6312,14 @@ const modelOptionsForProvider = (providerId = state.settings.provider, adapter =
       : providerId === "DeepSeek" && Boolean(ui.localOpenCode?.available);
   const availableIds = new Set(dynamicModels.map((item) => item.slug));
   const preset = getProviderPreset(providerId);
-  return [...merged.values()].map((item) => ({
+  const options = [...merged.values()].map((item) => ({
     ...item,
     availabilityKnown: exactAvailabilityKnown,
     available: item.selectable === false ? false : exactAvailabilityKnown
       ? availableIds.has(item.slug)
       : adapter === "api" ? false : Boolean(preset.cli.path),
   }));
+  return sortTextModelsByCapability(options, activeProfile);
 };
 
 const syncGenerationAdapterFields = (channel = "text") => {
@@ -6434,7 +6524,34 @@ const syncModelCapabilityControls = () => {
   renderCodexConnectionControls();
 };
 
-const renderModelOptions = (providerId = state.settings.provider, { allowBlank = false, preferredModel = "" } = {}) => {
+const settingsModelFocusSnapshot = () => {
+  const element = document.activeElement;
+  if (!element || !["modelInput", "customModelInput", "imageModelInput", "customImageModelInput", "videoModelInput", "customVideoModelInput", "audioModelInput", "customAudioModelInput"].includes(element.id)) return null;
+  return {
+    element,
+    start: typeof element.selectionStart === "number" ? element.selectionStart : null,
+    end: typeof element.selectionEnd === "number" ? element.selectionEnd : null,
+    direction: element.selectionDirection || "none",
+  };
+};
+
+const restoreSettingsModelFocus = (snapshot) => {
+  const element = snapshot?.element;
+  if (!element?.isConnected || element.hidden || element.closest("[hidden]")) return;
+  const restore = () => {
+    if (!element.isConnected || element.hidden || element.closest("[hidden]")) return;
+    if (document.activeElement !== element && document.activeElement !== document.body) return;
+    if (document.activeElement !== element) element.focus({ preventScroll: true });
+    if (snapshot.start !== null && typeof element.setSelectionRange === "function") {
+      const length = String(element.value || "").length;
+      element.setSelectionRange(Math.min(snapshot.start, length), Math.min(snapshot.end ?? snapshot.start, length), snapshot.direction);
+    }
+  };
+  restore();
+  requestAnimationFrame(restore);
+};
+
+const renderModelOptionsInternal = (providerId = state.settings.provider, { allowBlank = false, preferredModel = "" } = {}) => {
   const form = document.querySelector("#settingsForm");
   const select = document.querySelector("#modelInput");
   const customInput = document.querySelector("#customModelInput");
@@ -6450,7 +6567,7 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
     const current = String(preferredModel || profile?.agentModelId || profile?.model || "").trim();
     const runnerLabel = agentEngineDescriptor(selectedEngine)?.label || AGENT_RUNNER_LABELS[selectedEngine] || "外置 Agent";
     const capability = agentRunnerCapability(selectedEngine);
-    const models = capability?.modelState === "catalog_available" && capability?.authState === "authenticated" && Array.isArray(capability?.models)
+    const models = capability?.modelState === "catalog_available" && capability?.authState !== "login_required" && Array.isArray(capability?.models)
       ? capability.models.map((model) => String(model || "").trim()).filter(Boolean)
       : [];
     const installed = capability?.installed === true;
@@ -6575,7 +6692,16 @@ const renderModelOptions = (providerId = state.settings.provider, { allowBlank =
   syncModelCapabilityControls();
 };
 
-const renderImageModelOptions = (providerId = state.settings.imageProvider || "OpenAI", { allowBlank = false } = {}) => {
+// Capability probes can finish while the user is typing a custom model ID.
+// Keep the active control and caret stable across option-list rebuilds.
+const renderModelOptions = (...args) => {
+  const focus = settingsModelFocusSnapshot();
+  const result = renderModelOptionsInternal(...args);
+  restoreSettingsModelFocus(focus);
+  return result;
+};
+
+const renderImageModelOptionsInternal = (providerId = state.settings.imageProvider || "OpenAI", { allowBlank = false } = {}) => {
   const form = document.querySelector("#settingsForm");
   const select = document.querySelector("#imageModelInput");
   const customInput = document.querySelector("#customImageModelInput");
@@ -6621,7 +6747,7 @@ const renderImageModelOptions = (providerId = state.settings.imageProvider || "O
     : models.find((item) => item.available !== false)?.slug || "";
 };
 
-const renderVideoModelOptions = (providerId = state.settings.videoProvider || "OpenAI", { allowBlank = false } = {}) => {
+const renderVideoModelOptionsInternal = (providerId = state.settings.videoProvider || "OpenAI", { allowBlank = false } = {}) => {
   const form = document.querySelector("#settingsForm");
   const select = document.querySelector("#videoModelInput");
   const customInput = document.querySelector("#customVideoModelInput");
@@ -6669,7 +6795,7 @@ const renderVideoModelOptions = (providerId = state.settings.videoProvider || "O
     : models.find((item) => item.available !== false)?.slug || "";
 };
 
-const renderAudioModelOptions = (providerId = state.settings.audioProvider || "LibTV", { allowBlank = false } = {}) => {
+const renderAudioModelOptionsInternal = (providerId = state.settings.audioProvider || "LibTV", { allowBlank = false } = {}) => {
   const form = elements.settingsForm;
   const select = document.querySelector("#audioModelInput");
   const customInput = document.querySelector("#customAudioModelInput");
@@ -6690,6 +6816,27 @@ const renderAudioModelOptions = (providerId = state.settings.audioProvider || "L
   if (!models.length) models.push({ slug: provider === "即梦" ? "seed-tts-1.0" : provider === "LibTV" ? "seed-audio-1.0" : "sumo", label: provider === "即梦" ? "Seed Audio 1.0" : provider === "LibTV" ? "Seed Audio 1.0" : "自定义音频模型" });
   select.innerHTML = `${allowBlank ? '<option value="">请选择音频模型</option>' : ""}${models.map((item) => `<option value="${escapeHtml(item.slug)}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}`;
   select.value = models.some((item) => item.slug === current) ? current : models[0].slug;
+};
+
+const renderImageModelOptions = (...args) => {
+  const focus = settingsModelFocusSnapshot();
+  const result = renderImageModelOptionsInternal(...args);
+  restoreSettingsModelFocus(focus);
+  return result;
+};
+
+const renderVideoModelOptions = (...args) => {
+  const focus = settingsModelFocusSnapshot();
+  const result = renderVideoModelOptionsInternal(...args);
+  restoreSettingsModelFocus(focus);
+  return result;
+};
+
+const renderAudioModelOptions = (...args) => {
+  const focus = settingsModelFocusSnapshot();
+  const result = renderAudioModelOptionsInternal(...args);
+  restoreSettingsModelFocus(focus);
+  return result;
 };
 
 const GENERATION_FORM_FIELDS = {
@@ -7124,13 +7271,17 @@ const beginNewGenerationProfile = (channel) => {
 };
 
 const renderGenerationConnectionManagers = () => {
+  const settings = generationWorkingSettings();
   for (const channel of ["text", "image", "video", "audio"]) {
-    const settings = generationWorkingSettings();
     const keys = generationProfileKeys(channel);
     const select = connectionSelectFor(channel);
     if (!keys || !select) continue;
     const optionLabels = generationConnectionOptionLabels(channel, settings[keys.list]);
-    select.innerHTML = settings[keys.list].map((profile, index) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(optionLabels[index])}</option>`).join("");
+    const optionsMarkup = settings[keys.list].map((profile, index) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(optionLabels[index])}</option>`).join("");
+    if (select._connectionOptionsMarkup !== optionsMarkup) {
+      select.innerHTML = optionsMarkup;
+      select._connectionOptionsMarkup = optionsMarkup;
+    }
     select.value = settings[keys.active];
     const currentLabel = document.querySelector(`[data-generation-profile-current="${channel}"]`);
     if (currentLabel) currentLabel.textContent = optionLabels[settings[keys.list].findIndex((profile) => profile.id === settings[keys.active])] || optionLabels[0] || "请选择配置";
@@ -7148,11 +7299,15 @@ const renderGenerationConnectionManagers = () => {
     if (orderList) {
       const toggle = document.querySelector(`[data-generation-profile-toggle="${channel}"]`);
       orderList.hidden = toggle?.getAttribute("aria-expanded") !== "true";
-      orderList.innerHTML = settings[keys.list].map((profile, index) => `
+      const orderMarkup = settings[keys.list].map((profile, index) => `
         <div class="generation-order-row${profile.id === settings[keys.active] ? " selected" : ""}" draggable="true" role="option" aria-selected="${profile.id === settings[keys.active]}" data-generation-order-profile="${escapeHtml(profile.id)}" data-generation-order-channel="${channel}">
           <span class="generation-order-handle" aria-hidden="true">⋮⋮</span>
           <span>${escapeHtml(optionLabels[index])}</span>
         </div>`).join("") + `<button class="generation-order-add" type="button" role="option" data-add-generation-connection="${channel}">${icon("\uE710")}<span>新建配置</span></button>`;
+      if (orderList._connectionOrderMarkup !== orderMarkup) {
+        orderList.innerHTML = orderMarkup;
+        orderList._connectionOrderMarkup = orderMarkup;
+      }
     }
   }
 };
@@ -7586,8 +7741,8 @@ root.innerHTML = `
       </div>
       <span class="search-spacer" aria-hidden="true"></span>
       <div class="top-actions" aria-label="全局工具">
-        <button class="account-entry-button" id="accountEntryButton" type="button" title="账户服务未开放，查看说明" aria-label="账户服务未开放，查看账户设置说明" data-account-state="signed-out">
-          ${icon("\uE77B", "账户服务未开放")}
+        <button class="account-entry-button" id="accountEntryButton" type="button" title="登录神思账号" aria-label="登录神思账号" data-account-state="signed-out">
+          ${icon("\uE77B", "登录神思账号")}
           <span class="account-entry-status" aria-hidden="true"></span>
         </button>
         <div class="autosave-control">
@@ -7624,7 +7779,7 @@ root.innerHTML = `
 
     <dialog class="text-dialog media-recovery-dialog" id="mediaRecoveryDialog" aria-labelledby="mediaRecoveryDialogTitle">
       <form method="dialog">
-        <header><div><h2 id="mediaRecoveryDialogTitle">待处理媒体任务</h2><p>这里只显示正在阻塞软件操作的既有任务；处理后会自动隐藏并恢复正常操作。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭待处理媒体任务">${icon("\uE711", "关闭")}</button></header>
+        <header class="dialog-header"><div><h2 id="mediaRecoveryDialogTitle">待处理媒体任务</h2><p>这里只显示正在阻塞软件操作的既有任务；处理后会自动隐藏并恢复正常操作。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭待处理媒体任务">${icon("\uE711", "关闭")}</button></header>
         <section class="media-recovery-list" id="mediaRecoveryList" aria-live="polite"><p class="panel-empty">正在读取待处理任务…</p></section>
         <footer><button class="secondary-button" id="refreshMediaRecoveryList" type="button">重新读取</button><button class="primary-button" value="cancel" type="submit">完成</button></footer>
       </form>
@@ -7797,6 +7952,7 @@ root.innerHTML = `
               </div>
               <small id="whiteboardFindScope">当前选中卡片和展开的生成操作栏</small>
             </section>
+            <div class="whiteboard-card-toolbar" id="whiteboardCardToolbar" role="toolbar" aria-label="当前卡片工具" hidden></div>
             <div class="whiteboard-surface" id="whiteboardSurface"></div>
             <div class="whiteboard-marquee" id="whiteboardMarquee" hidden aria-hidden="true"></div>
             <div class="whiteboard-multi-selection" id="whiteboardMultiSelection" hidden aria-label="已选节点（可框选或按住 Ctrl 点击多选）">
@@ -7812,6 +7968,7 @@ root.innerHTML = `
               <div class="whiteboard-arrange-decision" id="whiteboardArrangeDecision" role="dialog" aria-label="确认自动整理方案" hidden>
                 <strong>采用这次整理？</strong>
                 <small>卡片已按上下游连接分层，同一分支纵向成列并集中排列；确认前不会写入布局。</small>
+                <span class="whiteboard-arrange-layout-modes" role="group" aria-label="整理样式"><button class="secondary-button compact" type="button" data-whiteboard-arrange-decision="layout-grid" aria-pressed="true">宫格排列</button><button class="secondary-button compact" type="button" data-whiteboard-arrange-decision="layout-horizontal" aria-pressed="false">水平排列</button><button class="secondary-button compact" type="button" data-whiteboard-arrange-decision="layout-vertical" aria-pressed="false">垂直排列</button></span>
                 <span><button class="primary-button compact" type="button" data-whiteboard-arrange-decision="adopt">采用</button><button class="secondary-button compact" type="button" data-whiteboard-arrange-decision="restore">还原</button></span>
               </div>
             </div>
@@ -7940,7 +8097,7 @@ root.innerHTML = `
             <div class="codex-agent-approvals composer-agent-approvals" id="codexAgentApprovals" aria-label="Agent 操作确认" hidden></div>
           </div>
           <section class="conversation-choice-panel" id="conversationChoicePanel" hidden aria-live="polite" aria-label="对话选项">
-            <div class="conversation-choice-question" id="conversationChoiceQuestion"></div>
+            <div class="conversation-choice-header"><div class="conversation-choice-question" id="conversationChoiceQuestion"></div><button class="icon-button bare small conversation-choice-close" id="conversationChoiceCloseButton" type="button" title="关闭选择区" aria-label="关闭选择区">${icon("\uE711", "关闭选择区")}</button></div>
             <div class="conversation-choice-options" id="conversationChoiceOptions"></div>
             <p class="conversation-choice-hint" id="conversationChoiceHint">也可以直接在下方对话输入区说明你的想法；发送后选项会自动隐藏。</p>
           </section>
@@ -7995,12 +8152,12 @@ root.innerHTML = `
   <div class="context-menu" id="skillContextMenu" hidden>
     <button type="button" data-skill-context-action="disable">${icon("\uE711")}<span>禁用</span></button>
     <button type="button" data-skill-context-action="detail">${icon("\uE8A5")}<span>查看 Skill 详情</span></button>
+    <button type="button" data-skill-context-action="history">${icon("\uE81C")}<span>查看历史版本</span></button>
     <button type="button" data-skill-context-action="replace">${icon("\uE8AB")}<span>替换 Skill</span></button>
     <button type="button" data-skill-context-action="edit">${icon("\uE70F")}<span>编辑为新版本</span></button>
     <button type="button" data-skill-context-action="copy">${icon("\uE8C8")}<span>创建副本</span></button>
-    <button type="button" data-skill-context-action="history">${icon("\uE81C")}<span>查看历史版本</span></button>
     <button type="button" data-skill-context-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
-    <button type="button" data-skill-context-action="share">${icon("\uE72D")}<span>分享到广场</span></button>
+    <button type="button" data-skill-context-action="share">${icon("\uE72D")}<span>分享到Skill广场</span></button>
     <button type="button" data-skill-context-action="unpublish" class="danger">${icon("\uE74D")}<span>下架</span></button>
   </div>
   <div class="context-menu" id="settingsSectionContextMenu" hidden>
@@ -8069,11 +8226,6 @@ root.innerHTML = `
   </div>
   <div class="context-menu" id="whiteboardMenu" hidden>
     <button type="button" data-whiteboard-action="toggle-generate" data-whiteboard-target="card" aria-expanded="false" aria-controls="whiteboardGenerateMenu">${icon("\uE945")}<span class="context-submenu-label">生成<span class="context-submenu-arrow" aria-hidden="true">›</span></span></button>
-    <div class="whiteboard-submenu whiteboard-generate-menu" id="whiteboardGenerateMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
-      <button type="button" data-whiteboard-action="generate-text" data-whiteboard-target="card">${icon("\uE8D2")}<span>生成文本</span></button>
-      <button type="button" data-whiteboard-action="generate-image" data-whiteboard-target="card">${icon("\uE91B")}<span>生成图片</span></button>
-      <button type="button" data-whiteboard-action="generate-video" data-whiteboard-target="card">${icon("\uE714")}<span>生成视频</span></button>
-    </div>
     <button type="button" data-whiteboard-action="preview" data-whiteboard-target="card" data-whiteboard-text-only>${icon("\uE736")}<span>预览</span></button>
     <button type="button" data-whiteboard-action="history" data-whiteboard-target="card" data-whiteboard-generation-history>${icon("\uE81C")}<span>查看历史版本</span></button>
     <button type="button" data-whiteboard-action="save-history" data-whiteboard-target="card" data-whiteboard-text-only>${icon("\uE74E")}<span>保存历史版本</span></button>
@@ -8093,18 +8245,7 @@ root.innerHTML = `
     <button type="button" data-whiteboard-action="reference-book" data-whiteboard-target="canvas">${icon("\uE82D")}<span>引用小说</span></button>
     <button type="button" data-whiteboard-action="upload-image" data-whiteboard-target="canvas">${icon("\uE91B")}<span>上传</span></button>
     <button type="button" data-whiteboard-action="toggle-reference" data-whiteboard-target="card" aria-expanded="false" aria-controls="whiteboardReferenceMenu">${icon("\uE71B")}<span class="context-submenu-label">引用<span class="context-submenu-arrow" aria-hidden="true">›</span></span></button>
-    <div class="whiteboard-submenu" id="whiteboardReferenceMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
-      <button type="button" data-whiteboard-action="reference-document" data-whiteboard-target="card">${icon("\uE8A5")}<span>引用文档</span></button>
-      <button type="button" data-whiteboard-action="reference-skill" data-whiteboard-target="card">${icon("\uE943")}<span>引用 Skill</span></button>
-      <button type="button" data-whiteboard-action="reference-book" data-whiteboard-target="card">${icon("\uE82D")}<span>引用小说</span></button>
-      <button type="button" data-whiteboard-action="reference-web" data-whiteboard-target="card" data-whiteboard-web-reference>${icon("\uE774")}<span>引用网页</span></button>
-    </div>
     <button type="button" data-whiteboard-action="toggle-transform" data-whiteboard-target="card" data-whiteboard-text-transform aria-expanded="false" aria-controls="whiteboardTransformMenu">${icon("\uE895")}<span class="context-submenu-label">转化<span class="context-submenu-arrow" aria-hidden="true">›</span></span></button>
-    <div class="whiteboard-submenu" id="whiteboardTransformMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
-      <button type="button" data-whiteboard-action="transform-project" data-whiteboard-target="card" data-whiteboard-text-transform>${icon("\uE895")}<span>转化为作品</span></button>
-      <button type="button" data-whiteboard-action="transform-notebook" data-whiteboard-target="card" data-whiteboard-text-transform>${icon("\uE8A5")}<span>转化为笔记</span></button>
-      <button type="button" data-whiteboard-action="upload-skill" data-whiteboard-target="card" data-whiteboard-text-only>${icon("\uE943")}<span>转化为 Skill</span></button>
-    </div>
     <button type="button" data-whiteboard-action="copy" data-whiteboard-target="card">${icon("\uE8C8")}<span>复制</span></button>
     <button type="button" data-whiteboard-action="cut" data-whiteboard-target="card">${icon("\uE8C6")}<span>剪切</span></button>
     <button type="button" data-whiteboard-action="duplicate" data-whiteboard-target="card">${icon("\uE7C5")}<span>创建副本</span></button>
@@ -8114,6 +8255,26 @@ root.innerHTML = `
     <button type="button" data-whiteboard-action="focus" data-whiteboard-target="card">${icon("\uE81E")}<span>聚焦卡片</span></button>
     <button type="button" data-whiteboard-action="arrange" data-whiteboard-target="card" data-whiteboard-multi-only>${icon("\uE8DE", "局部整理")}<span>局部整理</span></button>
     <button type="button" data-whiteboard-action="toggle-color" data-whiteboard-target="card" aria-expanded="false" aria-controls="whiteboardColorPalette">${icon("\uE790")}<span class="whiteboard-color-label">卡片颜色<span class="context-submenu-arrow" aria-hidden="true">›</span></span></button>
+    <button type="button" data-whiteboard-action="delete" data-whiteboard-target="card">${icon("\uE74D")}<span>删除卡片</span></button>
+    <button type="button" data-whiteboard-action="delete-edge" data-whiteboard-target="edge">${icon("\uE74D")}<span>删除连线</span></button>
+  </div>
+  <div class="context-menu whiteboard-submenu-panel" id="whiteboardSubmenuPanel" hidden aria-label="更多选项">
+    <div class="whiteboard-submenu whiteboard-generate-menu" id="whiteboardGenerateMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
+      <button type="button" data-whiteboard-action="generate-text" data-whiteboard-target="card">${icon("\uE8D2")}<span>生成文本</span></button>
+      <button type="button" data-whiteboard-action="generate-image" data-whiteboard-target="card">${icon("\uE91B")}<span>生成图片</span></button>
+      <button type="button" data-whiteboard-action="generate-video" data-whiteboard-target="card">${icon("\uE714")}<span>生成视频</span></button>
+    </div>
+    <div class="whiteboard-submenu" id="whiteboardReferenceMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
+      <button type="button" data-whiteboard-action="reference-document" data-whiteboard-target="card">${icon("\uE8A5")}<span>引用文档</span></button>
+      <button type="button" data-whiteboard-action="reference-skill" data-whiteboard-target="card">${icon("\uE943")}<span>引用 Skill</span></button>
+      <button type="button" data-whiteboard-action="reference-book" data-whiteboard-target="card">${icon("\uE82D")}<span>引用小说</span></button>
+      <button type="button" data-whiteboard-action="reference-web" data-whiteboard-target="card" data-whiteboard-web-reference>${icon("\uE774")}<span>引用网页</span></button>
+    </div>
+    <div class="whiteboard-submenu" id="whiteboardTransformMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
+      <button type="button" data-whiteboard-action="transform-project" data-whiteboard-target="card" data-whiteboard-text-transform>${icon("\uE895")}<span>转化为作品</span></button>
+      <button type="button" data-whiteboard-action="transform-notebook" data-whiteboard-target="card" data-whiteboard-text-transform>${icon("\uE8A5")}<span>转化为笔记</span></button>
+      <button type="button" data-whiteboard-action="upload-skill" data-whiteboard-target="card" data-whiteboard-text-only>${icon("\uE943")}<span>转化为 Skill</span></button>
+    </div>
     <div class="whiteboard-color-menu" id="whiteboardColorPalette" data-whiteboard-target="card" data-whiteboard-collapsible role="group" aria-label="卡片颜色" hidden>
       <button type="button" data-whiteboard-color="default" title="默认" aria-label="默认"></button>
       <button type="button" data-whiteboard-color="gray" title="灰色" aria-label="灰色"></button>
@@ -8128,8 +8289,6 @@ root.innerHTML = `
       <button type="button" data-whiteboard-color="purple" title="紫色" aria-label="紫色"></button>
       <button type="button" data-whiteboard-color="pink" title="粉色" aria-label="粉色"></button>
     </div>
-    <button type="button" data-whiteboard-action="delete" data-whiteboard-target="card">${icon("\uE74D")}<span>删除卡片</span></button>
-    <button type="button" data-whiteboard-action="delete-edge" data-whiteboard-target="edge">${icon("\uE74D")}<span>删除连线</span></button>
   </div>
   <div class="context-menu whiteboard-node-create-menu" id="whiteboardNodeCreateMenu" role="menu" aria-label="选择新建卡片类型" hidden>
     <button type="button" role="menuitem" data-whiteboard-node-create="plain">${icon("\uE710", "普通卡片")}<span>普通卡片</span></button>
@@ -8301,15 +8460,15 @@ root.innerHTML = `
         </nav>
         <div class="settings-pages">
           <section class="settings-page account-settings-page active" data-settings-page="account">
-            <header><h3>账户设置（未开放）</h3><p>账户、会员、支付和第一方云同步尚未开放；本机写作、历史版本与本地文件不受影响。</p></header>
+            <header><h3>账户设置</h3><p>登录神思账号后可上传 Skill 到广场并查看账户服务状态；本机写作、历史版本与本地文件不受影响。</p></header>
             <section class="account-settings-overview" aria-label="账户状态" data-account-view="signed-out">
               <span class="account-settings-avatar" aria-hidden="true">${icon("\uE77B")}</span>
-              <div><small>当前账户</small><strong>账户服务未开放</strong><p>当前版本不会提交登录信息、创建会员订单或启动第一方云同步。</p></div>
-              <button class="primary-button" id="accountSettingsLogin" type="button" disabled>登录账户（未开放）</button>
+              <div><small>当前账户</small><strong>尚未登录</strong><p>登录后可上传 Skill 到神思广场；会员与支付功能按服务器返回状态开放。</p></div>
+              <button class="primary-button" id="accountSettingsLogin" type="button">登录账户</button>
             </section>
             <div class="account-signed-in-content" data-account-view="signed-in" hidden>
             <section class="account-settings-section account-profile-section">
-              <header><div><h4>个人信息</h4><p>头像、昵称和个人资料将在未来账户服务开放后保存。</p></div><button class="secondary-button compact" type="button" data-account-requires-login="profile" disabled>编辑（未开放）</button></header>
+              <header><div><h4>个人信息</h4><p>显示当前神思账号的昵称与账号标识。</p></div><button class="secondary-button compact" type="button" data-account-requires-login="profile">编辑</button></header>
               <div class="account-profile-plate">
                 <span class="account-profile-avatar" aria-label="账户头像">${icon("\uE77B")}</span>
                 <div class="account-profile-identities">
@@ -8321,15 +8480,15 @@ root.innerHTML = `
             <section class="account-settings-section">
               <header><div><h4>账户安全</h4><p>登录方式已具备对应凭据时无需重复绑定或设置。</p></div></header>
               <div class="account-security-list">
-                <div><span>${icon("\uE717")}</span><div><strong>绑定手机号</strong><small>账户服务开放后可在此绑定或更换手机号。</small></div><b>未开放</b><button class="secondary-button compact" type="button" data-account-requires-login="phone" disabled>绑定 / 更换（未开放）</button></div>
-                <div><span>${icon("\uE72E")}</span><div><strong>账户密码</strong><small>账户服务开放后可在此设置或修改密码。</small></div><b>未开放</b><button class="secondary-button compact" type="button" data-account-requires-login="password" disabled>设置 / 修改（未开放）</button></div>
+                <div><span>${icon("\uE717")}</span><div><strong>绑定手机号</strong><small>手机号服务尚未接入。</small></div><b>未接入</b><button class="secondary-button compact" type="button" data-account-requires-login="phone">绑定 / 更换</button></div>
+                <div><span>${icon("\uE72E")}</span><div><strong>账户密码</strong><small>可通过密保问题找回密码；密码修改入口将按服务器能力开放。</small></div><b>已接入</b><button class="secondary-button compact" type="button" data-account-requires-login="password">设置 / 修改</button></div>
               </div>
             </section>
             <button class="secondary-button account-sign-out" id="accountSignOut" type="button">退出登录</button>
             </div>
             <section class="account-settings-section account-membership-summary">
-              <header><div><h4>会员、支付与积分（未开放）</h4><p>以下服务尚未连接真实账户或支付 API，不会产生订单、扣费或云端权益。</p></div><button class="secondary-button compact" id="accountSettingsMembership" type="button" disabled>查看套餐（未开放）</button></header>
-              <div><span><small>会员状态</small><strong>未开放</strong></span><span><small>积分余额</small><strong>未开放</strong></span><span><small>原生云同步</small><strong>未开放</strong></span></div>
+              <header><div><h4>会员、支付与积分</h4><p>登录后可读取服务器返回的会员与积分状态；支付渠道未接入时不会创建订单或扣费。</p></div><button class="secondary-button compact" id="accountSettingsMembership" type="button">查看套餐</button></header>
+              <div><span><small>会员状态</small><strong>登录后读取</strong></span><span><small>积分余额</small><strong>登录后读取</strong></span><span><small>原生云同步</small><strong>按服务状态</strong></span></div>
             </section>
           </section>
           <section class="settings-page" data-settings-page="quick" hidden>
@@ -8639,30 +8798,43 @@ root.innerHTML = `
 
   <dialog class="account-login-dialog" id="accountLoginDialog">
     <form method="dialog" id="accountLoginForm">
-      <header class="dialog-header"><div><h2>账户服务未开放</h2><p>当前版本不会提交或保存登录信息；此窗口仅保留未来版本的界面结构。</p></div><button class="icon-button bare" id="closeAccountLogin" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
+      <header class="dialog-header"><div><h2>神思账号</h2><p>登录后可上传 Skill 到广场并使用会员与积分服务。</p></div><button class="icon-button bare" id="closeAccountLogin" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
       <div class="account-login-body">
         <div class="account-login-tabs" role="tablist" aria-label="登录方式">
-          <button class="active" type="button" role="tab" aria-selected="true" data-account-login-mode="password" disabled>账号密码登录（未开放）</button>
-          <button type="button" role="tab" aria-selected="false" data-account-login-mode="sms" disabled>手机短信登录（未开放）</button>
+          <button class="active" type="button" role="tab" aria-selected="true" data-account-login-mode="password">登录</button>
+          <button type="button" role="tab" aria-selected="false" data-account-login-mode="register">注册</button>
         </div>
         <section class="account-login-panel" data-account-login-panel="password">
-          <label>账号<input name="account" type="text" autocomplete="username" placeholder="未开放" disabled /></label>
-          <label>密码<input name="password" type="password" autocomplete="current-password" placeholder="未开放" disabled /></label>
+          <label>账号<input name="account" type="text" autocomplete="username" placeholder="邮箱或神思账号" /></label>
+          <label>密码<span class="account-password-field"><input name="password" type="password" autocomplete="current-password" placeholder="至少 8 个字符" /><button class="icon-button bare account-password-reveal" type="button" data-account-password-reveal="password" title="按住显示密码" aria-label="按住显示密码">${passwordVisibilityIcon(false, "按住显示密码")}</button></span></label>
+          <div class="account-login-options"><label class="account-remember-password"><input name="rememberPassword" type="checkbox" />记住密码</label><button class="account-recover-link" type="button" data-account-login-mode="recover">找回密码</button></div>
         </section>
-        <section class="account-login-panel" data-account-login-panel="sms" hidden>
-          <label>手机号<input name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="未开放" disabled /></label>
-          <label>短信验证码<span class="account-code-input"><input name="smsCode" type="text" autocomplete="one-time-code" inputmode="numeric" maxlength="8" placeholder="未开放" disabled /><button class="secondary-button" id="requestAccountSms" type="button" disabled>获取验证码（未开放）</button></span></label>
+        <section class="account-login-panel" data-account-login-panel="register" hidden>
+          <label>账号<input name="registerAccount" type="text" autocomplete="username" placeholder="神思账号" /></label>
+          <label>显示名称<input name="displayName" type="text" autocomplete="name" placeholder="神思用户" /></label>
+          <label>绑定手机或邮箱<input name="contact" type="text" autocomplete="email" required placeholder="请输入手机号或邮箱" /></label>
+          <label>密码<span class="account-password-field"><input name="registerPassword" type="password" autocomplete="new-password" placeholder="至少 8 个字符" /><button class="icon-button bare account-password-reveal" type="button" data-account-password-reveal="registerPassword" title="按住显示密码" aria-label="按住显示密码">${passwordVisibilityIcon(false, "按住显示密码")}</button></span></label>
+          <label>密保问题<input name="securityQuestion" type="text" placeholder="例如：我的第一只宠物叫什么？" /></label>
+          <label>密保答案<span class="account-password-field"><input name="securityAnswer" type="password" autocomplete="off" placeholder="用于以后找回密码" /><button class="icon-button bare account-password-reveal" type="button" data-account-password-reveal="securityAnswer" title="按住显示答案" aria-label="按住显示答案">${passwordVisibilityIcon(false, "按住显示答案")}</button></span></label>
         </section>
-        <p class="account-login-status" id="accountLoginStatus" role="status">账户 API 尚未连接，不会提交或保存登录信息。</p>
+        <section class="account-login-panel" data-account-login-panel="recover" hidden>
+          <button class="account-login-back" type="button" data-account-login-mode="password">返回登录</button>
+          <label>账号<input name="recoverAccount" type="text" autocomplete="username" placeholder="请输入注册账号" /></label>
+          <div class="account-recovery-question" id="accountRecoveryQuestion" hidden><small>密保问题</small><strong id="accountRecoveryQuestionText"></strong></div>
+          <label>密保答案<span class="account-password-field"><input name="recoverAnswer" type="password" autocomplete="off" placeholder="先点击获取密保问题" /><button class="icon-button bare account-password-reveal" type="button" data-account-password-reveal="recoverAnswer" title="按住显示答案" aria-label="按住显示答案">${passwordVisibilityIcon(false, "按住显示答案")}</button></span></label>
+          <label>新密码<span class="account-password-field"><input name="newPassword" type="password" autocomplete="new-password" placeholder="至少 8 个字符" /><button class="icon-button bare account-password-reveal" type="button" data-account-password-reveal="newPassword" title="按住显示密码" aria-label="按住显示密码">${passwordVisibilityIcon(false, "按住显示密码")}</button></span></label>
+          <button class="secondary-button compact" id="loadAccountRecoveryQuestion" type="button">获取密保问题</button>
+        </section>
+        <p class="account-login-status" id="accountLoginStatus" role="status">可使用神思账号登录、注册或通过密保问题找回密码。</p>
       </div>
-      <footer class="dialog-footer"><button class="secondary-button" id="cancelAccountLogin" type="button">关闭</button><button class="primary-button" type="submit" disabled>登录（未开放）</button></footer>
+      <footer class="dialog-footer"><button class="secondary-button" id="cancelAccountLogin" type="button">关闭</button><button class="primary-button" type="submit">登录</button></footer>
     </form>
   </dialog>
 
   <dialog class="membership-dialog" id="membershipDialog">
     <div class="membership-dialog-shell">
-      <header class="dialog-header"><div><h2>会员与积分（未开放）</h2><p>以下内容仅用于未来方案说明；支付和会员 API 未连接，不会创建订单或扣费。</p></div><button class="icon-button bare" id="closeMembership" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
-      <section class="membership-account-state"><span>${icon("\uE77B")}</span><div><small>当前状态</small><strong>账户与会员服务未开放</strong></div><button class="secondary-button compact" id="membershipLogin" type="button" disabled>登录账户（未开放）</button></section>
+      <header class="dialog-header"><div><h2>会员与积分</h2><p>登录后显示账户额度；支付渠道接通前不会创建订单或扣费。</p></div><button class="icon-button bare" id="closeMembership" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
+      <section class="membership-account-state"><span>${icon("\uE77B")}</span><div><small>当前状态</small><strong id="membershipAccountState">尚未登录</strong></div><button class="secondary-button compact" id="membershipLogin" type="button">登录账户</button></section>
       <nav class="membership-tabs" role="tablist" aria-label="会员与积分页面"><button class="active" type="button" role="tab" aria-selected="true" data-membership-tab="plans">会员套餐</button><button type="button" role="tab" aria-selected="false" data-membership-tab="points">积分充值</button></nav>
       <div class="membership-content">
         <section data-membership-panel="plans">
@@ -8972,7 +9144,7 @@ root.innerHTML = `
     <button type="button" data-capability-context-action="replace">${icon("\uE8AB")}<span>替换</span></button>
     <button type="button" data-capability-context-action="copy">${icon("\uE8C8")}<span>创建副本</span></button>
     <button type="button" data-capability-context-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
-    <button type="button" data-capability-context-action="share">${icon("\uE72D")}<span>分享到广场</span></button>
+    <button type="button" data-capability-context-action="share">${icon("\uE72D")}<span>分享到Skill广场</span></button>
     <button type="button" data-capability-context-action="delete" class="danger">${icon("\uE74D")}<span>删除</span></button>
   </div>
 
@@ -9151,11 +9323,15 @@ root.innerHTML = `
         <div class="whiteboard-image-settings-shell whiteboard-media-settings-shell">
           <button class="whiteboard-image-settings-trigger whiteboard-media-settings-trigger" id="whiteboardImageSettingsTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">${icon("\uE713", "图片参数")}<span id="whiteboardImageSettingsSummary">自适应 · 高清 · 1张</span>${icon("\uE70D")}</button>
           <section class="whiteboard-image-settings-panel whiteboard-media-settings-panel" id="whiteboardImageSettingsPanel" role="dialog" aria-label="图片生成参数" popover="manual" hidden>
-            <label class="sr-only">画幅比例<select name="aspectRatio" id="whiteboardImageAspect"><option value="auto" selected>自适应</option><option value="1:1">1:1 方形</option><option value="16:9">16:9 横屏</option><option value="9:16">9:16 竖屏</option><option value="4:3">4:3 横向</option><option value="3:4">3:4 竖向</option></select></label>
+            <label class="sr-only">画幅比例<select name="aspectRatio" id="whiteboardImageAspect"><option value="auto" selected>自适应</option><option value="21:9">21:9 超宽屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option><option value="9:16">9:16 竖屏</option><option value="9:21">9:21 超长竖屏</option><option value="4:3">4:3 横向</option><option value="3:4">3:4 竖向</option></select></label>
             <fieldset><legend>比例</legend><div class="whiteboard-media-choice-grid aspect" id="whiteboardImageAspectChoices"></div></fieldset>
-            <label class="sr-only">清晰度<select name="quality" id="whiteboardImageQuality"><option value="standard">标准</option><option value="high" selected>高清</option></select></label>
-            <fieldset><legend>清晰度</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageQualityChoices"></div></fieldset>
-            <label class="sr-only">生成数量<select name="imageCount" id="whiteboardImageCount"><option value="1" selected>1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label>
+             <label class="sr-only">清晰度<select name="quality" id="whiteboardImageQuality"><option value="standard">标准</option><option value="high" selected>高清</option></select></label>
+             <fieldset id="whiteboardImageQualityField"><legend>清晰度</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageQualityChoices"></div></fieldset>
+             <label class="sr-only">输出分辨率<select name="resolution" id="whiteboardImageResolution"><option value="1k" selected>1K</option></select></label>
+             <fieldset id="whiteboardImageResolutionField" hidden><legend>画质</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageResolutionChoices"></div></fieldset>
+             <label class="sr-only">背景<select name="background" id="whiteboardImageBackground"><option value="auto" selected>自动</option></select></label>
+             <fieldset id="whiteboardImageBackgroundField" hidden><legend>背景</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageBackgroundChoices"></div></fieldset>
+             <label class="sr-only">生成数量<select name="imageCount" id="whiteboardImageCount"><option value="1" selected>1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label>
             <fieldset><legend>生成数量</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageCountChoices"><button type="button" data-image-setting="imageCount" data-image-setting-value="1">1张</button><button type="button" data-image-setting="imageCount" data-image-setting-value="2">2张</button><button type="button" data-image-setting="imageCount" data-image-setting-value="3">3张</button><button type="button" data-image-setting="imageCount" data-image-setting-value="4">4张</button></div></fieldset>
           </section>
         </div>
@@ -9237,6 +9413,22 @@ root.innerHTML = `
         </div>
       </div>
       <footer class="whiteboard-generation-footer"><output class="whiteboard-generation-credit" id="whiteboardAudioCreditEstimate" hidden aria-live="polite"></output><span class="whiteboard-generation-footer-actions"><button class="secondary-button whiteboard-generation-cancel" type="button" data-close-whiteboard-dialog>${icon("\uE711", "关闭")}<span class="whiteboard-generation-button-label">关闭</span></button><button class="primary-button whiteboard-generation-submit" type="submit" aria-label="生成音频"><span class="whiteboard-generation-button-label">生成音频</span><span class="whiteboard-generation-submit-glyph" aria-hidden="true">${icon("\uE74A")}</span></button></span></footer>
+    </form>
+  </dialog>
+
+  <dialog class="text-dialog whiteboard-audio-trim-dialog" id="whiteboardAudioTrimDialog" aria-labelledby="whiteboardAudioTrimTitle">
+    <form method="dialog" id="whiteboardAudioTrimForm">
+      <header class="dialog-header"><div><small>音频编辑</small><h2 id="whiteboardAudioTrimTitle">截取音频片段</h2><p>拖动左右手柄选择保留区间；原音频不会改变。</p></div><button class="icon-button bare" id="closeWhiteboardAudioTrim" type="button" title="关闭" aria-label="关闭音频截取">${icon("\uE711", "关闭")}</button></header>
+      <div class="whiteboard-audio-trim-body">
+        <audio id="whiteboardAudioTrimPreview" controls preload="metadata"></audio>
+        <div class="whiteboard-audio-trim-track" id="whiteboardAudioTrimTrack" style="--trim-start:0%;--trim-end:100%">
+          <span class="whiteboard-audio-trim-selection" aria-hidden="true"></span>
+          <input id="whiteboardAudioTrimStart" type="range" min="0" max="1" step="0.01" value="0" aria-label="截取开始时间" />
+          <input id="whiteboardAudioTrimEnd" type="range" min="0" max="1" step="0.01" value="1" aria-label="截取结束时间" />
+        </div>
+        <div class="whiteboard-audio-trim-times" aria-live="polite"><span><small>开始</small><output id="whiteboardAudioTrimStartOutput">00:00.00</output></span><span><small>片段时长</small><output id="whiteboardAudioTrimDurationOutput">00:01.00</output></span><span><small>结束</small><output id="whiteboardAudioTrimEndOutput">00:01.00</output></span></div>
+      </div>
+      <footer><button class="secondary-button" id="cancelWhiteboardAudioTrim" type="button">取消</button><button class="primary-button" id="confirmWhiteboardAudioTrim" type="submit">生成所选片段</button></footer>
     </form>
   </dialog>
 
@@ -9402,6 +9594,7 @@ const elements = {
   documentFindClose: document.querySelector("#documentFindClose"),
   compilationDecisionSummary: document.querySelector("#compilationDecisionSummary"),
   whiteboardEditor: document.querySelector("#whiteboardEditor"),
+  whiteboardCardToolbar: document.querySelector("#whiteboardCardToolbar"),
   whiteboardFindPanel: document.querySelector("#whiteboardFindPanel"),
   whiteboardFindQuery: document.querySelector("#whiteboardFindQuery"),
   whiteboardFindCount: document.querySelector("#whiteboardFindCount"),
@@ -9556,6 +9749,7 @@ const elements = {
   directoryBatchMenu: document.querySelector("#directoryBatchMenu"),
   scopeMenu: document.querySelector("#scopeMenu"),
   whiteboardMenu: document.querySelector("#whiteboardMenu"),
+  whiteboardSubmenuPanel: document.querySelector("#whiteboardSubmenuPanel"),
   whiteboardNodeCreateMenu: document.querySelector("#whiteboardNodeCreateMenu"),
   mediaAssetMenu: document.querySelector("#mediaAssetMenu"),
   videoFrameMenu: document.querySelector("#videoFrameMenu"),
@@ -9607,7 +9801,12 @@ const elements = {
   whiteboardImageCreditEstimate: document.querySelector("#whiteboardImageCreditEstimate"),
   whiteboardImageSettingsPanel: document.querySelector("#whiteboardImageSettingsPanel"),
   whiteboardImageAspectChoices: document.querySelector("#whiteboardImageAspectChoices"),
+  whiteboardImageQualityField: document.querySelector("#whiteboardImageQualityField"),
   whiteboardImageQualityChoices: document.querySelector("#whiteboardImageQualityChoices"),
+  whiteboardImageResolutionChoices: document.querySelector("#whiteboardImageResolutionChoices"),
+  whiteboardImageResolutionField: document.querySelector("#whiteboardImageResolutionField"),
+  whiteboardImageBackgroundChoices: document.querySelector("#whiteboardImageBackgroundChoices"),
+  whiteboardImageBackgroundField: document.querySelector("#whiteboardImageBackgroundField"),
   whiteboardImageCountChoices: document.querySelector("#whiteboardImageCountChoices"),
   whiteboardVideoDialog: document.querySelector("#whiteboardVideoDialog"),
   whiteboardVideoForm: document.querySelector("#whiteboardVideoForm"),
@@ -9655,6 +9854,18 @@ const elements = {
   whiteboardAudioVoiceField: document.querySelector("#whiteboardAudioVoiceField"),
   whiteboardAudioSpeedField: document.querySelector("#whiteboardAudioSpeedField"),
   whiteboardAudioCreditEstimate: document.querySelector("#whiteboardAudioCreditEstimate"),
+  whiteboardAudioTrimDialog: document.querySelector("#whiteboardAudioTrimDialog"),
+  whiteboardAudioTrimForm: document.querySelector("#whiteboardAudioTrimForm"),
+  whiteboardAudioTrimPreview: document.querySelector("#whiteboardAudioTrimPreview"),
+  whiteboardAudioTrimTrack: document.querySelector("#whiteboardAudioTrimTrack"),
+  whiteboardAudioTrimStart: document.querySelector("#whiteboardAudioTrimStart"),
+  whiteboardAudioTrimEnd: document.querySelector("#whiteboardAudioTrimEnd"),
+  whiteboardAudioTrimStartOutput: document.querySelector("#whiteboardAudioTrimStartOutput"),
+  whiteboardAudioTrimEndOutput: document.querySelector("#whiteboardAudioTrimEndOutput"),
+  whiteboardAudioTrimDurationOutput: document.querySelector("#whiteboardAudioTrimDurationOutput"),
+  closeWhiteboardAudioTrim: document.querySelector("#closeWhiteboardAudioTrim"),
+  cancelWhiteboardAudioTrim: document.querySelector("#cancelWhiteboardAudioTrim"),
+  confirmWhiteboardAudioTrim: document.querySelector("#confirmWhiteboardAudioTrim"),
   dreaminaReverifyDialog: document.querySelector("#dreaminaReverifyDialog"),
   dreaminaReverifyMessage: document.querySelector("#dreaminaReverifyMessage"),
   dreaminaReverifyConfirm: document.querySelector("#dreaminaReverifyConfirm"),
@@ -9715,6 +9926,7 @@ const elements = {
   candidateComparisonBody: document.querySelector("#candidateComparisonBody"),
   candidateComparisonSummary: document.querySelector("#candidateComparisonSummary"),
   conversationChoicePanel: document.querySelector("#conversationChoicePanel"),
+  conversationChoiceCloseButton: document.querySelector("#conversationChoiceCloseButton"),
   conversationChoiceQuestion: document.querySelector("#conversationChoiceQuestion"),
   conversationChoiceOptions: document.querySelector("#conversationChoiceOptions"),
   conversationChoiceHint: document.querySelector("#conversationChoiceHint"),
@@ -10356,9 +10568,16 @@ const openAttachmentPreview = (preview) => {
   const name = preview.title || sourceMedia?.alt || sourceMedia?.getAttribute("aria-label") || "附件预览";
   const fullscreen = video && preview?.dataset?.attachmentFullscreen === "true";
   elements.attachmentPreviewMedia.dataset.previewKind = previewKind;
+  // Paint a decoded card thumbnail immediately, then promote to the original
+  // asset in the background so double-click preview never waits for a large
+  // source download.
+  const previewSource = !video
+    ? String(preview?.dataset?.attachmentPreviewSrc || sourceMedia?.currentSrc || sourceMedia?.src || "")
+    : "";
+  const initialSource = previewSource || source;
   elements.attachmentPreviewMedia.innerHTML = video
     ? `<video src="${escapeHtml(source)}" aria-label="${escapeHtml(name)}" controls playsinline preload="metadata"></video>`
-    : `<img src="${escapeHtml(source)}" alt="${escapeHtml(name)}" />`;
+    : `<img src="${escapeHtml(initialSource)}" alt="${escapeHtml(name)}" />`;
   setAttachmentPreviewScale(1);
   const media = elements.attachmentPreviewMedia.querySelector("img, video");
   const fit = () => fitAttachmentPreviewMedia(media);
@@ -10367,6 +10586,18 @@ const openAttachmentPreview = (preview) => {
   if ((video && media.readyState >= 1) || (!video && media.complete)) fit();
   if (!elements.attachmentPreviewDialog.open) elements.attachmentPreviewDialog.showModal();
   elements.closeAttachmentPreview.focus();
+  if (!video && initialSource !== source) {
+    const upgrade = new Image();
+    upgrade.decoding = "async";
+    upgrade.onload = () => {
+      if (!elements.attachmentPreviewDialog.open
+        || elements.attachmentPreviewDialog.dataset.attachmentPath !== relativePath
+        || elements.attachmentPreviewDialog.dataset.attachmentKind !== previewKind) return;
+      media.src = source;
+      fitAttachmentPreviewMedia(media);
+    };
+    upgrade.src = source;
+  }
   if (fullscreen) {
     void requestAttachmentFullscreen(media);
   }
@@ -11136,7 +11367,9 @@ const renderDirectoryTree = (tree, { moduleId, viewId }) => {
       <div class="folder-children" ${expanded ? "" : "hidden"}>${children}</div>
     </section>`;
   };
-  return tree.map((node) => renderTreeNode(node)).join("");
+  if (!tree.length) return "";
+  const rootDropZone = (edge) => `<div class="directory-root-drop-zone" data-directory-root-drop="${edge}" data-directory-parent="${escapeHtml(rootOrderKey)}" aria-hidden="true"></div>`;
+  return `${rootDropZone("before")}${tree.map((node) => renderTreeNode(node)).join("")}${rootDropZone("after")}`;
 };
 
 const renderDocumentList = () => {
@@ -11837,14 +12070,15 @@ const messageAttachmentMarkup = (attachment, { sent = false } = {}) => {
 
 const composerAttachmentMarkup = (attachment) => {
   const preview = attachmentPreviewMarkup(attachment, "context-attachment-preview");
+  const attachmentKey = attachment.id || attachment.relativePath || attachment.sourceUrl || attachment.name || "";
   if (preview) {
-    return `<span class="context-chip attachment-chip visual-attachment-chip">${preview}<button type="button" data-remove-attachment="${escapeHtml(attachment.id)}" title="移除附件" aria-label="移除附件">${icon("\uE711", "移除附件")}</button></span>`;
+    return `<span class="context-chip attachment-chip visual-attachment-chip">${preview}<button type="button" data-remove-attachment="${escapeHtml(attachmentKey)}" title="移除附件" aria-label="移除附件">${icon("\uE711", "移除附件")}</button></span>`;
   }
   const label = attachment.referenceType === "book" ? `@${attachment.bookTitle || attachment.name}` : attachment.name;
   const detail = attachment.referenceType === "book"
     ? `${attachment.sourceName || "全本小说网"} · 已读取 ${Number(attachment.coverage?.successfulChapterCount) || 0} / ${Number(attachment.coverage?.requestedChapterCount) || 0} 章`
     : attachment.name;
-  return `<span class="context-chip attachment-chip${attachment.referenceType === "book" ? " book-reference-chip" : ""}">${attachmentIcon(attachment)}<span title="${escapeHtml(detail)}">${escapeHtml(label)}</span><button type="button" data-remove-attachment="${escapeHtml(attachment.id)}" title="移除附件">${icon("\uE711", "移除附件")}</button></span>`;
+  return `<span class="context-chip attachment-chip${attachment.referenceType === "book" ? " book-reference-chip" : ""}">${attachmentIcon(attachment)}<span title="${escapeHtml(detail)}">${escapeHtml(label)}</span><button type="button" data-remove-attachment="${escapeHtml(attachmentKey)}" title="移除附件">${icon("\uE711", "移除附件")}</button></span>`;
 };
 
 const whiteboardAttachmentUrl = (node) => workspaceAttachmentUrl(node.file, state.activeDocument, {
@@ -13463,10 +13697,18 @@ const patchWhiteboardCandidateProgress = (candidate) => {
   return true;
 };
 
-const renderWhiteboardCandidateLocation = (candidate) => {
+const renderWhiteboardCandidateLocationNow = (candidate) => {
   if (!candidate || state.activeDocument !== candidate.documentId) return;
   if (String(state.settings.workspacePath || "").toLowerCase() !== String(candidate.workspacePath || "").toLowerCase()) return;
   const activeDrag = ui.whiteboardDrag;
+  if (activeDrag?.documentId === candidate.documentId && activeDrag.mode === "pan") {
+    ui.whiteboardViewportDeferredRender = true;
+    return;
+  }
+  if (elements.whiteboardEditor.classList.contains("viewport-transforming")) {
+    ui.whiteboardViewportDeferredRender = true;
+    return;
+  }
   if (activeDrag && activeDrag.documentId === candidate.documentId && ["card", "resize"].includes(activeDrag.mode)) {
     // Provider progress and elapsed-time updates can arrive several times per
     // second. Rebuilding the canvas while a card is under the pointer replaces
@@ -13480,6 +13722,33 @@ const renderWhiteboardCandidateLocation = (candidate) => {
   if (documentState) renderWhiteboard(documentState);
 };
 
+const renderWhiteboardCandidateLocation = (candidate) => {
+  if (!candidate || candidate.documentId !== state.activeDocument
+    || String(candidate.workspacePath || "").toLowerCase() !== String(state.settings.workspacePath || "").toLowerCase()) return;
+  const renderKey = whiteboardCandidateKey(candidate.nodeId, {
+    workspacePath: candidate.workspacePath,
+    documentId: candidate.documentId,
+  });
+  ui.whiteboardCandidateRenderPending.set(renderKey, candidate);
+  if (ui.whiteboardCandidateRenderFrame) return;
+  // Candidate updates arrive from the provider poller and the elapsed-time
+  // ticker independently. Coalesce them into one frame so a video-heavy
+  // board does not rebuild cards repeatedly in the same turn.
+  ui.whiteboardCandidateRenderFrame = requestAnimationFrame(() => {
+    ui.whiteboardCandidateRenderFrame = 0;
+    const pending = [...ui.whiteboardCandidateRenderPending];
+    ui.whiteboardCandidateRenderPending.clear();
+    let fullRender = null;
+    for (const [key, candidate] of pending) {
+      const latest = ui.whiteboardCandidates.get(key) || candidate;
+      if (latest.documentId !== state.activeDocument
+        || String(latest.workspacePath || "").toLowerCase() !== String(state.settings.workspacePath || "").toLowerCase()) continue;
+      if (!patchWhiteboardCandidateProgress(latest)) fullRender = latest;
+    }
+    if (fullRender) renderWhiteboardCandidateLocationNow(fullRender);
+  });
+};
+
 const updateWhiteboardGenerationCandidate = (candidateKey, patch = {}, { render = true } = {}) => {
   const candidate = ui.whiteboardCandidates.get(candidateKey);
   if (!candidate) return null;
@@ -13491,6 +13760,16 @@ const updateWhiteboardGenerationCandidate = (candidateKey, patch = {}, { render 
   const normalizedPatch = { ...patch };
   if (patch.status === "complete" && !Object.prototype.hasOwnProperty.call(patch, "cardApplyStage")) {
     normalizedPatch.cardApplyStage = candidate.cardApplyStage || "saving";
+  }
+  if (patch.status === "complete" && !candidate.providerResultReadyAt) {
+    const resultAt = Date.now();
+    const startedAt = whiteboardGenerationStartedAt({ ...candidate, ...normalizedPatch }, { now: resultAt });
+    normalizedPatch.providerResultReadyAt = resultAt;
+    normalizedPatch.generationElapsedFrozenAt = resultAt;
+    normalizedPatch.elapsedMs = Math.max(
+      Number(candidate.elapsedMs) || 0,
+      Math.max(0, resultAt - startedAt),
+    );
   }
   if (!jobChanged && Object.prototype.hasOwnProperty.call(patch, "startedAt") && Number(candidate.startedAt) > 0) {
     const incomingStartedAt = Number(patch.startedAt);
@@ -13803,6 +14082,15 @@ const whiteboardGenerationJobTarget = ({ workspaceKind = state.workspaceKind, wo
   workspacePath,
   documentId,
   nodeId,
+  // Persist the user-facing card label with the task. Recovery dialogs can be
+  // shown after a workspace switch/restart, when the live DOM is unavailable;
+  // an internal node ID alone is not actionable for the user.
+  nodeName: (() => {
+    const node = state.documents?.[documentId]?.documentKind === "whiteboard"
+      ? normalizeCanvas(state.documents[documentId].canvas).nodes.find((item) => item.id === nodeId)
+      : null;
+    return String(node?.name || "").trim();
+  })(),
 });
 
 const postGenerationJobAction = async (path, body = {}, { transportRetries = 0 } = {}) => {
@@ -14027,11 +14315,16 @@ const mediaGenerationProfileLabel = (job = {}) => {
   if (explicit) return explicit;
   const connectionId = String(settings.connectionId || settings.id || "");
   const known = {
-    "video-dreamina-cli": "柏物语",
+    "image-dreamina-cli": "短剧最前线",
+    "image-dreamina-cli-duanju-zuiqianxian": "冰封初恋",
+    "video-dreamina-cli": "短剧最前线",
+    "video-dreamina-cli-duanju-zuiqianxian": "冰封初恋",
     "video-dreamina-cli-chenan": "陈安",
     "video-dreamina-cli-guobazai": "锅巴仔",
     "video-dreamina-cli-xiaoyujie": "小鱼姐",
     "video-dreamina-cli-tashuo-juyougeng": "她说剧有梗",
+    "video-dreamina-cli-yinou-shijie": "银鸥师姐",
+    "video-dreamina-cli-duanju-zuiqianxian": "冰封初恋",
   };
   return known[connectionId] || String(settings.name || settings.provider || "当前连接").trim();
 };
@@ -14062,6 +14355,14 @@ const dreaminaFailureInput = ({ error = null, job = null } = {}) => ({
 const dreaminaFailureNeedsVerification = ({ error = null, job = null } = {}) => (
   dreaminaFailureRequiresAccountVerification(dreaminaFailureInput({ error, job }))
 );
+
+const mediaGenerationProviderName = (job = {}) => String(
+  job?.provider
+    || job?.request?.settings?.provider
+    || job?.settings?.provider
+    || job?.generationProfile?.provider
+    || "",
+).trim();
 
 const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = {}) => {
   const current = job && typeof job === "object" ? job : {};
@@ -14135,12 +14436,13 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
   const queuePosition = Number.isFinite(Number(current.providerQueuePosition)) && current.providerQueuePosition !== null
     ? ` ${Math.max(0, Number(current.providerQueuePosition)).toLocaleString()}${Number.isFinite(Number(current.providerQueueLength)) && current.providerQueueLength !== null ? `/${Math.max(0, Number(current.providerQueueLength)).toLocaleString()}` : ""}`
     : "";
-  if (directGeneration && !whiteboardProviderQueueVisible(current)
+  if ((directGeneration || mediaGenerationProviderName(current) === "即梦") && !whiteboardProviderQueueVisible(current)
     && ["queued", "polling", "running"].includes(current.status) && current.providerStatus === "queued") {
-    return `${uiText("正在生成")} · ${billingLabel}${taskLabel}`;
+    return `${uiText("正式生成")} · ${billingLabel}${taskLabel}`;
   }
   if (["queued", "polling", "running"].includes(current.status) && whiteboardProviderQueueVisible(current)) {
-    return queuePosition ? `${uiText("已提交厂商，正在排队")}${queuePosition} · ${billingLabel}${taskLabel}` : `${uiText("已提交厂商，正在排队")} · ${billingLabel}${taskLabel}`;
+    const queueLabel = queuePosition ? `${uiText("已提交厂商，正在排队")}${queuePosition}` : uiText("已提交厂商，正在排队");
+    return `${queueLabel} · ${billingLabel}${taskLabel}`;
   }
   const labels = {
     connecting: "正在连接生成服务",
@@ -14769,6 +15071,7 @@ const waitForWhiteboardGenerationJob = (jobId, candidateKey) => waitForGeneratio
       desiredAction: job.desiredAction || "run",
       availableActions: job.availableActions ?? {},
       providerStatus: job.providerStatus,
+      provider: String(job.request?.settings?.provider || job.settings?.provider || ""),
       model: String(job.request?.settings?.model || job.settings?.model || ""),
       providerQueuePosition: job.providerQueuePosition,
       providerQueueLength: job.providerQueueLength,
@@ -14815,13 +15118,14 @@ const generationJobElapsedMs = (job) => {
 
 const whiteboardJobHasVerifiedMediaResult = (job = {}) => {
   const channel = String(job?.channel || "").trim().toLowerCase();
-  if (channel !== "image") return false;
+  if (!["image", "video", "audio"].includes(channel)) return false;
   const attachment = job?.result?.attachment || job?.attachment || {};
   const relativePath = String(attachment.relativePath || "").trim();
   const sha256 = String(attachment.sha256 || job?.landingReceipt?.sha256 || "").trim();
   const mimeType = String(attachment.mimeType || "").trim().toLowerCase();
   if (!relativePath || !sha256) return false;
-  return mimeType.startsWith("image/");
+  const expectedMime = channel === "image" ? "image/" : channel === "video" ? "video/" : "audio/";
+  return mimeType.startsWith(expectedMime);
 };
 
 const normalizedMediaRelativePath = (value = "") => String(value || "")
@@ -15151,12 +15455,12 @@ const updateDocumentArtifactJobProgress = (job, { connectionInterrupted = false,
   return true;
 };
 
-const showInterruptedDocumentArtifactJob = (job) => {
+const showInterruptedDocumentArtifactJob = (job, { allowLockDialog = true } = {}) => {
   const target = job.target ?? {};
   if (target.targetType !== "document-artifact" || !state.documents[target.documentId]) return;
   recordCustomGenerationJobCapability(job);
   promptDreaminaReverificationForJob(job);
-  promptDreaminaSubmissionBlockForJob(job);
+  promptDreaminaSubmissionBlockForJob(job, { allowLockDialog });
   updateDocumentArtifactJobProgress(job, { persistNow: true });
   mediaDocumentArtifactProgressSaves.delete(job.id);
 };
@@ -15461,12 +15765,12 @@ const maybeOfferConversationImageQuotaFallback = async (job = {}) => {
   }
 };
 
-const showInterruptedConversationMediaJob = (job) => {
+const showInterruptedConversationMediaJob = (job, { allowLockDialog = true } = {}) => {
   recordCustomGenerationJobCapability(job);
   const target = conversationMessageTarget(job);
   if (!target) return false;
   promptDreaminaReverificationForJob(job);
-  promptDreaminaSubmissionBlockForJob(job);
+  promptDreaminaSubmissionBlockForJob(job, { allowLockDialog });
   const mediaLabel = job.channel === "audio" ? "音频" : job.channel === "video" ? "视频" : "图片";
   const batchTotal = Math.max(1, Number(job.target?.mediaBatchTotal) || 1);
   const batchIndex = Math.max(1, Number(job.target?.mediaBatchIndex) || 1);
@@ -15800,24 +16104,37 @@ const promptDreaminaReverificationForJob = (job) => {
   if (provider !== "即梦" || adapter !== "cli") return;
   rememberDreaminaJobForReverification(job, settings);
   dreaminaReverifyPromptedJobs.add(job.id);
-  queueDreaminaReverification({
-    settings,
-    account: dreaminaAccountForSettings(settings),
-    errorMessage: mediaGenerationErrorText(job),
-    jobId: job.id,
-  });
+  // Restored tasks can predate the most recent browser authorization. Re-read
+  // the persisted receipt before replaying their old login warning at startup.
+  void refreshDreaminaAccountStatus({ profileId: settings.dreaminaCliProfile, channel: job.channel })
+    .then((account) => {
+      const failureAt = Date.parse(job.failedAt || job.updatedAt || job.createdAt || "");
+      const verifiedAt = Date.parse(account?.verifiedAt || "");
+      if (dreaminaAccountHasDurableIdentity(account) && Number.isFinite(failureAt) && verifiedAt > failureAt) return;
+      queueDreaminaReverification({ settings, account, errorMessage: mediaGenerationErrorText(job), jobId: job.id });
+    })
+    .catch(() => { dreaminaReverifyPromptedJobs.delete(job.id); });
 };
 
-const promptDreaminaSubmissionBlockForJob = (job) => {
+const promptDreaminaSubmissionBlockForJob = (job, { allowLockDialog = true } = {}) => {
   if (!job?.id || dreaminaSubmissionBlockPromptedJobs.has(job.id)) return false;
   const jobStatus = String(job.status || "").trim().toLowerCase();
-  const terminalJob = ["complete", "failed", "cancelled"].includes(jobStatus);
   const reconciliationOnly = String(job.submissionState || "").toLowerCase() === "uncertain"
     || String(job.providerStatus || "").toLowerCase() === "reconciling"
     || String(job.billingRisk || "").toLowerCase() === "submission_outcome_unknown";
   if (String(job.providerErrorCode || "").toUpperCase() === "DREAMINA_PROFILE_SWITCH_BLOCKED"
-    && !terminalJob
+    // A worker-side race can persist the lock conflict as `failed` before the
+    // renderer receives it.  It is still actionable: the user needs the
+    // occupant list to release the other task.  Only successful/cancelled
+    // jobs should suppress the lock dialog.
+    && !["complete", "cancelled"].includes(jobStatus)
     && !reconciliationOnly) {
+    // Startup/workspace recovery replays historical failed jobs so their
+    // cards can be restored.  Those old records must never open a lock dialog:
+    // only a lock conflict observed during the current generation attempt is
+    // actionable.  Keep the durable job untouched so a later real conflict
+    // can still surface normally.
+    if (!allowLockDialog) return false;
     const conflict = job.lockConflict && typeof job.lockConflict === "object" ? job.lockConflict : {};
     const fallbackSettings = mediaGenerationSettingsForJob(job) || job.request?.settings || {};
     dreaminaSubmissionBlockPromptedJobs.add(job.id);
@@ -15842,13 +16159,13 @@ const promptDreaminaSubmissionBlockForJob = (job) => {
   return true;
 };
 
-const showInterruptedWhiteboardGenerationJob = (job) => {
+const showInterruptedWhiteboardGenerationJob = (job, { allowLockDialog = true } = {}) => {
   if (!job || typeof job !== "object" || !String(job.id || "").trim()) {
     console.warn("ignored invalid interrupted generation job", job);
     return;
   }
   recordCustomGenerationJobCapability(job);
-  promptDreaminaSubmissionBlockForJob(job);
+  promptDreaminaSubmissionBlockForJob(job, { allowLockDialog });
   const target = job.target ?? {};
   const documentState = state.documents[target.documentId];
   if (!documentState || documentState.documentKind !== "whiteboard") return;
@@ -15925,8 +16242,10 @@ const showInterruptedWhiteboardGenerationJob = (job) => {
     availableActions: job.availableActions ?? {},
     providerErrorCode: job.providerErrorCode || "",
     providerStatus: job.providerStatus || "",
+    provider: String(job.request?.settings?.provider || job.settings?.provider || ""),
     providerQueuePosition: job.providerQueuePosition ?? null,
     providerQueueLength: job.providerQueueLength ?? null,
+    providerQueueStatus: job.providerQueueStatus || "",
     resultReady: whiteboardJobHasVerifiedMediaResult(job),
     ...(job.result?.attachment?.relativePath ? { attachment: job.result.attachment } : {}),
     error: mediaGenerationErrorText(job),
@@ -15958,6 +16277,7 @@ const monitorWhiteboardGenerationJob = (job) => {
       availableActions: job.availableActions ?? {},
       providerErrorCode: job.providerErrorCode || "",
       providerStatus: job.providerStatus || "",
+      provider: String(job.request?.settings?.provider || job.settings?.provider || ""),
       providerTaskId: job.providerTaskId || "",
       submissionState: job.submissionState || "",
       submittedAt: job.submittedAt || "",
@@ -15965,6 +16285,7 @@ const monitorWhiteboardGenerationJob = (job) => {
       automaticRecoveryInProgress: job.automaticRecoveryInProgress === true,
       providerQueuePosition: job.providerQueuePosition ?? null,
       providerQueueLength: job.providerQueueLength ?? null,
+      providerQueueStatus: job.providerQueueStatus || "",
     });
   }
   const operation = waitForWhiteboardGenerationJob(job.id, candidateKey)
@@ -16021,10 +16342,13 @@ const mediaRecoveryJobIsActionable = (job = {}) => {
     ? job.availableActions
     : {};
   if (Object.values(actions).some(Boolean)) return true;
-  // Keep an account-related failure visible only when the user can actually
-  // resolve it through the verification dialog. Historical, non-actionable
-  // jobs are intentionally omitted so the queue does not grow forever.
-  return dreaminaFailureNeedsVerification({ job });
+  // Any task that still blocks the originating card/configuration must be
+  // visible in the pending dialog, even when the provider has not exposed a
+  // specialized action yet. Hiding it leaves the user unable to release the
+  // block manually. Definitive non-blocking failures are filtered earlier by
+  // mediaRecoveryJobBlocksOperation().
+  return dreaminaFailureNeedsVerification({ job })
+    || ["queued", "submitting", "running", "polling", "downloading", "waiting_credentials", "waiting_storage", "retry_required", "reconciliation_required"].includes(status);
 };
 
 const mediaRecoveryJobNeedsAccountVerification = (job = {}) => (
@@ -16036,7 +16360,12 @@ const mediaRecoveryJobTargetLabel = (job) => {
   const target = job?.target ?? {};
   const documentTitle = state.documents?.[target.documentId]?.title;
   const documentLabel = documentTitle || target.documentId || "未命名文档";
-  const nodeLabel = target.nodeId ? ` · 卡片 ${String(target.nodeId).slice(-8)}` : "";
+  const liveNode = target.nodeId && state.documents?.[target.documentId]?.documentKind === "whiteboard"
+    ? normalizeCanvas(state.documents[target.documentId].canvas).nodes.find((node) => node.id === target.nodeId)
+    : null;
+  const nodeLabel = target.nodeId
+    ? ` · 卡片 ${String(liveNode?.name || target.nodeName || "未命名卡片").trim() || "未命名卡片"}`
+    : "";
   const workspaceLabel = normalizedWorkspacePath(target.workspacePath) === normalizedWorkspacePath(state.settings.workspacePath)
     ? "当前工作区"
     : target.workspacePath
@@ -16066,7 +16395,12 @@ const renderMediaRecoveryJobs = (jobs = []) => {
     const reapply = status === "complete" && !job.appliedAt
       ? `<button class="media-job-resume" type="button" data-media-recovery-action="reapply" data-media-job-id="${escapeHtml(job.id)}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button>`
       : "";
+    // `mediaGenerationActionMarkup` already renders the reverify action for
+    // structured credential failures.  Keep the recovery-only fallback only
+    // when that action could not be derived, otherwise the same job showed
+    // two identical “核验账号” buttons.
     const verify = mediaRecoveryJobNeedsAccountVerification(job)
+      && !actions.includes('data-media-job-action="reverify"')
       ? `<button class="media-job-resume" type="button" data-media-recovery-action="verify" data-media-job-id="${escapeHtml(job.id)}" title="核验该任务原来使用的即梦配置">${icon("\uE77B", "核验账号")}<span>核验账号</span></button>`
       : "";
     const actionsMarkup = actions || reapply || verify
@@ -16116,6 +16450,8 @@ const openMediaRecoveryDialog = async () => {
 };
 
 let mediaRecoveryFullScanKey = "";
+const mediaRecoveryPromptedJobSignatures = new Map();
+const mediaRecoveryBaselinedScanKeys = new Set();
 
 const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = false, manual = false } = {}) => {
   if (manual) showMediaRecoveryBanner("正在重新读取本机媒体任务与厂商续接状态…", { checking: true });
@@ -16140,6 +16476,16 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       ...(globalPayload.jobs ?? []),
       ...(smokeResponse.ok && smokePayload.ok ? smokePayload.jobs ?? [] : []),
     ].map((job) => [job.id, job])).values()];
+    const blockingJobs = jobs.filter(mediaRecoveryJobBlocksOperation).filter(mediaRecoveryJobIsActionable);
+    const { freshBlockingJobs } = mediaRecoveryPromptCandidates({
+      scanKey: recoveryScanKey,
+      blockingJobs,
+      baselinedScanKeys: mediaRecoveryBaselinedScanKeys,
+      promptedJobSignatures: mediaRecoveryPromptedJobSignatures,
+    });
+    if (freshBlockingJobs.length && document.visibilityState !== "hidden" && !elements.mediaRecoveryDialog?.open) {
+      void openMediaRecoveryDialog();
+    }
     let recovered = 0;
     const recoveryIssues = [];
     for (const job of jobs) {
@@ -16213,7 +16559,7 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
             monitorConversationMediaJob(job);
             recovered += 1;
           } else if (MEDIA_JOB_ATTENTION_STATUSES.has(job.status) || job.status === "cancelled") {
-            showInterruptedConversationMediaJob(job);
+            showInterruptedConversationMediaJob(job, { allowLockDialog: false });
             recovered += 1;
           }
           continue;
@@ -16227,7 +16573,7 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
             monitorDocumentArtifactJob(job);
             recovered += 1;
           } else if (MEDIA_JOB_ATTENTION_STATUSES.has(job.status) || job.status === "cancelled") {
-            showInterruptedDocumentArtifactJob(job);
+            showInterruptedDocumentArtifactJob(job, { allowLockDialog: false });
             recovered += 1;
           }
           continue;
@@ -16239,13 +16585,13 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
           monitorWhiteboardGenerationJob(job);
           recovered += 1;
         } else if (MEDIA_JOB_ATTENTION_STATUSES.has(job.status) || job.status === "cancelled") {
-          showInterruptedWhiteboardGenerationJob(job);
+          showInterruptedWhiteboardGenerationJob(job, { allowLockDialog: false });
           recovered += 1;
         }
       } catch (error) {
         console.warn(`Generation job ${job.id} recovery skipped:`, error.message);
         if (mediaRecoveryJobBlocksOperation(job) && mediaRecoveryJobIsActionable(job)) {
-          recoveryIssues.push(`${job.channel === "video" ? "视频" : job.channel === "image" ? "图片" : "媒体"}任务 ${job.id.slice(-8)}：${error.message}`);
+          recoveryIssues.push(`${job.channel === "video" ? "视频" : job.channel === "image" ? "图片" : "媒体"}任务 · ${mediaRecoveryJobTargetLabel(job)}：${error.message}`);
         }
       }
     }
@@ -17636,7 +17982,7 @@ const renderWhiteboardMultiSelection = (documentState) => {
     elements.whiteboardMultiSelection.hidden = true;
     return;
   }
-  const viewport = normalizeCanvas(documentState.canvas).viewport;
+  const viewport = whiteboardViewport(documentState);
   elements.whiteboardMultiSelection.style.left = `${viewport.x + bounds.left * viewport.zoom}px`;
   elements.whiteboardMultiSelection.style.top = `${viewport.y + bounds.top * viewport.zoom}px`;
   elements.whiteboardMultiSelection.style.width = `${bounds.width * viewport.zoom}px`;
@@ -17667,7 +18013,7 @@ const whiteboardStableNodeRenderSignature = (node) => {
 };
 
 const whiteboardForegroundRelationState = (canvas) => {
-  const normalized = normalizeCanvas(canvas);
+  const normalized = canonicalCanvas(canvas);
   const nodeIds = new Set(normalized.nodes.map((node) => node.id));
   const selectedNodeIds = ui.whiteboardSelectedDocumentId === state.activeDocument
     ? new Set([...ui.whiteboardSelectedNodeIds].filter((id) => nodeIds.has(id)))
@@ -17699,7 +18045,7 @@ const syncWhiteboardForegroundRelationLayer = (documentState = state.documents[s
     return { edges: [], nodeIds: new Set(), selectedEdgeIds: new Set() };
   }
   const relation = whiteboardForegroundRelationState(documentState.canvas);
-  const canvas = normalizeCanvas(documentState.canvas);
+  const canvas = canonicalCanvas(documentState.canvas);
   const nodeMap = new Map(canvas.nodes.map((node) => [node.id, node]));
   const markup = relation.edges.map((edge, index) => {
     const fromNode = nodeMap.get(edge.fromNode);
@@ -17762,7 +18108,7 @@ const patchStableWhiteboardMediaCard = (card, replacement, mediaIdentity) => {
   // Progress polling must never replace a live <video> or <img>. Replacing the
   // native element resets playback/decoding and visibly flashes the card. Keep
   // the media node itself and reconcile only the changing generation chrome.
-  for (const attribute of ["alt", "aria-label", "title", "data-attachment-preview", "data-attachment-path", "data-attachment-download-name", "data-media-batch-directory"]) {
+  for (const attribute of ["alt", "aria-label", "title", "data-attachment-preview", "data-attachment-src", "data-attachment-path", "data-attachment-download-name", "data-media-batch-directory"]) {
     if (nextMedia.hasAttribute(attribute)) currentMedia.setAttribute(attribute, nextMedia.getAttribute(attribute));
     else currentMedia.removeAttribute(attribute);
   }
@@ -17835,6 +18181,8 @@ const WHITEBOARD_PROGRESSIVE_RENDER_THRESHOLD = 48;
 const WHITEBOARD_PROGRESSIVE_RENDER_BATCH = 10;
 const WHITEBOARD_PROGRESSIVE_FRAME_BUDGET_MS = 7;
 const WHITEBOARD_DEFERRED_IMAGE_BATCH = 2;
+const whiteboardCardRecords = new Map();
+let whiteboardEdgeMarkupCache = null;
 
 const cancelWhiteboardMediaHydration = () => {
   cancelUiBackgroundTask(ui.whiteboardMediaHydrationTask);
@@ -17843,16 +18191,16 @@ const cancelWhiteboardMediaHydration = () => {
 };
 
 const scheduleWhiteboardMediaHydration = () => {
-  cancelWhiteboardMediaHydration();
+  if (ui.whiteboardMediaHydrationTask) return;
   const renderIdentity = elements.whiteboardSurface.dataset.renderIdentity || "";
-  const queue = [...elements.whiteboardSurface.querySelectorAll("img[data-whiteboard-deferred-src]")];
-  if (!queue.length) return;
+  if (!elements.whiteboardSurface.querySelector("img[data-whiteboard-deferred-src]")) return;
   const token = ui.whiteboardMediaHydrationToken;
   const run = () => {
     ui.whiteboardMediaHydrationTask = null;
     if (token !== ui.whiteboardMediaHydrationToken
       || elements.whiteboardSurface.dataset.renderIdentity !== renderIdentity
       || !activeWhiteboardDocument()) return;
+    const queue = [...elements.whiteboardSurface.querySelectorAll("img[data-whiteboard-deferred-src]")];
     let hydrated = 0;
     while (queue.length && hydrated < WHITEBOARD_DEFERRED_IMAGE_BATCH) {
       const image = queue.shift();
@@ -17864,16 +18212,16 @@ const scheduleWhiteboardMediaHydration = () => {
     }
     if (queue.length) {
       ui.whiteboardMediaHydrationTask = scheduleUiBackgroundTask(run, {
-        delay: 48,
-        timeout: 1_600,
-        interactionGrace: 240,
+        delay: 16,
+        timeout: 160,
+        interactionGrace: 0,
       });
     }
   };
   ui.whiteboardMediaHydrationTask = scheduleUiBackgroundTask(run, {
-    delay: 72,
-    timeout: 1_600,
-    interactionGrace: 240,
+    delay: 0,
+    timeout: 160,
+    interactionGrace: 0,
   });
 };
 
@@ -17896,7 +18244,8 @@ const whiteboardVirtualRenderWindow = (documentState) => {
   }
   elements.whiteboardEditor.hidden = false;
   const rect = elements.whiteboardEditor.getBoundingClientRect();
-  const viewport = whiteboardViewport(documentState);
+  const drag = ui.whiteboardDrag?.documentId === state.activeDocument && ui.whiteboardDrag.mode === "pan" ? ui.whiteboardDrag : null;
+  const viewport = drag?.pending ? { ...drag.pending, zoom: drag.zoom } : whiteboardViewport(documentState);
   if (rect.width < 1 || rect.height < 1) {
     const fallback = nodes.slice(0, WHITEBOARD_VIRTUALIZATION_NODE_THRESHOLD);
     return { enabled: true, nodes: fallback, nodeIds: new Set(fallback.map((node) => node.id)) };
@@ -18017,7 +18366,6 @@ const scheduleWhiteboardDormantVideoRefresh = () => {
 };
 
 const renderWhiteboard = (documentState) => {
-  cancelWhiteboardMediaHydration();
   const arrangePreview = ui.whiteboardArrangePreview;
   const previewMatches = arrangePreview
     && arrangePreview.workspaceId === workspaceIdentity()
@@ -18033,7 +18381,10 @@ const renderWhiteboard = (documentState) => {
     };
   }
   documentState.canvas = canonicalCanvas(documentState.canvas);
-  const { x, y, zoom } = documentState.canvas.viewport;
+  const viewportDrag = ui.whiteboardDrag?.documentId === state.activeDocument && ui.whiteboardDrag.mode === "pan"
+    ? ui.whiteboardDrag : null;
+  const { x, y, zoom } = viewportDrag?.pending
+    ? { ...viewportDrag.pending, zoom: viewportDrag.zoom } : documentState.canvas.viewport;
   elements.whiteboardSurface.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
   elements.whiteboardZoomOut.disabled = zoom <= CANVAS_MIN_ZOOM;
   elements.whiteboardZoomIn.disabled = zoom >= CANVAS_MAX_ZOOM;
@@ -18041,6 +18392,7 @@ const renderWhiteboard = (documentState) => {
   elements.whiteboardZoomIn.title = `放大白板（当前 ${Math.round(zoom * 100)}%）`;
   const nodeMap = new Map(documentState.canvas.nodes.map((node) => [node.id, node]));
   const virtualWindow = whiteboardVirtualRenderWindow(documentState);
+  ui.whiteboardVirtualWindowBounds = virtualWindow.bounds || null;
   elements.whiteboardEditor.dataset.virtualized = String(virtualWindow.enabled);
   elements.whiteboardEditor.dataset.renderedNodeCount = String(virtualWindow.nodes.length);
   elements.whiteboardEditor.dataset.totalNodeCount = String(documentState.canvas.nodes.length);
@@ -18055,7 +18407,11 @@ const renderWhiteboard = (documentState) => {
     if (!current || entry.updatedAt > current.updatedAt) generationDraftByNode.set(entry.nodeId, entry);
   }
   const foregroundRelation = whiteboardForegroundRelationState(documentState.canvas);
-  const edgeMarkup = documentState.canvas.edges.map((edge, index) => {
+  const edgeContext = JSON.stringify([state.activeDocument, virtualWindow.enabled ? [...virtualWindow.nodeIds] : null,
+    ui.whiteboardSelectedEdgeDocumentId, [...ui.whiteboardSelectedEdgeIds], ui.whiteboardSelectedEdgeId]);
+  const cachedEdges = whiteboardEdgeMarkupCache;
+  const edgeMarkup = cachedEdges?.nodes === documentState.canvas.nodes && cachedEdges?.edges === documentState.canvas.edges
+    && cachedEdges.context === edgeContext ? cachedEdges.markup : documentState.canvas.edges.map((edge, index) => {
     const fromNode = nodeMap.get(edge.fromNode);
     const toNode = nodeMap.get(edge.toNode);
     if (!fromNode || !toNode) return "";
@@ -18065,6 +18421,7 @@ const renderWhiteboard = (documentState) => {
       && (ui.whiteboardSelectedEdgeIds?.has(edge.id) || ui.whiteboardSelectedEdgeId === edge.id);
     return `<g class="whiteboard-edge-group ${selected ? "selected" : ""}" data-canvas-edge="${escapeHtml(edge.id)}"><path class="whiteboard-edge-hit" d="${path}"></path><path class="whiteboard-edge" d="${path}"></path><path class="whiteboard-edge-flow" d="${path}" pathLength="100" style="--whiteboard-flow-delay:-${(index % 8) * 0.17}s"></path></g>`;
   }).join("");
+  whiteboardEdgeMarkupCache = { nodes: documentState.canvas.nodes, edges: documentState.canvas.edges, context: edgeContext, markup: edgeMarkup };
   const draftStart = ui.whiteboardEdgeDraft?.fromPoint
     ?? (ui.whiteboardEdgeDraft?.fromNode && nodeMap.has(ui.whiteboardEdgeDraft.fromNode) ? whiteboardNodeSidePoint(nodeMap.get(ui.whiteboardEdgeDraft.fromNode), "right") : null);
   const draftMarkup = draftStart
@@ -18073,11 +18430,20 @@ const renderWhiteboard = (documentState) => {
   const renderIdentity = `${workspaceIdentity()}::${state.activeDocument}`;
   const previousRenderIdentity = elements.whiteboardSurface.dataset.renderIdentity || "";
   const renderIdentityChanged = previousRenderIdentity !== renderIdentity;
-  if (renderIdentityChanged) ui.whiteboardActiveVideoKeys.clear();
-  const progressiveAlreadyRunning = elements.whiteboardSurface.classList.contains("progressive-rendering");
+  if (renderIdentityChanged) {
+    cancelWhiteboardMediaHydration();
+    ui.whiteboardActiveVideoKeys.clear();
+    whiteboardCardRecords.clear();
+  }
   cancelWhiteboardProgressiveRender();
+  // Progressive rendering is a cold-presentation optimization only. If the
+  // same board renders again while that first pass is still running (space
+  // pan, selection, status tick), restarting from card one clears readiness
+  // classes and produces a visible white flash. Converge the existing DOM in
+  // one pass instead; already decoded media and stable card nodes are reused
+  // by applyCardRecord below.
   const useProgressiveRender = virtualWindow.nodes.length > WHITEBOARD_PROGRESSIVE_RENDER_THRESHOLD
-    && (renderIdentityChanged || progressiveAlreadyRunning);
+    && renderIdentityChanged;
   elements.whiteboardSurface.dataset.renderIdentity = renderIdentity;
   const buildWhiteboardCardRecord = (node) => {
     const cardOrigin = uploadedMediaNodeIds.has(node.id) ? "upload" : "";
@@ -18121,6 +18487,17 @@ const renderWhiteboard = (documentState) => {
       && !candidate
       && !generating
       && !activeVideo;
+    const selected = ui.whiteboardSelectedDocumentId === state.activeDocument && ui.whiteboardSelectedNodeIds.has(node.id);
+    const relationActive = foregroundRelation.nodeIds.has(node.id);
+    const focused = ui.whiteboardFocusedNodeId === node.id;
+    const dismissed = ui.whiteboardDismissedGenerationElapsed.has(whiteboardGenerationElapsedDismissKey(node));
+    const previous = whiteboardCardRecords.get(node.id);
+    const completionTime = whiteboardGenerationCompletedElapsedMs(node);
+    const renderContext = [editing, lowDetail, activeVideo, generating, cardOrigin, dismissed, completionTime, state.readOnly, generationDraftByNode.get(node.id), whiteboardAutoOpenIsDisabled(node.id)];
+    if (previous?.sourceNode === node && previous.candidate === candidate
+      && previous.context.every((value, index) => value === renderContext[index])) {
+      return { ...previous.record, selected, relationActive, focused };
+    }
     const candidateHasOutput = Boolean(String(candidate?.text ?? "").trim() || candidate?.attachment?.relativePath);
     const generatedDisplayName = candidateHasOutput
       ? generatedWhiteboardNodeNames(documentState.canvas, ["image", "video", "audio"].includes(candidate.kind) ? candidate.kind : "text", 1, node.name)[0]
@@ -18167,6 +18544,7 @@ const renderWhiteboard = (documentState) => {
       ? whiteboardAttachmentUrl({ ...visibleNode, generation: { ...(visibleNode.generation || {}), prompt: candidate?.prompt || visibleNode.generation?.prompt } })
       : "";
     const visibleVideoUrl = visibleNode.kind === "video" && visibleMediaUrl ? `${visibleMediaUrl}#t=0.001` : visibleMediaUrl;
+    const visibleImageUrl = visibleNode.kind === "image" && visibleMediaUrl ? `${visibleMediaUrl}&preview=640` : visibleMediaUrl;
     const visiblePosterUrl = visibleNode.kind === "video" && visibleNode.thumbnailRelativePath
       ? workspaceAttachmentUrl(visibleNode.thumbnailRelativePath, state.activeDocument)
       : "";
@@ -18202,7 +18580,7 @@ const renderWhiteboard = (documentState) => {
       : candidate?.cardApplyStage === "verifying"
         ? uiText("结果已保存，正在回读卡片")
       : generationResultReady
-        ? uiText("图片已生成，正在回写卡片")
+        ? uiText(`${generationChannel === "video" ? "视频" : generationChannel === "audio" ? "音频" : "图片"}已生成，正在回写卡片`)
       : candidateConnecting
       ? durableMediaCandidate ? mediaGenerationPhaseText(candidate) : uiText("正在连接生成服务")
       : candidate?.connectionInterrupted
@@ -18245,7 +18623,7 @@ const renderWhiteboard = (documentState) => {
       ? ""
       : generatedDisplayName || visibleNode.name || whiteboardNodeKindLabel(visibleNode) || "";
     const lowDetailContent = visibleNode.kind === "image"
-      ? `<div class="whiteboard-card-low-detail media image"><img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visibleMediaUrl)}" alt="${escapeHtml(visibleNode.name || "白板图片")}" data-attachment-preview="image" data-attachment-src="${escapeHtml(visibleMediaUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="${escapeHtml(`拖拽移动；双击预览 ${visibleNode.name || "白板图片"}`)}" decoding="async" fetchpriority="low" draggable="false" /></div>`
+      ? `<div class="whiteboard-card-low-detail media image"><img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visibleImageUrl)}" alt="${escapeHtml(visibleNode.name || "白板图片")}" data-attachment-preview="image" data-attachment-preview-src="${escapeHtml(visibleImageUrl)}" data-attachment-src="${escapeHtml(visibleMediaUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="${escapeHtml(`拖拽移动；双击预览 ${visibleNode.name || "白板图片"}`)}" decoding="async" fetchpriority="low" draggable="false" /></div>`
       : visibleNode.kind === "video"
         ? `<div class="whiteboard-card-low-detail media video whiteboard-card-video-poster" data-attachment-preview="video" data-attachment-src="${escapeHtml(visibleVideoUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="点击播放；拖拽移动；双击预览视频">${visiblePosterUrl ? `<img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visiblePosterUrl)}" alt="${escapeHtml(visibleNode.name || "白板视频")}" decoding="async" fetchpriority="low" draggable="false" />` : `<span class="whiteboard-card-overview-placeholder">${icon("\uE714", "视频")}</span>`}<span class="attachment-video-play" data-whiteboard-video-activate aria-hidden="true">${icon("\uE768", "播放视频")}</span></div>`
         : visibleNode.kind === "audio"
@@ -18254,45 +18632,34 @@ const renderWhiteboard = (documentState) => {
     const content = lowDetail
       ? lowDetailContent
       : visibleNode.kind === "image"
-      ? `<img class="whiteboard-card-image" src="${escapeHtml(visibleMediaUrl)}" alt="${escapeHtml(visibleNode.name || "白板图片")}" data-attachment-preview="image" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="${escapeHtml(`拖拽移动；双击预览 ${visibleNode.name || "白板图片"}`)}" loading="lazy" decoding="async" draggable="false" />`
+      ? `<img class="whiteboard-card-image" src="${escapeHtml(visibleImageUrl)}" alt="${escapeHtml(visibleNode.name || "白板图片")}" data-attachment-preview="image" data-attachment-preview-src="${escapeHtml(visibleImageUrl)}" data-attachment-src="${escapeHtml(visibleMediaUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="${escapeHtml(`拖拽移动；双击预览 ${visibleNode.name || "白板图片"}`)}" loading="lazy" decoding="async" draggable="false" />`
       : visibleNode.kind === "video"
         ? activeVideo
-          ? `<div class="whiteboard-card-media-shell"><video class="whiteboard-card-video" src="${escapeHtml(visibleVideoUrl)}"${visiblePosterAttribute} controls preload="none" aria-label="${escapeHtml(visibleMediaDownloadName || visibleNode.name || "白板视频")}" data-attachment-preview="video" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="拖拽移动；双击预览视频"></video><span class="whiteboard-card-video-drag-surface" data-whiteboard-video-drag-surface title="拖拽移动；双击预览视频" aria-hidden="true"></span><button class="video-frame-trigger whiteboard-video-frame-trigger" type="button" data-video-frame-trigger data-frame-destination="whiteboard" data-frame-source-node="${escapeHtml(node.id)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" title="提取关键帧" aria-label="提取关键帧">${icon("\uE722", "提取关键帧")}</button></div>`
-          : `<div class="whiteboard-card-media-shell dormant whiteboard-card-video-poster" data-attachment-preview="video" data-attachment-src="${escapeHtml(visibleVideoUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="点击播放；拖拽移动；双击预览视频">${visiblePosterUrl ? `<img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visiblePosterUrl)}" alt="${escapeHtml(visibleNode.name || "白板视频")}" decoding="async" fetchpriority="low" draggable="false" />` : `<span class="whiteboard-card-overview-placeholder">${icon("\uE714", "视频")}</span>`}<span class="attachment-video-play" data-whiteboard-video-activate aria-hidden="true">${icon("\uE768", "播放视频")}</span><button class="video-frame-trigger whiteboard-video-frame-trigger" type="button" data-video-frame-trigger data-frame-destination="whiteboard" data-frame-source-node="${escapeHtml(node.id)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" title="提取首帧" aria-label="提取首帧">${icon("\uE722", "提取首帧")}</button></div>`
+          ? `<div class="whiteboard-card-media-shell"><video class="whiteboard-card-video" src="${escapeHtml(visibleVideoUrl)}"${visiblePosterAttribute} controls preload="none" aria-label="${escapeHtml(visibleMediaDownloadName || visibleNode.name || "白板视频")}" data-attachment-preview="video" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="拖拽移动；双击预览视频"></video><span class="whiteboard-card-video-drag-surface" data-whiteboard-video-drag-surface title="拖拽移动；双击预览视频" aria-hidden="true"></span></div>`
+          : `<div class="whiteboard-card-media-shell dormant whiteboard-card-video-poster" data-attachment-preview="video" data-attachment-src="${escapeHtml(visibleVideoUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="点击播放；拖拽移动；双击预览视频">${visiblePosterUrl ? `<img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visiblePosterUrl)}" alt="${escapeHtml(visibleNode.name || "白板视频")}" decoding="async" fetchpriority="low" draggable="false" />` : `<span class="whiteboard-card-overview-placeholder">${icon("\uE714", "视频")}</span>`}<span class="attachment-video-play" data-whiteboard-video-activate aria-hidden="true">${icon("\uE768", "播放视频")}</span></div>`
         : visibleNode.kind === "audio"
           ? `<div class="whiteboard-card-audio-shell"><strong title="${escapeHtml(visibleNode.name || "白板音频")}">${escapeHtml(visibleNode.name || "白板音频")}</strong><audio class="whiteboard-card-audio" src="${escapeHtml(whiteboardAttachmentUrl(visibleNode))}" controls preload="none" aria-label="${escapeHtml(visibleNode.name || "白板音频")}"></audio></div>`
       : visibleNode.kind === "web" && !editing
         ? `<div class="whiteboard-web-card" title="已读取网页正文；拖拽移动，双击或右键可修改链接"><span class="whiteboard-web-icon">${icon("\uE774")}</span><strong>${escapeHtml(whiteboardWebTitle(visibleNode))}</strong><small>${escapeHtml(visibleNode.webSnapshot ? `${visibleNode.webSnapshot.pages?.length || 1} 页 · ${visibleNode.webSnapshot.contentCharacters || visibleNode.webSnapshot.text?.length || 0} 字` : visibleNode.url)}</small><a class="whiteboard-web-open" href="${escapeHtml(visibleNode.url)}" target="_blank" rel="noopener noreferrer" title="打开网页" aria-label="打开 ${escapeHtml(whiteboardWebTitle(visibleNode))}">${icon("\uE8A7")}</a></div>`
         : textEditor;
-    const selected = ui.whiteboardSelectedDocumentId === state.activeDocument && ui.whiteboardSelectedNodeIds.has(node.id);
-    const relationActive = foregroundRelation.nodeIds.has(node.id);
     const usesFourCornerResize = ["image", "video", "audio"].includes(visibleNode.kind) || (visibleNode.type === "text" && visibleNode.kind !== "web");
     const resizeHandles = lowDetail
       ? ""
       : usesFourCornerResize
       ? ["nw", "ne", "sw", "se"].map((corner) => `<span class="whiteboard-resize-handle ${["image", "video", "audio"].includes(visibleNode.kind) ? "media-corner" : "text-corner"} ${corner}" data-canvas-resize="${corner}" title="拖拽调整卡片大小" aria-label="从${corner}角调整卡片大小"></span>`).join("")
       : '<span class="whiteboard-resize-handle se" data-canvas-resize="se" title="拖拽调整卡片大小" aria-label="拖拽调整卡片大小"></span>';
-    const imageEditButton = !lowDetail && visibleNode.kind === "image" && visibleNode.file && !candidate && !state.readOnly
-      ? `<button class="whiteboard-image-edit-button" type="button" data-edit-whiteboard-image="${escapeHtml(node.id)}" title="编辑图片" aria-label="编辑图片">${icon("\uE70F", "编辑图片")}</button>`
-      : "";
-    const compositeManifest = node.generation?.compositeLongVideo;
-    const compositeProcessButton = !lowDetail && compositeManifest
-      ? `<button class="whiteboard-long-video-process-trigger" type="button" data-composite-long-video-process="${escapeHtml(node.id)}" title="查看每个分段的提示词、参考、状态和积分"><span>${escapeHtml(compositeManifest.status === "complete" ? "生成过程" : `${Number(compositeManifest.completedSegments) || 0}/${compositeManifest.segments?.length || 0}`)}</span>${icon("\uE9D9", "生成过程")}</button>`
-      : "";
     const markup = `<article class="whiteboard-card ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${relationActive ? "relation-active" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
       ${generatedNodeTitle}
       ${kindMarkup}
       ${generationTypeIndicator}
-      ${compositeProcessButton}
       ${content}
-      ${imageEditButton}
       ${whiteboardTextGenerationFailureActions(candidate)}
       ${candidateApplyFailed ? `<div class="media-generation-actions compact"><button class="media-job-resume" type="button" data-whiteboard-candidate-action data-media-job-action="reapply" data-media-job-id="${escapeHtml(candidate.jobId || "")}" title="${escapeHtml(uiText("使用已生成结果重新回填卡片，不会重新生成"))}">${icon("\uE8B7", uiText("重新回填"))}<span>${escapeHtml(uiText("重新回填"))}</span></button></div>` : candidate && !generationResultReady ? mediaGenerationActionMarkup({ jobId: candidate.jobId, status: candidate.status, availableActions: candidate.availableActions, desiredAction: candidate.desiredAction, providerErrorCode: candidate.providerErrorCode, error: candidate.error, providerTaskId: candidate.providerTaskId, submissionState: candidate.submissionState }, { compact: true }) : ""}
       ${lowDetail ? "" : `<button class="whiteboard-node-handle input" type="button" data-canvas-handle="input" title="${escapeHtml(uiText("输入节点：接收直接上游信息"))}" aria-label="${escapeHtml(uiText("输入节点：接收直接上游信息"))}"></button>
       <button class="whiteboard-node-handle output" type="button" data-canvas-handle="output" title="${escapeHtml(uiText("输出节点：连接下游卡片"))}" aria-label="${escapeHtml(uiText("输出节点：连接下游卡片"))}"></button>`}
       ${resizeHandles}
     </article>`;
-    return {
+    const record = {
       id: node.id,
       node,
       selected,
@@ -18302,6 +18669,8 @@ const renderWhiteboard = (documentState) => {
       signature: whiteboardCardRenderSignature({ stableNode: whiteboardStableNodeRenderSignature(node), candidate, editing, generating, lowDetail, activeVideo, generationElapsedDismissed, pendingGenerationType, visibleText: lowDetail ? "" : visibleText, visibleKind: visibleNode.kind, visibleFile: visibleNode.file || "", cardOrigin }),
       markup,
     };
+    whiteboardCardRecords.set(node.id, { sourceNode: node, candidate, context: renderContext, record });
+    return record;
   };
   const cardRecords = useProgressiveRender ? [] : virtualWindow.nodes.map(buildWhiteboardCardRecord);
   const edgeLayerMarkup = `<defs><marker id="whiteboardArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path></marker></defs>${edgeMarkup}${draftMarkup}`;
@@ -18317,9 +18686,9 @@ const renderWhiteboard = (documentState) => {
   }
   syncWhiteboardForegroundRelationLayer(documentState);
   const existingCards = new Map([...elements.whiteboardSurface.querySelectorAll(":scope > [data-canvas-node]")].map((card) => [card.dataset.canvasNode, card]));
+  for (const id of whiteboardCardRecords.keys()) if (!nodeMap.has(id)) whiteboardCardRecords.delete(id);
   if (useProgressiveRender) {
     elements.whiteboardSurface.classList.add("progressive-rendering");
-    existingCards.forEach((card) => card.classList.remove("progressive-ready"));
   } else {
     elements.whiteboardSurface.classList.remove("progressive-rendering");
     existingCards.forEach((card) => card.classList.remove("progressive-ready"));
@@ -18347,6 +18716,20 @@ const renderWhiteboard = (documentState) => {
       if (patchedStableMedia) {
         card.dataset.whiteboardRenderKey = record.signature;
       } else {
+        // Keep decoded media across detail-level or status-chrome changes.
+        // Reusing the actual image avoids a white card until the new deferred
+        // loader runs, especially when zoom crosses the overview threshold.
+        const oldImage = card?.querySelector("img.whiteboard-card-image, img.whiteboard-card-overview-image");
+        const nextImage = replacement.querySelector("img.whiteboard-card-image, img.whiteboard-card-overview-image");
+        if (!renderIdentityChanged && oldImage && nextImage
+          && (oldImage.getAttribute("src") || oldImage.dataset.whiteboardDeferredSrc)
+            === (nextImage.getAttribute("src") || nextImage.dataset.whiteboardDeferredSrc)) {
+          oldImage.className = nextImage.className;
+          for (const attribute of nextImage.attributes) {
+            if (!["src", "data-whiteboard-deferred-src"].includes(attribute.name)) oldImage.setAttribute(attribute.name, attribute.value);
+          }
+          nextImage.replaceWith(oldImage);
+        }
         if (card) card.replaceWith(replacement);
         else elements.whiteboardSurface.insertBefore(replacement, cursor);
         card = replacement;
@@ -18432,7 +18815,10 @@ const renderWhiteboard = (documentState) => {
     renderWhiteboardGenerationReferences(elements.whiteboardAudioReferences, elements.whiteboardAudioForm.dataset.nodeId);
   }
   renderWhiteboardGenerationCollapsedSessions();
-  scheduleWhiteboardGenerationDialogPosition();
+  renderWhiteboardCardToolbar();
+  if (!elements.whiteboardEditor.classList.contains("viewport-transforming")) {
+    scheduleWhiteboardGenerationDialogPosition();
+  }
   if (!useProgressiveRender) scheduleWhiteboardMediaHydration();
 };
 
@@ -19613,6 +19999,9 @@ const renderExecutionProcess = (message) => {
   const intentEnvelope = execution.taskRoute?.intentEnvelope && typeof execution.taskRoute.intentEnvelope === "object"
     ? execution.taskRoute.intentEnvelope
     : null;
+  const writePresentation = nativeAgentExecution
+    ? agentTaskWritePresentation({ execution, pending })
+    : { resolved: Boolean(intentEnvelope), mode: String(intentEnvelope?.writeMode || ""), targetDocumentIds: [] };
   // Creative guidance is an Agent-controlled workflow even though its first
   // turns intentionally have no write authorization.  Do not collapse that
   // distinction into the generic "conversation only" label: authors need to
@@ -19744,15 +20133,18 @@ const renderExecutionProcess = (message) => {
     operation: "操作",
     discussion: "对话",
   })[String(intentEnvelope?.taskType || "")] || "未确定";
+  const effectiveIntentWriteMode = writePresentation.mode || String(intentEnvelope?.writeMode || "");
   const intentWriteModeLabel = ({
     formal_auto: "正式交付自动写入",
     confirm_required: "需确认后写入",
     conversation_only: "仅对话，不写入",
-  })[String(intentEnvelope?.writeMode || "")] || "仅对话，不写入";
-  const intentTargetIds = [
+    media: "媒体生成，不写入文档",
+  })[effectiveIntentWriteMode] || "";
+  const intentTargetIds = [...new Set([
+    ...(writePresentation.targetDocumentIds || []),
     ...(intentEnvelope?.deliverables || []).map((item) => item?.targetDocumentId),
     ...(intentEnvelope?.deliverables?.length ? [] : (intentEnvelope?.targetDocumentIds || [])),
-  ].filter(Boolean).slice(0, 6);
+  ].filter(Boolean))].slice(0, 6);
   const intentTargetText = intentTargetIds
     .map((documentId) => state.documents?.[documentId]?.title || documentId)
     .join("、");
@@ -19764,12 +20156,12 @@ const renderExecutionProcess = (message) => {
     .join("、");
   const taskDisplayLabel = nativeAgentExecution && explicitNativeTaskKind
     ? strengthLabel
-    : qualityReviewExecution ? "内容质检" : intentTaskTypeLabel;
-  const unresolvedIntentTargetLabel = intentEnvelope?.writeMode === "formal_auto"
+    : qualityReviewExecution ? "内容质检" : intentEnvelope ? intentTaskTypeLabel : strengthLabel;
+  const unresolvedIntentTargetLabel = effectiveIntentWriteMode === "formal_auto"
     && execution.taskRoute?.writeAuthorization?.action === "create"
     ? "待创建新文档"
-    : intentEnvelope?.writeMode === "conversation_only" ? "无需写入文档" : "写入目标待确定";
-  const intentSummary = intentEnvelope
+    : effectiveIntentWriteMode === "conversation_only" || effectiveIntentWriteMode === "media" ? "无需写入文档" : "写入目标待确定";
+  const intentSummary = writePresentation.resolved && intentWriteModeLabel
     ? [taskDisplayLabel, intentWriteModeLabel, intentTargetText ? `${intentTargetLabel}：${intentTargetText}` : unresolvedIntentTargetLabel, intentRequiredContextText ? `读取：${intentRequiredContextText}` : ""].filter(Boolean).join(" · ")
     : "";
   const nativeAgentSession = agentExecution && execution.nativeSession && typeof execution.nativeSession === "object"
@@ -19925,7 +20317,7 @@ const renderExecutionProcess = (message) => {
     <summary><span class="execution-progress-ring" style="--execution-progress:${progress * 3.6}deg" role="progressbar" aria-label="任务处理进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><span>${escapeHtml(progressLabel)}</span></span><span>${escapeHtml(uiText(processTitle))}${!agentExecution && stepProgress ? ` · ${escapeHtml(stepProgress)}` : ""}</span><span class="execution-time"${timerData}>${timeText}</span></summary>
     ${pending && execution.requestId ? `<button class="execution-stop" type="button" data-cancel-run="${escapeHtml(execution.requestId)}" title="${cancelling ? "正在终止任务" : "终止任务"}" ${cancelling ? "disabled" : ""}>${icon("\uE71A", cancelling ? "正在终止任务" : "终止任务")}</button>` : ""}
     ${pending && agentExecution && execution.agentTurnId ? `<button class="execution-stop" type="button" data-stop-codex-turn="${escapeHtml(execution.agentTurnId)}" title="${escapeHtml(uiText("停止 Agent 任务"))}">${icon("\uE71A", uiText("停止 Agent 任务"))}</button>` : ""}
-    ${pending && agentExecution && !execution.agentTurnId && execution.sourceMessageId ? `<button class="execution-stop" type="button" data-cancel-preparation="${escapeHtml(execution.sourceMessageId)}" title="${escapeHtml(uiText("停止 Agent 准备任务"))}">${icon("\uE71A", uiText("停止 Agent 准备任务"))}</button>` : ""}
+    ${pending && agentExecution && !execution.agentTurnId && !execution.nativeAgentRunId && execution.sourceMessageId ? `<button class="execution-stop" type="button" data-cancel-preparation="${escapeHtml(execution.sourceMessageId)}" title="${escapeHtml(uiText("停止 Agent 准备任务"))}">${icon("\uE71A", uiText("停止 Agent 准备任务"))}</button>` : ""}
     ${pending && execution.backgroundAvailable ? `<button class="execution-background secondary-button compact" type="button" data-background-run="${escapeHtml(execution.requestId || "")}">转入后台等待</button>` : ""}
     ${execution.status === "paused" && execution.jobId ? `<button class="execution-stop execution-resume" type="button" data-resume-job="${escapeHtml(execution.jobId)}" title="从检查点继续任务">${icon("\uE768", "从检查点继续任务")}</button>` : ""}
     ${mediaGenerationActionMarkup({ jobId: execution.generationJobId, status: execution.mediaJobStatus || execution.status, availableActions: execution.mediaAvailableActions, desiredAction: execution.desiredAction, providerErrorCode: execution.mediaProviderErrorCode, error: execution.mediaError, providerTaskId: execution.mediaProviderTaskId, submissionState: execution.mediaSubmissionState })}
@@ -20990,10 +21382,8 @@ const renderConversationPreview = () => {
   if (supplement) supplement.disabled = true;
   const ownerLabel = preview.owner?.workspaceKind === "notebook" ? "笔记本" : "作品";
   elements.chatFeed.innerHTML = `<section class="message assistant-message history-preview-header">
-    <header><strong>${escapeHtml(preview.title || "历史对话")}</strong><span>只读</span>
-      <button class="icon-button bare small" type="button" data-close-history-preview title="返回当前对话" aria-label="返回当前对话">${icon("\uE711", "返回当前对话")}</button></header>
-    <p>${escapeHtml(ownerLabel)} · ${escapeHtml(preview.owner?.workspaceName || "")}</p>
-    <button class="secondary-button compact" type="button" data-jump-history-owner ${preview.loading || preview.ownerAvailable === false ? "disabled" : ""}>${icon("\uE8B7")}前往所属${ownerLabel}</button>
+    <button class="icon-button bare small history-preview-close" type="button" data-close-history-preview title="返回当前对话" aria-label="返回当前对话">${icon("\uE711", "返回当前对话")}</button>
+    <div class="history-preview-header-row"><strong>${escapeHtml(preview.title || "历史对话")}</strong><span>只读</span><span class="history-preview-owner">${escapeHtml(ownerLabel)} · ${escapeHtml(preview.owner?.workspaceName || "")}</span><button class="secondary-button compact" type="button" data-jump-history-owner ${preview.loading || preview.ownerAvailable === false ? "disabled" : ""}>${icon("\uE8B7")}前往所属${ownerLabel}</button></div>
     ${preview.ownerAvailable === false ? "<p>所属作品或笔记本不存在或不可访问</p>" : ""}
   </section>${preview.loading ? '<p role="status">正在读取历史对话…</p>' : preview.error ? `<p role="alert">${escapeHtml(preview.error)}</p>`
     : (preview.messages || []).map((message) => `<section class="message ${message.role === "user" ? "user-message" : "assistant-message"}">
@@ -22448,7 +22838,7 @@ const showSkillContextMenu = (event, { id, kind = "mine", meta = null } = {}) =>
   history.hidden = false;
   share.hidden = kind === "marketplace";
   share.disabled = officialOriginal;
-  share.querySelector("span:last-child").textContent = officialOriginal ? "官方原版无需分享" : "分享到广场";
+  share.querySelector("span:last-child").textContent = officialOriginal ? "官方原版无需分享" : "分享到Skill广场";
   unpublish.hidden = kind !== "marketplace" || meta?.publishedByUser !== true || meta?.publicationStatus === "yanked";
   elements.skillContextMenu.hidden = false;
   positionContextMenu(elements.skillContextMenu, { x: event.clientX, y: event.clientY });
@@ -22644,17 +23034,24 @@ const renderSkillSettings = () => {
     </article>`;
     }).join("") || `<p class="settings-empty">当前来源没有可展示的项目。</p>`;
     const submissionCount = (marketplace?.submissions ?? []).length;
-    const submissionNote = submissionCount ? `<small class="marketplace-submission-note">已在本机广场发布 ${submissionCount} 个版本，尚未上传云端</small>` : "";
+    const cloudPublishReady = marketplace?.capabilities?.publish === true;
+    const submissionNote = submissionCount
+      ? `<small class="marketplace-submission-note">已在本机广场保存 ${submissionCount} 个版本${cloudPublishReady ? "；登录后可上传云端" : "；云端上传依赖尚未就绪"}</small>`
+      : "";
     const title = marketplace?.connected ? "开放 Skill 广场" : "本地 Skill 广场";
     const marketplaceMessage = String(marketplace?.message || "Skill 广场正在读取开放来源。")
       .replace("云端上传下载服务", "云端分享与下载服务");
-  elements.skillSettingsContent.innerHTML = `<div class="marketplace-header"><div class="marketplace-boundary">${icon("\uE946")}<strong>${title}</strong><p>${escapeHtml(marketplaceMessage)}</p><small>Skill、模块、模组和面板均以不可变版本快照发布到本机目录。信任等级由软件自动评定；结构资产还会检查依赖闭包与循环。可登记来源：${escapeHtml(sourceLabels)}。</small><b class="marketplace-local-notice">发布只保存在本机，尚未上传云端。</b></div><div class="marketplace-share-actions"><button class="secondary-button" id="shareSkillToMarketplace" type="button">${icon("\uE72D")}<span>发布到本机广场</span></button>${submissionNote}</div></div><div class="marketplace-search-row"><div class="marketplace-search-primary"><label class="marketplace-search" for="skillMarketplaceSearch">${icon("\uE721")}<input id="skillMarketplaceSearch" type="search" value="${escapeHtml(ui.skillMarketplaceQuery)}" placeholder="搜索名称、作者、能力、类型或来源" autocomplete="off" /></label><div class="marketplace-view-filters" role="group" aria-label="广场筛选">${viewOptionsHtml}</div></div><div class="marketplace-search-secondary"><label class="marketplace-select-filter marketplace-type-filter" for="skillMarketplaceAssetTypeFilter"><span>类型</span><select id="skillMarketplaceAssetTypeFilter">${assetTypeOptionsHtml}</select></label><small id="skillMarketplaceSearchCount">找到 ${visibleCount} 个项目</small><label class="marketplace-select-filter marketplace-capability-filter" for="skillMarketplaceCapabilityFilter"><span>能力分类</span><select id="skillMarketplaceCapabilityFilter"><option value="">全部分类</option>${capabilityOptionsHtml}</select></label><label class="marketplace-select-filter marketplace-mode-filter" for="skillMarketplaceModeFilter"><span>使用模式</span><select id="skillMarketplaceModeFilter">${modeOptionsHtml}</select></label></div></div><p class="settings-empty marketplace-search-empty" id="skillMarketplaceSearchEmpty" ${visibleCount ? "hidden" : ""}>没有匹配的项目。</p><div class="marketplace-skill-list">${items}</div>`;
+  elements.skillSettingsContent.innerHTML = `<div class="marketplace-header"><div class="marketplace-boundary">${icon("\uE946")}<strong>${title}</strong><p>${escapeHtml(marketplaceMessage)}</p><small>Skill、模块、模组和面板均以不可变版本快照发布到本机目录。信任等级由软件自动评定；结构资产还会检查依赖闭包与循环。可登记来源：${escapeHtml(sourceLabels)}。</small><b class="marketplace-local-notice">${marketplace?.connected ? (cloudPublishReady ? "已连接服务器，可登录、下载并上传签名 Skill。" : "账号与下载服务已连接；云端上传安全依赖尚未全部就绪。") : "发布只保存在本机，尚未上传云端。"}</b></div><div class="marketplace-share-actions"><button class="secondary-button" id="shareSkillToMarketplace" type="button"><span>分享到Skill广场</span></button>${submissionNote}</div></div><div class="marketplace-search-row"><div class="marketplace-search-primary"><label class="marketplace-search" for="skillMarketplaceSearch">${icon("\uE721")}<input id="skillMarketplaceSearch" type="search" value="${escapeHtml(ui.skillMarketplaceQuery)}" placeholder="搜索名称、作者、能力、类型或来源" autocomplete="off" /></label><div class="marketplace-view-filters" role="group" aria-label="广场筛选">${viewOptionsHtml}</div></div><div class="marketplace-search-secondary"><label class="marketplace-select-filter marketplace-type-filter" for="skillMarketplaceAssetTypeFilter"><span>类型</span><select id="skillMarketplaceAssetTypeFilter">${assetTypeOptionsHtml}</select></label><small id="skillMarketplaceSearchCount">找到 ${visibleCount} 个项目</small><label class="marketplace-select-filter marketplace-capability-filter" for="skillMarketplaceCapabilityFilter"><span>能力分类</span><select id="skillMarketplaceCapabilityFilter"><option value="">全部分类</option>${capabilityOptionsHtml}</select></label><label class="marketplace-select-filter marketplace-mode-filter" for="skillMarketplaceModeFilter"><span>使用模式</span><select id="skillMarketplaceModeFilter">${modeOptionsHtml}</select></label></div></div><p class="settings-empty marketplace-search-empty" id="skillMarketplaceSearchEmpty" ${visibleCount ? "hidden" : ""}>没有匹配的项目。</p><div class="marketplace-skill-list">${items}</div>`;
     const marketplaceBoundary = elements.skillSettingsContent.querySelector(".marketplace-boundary small");
     if (marketplaceBoundary) marketplaceBoundary.textContent = `这里只展示用户上传的 Skill。官方 Skill、模块、模组和面板随软件内置，可在“我的 Skill”底部按官方面板结构查看。可登记来源：${sourceLabels}。`;
     const marketplaceNotice = elements.skillSettingsContent.querySelector(".marketplace-local-notice");
-    if (marketplaceNotice) marketplaceNotice.textContent = "上传后端尚未接通；当前发布只保存在本机。";
+    if (marketplaceNotice) marketplaceNotice.textContent = marketplace?.connected
+      ? cloudPublishReady
+        ? "已连接服务器，可登录、下载并上传签名 Skill。"
+        : "账号与下载服务已连接；云端上传安全依赖尚未全部就绪。"
+      : "上传后端尚未接通；当前发布只保存在本机。";
     const marketplaceShareLabel = elements.skillSettingsContent.querySelector("#shareSkillToMarketplace span");
-    if (marketplaceShareLabel) marketplaceShareLabel.textContent = "发布用户 Skill";
+    if (marketplaceShareLabel) marketplaceShareLabel.textContent = "分享到Skill广场";
     return;
   }
   const userSkills = ui.skillCatalog.user;
@@ -23355,6 +23752,17 @@ const startBookAuthenticationFlow = async ({ book, selectedSections, challenge }
   if (document.hasFocus() && bookAuthenticationWindowBlurredAt >= openedAt) scheduleBookAuthenticationResume();
 };
 
+const bookReferenceAttachmentKey = (attachment = {}) => {
+  const selectedChapterIds = Array.isArray(attachment.coverage?.selectedChapterIds)
+    ? [...new Set(attachment.coverage.selectedChapterIds.map(String).filter(Boolean))].sort()
+    : [];
+  return JSON.stringify([
+    String(attachment.sourceUrl || ""),
+    selectedChapterIds,
+    String(attachment.sha256 || attachment.objectHash || ""),
+  ]);
+};
+
 const finishImportedBookReference = ({ book, payload, whiteboardTarget }) => {
   clearBookAuthenticationResumeTimer();
   if (whiteboardTarget) {
@@ -23369,7 +23777,11 @@ const finishImportedBookReference = ({ book, payload, whiteboardTarget }) => {
     const conversation = activeConversation();
     if (conversation) {
       conversation.attachments ??= [];
-      const duplicate = conversation.attachments.some((attachment) => attachment.referenceType === "book" && attachment.sourceUrl === book.url);
+      const importedKey = bookReferenceAttachmentKey(payload.attachment);
+      const duplicate = conversation.attachments.some((attachment) => (
+        attachment.referenceType === "book"
+        && bookReferenceAttachmentKey(attachment) === importedKey
+      ));
       if (!duplicate) {
         conversation.attachments.push(payload.attachment);
         markConversationComposerReferencesPending(conversation);
@@ -23872,6 +24284,11 @@ const renderHistoryPreview = () => {
     hasParent: Boolean(parentVersion && historyVersionHasCompleteSnapshot(parentVersion)),
     hasSnapshot: completeSnapshotAvailable,
   });
+  const fullReplacement = !structured && !diffInput.integrityError && historyDiffIsFullReplacement({
+    operationType: version.operationType || version.operation,
+    ...diffInput,
+  });
+  const showInlineHistoryDiff = diffInput.hasDiff && !fullReplacement;
 
   document.querySelector("#historyPreviewTitle").textContent = version.name || version.title;
   const relatedSource = version.relatedDocumentOnly ? ` · ${version.sourceHistoryGroup || "关联快照"}` : "";
@@ -23892,10 +24309,10 @@ const renderHistoryPreview = () => {
       <header><strong>${escapeHtml(selectedDocument.title ?? "未命名文档")}</strong><span>${(historyDiffTextFromHtml(selectedDocument.html ?? "") || String(selectedDocument.markdown || selectedDocument.content || "")).length.toLocaleString("zh-CN")} 字</span></header>
       <article class="history-preview-document">${previewDocumentHtml(selectedDocument)}</article>
     </section>
-  ` : `<section class="history-preview-content single-history-preview${diffInput.hasDiff ? " has-history-diff" : ""}">
+  ` : `<section class="history-preview-content single-history-preview${showInlineHistoryDiff ? " has-history-diff" : fullReplacement ? " has-history-status" : ""}">
     ${diffInput.integrityError ? `<p class="history-preview-integrity-error" role="alert">${escapeHtml(diffInput.integrityError)}</p>` : ""}
-    ${diffInput.hasDiff ? `<header class="history-diff-toolbar"><span><strong>完整版本与修改标注</strong><small>${escapeHtml(historyDiffSourceLabel(diffInput))}</small></span><span class="history-diff-legend"><i class="added">新增</i><i class="deleted">删除</i></span></header>` : ""}
-    <article class="history-preview-document single ${diffInput.hasDiff ? "has-diff" : ""}">${diffInput.integrityError ? `<p class="history-preview-empty">无法预览：历史版本缺少完整正文快照。</p>` : diffInput.hasDiff
+    ${showInlineHistoryDiff ? `<header class="history-diff-toolbar"><span><strong>完整版本与修改标注</strong><small>${escapeHtml(historyDiffSourceLabel(diffInput))}</small></span><span class="history-diff-legend"><i class="added">新增</i><i class="deleted">删除</i></span></header>` : fullReplacement ? `<header class="history-diff-toolbar history-full-replacement-toolbar"><span class="history-full-replacement-badge">全文覆盖</span></header>` : ""}
+    <article class="history-preview-document single ${showInlineHistoryDiff ? "has-diff" : fullReplacement ? "full-replacement" : ""}">${diffInput.integrityError ? `<p class="history-preview-empty">无法预览：历史版本缺少完整正文快照。</p>` : showInlineHistoryDiff
       ? renderHistoryDiff(diffInput)
       : previewDocumentHtml(selectedDocument)}</article>
   </section>`;
@@ -24604,6 +25021,27 @@ const textModelVisualState = (profile, model = profile?.model, option = null) =>
   return "unknown";
 };
 
+// Keep the picker stable while putting models with the strongest local
+// evidence first. A catalog refresh must not reshuffle models within the same
+// evidence tier, so the original provider order is used as the tie-breaker.
+const TEXT_MODEL_STATE_ORDER = Object.freeze({
+  available: 0,
+  catalog: 1,
+  checking: 2,
+  unknown: 3,
+  limited: 4,
+  unavailable: 5,
+});
+
+const sortTextModelsByCapability = (models = [], profile = null) => models
+  .map((item, index) => ({
+    item,
+    index,
+    rank: TEXT_MODEL_STATE_ORDER[textModelVisualState(profile, item.slug, item)] ?? TEXT_MODEL_STATE_ORDER.unknown,
+  }))
+  .sort((left, right) => left.rank - right.rank || left.index - right.index)
+  .map(({ item }) => item);
+
 const textModelVerificationView = (profile, option = null) => {
   if (!profile?.model) return { state: "unknown", message: "请先选择模型", checking: false };
   const probe = textModelCapabilityProbe(profile);
@@ -25080,11 +25518,16 @@ const agentEngineDisplayLabel = (engine = "") => engine === "deepseek_opencode"
 const whiteboardTextModelsForProfile = (profile) => {
   if (!profile) return [];
   const models = modelOptionsForProvider(profile.provider, profile.adapter)
-    .filter((model) => model.selectable !== false || model.slug === profile.model);
-  if (profile.model && !models.some((model) => model.slug === profile.model)) {
+    .filter((model) => isSelectableTextModel(model) && (model.selectable !== false || model.slug === profile.model));
+  const selectedOption = getModelOption(profile.provider, profile.model, dynamicModelsForChannel(profile.provider, profile.adapter));
+  const selectedModelIsText = !profile.model || isSelectableTextModel({
+    slug: profile.model,
+    capabilities: selectedOption?.capabilities,
+  });
+  if (profile.model && selectedModelIsText && !models.some((model) => model.slug === profile.model)) {
     models.unshift({ slug: profile.model, label: modelPickerDisplayName(profile.model), available: null });
   }
-  return models;
+  return sortTextModelsByCapability(models, profile);
 };
 
 const whiteboardTextVerificationProfile = ({ connectionId = "", model = "" } = {}) => {
@@ -25310,38 +25753,47 @@ const agentModelsForProfile = (profile = null) => {
     ? exactCachedCatalog
     : (Array.isArray(exactProbe?.models) ? exactProbe.models.map((slug) => ({ slug, label: modelPickerDisplayName(slug) })) : []);
   const presetCatalog = getProviderModelOptions(profile.provider)
-    .filter((item) => isTextGenerationModel(item.slug));
+    .filter(isSelectableTextModel);
   const candidates = exactCatalog.length ? exactCatalog : presetCatalog;
+  const finalize = (models) => {
+    const unique = new Map();
+    for (const item of (Array.isArray(models) ? models : [])) {
+      if (!isSelectableTextModel(item)) continue;
+      const slug = String(item.slug || item.id || item.name || "").trim();
+      if (slug && !unique.has(slug)) unique.set(slug, { ...item, slug });
+    }
+    return sortTextModelsByCapability([...unique.values()], profile);
+  };
   if (profile.id === "text-public-agent" && profile.protocol === "chat_completions") {
-    return candidates.filter((item) => item.agentCapable === true
+    return finalize(candidates.filter((item) => item.agentCapable === true
       || item.capabilities?.includes("function_tools")
-      || VERIFIED_PUBLIC_AGENT_FALLBACK_MODELS.has(String(item.slug || "")));
+      || VERIFIED_PUBLIC_AGENT_FALLBACK_MODELS.has(String(item.slug || ""))));
   }
   if (engine === "codex_api") {
-    return agentModelsForEngine(engine, {
+    return finalize(agentModelsForEngine(engine, {
       codexModels: candidates,
       effectiveModel: profile.agentModelId || profile.model,
-    });
+    }));
   }
   if (engine === "opencode") {
     const catalog = profile.credentialSource === "shensi"
       ? candidates.map((item) => ({ ...item, slug: qualifiedOpenCodeModel(item.slug, profile.provider) }))
       : ui.genericOpenCode?.models || [];
-    return agentModelsForEngine(engine, { openCodeModels: catalog, effectiveModel: profile.agentModelId || profile.model });
+    return finalize(agentModelsForEngine(engine, { openCodeModels: catalog, effectiveModel: profile.agentModelId || profile.model }));
   }
   if (engine === "deepseek_opencode") {
-    return agentModelsForEngine(engine, { openCodeModels: ui.localOpenCode?.models || [], effectiveModel: profile.agentModelId || profile.model });
+    return finalize(agentModelsForEngine(engine, { openCodeModels: ui.localOpenCode?.models || [], effectiveModel: profile.agentModelId || profile.model }));
   }
   if (engine === "claude_code") {
-    return agentModelsForEngine(engine, { codexModels: candidates, effectiveModel: profile.agentModelId || profile.model });
+    return finalize(agentModelsForEngine(engine, { codexModels: candidates, effectiveModel: profile.agentModelId || profile.model }));
   }
   if (engine === "workbuddy") {
-    return (agentRunnerCapability(engine)?.models || []).map((slug) => ({
+    return finalize((agentRunnerCapability(engine)?.models || []).map((slug) => ({
       slug: String(slug || ""),
       label: modelPickerDisplayName(slug),
-    })).filter((item) => item.slug);
+    })).filter((item) => item.slug));
   }
-  return agentModelsForEngine(engine, { codexModels: ui.localCodex?.models || [], effectiveModel: profile.agentModelId || profile.model });
+  return finalize(agentModelsForEngine(engine, { codexModels: ui.localCodex?.models || [], effectiveModel: profile.agentModelId || profile.model }));
 };
 
 const agentCatalogRequests = new Map();
@@ -25350,7 +25802,7 @@ const hydrateAgentProfileModelCatalog = async (profile, { force = false } = {}) 
   const engine = agentEngineForTextProfile(profile);
   if (engine === "workbuddy") {
     const current = agentRunnerCapability(engine);
-    const catalogReady = current?.authState === "authenticated"
+    const catalogReady = current?.authState !== "login_required"
       && current?.modelState === "catalog_available"
       && Array.isArray(current?.models)
       && current.models.length > 0;
@@ -26583,6 +27035,41 @@ const positionContextMenu = (menu, { x, y }) => {
   const height = menu.offsetHeight || 96;
   menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - height - 8))}px`;
+};
+
+const closeWhiteboardSubmenuPanel = () => {
+  if (!elements.whiteboardSubmenuPanel) return;
+  elements.whiteboardSubmenuPanel.hidden = true;
+  delete elements.whiteboardSubmenuPanel.dataset.anchorAction;
+  elements.whiteboardSubmenuPanel.querySelectorAll("[data-whiteboard-collapsible]").forEach((item) => {
+    item.hidden = true;
+  });
+};
+
+const positionWhiteboardSubmenuPanel = (anchor = null) => {
+  const panel = elements.whiteboardSubmenuPanel;
+  const menu = elements.whiteboardMenu;
+  if (!panel || !menu || menu.hidden) return;
+  panel.hidden = false;
+  const menuRect = menu.getBoundingClientRect();
+  const anchorAction = String(anchor?.dataset?.whiteboardAction || panel.dataset.anchorAction || "");
+  const anchorButton = anchor || (anchorAction
+    ? menu.querySelector(`[data-whiteboard-action="${CSS.escape(anchorAction)}"]`)
+    : null);
+  const anchorRect = anchorButton?.getBoundingClientRect?.() || menuRect;
+  const width = panel.offsetWidth || 168;
+  const height = panel.offsetHeight || 96;
+  const gap = 6;
+  const right = menuRect.right + gap;
+  const left = right + width <= window.innerWidth - 8
+    ? right
+    : Math.max(8, menuRect.left - width - gap);
+  // Keep each submenu aligned to the row that opened it.  Anchoring to the
+  // whole menu made every palette appear at one fixed top-right position.
+  const preferredTop = anchorRect.top;
+  const top = Math.max(8, Math.min(preferredTop, window.innerHeight - height - 8));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
 };
 
 const textEditContextState = {
@@ -30112,6 +30599,14 @@ const uploadStandaloneAssets = async (files) => {
       try {
         const text = kind === "text" ? (await file.text()).replace(/^\uFEFF/u, "").slice(0, 200_000) : "";
         if (kind === "text" && !text.trim()) throw new Error("文本文件为空");
+        // Text content is already available locally. Reject an existing
+        // standalone text asset before starting a redundant workspace upload;
+        // this also keeps the picker responsive when storage is temporarily
+        // slow or unavailable.
+        if (kind === "text" && duplicateStandaloneAsset(state.workspaceAssets, { kind, text })) {
+          results[index] = { file, duplicate: true };
+          continue;
+        }
         const attachment = await uploadWorkspaceFile(file);
         const uploadedAt = attachment.uploadedAt || new Date().toISOString();
         const asset = normalizeGenerationAsset({
@@ -30140,6 +30635,10 @@ const uploadStandaloneAssets = async (files) => {
   await Promise.all(Array.from({ length: Math.min(standaloneAssetUploadWorkerCount(accepted), accepted.length) }, () => worker()));
   for (const result of results) {
     if (!result) continue;
+    if (result.duplicate) {
+      duplicateCount += 1;
+      continue;
+    }
     if (result.error) {
       showToast(`${result.file.name || "资产"}：${result.error}`);
       continue;
@@ -32943,6 +33442,7 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
     target: { ...target, documentId: targetDocumentId },
   });
   let requestTextProfile = null;
+  let streamedText = "";
   try {
     const requestGenerationSettings = executionSurface === "agent"
       ? generationSettingsForAgentEngine(settingsOverride ?? requestWorkspaceState.settings, {
@@ -32962,6 +33462,10 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       settings: requestGenerationSettings,
+      // Whiteboard cards choose an Agent profile independently of the global
+      // conversation profile. Keep that selection explicit so /api/chat
+      // cannot fall back to the machine's default Codex runner.
+      agentSettings: requestGenerationSettings,
       workspaceKind: creativeTask?.context?.workspaceKind === "notebook" ? "notebook" : requestWorkspaceState.workspaceKind === "notebook" ? "notebook" : "project",
       workspaceScope: creativeTask ? {
         source: {
@@ -32995,6 +33499,7 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
       explicitReferenceDocumentIds,
       requestId,
       conversationId: requestConversation?.id || "",
+      sourceMessageId: requestId,
       branchId: requestMessages.at(-1)?.id || "",
       taskPacket: requestTaskPacket,
       creativeTask,
@@ -33039,10 +33544,24 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
             const event = JSON.parse(line);
             if (event.type === "progress") onProgress?.(event.payload?.execution);
             else if (event.type === "heartbeat") onProgress?.(event.payload?.execution);
-            else if (event.type === "text_delta") onTextDelta?.(String(event.payload?.delta ?? ""));
-            else if (event.type === "result") streamPayload = event.payload;
+            else if (event.type === "text_delta") {
+              const delta = String(event.payload?.delta ?? "");
+              streamedText += delta;
+              onTextDelta?.(delta);
+            }
+            else if (event.type === "result") {
+              streamPayload = event.payload;
+              if (whiteboardIsolated && !streamedText.trim()) {
+                streamedText = String(event.payload?.candidate || event.payload?.content || event.payload?.text || "");
+              }
+            }
             else if (event.type === "error") {
               const streamError = modelReplyRequestError(event.payload);
+              // Some providers emit a late quota/transport event after a
+              // complete text result has already been streamed. Preserve the
+              // usable正文 and let the caller finish the card; only a stream
+              // with no正文 remains a real failure.
+              if (whiteboardIsolated && streamedText.trim()) continue;
               onProgress?.({ status: "failed", currentStage: "failed", result: streamError.message, terminal: true });
               throw streamError;
             }
@@ -33100,6 +33619,30 @@ const requestModelReply = async (target = null, { storeCandidate = true, request
     }
     return parsedReply;
   } catch (error) {
+    const streamedCandidate = cleanGeneratedPlainText(streamedText).trim();
+    if (whiteboardIsolated
+      && streamedCandidate
+      && !isUnusableWhiteboardGenerationText(streamedCandidate)
+      && !/^\s*(?:\{[\s\S]*\}|\[?["']?(?:error|code|message|status|providerErrorCode)["']?\s*:)/iu.test(streamedCandidate)) {
+      recordCustomTextGenerationCapability(requestTextProfile, null, { agent: executionSurface === "agent" });
+      const warning = String(error?.message || "").trim();
+      return {
+        candidate: streamedCandidate,
+        content: streamedCandidate,
+        text: streamedCandidate,
+        lead: warning ? "已取得有效正文；后续供应商状态提示未覆盖本次结果" : "Agent 已生成候选内容",
+        execution: {
+          status: "complete",
+          strength: "native_agent",
+          ...(warning ? { warning: warning.slice(0, 300) } : {}),
+        },
+        engineExecution: {
+          status: "complete",
+          strength: "native_agent",
+          ...(warning ? { warning: warning.slice(0, 300) } : {}),
+        },
+      };
+    }
     if (!whiteboardIsolated) {
       recordCustomTextGenerationCapability(requestTextProfile, error, { agent: executionSurface === "agent" });
     }
@@ -33399,7 +33942,12 @@ const generationAttemptTarget = (attempt, fallbackTarget = null) => {
   return target;
 };
 
-const applyGenerationAttemptToMessage = (message, attempt, { promoteCandidate = true } = {}) => {
+const applyGenerationAttemptToMessage = (message, attempt, {
+  promoteCandidate = true,
+  conversation = activeConversation(),
+  messages = state.messages,
+  candidateState = state,
+} = {}) => {
   if (!message || !attempt) return;
   const target = generationAttemptTarget(attempt, message.target);
   const normalizedCandidate = normalizeSingleCandidateOutput(attempt.candidate || message.candidate || "");
@@ -33436,22 +33984,22 @@ const applyGenerationAttemptToMessage = (message, attempt, { promoteCandidate = 
     recoveryPending: false,
   };
   if (message.candidate && promoteCandidate) {
-    state.currentCandidate = message.candidate;
-    state.currentCandidateTarget = clone(message.target);
-    state.currentCandidateMemoryUpdate = clone(attempt.memoryUpdate ?? null);
+    candidateState.currentCandidate = message.candidate;
+    candidateState.currentCandidateTarget = clone(message.target);
+    candidateState.currentCandidateMemoryUpdate = clone(attempt.memoryUpdate ?? null);
     const recoveredAuthorization = candidateWriteAuthorizationForRecovery(message, attempt);
-    state.currentCandidateAuthorization = clone(bindFormalWriteCandidate(recoveredAuthorization, {
+    candidateState.currentCandidateAuthorization = clone(bindFormalWriteCandidate(recoveredAuthorization, {
       candidate: message.candidate,
       targetDocumentIds: recoveredAuthorization?.targetDocumentIds,
       expectedRevisions: recoveredAuthorization?.expectedRevisions,
     }));
   }
-  const messageIndex = state.messages.indexOf(message);
+  const messageIndex = messages.indexOf(message);
   if (messageIndex >= 0) materializeCandidateDraftBranches({
-    conversation: activeConversation(),
-    messages: state.messages,
+    conversation,
+    messages,
     messageIndex,
-    candidateState: state,
+    candidateState,
   });
 };
 
@@ -33710,6 +34258,66 @@ const handleGenerationAttemptAction = async ({ message, action, requestId }) => 
   }
 };
 
+const RECOVERED_GENERATION_MESSAGE = "已从当前工作区找回未完成的正文任务。";
+const RECOVERY_CONVERSATION_TITLE = "待恢复任务";
+
+const conversationMessageList = (conversation) => (
+  conversation?.id === state.activeConversationId ? state.messages : conversation?.messages
+) ?? [];
+
+const generationAttemptRequestId = (message) => String(
+  message?.generationAttempt?.requestId || message?.execution?.requestId || "",
+).trim();
+
+const removeConversationMessage = (conversation, message) => {
+  const messages = conversationMessageList(conversation);
+  const index = messages.indexOf(message);
+  if (index < 0) return false;
+  messages.splice(index, 1);
+  if (conversation.snapshots && message?.id) delete conversation.snapshots[message.id];
+  return true;
+};
+
+const recoveryConversation = ({ create = false } = {}) => {
+  const existing = (state.conversations ?? []).find((conversation) => conversation.systemManagedRecovery === true);
+  if (existing || !create) return existing ?? null;
+  const conversation = newConversationRecord({
+    title: RECOVERY_CONVERSATION_TITLE,
+    systemManagedRecovery: true,
+    manualCreated: false,
+    updatedAt: `今天 ${nowTime()}`,
+  });
+  state.conversations.push(conversation);
+  return conversation;
+};
+
+const uniqueConversationForAttempt = (attempt, existingLocations = []) => {
+  const explicitConversationId = String(attempt?.conversationId || attempt?.execution?.conversationId || "").trim();
+  if (explicitConversationId) {
+    const explicit = conversationById(explicitConversationId);
+    if (explicit) return explicit;
+  }
+  const sourceMessageId = String(attempt?.sourceMessageId || attempt?.execution?.sourceMessageId || "").trim();
+  if (sourceMessageId) {
+    const matches = (state.conversations ?? []).filter((conversation) => conversationMessageList(conversation)
+      .some((message) => message?.role === "user" && message.id === sourceMessageId));
+    if (matches.length === 1) return matches[0];
+  }
+  const nonPlaceholderLocations = existingLocations.filter(({ message }) => (
+    message?.role === "assistant" && String(message.content || "").trim() !== RECOVERED_GENERATION_MESSAGE
+  ));
+  if (new Set(nonPlaceholderLocations.map(({ conversation }) => conversation.id)).size === 1) {
+    return nonPlaceholderLocations[0].conversation;
+  }
+  const sourcePrompt = String(attempt?.sourcePrompt || "").trim();
+  if (sourcePrompt) {
+    const matches = (state.conversations ?? []).filter((conversation) => conversationMessageList(conversation)
+      .some((message) => message?.role === "user" && String(message.content || "").trim() === sourcePrompt));
+    if (matches.length === 1) return matches[0];
+  }
+  return null;
+};
+
 const discoverUnfinishedGenerationAttempts = async () => {
   const discoveryStartedAt = performance.now();
   const earlyDiscovery = ui.workspaceHydrating === true;
@@ -33720,36 +34328,121 @@ const discoverUnfinishedGenerationAttempts = async () => {
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload?.ok) return 0;
   let recoveredCount = 0;
+  let changed = false;
   const directLandingRecoveries = [];
-  // The API returns newest first. Recover oldest first so chronological message
-  // order remains meaningful, and never let background discovery steal the
-  // active conversation's current candidate pointer.
-  for (const attempt of (payload.attempts ?? []).slice(0, 5).reverse()) {
-    let message = state.messages.find((entry) => entry?.generationAttempt?.requestId === attempt.requestId || entry?.execution?.requestId === attempt.requestId);
+  state.generationAttemptRecoveryLedger ??= {};
+  // The API returns newest first. Process the complete bounded response oldest
+  // first. A recovery record may update only its recorded conversation; an
+  // ambiguous legacy task is isolated instead of being appended to whichever
+  // conversation happens to be active at startup.
+  for (const attempt of (payload.attempts ?? []).reverse()) {
+    const requestId = String(attempt?.requestId || "").trim();
+    if (!requestId) continue;
+    const existingLocations = (state.conversations ?? []).flatMap((conversation) => conversationMessageList(conversation)
+      .filter((message) => generationAttemptRequestId(message) === requestId)
+      .map((message) => ({ conversation, message })));
+    const ledger = state.generationAttemptRecoveryLedger[requestId];
+    if (ledger) {
+      const retained = existingLocations.find(({ conversation, message }) => (
+        conversation.id === ledger.conversationId && message.id === ledger.messageId
+      ));
+      for (const location of existingLocations) {
+        if (retained && location === retained) continue;
+        changed = removeConversationMessage(location.conversation, location.message) || changed;
+      }
+      continue;
+    }
+    let owner = uniqueConversationForAttempt(attempt, existingLocations);
+    if (!owner) owner = recoveryConversation({ create: true });
+    const ownerMessages = conversationMessageList(owner);
+    let message = existingLocations.find((location) => location.conversation.id === owner.id)?.message;
+    for (const location of existingLocations) {
+      if (location.message === message) continue;
+      changed = removeConversationMessage(location.conversation, location.message) || changed;
+    }
     if (!message) {
       message = {
         id: uid("message"),
         role: "assistant",
         time: nowTime(),
-        content: "已从当前工作区找回未完成的正文任务。",
+        content: owner.systemManagedRecovery === true
+          ? "已隔离一项无法确认原对话的旧正文任务；确认后可继续处理。"
+          : RECOVERED_GENERATION_MESSAGE,
         candidate: attempt.candidate || "",
         target: generationAttemptTarget(attempt),
       };
-      state.messages.push(message);
+      ownerMessages.push(message);
+      changed = true;
     }
-    applyGenerationAttemptToMessage(message, attempt, { promoteCandidate: false });
-    const sourceMessage = state.messages.find((entry) => entry?.role === "user" && entry.id === message.execution?.sourceMessageId);
+    applyGenerationAttemptToMessage(message, attempt, {
+      promoteCandidate: false,
+      conversation: owner,
+      messages: ownerMessages,
+      candidateState: conversationCandidateState(owner),
+    });
+    message.execution = {
+      ...(message.execution ?? {}),
+      conversationId: owner.id,
+      sourceMessageId: String(attempt.sourceMessageId || message.execution?.sourceMessageId || ""),
+    };
+    owner.updatedAt = `今天 ${nowTime()}`;
+    state.generationAttemptRecoveryLedger[requestId] = {
+      conversationId: owner.id,
+      messageId: message.id,
+      isolated: owner.systemManagedRecovery === true,
+      recoveredAt: Date.now(),
+    };
+    changed = true;
+    const sourceMessage = ownerMessages.find((entry) => entry?.role === "user" && entry.id === message.execution?.sourceMessageId);
     const authorization = candidateWriteAuthorizationForRecovery(message, attempt);
     if (attempt.validationStatus === "passed" && attempt.landingStatus === "ready"
       && authorization?.state === "commit" && sourceMessage
+      && owner.id === state.activeConversationId
       && !explicitlyDefersCandidateLanding(sourceMessage.content || "")
       && !requestsMultipleCandidates(sourceMessage.content || "")) {
       directLandingRecoveries.push({ message, requestId: attempt.requestId });
     }
     recoveredCount += 1;
   }
-  persist();
-  renderAll();
+  const staleRecoveryGroups = new Map();
+  for (const conversation of state.conversations ?? []) {
+    if (conversation.systemManagedRecovery === true) continue;
+    for (const message of conversationMessageList(conversation)) {
+      if (message?.role !== "assistant" || String(message.content || "").trim() !== RECOVERED_GENERATION_MESSAGE) continue;
+      const requestId = generationAttemptRequestId(message);
+      if (!requestId || state.generationAttemptRecoveryLedger[requestId]) continue;
+      const group = staleRecoveryGroups.get(requestId) ?? [];
+      group.push({ conversation, message });
+      staleRecoveryGroups.set(requestId, group);
+    }
+  }
+  // Older releases could leave terminal recovery cards in every conversation,
+  // so they no longer appear in the unfinished API. Preserve one copy in the
+  // isolated recovery conversation and remove only the exact generated cards.
+  for (const [requestId, locations] of staleRecoveryGroups) {
+    const isolatedConversation = recoveryConversation({ create: true });
+    const retainedMessage = locations[0].message;
+    for (const location of locations) changed = removeConversationMessage(location.conversation, location.message) || changed;
+    retainedMessage.content = "已隔离一项无法确认原对话的旧正文任务；确认后可继续处理。";
+    retainedMessage.execution = {
+      ...(retainedMessage.execution ?? {}),
+      conversationId: isolatedConversation.id,
+    };
+    conversationMessageList(isolatedConversation).push(retainedMessage);
+    isolatedConversation.updatedAt = `今天 ${nowTime()}`;
+    state.generationAttemptRecoveryLedger[requestId] = {
+      conversationId: isolatedConversation.id,
+      messageId: retainedMessage.id,
+      isolated: true,
+      recoveredAt: Date.now(),
+      legacyCleanup: true,
+    };
+    changed = true;
+  }
+  if (changed) {
+    persist();
+    renderAll();
+  }
   for (const recovery of directLandingRecoveries) {
     await handleGenerationAttemptAction({ ...recovery, action: "land" });
   }
@@ -35480,11 +36173,11 @@ const scheduleConversationQueueDrain = (conversationId, { delayMs = 0 } = {}) =>
   }, Math.max(0, Number(delayMs) || 0));
 };
 
-const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", executionSurface = "", conversationId = "", runtimeSupplement = false, supplementTargetSourceMessageId = "", cockpitDecision = null, mediaDispatch = null, taskContextSnapshot = null, decisionResolution = null, silent = false } = {}) => {
+const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", executionSurface = "", conversationId = "", runtimeSupplement = false, supplementTargetSourceMessageId = "", cockpitDecision = null, mediaDispatch = null, taskContextSnapshot = null, decisionResolution = null, referenceScope = null, silent = false } = {}) => {
   const conversation = conversationById(conversationId) ?? activeConversation();
   if (!conversation) return false;
   const trimmed = String(content ?? "").trim();
-  const activeReferenceScope = ensureConversationReferenceContext(conversation);
+  const activeReferenceScope = referenceScope ? clone(referenceScope) : ensureConversationReferenceContext(conversation);
   const references = [...activeReferenceScope.references];
   const workspaceReferences = clone(activeReferenceScope.workspaceReferences);
   const skillReferences = clone(activeReferenceScope.skillReferences);
@@ -35523,6 +36216,7 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
     lastError: "",
   };
   conversation.queue.push(queuedItem);
+  consumeConversationComposerAttachments(conversation);
   consumeConversationComposerReferences(conversation);
   conversation.updatedAt = `今天 ${nowTime()}`;
   persist();
@@ -36980,6 +37674,12 @@ const renderNativeConversationImmediately = (runtime, forceScrollToBottom = fals
   renderConversationIfActive(runtime.conversation.id, { forceScrollToBottom });
 };
 
+const nativeConversationQuestionRequiresLiveRun = (question = null) => Boolean(
+  question?.decisionKind === "agent_permission"
+  || question?.allowFreeText === false
+  || question?.presentation === "browser_login"
+);
+
 const monitorNativeConversation = (runtime, pending) => {
   const runId = pending.execution.nativeAgentRunId;
   if (nativeConversationMonitors.has(runId)) return nativeConversationMonitors.get(runId);
@@ -36987,13 +37687,14 @@ const monitorNativeConversation = (runtime, pending) => {
     const { conversation, messages } = runtime;
     try {
       const result = await watchConversationAgent({ runId, after: pending.execution.nativeAgentCursor || 0, onEvent: async (event) => {
+        if (pending.execution?.userStoppedAt) return;
         pending.execution.nativeAgentCursor = event.sequence;
         if (event.type === "question") {
           const id = `question-${event.payload.id}`;
           if (!messages.some((message) => message.id === id)) messages.push({
             id, role: "assistant", content: event.payload.question, time: nowTime(), conversationChoiceQuestion: true,
           });
-          conversation.agentQuestion = { ...event.payload, kind: "native_agent", runId,
+          conversation.agentQuestion = { ...event.payload, decisionKind: event.payload?.kind || "conversation_choice", kind: "native_agent", runId,
             conversationId: conversation.id, workspacePath: runtime.workspaceScope.workspacePath, sourceMessageId: id };
           pending.execution.status = "waiting_input";
           await persistNativeConversation(runtime);
@@ -37048,7 +37749,7 @@ const monitorNativeConversation = (runtime, pending) => {
             pending.execution.result = title ? `正在读取 Skill：${title}` : "正在读取 Skill";
           }
         } else if (event.type === "text_delta") {
-          pending.streamText = (pending.streamText || "") + event.payload.text;
+          pending.streamText = sanitizeAgentDisplayText(appendAgentDisplayRawText(pending, event.payload.text || ""), { final: false });
           pending.execution.result = "Agent 正在生成回答";
         } else if (event.type === "open_candidates") {
           if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) openLatestCandidateComparison();
@@ -37067,6 +37768,12 @@ const monitorNativeConversation = (runtime, pending) => {
           await persistNativeConversation(runtime);
         } else if (event.type === "tool") {
           const name = String(event.payload.name || "");
+          if (name === "documents.write" && event.payload.phase === "started") {
+            pending.execution.taskRoute = {
+              ...(pending.execution.taskRoute || {}),
+              deliveryMode: "documents",
+            };
+          }
           pending.execution.result = event.payload.phase === "started"
             ? name === "documents.write" ? "正在保存文档" : name === "interaction.delivery" ? "正在核对成果归档" : name.startsWith("skills.") ? "正在读取 Skill" : name.startsWith("documents.") ? "正在查阅文档" : "Agent 正在处理"
             : event.payload.success === false ? "操作未完成，Agent 正在处理原因" : "Agent 正在继续处理";
@@ -37087,6 +37794,14 @@ const monitorNativeConversation = (runtime, pending) => {
             const target = { documentId: event.payload.documentId, title: event.payload.title };
             const index = targets.findIndex(item => item.documentId === target.documentId);
             if (index < 0) targets.push(target); else targets[index] = target;
+            pending.execution.taskRoute = {
+              ...(pending.execution.taskRoute || {}),
+              deliveryMode: "documents",
+              deliveryDocumentIds: [...new Set([
+                ...(pending.execution.taskRoute?.deliveryDocumentIds || []),
+                event.payload.documentId,
+              ].filter(Boolean))],
+            };
             if (workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
               try {
                 const projected = await refreshVerifiedAgentDocuments([event.payload.documentId]);
@@ -37130,19 +37845,30 @@ const monitorNativeConversation = (runtime, pending) => {
               }
             }
           }
-          pending.content = event.payload.text;
+          pending.content = sanitizeAgentDisplayText(event.payload.text || agentDisplayRawText(pending) || pending.streamText, { final: true }) || "Agent 已完成任务。";
+          clearAgentDisplayRawText(pending);
           pending.execution.deliveryWarnings = event.payload.warnings || pending.execution.deliveryWarnings || [];
         } else if (["failed", "cancelled"].includes(event.type)) {
-          const terminal = nativeAgentTerminalPresentation({
-            status: event.type,
-            error: event.payload.message,
-            partialText: pending.streamText,
-            pendingWarnings: pending.execution.deliveryWarnings,
-          });
-          pending.content = terminal.content;
-          pending.execution.error = terminal.error;
-          pending.execution.result = terminal.result;
-          pending.execution.deliveryWarnings = terminal.warnings;
+          const durableQuestionWaiting = conversation.agentQuestion?.runId === runId
+            && !nativeConversationQuestionRequiresLiveRun(conversation.agentQuestion);
+          if (durableQuestionWaiting) {
+            clearAgentDisplayRawText(pending);
+            pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+            pending.execution.error = "";
+            pending.execution.result = "等待你的选择；选项不会因等待时间而过期";
+          } else {
+            const terminal = nativeAgentTerminalPresentation({
+              status: event.type,
+              error: event.payload.message,
+              partialText: sanitizeAgentDisplayText(agentDisplayRawText(pending) || pending.streamText, { final: true }),
+              pendingWarnings: pending.execution.deliveryWarnings,
+            });
+            clearAgentDisplayRawText(pending);
+            pending.content = terminal.content;
+            pending.execution.error = terminal.error;
+            pending.execution.result = terminal.result;
+            pending.execution.deliveryWarnings = terminal.warnings;
+          }
         }
         if (event.type === "text_delta" && conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) {
           const card = document.querySelector(`[data-native-task-card="${CSS.escape(pending.id)}"]`);
@@ -37151,15 +37877,35 @@ const monitorNativeConversation = (runtime, pending) => {
           else renderNativeConversation(runtime);
         } else renderNativeConversation(runtime);
       }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
+      if (pending.execution?.userStoppedAt) return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
+      const durableQuestion = conversation.agentQuestion?.runId === runId
+        && !nativeConversationQuestionRequiresLiveRun(conversation.agentQuestion);
+      if (durableQuestion) {
+        pending.pending = false;
+        pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+        Object.assign(pending.execution, {
+          status: "waiting_input",
+          error: "",
+          result: "等待你的选择；选项不会因任务结束而过期",
+          nativeAgentTerminal: true,
+          progressPercent: 100,
+          endedAt: pending.execution.endedAt || Date.now(),
+        });
+        conversation.nativeAgentRun = null;
+        await persistNativeConversation(runtime);
+        renderNativeConversation(runtime, true);
+        return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true, durableQuestion: true });
+      }
       pending.pending = false;
       const terminal = nativeAgentTerminalPresentation({
         status: result.status,
         text: result.text,
         error: result.error || pending.execution.error,
-        partialText: pending.streamText || pending.content,
+        partialText: sanitizeAgentDisplayText(agentDisplayRawText(pending) || pending.streamText || pending.content, { final: true }),
         pendingWarnings: pending.execution.deliveryWarnings,
         resultWarnings: result.deliveryWarnings,
       });
+      clearAgentDisplayRawText(pending);
       pending.content = terminal.content;
       Object.assign(pending.execution, { status: terminal.status, error: terminal.error,
         deliveryWarnings: terminal.warnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now(), result: terminal.result });
@@ -37188,9 +37934,10 @@ const monitorNativeConversation = (runtime, pending) => {
       const terminal = nativeAgentTerminalPresentation({
         status: "interrupted",
         error: error.message,
-        partialText: pending.streamText,
+        partialText: sanitizeAgentDisplayText(agentDisplayRawText(pending) || pending.streamText, { final: true }),
         pendingWarnings: pending.execution.deliveryWarnings,
       });
+      clearAgentDisplayRawText(pending);
       pending.pending = false; pending.content = terminal.content;
       Object.assign(pending.execution, { status: terminal.status, error: terminal.error, result: terminal.result,
         deliveryWarnings: terminal.warnings, nativeAgentTerminal: true, progressPercent: 100, endedAt: Date.now() });
@@ -37207,44 +37954,166 @@ const monitorNativeConversation = (runtime, pending) => {
   return monitor;
 };
 
-const answerNativeConversationQuestion = async (question, answer) => {
-  if (!String(answer || "").trim()) return;
+const answerLiveNativeConversationQuestion = async (question, answer) => {
+  const normalizedAnswer = String(answer || "").trim();
+  if (!normalizedAnswer) {
+    showToast("请先选择一个选项");
+    return;
+  }
   if (question.submitting) return;
-  const runtime = agentTaskRuntimeFor({ conversationId: question.conversationId });
-  if (!runtime || runtime.conversation.agentQuestion?.id !== question.id) { showToast("选项已过期，请刷新当前任务"); return; }
+  const conversationId = String(question.conversationId || state.activeConversationId || "");
+  let runId = String(question.runId || "");
+  let runtime = agentTaskRuntimeFor({ conversationId });
+  // A conversation restored from durable storage can briefly have no in-memory
+  // runtime while its task card and question are already visible. Rehydrate the
+  // runtime from the frozen conversation before rejecting the answer. Without
+  // this fallback the confirm button appeared to do nothing after a switch or
+  // refresh, even though the server-side run was still waiting for the answer.
+  if (!runtime) {
+    const conversation = conversationById(conversationId);
+    const messages = conversation ? conversationMessagesForTaskState(conversation) : [];
+    const pendingMessage = messages.find((message) => (
+      (!runId || message.execution?.nativeAgentRunId === runId)
+      && !message.execution?.nativeAgentTerminal
+    ));
+    runId ||= String(pendingMessage?.execution?.nativeAgentRunId || "");
+    if (conversation && runId) {
+      runtime = registerAgentTaskRuntime({
+        conversation,
+        messages,
+        workspaceState: state,
+        workspaceScope: {
+          workspaceKind: state.workspaceKind,
+          workspacePath: state.settings?.workspacePath || question.workspacePath || "",
+        },
+        pendingId: pendingMessage?.id || "",
+        requestId: pendingMessage?.execution?.requestId || runId,
+      });
+    }
+  }
+  const runtimeQuestion = runtime?.conversation?.agentQuestion || conversationById(conversationId)?.agentQuestion || null;
+  if (runtimeQuestion?.id && runtimeQuestion.id !== question.id) {
+    showToast("当前选择已更新，请按最新问题确认");
+    if (pendingConversationChoice?.id === question.id) {
+      pendingConversationChoice = runtimeQuestion;
+      renderConversationChoicePanel();
+    }
+    return;
+  }
+  runId ||= String(runtime?.conversation?.agentQuestion?.runId || "");
+  runId ||= String(runtime?.messages?.find((message) => (
+    !message.execution?.nativeAgentTerminal
+    && message.execution?.nativeAgentRunId
+  ))?.execution?.nativeAgentRunId || "");
+  if (!runId) {
+    showToast("当前任务缺少可继续的运行编号，请重新发送指令");
+    return;
+  }
+  question.runId ||= runId;
   const id = `answer-${question.id}`;
   question.submitting = true;
-  const pending = runtime.messages.find((message) => message.execution?.nativeAgentRunId === question.runId && !message.execution.nativeAgentTerminal);
+  if (pendingConversationChoice?.id === question.id) renderConversationChoicePanel();
+  const pending = runtime?.messages?.find((message) => message.execution?.nativeAgentRunId === runId && !message.execution.nativeAgentTerminal);
   if (pending) Object.assign(pending.execution, { status: "running", result: "正在提交答案，Agent 将继续处理" });
-  if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
   // The task card is created immediately after the original instruction so
   // the user sees instant feedback. Once a question is answered, move that
   // same card behind the question and answer instead of leaving later Agent
   // output above the user's choice. This preserves one run and one card.
-  const pendingIndex = pending ? runtime.messages.indexOf(pending) : -1;
-  if (pendingIndex >= 0) runtime.messages.splice(pendingIndex, 1);
-  if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: String(answer), time: nowTime(), conversationChoiceInstruction: true });
-  if (pending && !runtime.messages.includes(pending)) {
-    const answerIndex = runtime.messages.findIndex((message) => message.id === id);
-    runtime.messages.splice(answerIndex >= 0 ? answerIndex + 1 : runtime.messages.length, 0, pending);
+  if (runtime?.messages) {
+    const pendingIndex = pending ? runtime.messages.indexOf(pending) : -1;
+    if (pendingIndex >= 0) runtime.messages.splice(pendingIndex, 1);
+    if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: normalizedAnswer, time: nowTime(), conversationChoiceInstruction: true });
+    if (pending && !runtime.messages.includes(pending)) {
+      const answerIndex = runtime.messages.findIndex((message) => message.id === id);
+      runtime.messages.splice(answerIndex >= 0 ? answerIndex + 1 : runtime.messages.length, 0, pending);
+    }
   }
   clearActiveComposerDraft();
-  await persistNativeConversation(runtime);
-  renderNativeConversation(runtime, true);
+  if (runtime) {
+    await persistNativeConversation(runtime);
+    renderNativeConversation(runtime, true);
+  }
   try {
-    await conversationAgentRequest(`/api/conversation-agent/${question.runId}/answer`, { decisionId: question.id, answer: String(answer) });
-    if (runtime.conversation.agentQuestion?.id === question.id) runtime.conversation.agentQuestion = null;
+    await conversationAgentRequest(`/api/conversation-agent/${question.runId}/answer`, { decisionId: question.id, answer: normalizedAnswer });
+    if (runtime?.conversation.agentQuestion?.id === question.id) runtime.conversation.agentQuestion = null;
+    else if (conversationById(conversationId)?.agentQuestion?.id === question.id) conversationById(conversationId).agentQuestion = null;
     if (pending && !pending.execution.nativeAgentTerminal) pending.execution.result = "Agent 正在继续处理";
     if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
   } catch (error) {
     question.submitting = false;
-    if (runtime.conversation.agentQuestion?.id === question.id) {
+    if (runtime?.conversation.agentQuestion?.id === question.id || conversationById(conversationId)?.agentQuestion?.id === question.id) {
       if (pending) Object.assign(pending.execution, { status: "waiting_input", result: "答案提交失败，请重试" });
-      if (question.conversationId === state.activeConversationId) { pendingConversationChoice = question; renderConversationChoicePanel(); }
     }
-    showToast(error.message);
+    if (question.conversationId === state.activeConversationId && pendingConversationChoice?.id === question.id) {
+      pendingConversationChoice = question;
+      renderConversationChoicePanel();
+    }
+    showToast(`选择提交失败：${error.message || "请重试"}`);
   }
-  renderNativeConversation(runtime, true);
+  if (runtime) renderNativeConversation(runtime, true);
+};
+
+const answerNativeConversationQuestion = async (question, answer) => {
+  const normalizedAnswer = String(answer || "").trim();
+  if (!normalizedAnswer) {
+    showToast("请先选择一个选项");
+    return;
+  }
+  if (nativeConversationQuestionRequiresLiveRun(question)) {
+    await answerLiveNativeConversationQuestion(question, normalizedAnswer);
+    return;
+  }
+  const conversationId = String(question?.conversationId || state.activeConversationId || "");
+  const conversation = conversationById(conversationId);
+  if (!conversation) {
+    showToast("原对话已经不存在，无法提交这个选择");
+    return;
+  }
+  const currentQuestion = conversation.agentQuestion;
+  if (currentQuestion?.id && currentQuestion.id !== question.id) {
+    showToast("当前选择已更新，请按最新问题确认");
+    pendingConversationChoice = currentQuestion;
+    renderConversationChoicePanel();
+    return;
+  }
+  const runId = String(question?.runId || currentQuestion?.runId || "");
+  const runtime = agentTaskRuntimeFor({ conversationId });
+  const messages = runtime?.messages || conversationMessagesForTaskState(conversation);
+  const pending = messages.find((message) => message.execution?.nativeAgentRunId === runId);
+  const endedAt = Date.now();
+  if (pending && !pending.execution?.nativeAgentTerminal) {
+    pending.pending = false;
+    pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+    Object.assign(pending.execution, {
+      status: "waiting_input",
+      error: "",
+      result: "选择已作为新指令继续",
+      nativeAgentTerminal: true,
+      progressPercent: 100,
+      endedAt,
+      userStoppedAt: endedAt,
+    });
+    clearAgentDisplayRawText(pending);
+  }
+  conversation.agentQuestion = null;
+  if (conversation.nativeAgentRun?.id === runId) conversation.nativeAgentRun = null;
+  if (pendingConversationChoice?.id === question.id) closeConversationChoicePanel({ focus: false });
+  if (runtime) {
+    await persistNativeConversation(runtime);
+    renderNativeConversation(runtime, true);
+  } else {
+    conversation.messages = clone(messages);
+    persist();
+    renderConversationIfActive(conversationId, { forceScrollToBottom: true });
+  }
+  if (runId) {
+    await conversationAgentRequest(`/api/conversation-agent/${runId}/cancel`, {}).catch(() => null);
+  }
+  dispatchComposerContent(normalizedAnswer, {
+    conversationId,
+    taskContextSnapshot: captureTaskContextSnapshot(conversationId),
+    conversationChoiceInstruction: true,
+  });
 };
 
 const recoverNativeConversationRuns = () => {
@@ -37263,7 +38132,9 @@ const executeConversationAgentMessage = async (content, options) => {
   const { conversation, taskMessages, workspaceState, taskContextSnapshot, onPersist, queuedItem } = options;
   const sourceMessageId = queuedItem?.sourceMessageIdForRun || uid("message");
   if (queuedItem) queuedItem.sourceMessageIdForRun = sourceMessageId;
-  const refs = queuedItem || resolveConversationReferenceContext(conversation);
+  const refs = options.referenceScope
+    ? { ...clone(options.referenceScope), inherited: false, sourceMessageId: "" }
+    : queuedItem || resolveConversationReferenceContext(conversation);
   const explicitNewDocumentRequest = explicitNewDocumentIntent(String(content || ""));
   const explicitChapterTarget = requestedChapterTarget(String(content || ""));
   // “当前文档” is a semantic target, not a request for the Agent to guess
@@ -37299,6 +38170,7 @@ const executeConversationAgentMessage = async (content, options) => {
   // was accepted even when a large workspace makes preflight take a moment.
   const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
     time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
+    ...(options.conversationChoiceInstruction ? { conversationChoiceInstruction: true } : {}),
     taskId: String(taskContextSnapshot.taskId || sourceMessageId),
     turnContextSnapshot: clone({ ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) }) };
   removeImmediateConversationInstruction(options.immediateInstructionId);
@@ -37573,6 +38445,7 @@ const sendMessage = async (content, options = {}) => {
         mediaDispatch: options.mediaDispatch ?? null,
         taskContextSnapshot: options.taskContextSnapshot,
         decisionResolution: options.decisionResolution ?? null,
+        referenceScope: options.referenceScope ?? null,
       });
     await persistTaskConversation();
     return null;
@@ -37948,20 +38821,55 @@ const smartLandMessage = async (messageId) => {
 };
 
 const cancelConversationRun = async (requestId) => {
-  const pendingMessage = state.messages.find((message) => message.pending && message.execution?.requestId === requestId);
+  const currentConversationId = String(state.activeConversationId || "");
+  const taskRuntime = agentTaskRuntimeFor({ conversationId: currentConversationId });
+  const taskConversation = taskRuntime?.conversation || conversationById(currentConversationId) || activeConversation();
+  const taskWorkspaceState = taskRuntime?.workspaceState || state;
+  const taskMessages = taskRuntime?.messages || conversationMessagesForTaskState(taskConversation, taskWorkspaceState);
+  const pendingMessage = taskMessages.find((message) => message.pending && message.execution?.requestId === requestId);
   if (!pendingMessage || pendingMessage.execution.cancelling) return;
   const job = (state.longFormJobs ?? []).find((item) => item.id === pendingMessage.execution.jobId);
   if (job) job.stopRequested = true;
   pendingMessage.execution.cancelling = true;
-  renderMessages();
-  try {
-    if (pendingMessage.execution?.nativeAgentRunId) {
-      const response = await conversationAgentRequest(`/api/conversation-agent/${pendingMessage.execution.nativeAgentRunId}/cancel`, {});
-      pendingMessage.execution.cancelling = false;
-      if (response.accepted) pendingMessage.execution.result = "已请求取消 Agent 任务";
-      renderMessages();
-      return;
+  pendingMessage.execution.result = "正在终止当前任务";
+  if (taskRuntime) renderNativeConversation(taskRuntime, true);
+  else renderMessages();
+  if (pendingMessage.execution?.nativeAgentRunId) {
+    const nativeRunId = pendingMessage.execution.nativeAgentRunId;
+    const conversationId = String(pendingMessage.execution.conversationId || taskConversation?.id || currentConversationId);
+    pendingMessage.pending = false;
+    pendingMessage.streamText = "";
+    pendingMessage.streamDisplayText = "";
+    pendingMessage.content = "当前 Agent 任务已停止；停止前已经完成的操作会保留。";
+    pendingMessage.execution = {
+      ...pendingMessage.execution,
+      status: "cancelled",
+      result: "任务已停止，作品内容未发生变化",
+      progressPercent: 100,
+      endedAt: Date.now(),
+      nativeAgentTerminal: true,
+      userStoppedAt: Date.now(),
+      cancelling: false,
+    };
+    clearAgentDisplayRawText(pendingMessage);
+    const conversation = taskRuntime?.conversation || conversationById(conversationId);
+    if (conversation?.nativeAgentRun?.id === nativeRunId) conversation.nativeAgentRun = null;
+    scheduleConversationQueueDrain(conversationId);
+    syncActiveConversationBusyState();
+    if (taskRuntime) {
+      await persistNativeConversation(taskRuntime).catch(() => {});
+      renderNativeConversation(taskRuntime, true);
+    } else {
+      persist();
+      renderConversationIfActive(conversationId);
     }
+    void conversationAgentRequest(`/api/conversation-agent/${nativeRunId}/cancel`, {}).catch((error) => {
+      showToast(`任务已在界面中停止；后台终止确认失败并将由超时保护收尾：${error.message || "未知错误"}`);
+    });
+    showToast("Agent 任务已停止；可立即继续发送其他指令");
+    return;
+  }
+  try {
     const response = await fetch("/api/chat/cancel", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -38333,13 +39241,17 @@ const renderConversationChoicePanel = () => {
   }
   if (pending.kind === "native_agent") {
     elements.conversationChoiceQuestion.textContent = pending.question || "Agent 需要你的决定";
+    const submitting = pending.submitting === true;
     elements.conversationChoiceOptions.innerHTML = '<span class="native-choice-items">' + (pending.options || []).map((option) => conversationChoiceButton({
       label: option.label,
       type: "native_agent_answer",
       value: pending.allowFreeText === false ? option.id : option.label,
       selected: (pending.selectedValues || []).includes(pending.allowFreeText === false ? option.id : option.label),
-    })).join("") + `</span><span class="native-choice-confirm">${conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: !pending.selectedValues?.length })}</span>`;
-    elements.conversationChoiceHint.textContent = pending.allowFreeText === false
+      disabled: submitting,
+    })).join("") + `</span><span class="native-choice-confirm">${conversationChoiceButton({ label: "确认选择", type: "native_agent_confirm", value: "confirm", disabled: submitting || !pending.selectedValues?.length })}</span>`;
+    elements.conversationChoiceHint.textContent = submitting
+      ? "正在提交选择，Agent 将继续处理；请稍候。"
+      : pending.allowFreeText === false
       ? "请选择允许或拒绝；本次决定只作用于当前这一项操作。"
       : "也可以直接在下方输入其他想法。";
     elements.conversationChoicePanel.hidden = false;
@@ -40232,6 +41144,7 @@ const selectDocument = (documentId) => {
   state.selectedText = "";
   ui.whiteboardEditingNodeId = null;
   ui.whiteboardDrag = null;
+  closeWhiteboardSubmenuPanel();
   elements.whiteboardMenu.hidden = true;
   elements.editor.dataset.document = "";
   elements.selectionToolbar.hidden = true;
@@ -40290,6 +41203,7 @@ const selectModuleRoot = (moduleId) => {
   state.selectedText = "";
   ui.whiteboardEditingNodeId = null;
   ui.whiteboardDrag = null;
+  closeWhiteboardSubmenuPanel();
   elements.whiteboardMenu.hidden = true;
   elements.editor.dataset.document = "";
   elements.selectionToolbar.hidden = true;
@@ -40339,14 +41253,14 @@ const locationChoiceForDocument = (documentId) => {
 };
 
 const clearDocumentDragIndicators = () => {
-  document.querySelectorAll(".dragging, .drop-target, .drop-before, .drop-after").forEach((element) => element.classList.remove("dragging", "drop-target", "drop-before", "drop-after"));
+  document.querySelectorAll(".dragging, .drop-target, .drop-before, .drop-after, .drop-root-line").forEach((element) => element.classList.remove("dragging", "drop-target", "drop-before", "drop-after", "drop-root-line"));
 };
 
 const clearDocumentDropIndicators = () => {
-  document.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach((element) => element.classList.remove("drop-target", "drop-before", "drop-after"));
+  document.querySelectorAll(".drop-target, .drop-before, .drop-after, .drop-root-line").forEach((element) => element.classList.remove("drop-target", "drop-before", "drop-after", "drop-root-line"));
 };
 
-const moveDocumentByDrag = async ({ documentId, moduleId, viewId, location, beforeDocumentId = null }) => {
+const moveDocumentByDrag = async ({ documentId, moduleId, viewId, location, beforeDocumentId = null, directoryOrder = null }) => {
   const located = documentItem(documentId);
   const documentState = state.documents[documentId];
   const sourceLocations = Object.values(state.moduleItems).filter((items) => items.some(([id]) => id === documentId));
@@ -40395,6 +41309,10 @@ const moveDocumentByDrag = async ({ documentId, moduleId, viewId, location, befo
       updatedAt: nowTime(),
       ...(targetOptions.volumeFolder ? { volumeFolder: targetOptions.volumeFolder, volumeLabel: targetOptions.folderLabel } : {}),
     });
+    if (directoryOrder?.parentKey && Array.isArray(directoryOrder.tokens)) {
+      state.directoryOrders ??= {};
+      state.directoryOrders[directoryOrder.parentKey] = [...directoryOrder.tokens];
+    }
     ensureDocumentTreeMetadata(state);
     rebuildProjectCompilationStatus();
     state.activeDocument = documentId;
@@ -40428,9 +41346,9 @@ const moveDocumentByDrag = async ({ documentId, moduleId, viewId, location, befo
   }
 };
 
-const moveDocumentsByDrag = async ({ documentIds, moduleId, viewId, location, beforeDocumentId = null }) => {
+const moveDocumentsByDrag = async ({ documentIds, moduleId, viewId, location, beforeDocumentId = null, directoryOrder = null }) => {
   const ids = [...new Set(documentIds ?? [])].filter(Boolean);
-  if (ids.length <= 1) return ids.length === 1 ? moveDocumentByDrag({ documentId: ids[0], moduleId, viewId, location, beforeDocumentId }) : false;
+  if (ids.length <= 1) return ids.length === 1 ? moveDocumentByDrag({ documentId: ids[0], moduleId, viewId, location, beforeDocumentId, directoryOrder }) : false;
   if (!location) {
     showToast("目标位置不可用");
     return false;
@@ -40485,6 +41403,10 @@ const moveDocumentsByDrag = async ({ documentIds, moduleId, viewId, location, be
         updatedAt: nowTime(),
         ...(targetOptions.volumeFolder ? { volumeFolder: targetOptions.volumeFolder, volumeLabel: targetOptions.folderLabel } : {}),
       });
+    }
+    if (directoryOrder?.parentKey && Array.isArray(directoryOrder.tokens)) {
+      state.directoryOrders ??= {};
+      state.directoryOrders[directoryOrder.parentKey] = [...directoryOrder.tokens];
     }
     ensureDocumentTreeMetadata(state);
     rebuildProjectCompilationStatus();
@@ -44970,10 +45892,28 @@ elements.documentList.addEventListener("dragover", (event) => {
   const dragEntry = ui.dragDirectoryEntry;
   if (!dragEntry && !ui.dragDocumentId) return;
   const targetEntry = directoryEntryAtPoint(event);
-  const movingTokens = new Set((ui.dragDirectoryEntries ?? []).map((entry) => entry.token));
+  const dragEntries = ui.dragDirectoryEntries ?? [];
+  const movingTokens = new Set(dragEntries.map((entry) => entry.token));
+  const rootZone = event.target.closest?.("[data-directory-root-drop]");
+  if (rootZone && dragEntry && dragEntries.length && dragEntries.every((entry) => entry.type === "document")) {
+    const intent = directoryRootDropIntent({
+      parentKey: rootZone.dataset.directoryParent,
+      siblings: directorySiblingTokens(rootZone.dataset.directoryParent),
+      movingTokens: [...movingTokens],
+      edge: rootZone.dataset.directoryRootDrop,
+    });
+    if (intent) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      clearDocumentDropIndicators();
+      ui.directoryDropIntent = intent;
+      rootZone.classList.add("drop-root-line");
+      return;
+    }
+  }
   const movingIntoFolder = directoryDropIntoFolder({
     targetEntry,
-    dragEntries: ui.dragDirectoryEntries ?? [],
+    dragEntries,
     movingTokens,
     clientY: event.clientY,
   });
@@ -45017,6 +45957,36 @@ elements.documentList.addEventListener("drop", async (event) => {
   const targetEntry = directoryEntryAtPoint(event);
   const dragEntries = ui.dragDirectoryEntries?.length ? ui.dragDirectoryEntries : (dragEntry ? [{ ...dragEntry, documentId: ui.dragDocumentId || "" }] : []);
   const movingTokens = new Set(dragEntries.map((entry) => entry.token));
+  const rootZone = event.target.closest?.("[data-directory-root-drop]");
+  const rootIntent = rootZone && ui.directoryDropIntent?.type === "root"
+    && ui.directoryDropIntent.parentKey === rootZone.dataset.directoryParent
+    ? ui.directoryDropIntent
+    : null;
+  if (rootIntent && dragEntries.length && dragEntries.every((entry) => entry.type === "document")) {
+    event.preventDefault();
+    const documentIds = dragEntries.map((entry) => entry.documentId).filter(Boolean);
+    const moduleId = directoryModuleForTarget(rootZone);
+    const viewId = activeViewForModule(moduleId);
+    const orderTokens = directoryOrderWithPlacement({
+      siblings: directorySiblingTokens(rootIntent.parentKey),
+      movingTokens: dragEntries.map((entry) => entry.token),
+      targetToken: rootIntent.targetToken,
+      placement: rootIntent.placement,
+    });
+    clearDocumentDragIndicators();
+    ui.dragDocumentId = null;
+    ui.dragDirectoryEntry = null;
+    ui.dragDirectoryEntries = [];
+    ui.directoryDropIntent = null;
+    await moveDocumentsByDrag({
+      documentIds,
+      moduleId,
+      viewId,
+      location: defaultLocationChoice(moduleId, viewId),
+      directoryOrder: { parentKey: rootIntent.parentKey, tokens: orderTokens },
+    });
+    return;
+  }
   const movingIntoFolder = directoryDropIntoFolder({ targetEntry, dragEntries, movingTokens, clientY: event.clientY });
   const storedIntent = !movingIntoFolder && ui.directoryDropIntent?.parentKey === dragEntry?.parentKey
     && !movingTokens.has(ui.directoryDropIntent?.targetToken)
@@ -45155,6 +46125,7 @@ elements.listTitle.addEventListener("drop", async (event) => {
   ui.dragDocumentId = null;
   ui.dragDirectoryEntry = null;
   ui.dragDirectoryEntries = [];
+  ui.directoryDropIntent = null;
   await moveDocumentsByDrag({ documentIds: documentIds.length ? documentIds : [documentId], moduleId, viewId, location: defaultLocationChoice(moduleId, viewId) });
 });
 
@@ -45663,6 +46634,8 @@ elements.candidateComparisonDialog.addEventListener("cancel", () => {
   ui.candidateComparison.groupId = "";
 });
 
+elements.conversationChoiceCloseButton?.addEventListener("click", () => closeConversationChoicePanel());
+
 elements.conversationChoicePanel?.addEventListener("click", async (event) => {
   const choice = event.target.closest("[data-conversation-choice]");
   if (!choice || !pendingConversationChoice) return;
@@ -45670,6 +46643,7 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
     closeConversationChoicePanel({ focus: false });
     return;
   }
+  if (pendingConversationChoice.submitting === true) return;
   const type = choice.dataset.choiceType || "";
   const value = choice.dataset.choiceValue || "";
   if (pendingConversationChoice.kind === "agent_guidance" && type === "chat_agent_guidance") {
@@ -45716,7 +46690,12 @@ elements.conversationChoicePanel?.addEventListener("click", async (event) => {
     return;
   }
   if (pendingConversationChoice.kind === "native_agent" && type === "native_agent_confirm") {
-    await answerNativeConversationQuestion(pendingConversationChoice, (pendingConversationChoice.selectedValues || []).join("；"));
+    const selectedValues = [...(pendingConversationChoice.selectedValues || [])];
+    if (!selectedValues.length) {
+      showToast("请先选择一个选项");
+      return;
+    }
+    await answerNativeConversationQuestion(pendingConversationChoice, selectedValues.join("；"));
     return;
   }
   if (pendingConversationChoice.kind === "contract" && type === "contract") {
@@ -47843,16 +48822,16 @@ const whiteboardWorldPoint = (clientX, clientY, documentState = activeWhiteboard
 };
 
 const WHITEBOARD_VIEWPORT_GESTURE_COMMIT_DELAY = 180;
-
 const commitWhiteboardViewportGesture = ({ persistChange = true } = {}) => {
   clearTimeout(ui.whiteboardViewportGestureTimer);
   ui.whiteboardViewportGestureTimer = null;
   const gesture = ui.whiteboardViewportGesture;
   ui.whiteboardViewportGesture = null;
+  elements.whiteboardEditor.classList.remove("viewport-transforming");
   if (!gesture || gesture.workspaceKey !== workspaceIdentity()) return false;
   const documentState = state.documents[gesture.documentId];
   if (!documentState || documentState.documentKind !== "whiteboard") return false;
-  const changed = pushWhiteboardHistory(gesture.beforeCanvas, {
+  const changed = pushWhiteboardViewportHistory(gesture.beforeViewport, {
     documentId: gesture.documentId,
     label: "缩放白板",
     coalesce: true,
@@ -47861,6 +48840,10 @@ const commitWhiteboardViewportGesture = ({ persistChange = true } = {}) => {
   syncWhiteboardHistoryControls();
   if (state.activeDocument === gesture.documentId && elements.whiteboardEditor.dataset.virtualized === "true") {
     renderWhiteboard(documentState);
+  }
+  ui.whiteboardViewportDeferredRender = false;
+  if (!elements.whiteboardEditor.classList.contains("viewport-transforming")) {
+    scheduleWhiteboardGenerationDialogPosition();
   }
   return changed;
 };
@@ -47881,23 +48864,29 @@ const applyWhiteboardTransform = (documentState = activeWhiteboardDocument()) =>
   elements.whiteboardZoomIn.disabled = zoom >= CANVAS_MAX_ZOOM;
   elements.whiteboardZoomOut.title = `缩小白板（当前 ${Math.round(zoom * 100)}%）`;
   elements.whiteboardZoomIn.title = `放大白板（当前 ${Math.round(zoom * 100)}%）`;
-  scheduleWhiteboardGenerationDialogPosition();
+  if (!elements.whiteboardEditor.classList.contains("viewport-transforming")) {
+    scheduleWhiteboardGenerationDialogPosition();
+  }
 };
 
-const zoomWhiteboardAt = ({ zoom, localX, localY, deferCommit = false } = {}) => {
+const zoomWhiteboardAt = ({ zoom, localX, localY, editorRect = null, deferCommit = false } = {}) => {
   const documentState = activeWhiteboardDocument();
   if (!documentState) return;
   const gestureIdentity = `${workspaceIdentity()}::${state.activeDocument}`;
   if (ui.whiteboardViewportGesture && (!deferCommit || ui.whiteboardViewportGesture.identity !== gestureIdentity)) {
     commitWhiteboardViewportGesture();
   }
-  const beforeCanvas = deferCommit
-    ? ui.whiteboardViewportGesture?.beforeCanvas ?? whiteboardCanvasSnapshot(documentState.canvas)
-    : whiteboardCanvasSnapshot(documentState.canvas);
-  const rect = elements.whiteboardEditor.getBoundingClientRect();
-  const viewport = normalizeCanvas(documentState.canvas).viewport;
-  const anchorX = Number.isFinite(localX) ? localX : rect.width / 2;
-  const anchorY = Number.isFinite(localY) ? localY : rect.height / 2;
+  const beforeViewport = deferCommit
+    ? ui.whiteboardViewportGesture?.beforeViewport ?? whiteboardViewport(documentState)
+    : whiteboardViewport(documentState);
+  if (deferCommit) elements.whiteboardEditor.classList.add("viewport-transforming");
+  const needsEditorRect = !Number.isFinite(localX) || !Number.isFinite(localY);
+  const rect = editorRect
+    ?? (ui.whiteboardViewportGesture?.identity === gestureIdentity ? ui.whiteboardViewportGesture.editorRect : null)
+    ?? (needsEditorRect ? elements.whiteboardEditor.getBoundingClientRect() : null);
+  const viewport = whiteboardViewport(documentState);
+  const anchorX = Number.isFinite(localX) ? localX : rect?.width / 2;
+  const anchorY = Number.isFinite(localY) ? localY : rect?.height / 2;
   const nextZoom = Math.min(CANVAS_MAX_ZOOM, Math.max(CANVAS_MIN_ZOOM, Number(zoom) || viewport.zoom));
   const worldX = (anchorX - viewport.x) / viewport.zoom;
   const worldY = (anchorY - viewport.y) / viewport.zoom;
@@ -47908,21 +48897,17 @@ const zoomWhiteboardAt = ({ zoom, localX, localY, deferCommit = false } = {}) =>
   });
   documentState.updatedAt = nowTime();
   applyWhiteboardTransform(documentState);
-  // The card transform and its attached generation surface must become one
-  // visual transaction. Deferring the popover to a second animation frame
-  // leaves it visibly detached for one frame after wheel zoom (and makes fast
-  // pointer input race the stale hit box).
-  flushWhiteboardGenerationDialogPosition();
   if (deferCommit) {
     ui.whiteboardViewportGesture = {
       identity: gestureIdentity,
       workspaceKey: workspaceIdentity(),
       documentId: state.activeDocument,
-      beforeCanvas,
+      beforeViewport,
+      editorRect: editorRect ?? rect,
     };
     scheduleWhiteboardViewportGestureCommit();
   } else {
-    pushWhiteboardHistory(beforeCanvas, { label: "缩放白板", coalesce: true });
+    pushWhiteboardViewportHistory(beforeViewport, { label: "缩放白板", coalesce: true });
     persist({ documentIds: [state.activeDocument] });
     if (elements.whiteboardEditor.dataset.virtualized === "true") renderWhiteboard(documentState);
   }
@@ -47940,7 +48925,9 @@ const flushWhiteboardWheelZoom = () => {
 
 const scheduleWhiteboardWheelZoom = (pending) => {
   ui.whiteboardWheelZoom = pending;
+  elements.whiteboardEditor.classList.add("viewport-transforming");
   if (ui.whiteboardWheelZoomFrame) return;
+  cancelWhiteboardMediaHydration();
   ui.whiteboardWheelZoomFrame = requestAnimationFrame(() => {
     ui.whiteboardWheelZoomFrame = 0;
     const latest = ui.whiteboardWheelZoom;
@@ -48500,6 +49487,63 @@ const replaceAllWhiteboardFindMatches = () => {
 
 const whiteboardNodeById = (nodeId, documentState = activeWhiteboardDocument()) => canonicalCanvas(documentState?.canvas).nodes.find((node) => node.id === nodeId) ?? null;
 
+const whiteboardMediaEditBusyNodeIds = new Set();
+
+const whiteboardCardToolbarButtons = (node) => {
+  if (!node?.file || !["image", "video", "audio"].includes(node.kind)) return [];
+  const editingDisabled = state.readOnly || Boolean(whiteboardCandidateFor(node.id)) || whiteboardMediaEditBusyNodeIds.has(node.id);
+  const buttons = [];
+  if (node.kind === "image") buttons.push({ tool: "edit-image", label: "编辑图片", glyph: "\uE70F", disabled: editingDisabled });
+  if (node.kind === "video") {
+    buttons.push({ tool: "extract-frame", label: "提取关键帧", glyph: "\uE91B", disabled: editingDisabled });
+    buttons.push({ tool: "separate-av", label: "分离音视频", glyph: "\uE8D6", disabled: editingDisabled });
+    if (node.generation?.compositeLongVideo) buttons.push({ tool: "composite-process", label: "查看超长视频生成过程", glyph: "\uE9D9" });
+  }
+  if (node.kind === "audio") buttons.push({ tool: "trim-audio", label: "截取音频片段", glyph: "\uE8D6", disabled: editingDisabled });
+  if (["image", "video"].includes(node.kind)) buttons.push({ tool: "preview", label: `预览${node.kind === "video" ? "视频" : "图片"}`, glyph: "\uE890", compact: true });
+  buttons.push({ tool: "save-as", label: "另存为", glyph: "\uE74E", compact: true });
+  return buttons;
+};
+
+const positionWhiteboardCardToolbar = () => {
+  const toolbar = elements.whiteboardCardToolbar;
+  if (!toolbar || toolbar.hidden || !toolbar.dataset.nodeId) return;
+  const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(toolbar.dataset.nodeId)}"]`);
+  if (!card) {
+    toolbar.hidden = true;
+    return;
+  }
+  const editorRect = elements.whiteboardEditor.getBoundingClientRect();
+  const cardRect = card.getBoundingClientRect();
+  const toolbarRect = toolbar.getBoundingClientRect();
+  const margin = 8;
+  const titleOffset = card.querySelector(".whiteboard-card-node-title") ? 25 : 0;
+  const preferredLeft = cardRect.left + (cardRect.width - toolbarRect.width) / 2 - editorRect.left;
+  const preferredTop = cardRect.top - editorRect.top - toolbarRect.height - titleOffset - 8;
+  const maxLeft = Math.max(margin, editorRect.width - toolbarRect.width - margin);
+  toolbar.style.left = `${Math.round(Math.min(Math.max(preferredLeft, margin), maxLeft))}px`;
+  toolbar.style.top = `${Math.round(Math.max(margin, preferredTop))}px`;
+};
+
+const renderWhiteboardCardToolbar = () => {
+  const toolbar = elements.whiteboardCardToolbar;
+  if (!toolbar) return;
+  const ids = selectedWhiteboardNodeIds();
+  const node = ids.length === 1 ? whiteboardNodeById(ids[0]) : null;
+  const buttons = whiteboardCardToolbarButtons(node);
+  if (!node || !buttons.length) {
+    toolbar.hidden = true;
+    toolbar.dataset.nodeId = "";
+    toolbar.innerHTML = "";
+    return;
+  }
+  toolbar.dataset.nodeId = node.id;
+  toolbar.innerHTML = buttons.map((button) => `<button class="${button.compact ? "compact" : ""}" type="button" data-whiteboard-card-tool="${escapeHtml(button.tool)}" title="${escapeHtml(button.label)}" aria-label="${escapeHtml(button.label)}"${button.disabled ? " disabled" : ""}>${icon(button.glyph, button.label)}${button.compact ? "" : `<span>${escapeHtml(button.label)}</span>`}</button>`).join("");
+  toolbar.hidden = false;
+  localizeUi(toolbar, globalUiPreferences.uiLanguage);
+  positionWhiteboardCardToolbar();
+};
+
 const selectedWhiteboardNodeIds = () => ui.whiteboardSelectedDocumentId === state.activeDocument
   ? [...ui.whiteboardSelectedNodeIds]
   : [];
@@ -48548,6 +49592,7 @@ const selectWhiteboardNodes = (nodeIds = []) => {
   }
   syncWhiteboardForegroundRelationLayer();
   renderWhiteboardMultiSelection(activeWhiteboardDocument());
+  renderWhiteboardCardToolbar();
   if (ui.whiteboardFind.open) renderWhiteboardFindPanel();
 };
 
@@ -48582,6 +49627,7 @@ const selectWhiteboardEdges = (edgeIds = []) => {
   }
   syncWhiteboardForegroundRelationLayer();
   renderWhiteboardMultiSelection(activeWhiteboardDocument());
+  renderWhiteboardCardToolbar();
 };
 
 const selectWhiteboardEdge = (edgeId = null) => selectWhiteboardEdges(edgeId ? [edgeId] : []);
@@ -48599,6 +49645,31 @@ const whiteboardRedoStack = (documentId = state.activeDocument) => {
 };
 
 const whiteboardCanvasSnapshot = (canvas) => clone(normalizeCanvas(canvas));
+const pushWhiteboardViewportHistory = (viewport, { documentId = state.activeDocument, label = "移动白板视图", coalesce = false } = {}) => {
+  const documentState = state.documents[documentId];
+  if (!viewport || documentState?.documentKind !== "whiteboard") return false;
+  const current = whiteboardViewport(documentState);
+  if (["x", "y", "zoom"].every(key => current[key] === viewport[key])) return false;
+  const stack = whiteboardUndoStack(documentId), time = Date.now(), last = stack.at(-1);
+  if (coalesce && last?.viewport && last.label === label && time - last.time < 500) last.time = time;
+  else stack.push({ viewport: { ...viewport }, label, time });
+  if (stack.length > 80) stack.splice(0, stack.length - 80);
+  whiteboardRedoStack(documentId).length = 0;
+  if (documentId === state.activeDocument) syncWhiteboardHistoryControls();
+  return true;
+};
+
+const restoreWhiteboardViewportHistory = (action, opposingStack) => {
+  const documentState = activeWhiteboardDocument();
+  opposingStack.push({ viewport: whiteboardViewport(documentState), label: action.label, time: Date.now() });
+  if (opposingStack.length > 80) opposingStack.splice(0, opposingStack.length - 80);
+  documentState.canvas = updateCanvasViewport(documentState.canvas, action.viewport);
+  documentState.updatedAt = nowTime();
+  persist({ documentIds: [state.activeDocument] });
+  renderWhiteboard(documentState);
+  syncWhiteboardHistoryControls();
+  return true;
+};
 const workspaceAssetsSnapshot = (assets = state.workspaceAssets) => clone(normalizeGenerationAssets(assets));
 const assetHistoryTombstonesSnapshot = (tombstones = state.assetHistoryTombstones) => clone(normalizeAssetHistoryTombstones(tombstones));
 const globalAssetHiddenIdsSnapshot = (values = ui.globalAssetTrashRecords) => {
@@ -48762,7 +49833,7 @@ const whiteboardCanvasWithPreviewLayout = (canvas, layoutCanvas) => {
   return current;
 };
 
-const localWhiteboardArrangeLayout = (canvas, nodeIds = []) => {
+const localWhiteboardArrangeLayout = (canvas, nodeIds = [], layoutMode = "grid") => {
   const normalized = normalizeCanvas(canvas);
   const ids = [...new Set((nodeIds ?? []).map(String).filter(Boolean))]
     .filter((id) => normalized.nodes.some((node) => node.id === id));
@@ -48773,7 +49844,7 @@ const localWhiteboardArrangeLayout = (canvas, nodeIds = []) => {
     nodes: normalized.nodes.filter((node) => selected.has(node.id)).map((node) => ({ ...node })),
     edges: normalized.edges.filter((edge) => selected.has(edge.fromNode) && selected.has(edge.toNode)).map((edge) => ({ ...edge })),
   };
-  const arranged = arrangeCanvasNodes(subset);
+  const arranged = arrangeCanvasNodes(subset, { layoutMode });
   const originalBounds = canvasSelectionBounds(normalized, ids, 0);
   const arrangedBounds = canvasSelectionBounds(arranged, ids, 0);
   if (!originalBounds || !arrangedBounds) return arranged;
@@ -48784,6 +49855,33 @@ const localWhiteboardArrangeLayout = (canvas, nodeIds = []) => {
     : node);
   arranged.viewport = { ...normalized.viewport };
   return arranged;
+};
+
+const arrangePreviewLayoutMode = (preview) => String(preview?.layoutMode || "grid");
+
+const refreshWhiteboardArrangePreview = (layoutMode = "grid") => {
+  const preview = ui.whiteboardArrangePreview;
+  const documentState = activeWhiteboardDocument();
+  if (!preview || !documentState) return false;
+  const nextMode = ["grid", "horizontal", "vertical"].includes(layoutMode) ? layoutMode : "grid";
+  const baseCanvas = normalizeCanvas(documentState.canvas);
+  let layoutCanvas;
+  if (preview.scope === "selection") {
+    layoutCanvas = localWhiteboardArrangeLayout(baseCanvas, preview.nodeIds || [], nextMode);
+  } else {
+    layoutCanvas = arrangeCanvasNodes(baseCanvas, { layoutMode: nextMode });
+    const rect = elements.whiteboardEditor.getBoundingClientRect();
+    layoutCanvas = updateCanvasViewport(layoutCanvas, centeredVisibleWhiteboardViewport(layoutCanvas, rect));
+    layoutCanvas = setCanvasSnap(layoutCanvas, baseCanvas.settings.snapToGrid);
+  }
+  if (!layoutCanvas) return false;
+  preview.layoutMode = nextMode;
+  preview.layoutCanvas = whiteboardCanvasSnapshot(layoutCanvas);
+  elements.whiteboardArrangeDecision?.querySelectorAll("[data-whiteboard-arrange-decision^=layout-]").forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset.whiteboardArrangeDecision === `layout-${nextMode}`));
+  });
+  renderWhiteboard(documentState);
+  return true;
 };
 
 const updateWhiteboardArrangeDecisionCopy = (scope = "global") => {
@@ -48832,6 +49930,7 @@ const undoWhiteboardAction = () => {
   finishWhiteboardEditing();
   const stack = whiteboardUndoStack();
   const action = stack.pop();
+  if (action?.viewport) return restoreWhiteboardViewportHistory(action, whiteboardRedoStack());
   if (!action?.canvas) {
     syncWhiteboardHistoryControls();
     return false;
@@ -48865,6 +49964,7 @@ const redoWhiteboardAction = () => {
   finishWhiteboardEditing();
   const stack = whiteboardRedoStack();
   const action = stack.pop();
+  if (action?.viewport) return restoreWhiteboardViewportHistory(action, whiteboardUndoStack());
   if (!action?.canvas) {
     syncWhiteboardHistoryControls();
     return false;
@@ -49132,11 +50232,9 @@ const duplicateWhiteboardCards = (nodeIds = []) => {
     const record = source ? copyCanvasNode(sourceCanvas, nodeId) : null;
     if (!source || !record) continue;
     const duplicateId = uid(["image", "video", "audio"].includes(source.kind) ? "canvas-file" : "canvas-node");
-    const pasted = pasteCanvasNode(nextCanvas, record, {
+    const pasted = duplicateCanvasNodeRight(nextCanvas, nodeId, {
       id: duplicateId,
-      x: snapCanvasValue(source.x + 40, nextCanvas),
-      y: snapCanvasValue(source.y + 40, nextCanvas),
-      includeEdges: false,
+      inheritEdges: "none",
     });
     if (!pasted.nodeId) continue;
     nextCanvas = pasted.canvas;
@@ -49178,7 +50276,7 @@ const duplicateWhiteboardCard = (nodeId) => {
   if (!documentState || !source) return false;
   flushWhiteboardGenerationDrafts();
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
-  const duplicated = duplicateCanvasNodeBelow(documentState.canvas, nodeId, {
+  const duplicated = duplicateCanvasNodeRight(documentState.canvas, nodeId, {
     id: uid(["image", "video", "audio"].includes(source.kind) ? "canvas-file" : "canvas-node"),
     inheritEdges: "upstream",
   });
@@ -49199,10 +50297,10 @@ const duplicateWhiteboardCard = (nodeId) => {
   persist();
   renderWhiteboard(documentState);
   selectWhiteboardNode(duplicated.nodeId);
-  const movedLabel = duplicated.movedNodeIds.length ? `，并顺延 ${duplicated.movedNodeIds.length} 张下方卡片` : "";
+  const movedLabel = duplicated.movedNodeIds.length ? `，并顺延 ${duplicated.movedNodeIds.length} 张右侧卡片` : "";
   showToast(duplicated.copiedEdges
-    ? `已在原卡片下方创建副本，并继承生成提示词和 ${duplicated.copiedEdges} 条上游连接${movedLabel}`
-    : `已在原卡片下方创建副本并继承生成提示词${movedLabel}`);
+    ? `已在原卡片右侧创建副本，并继承生成提示词和 ${duplicated.copiedEdges} 条上游连接${movedLabel}`
+    : `已在原卡片右侧创建副本并继承生成提示词${movedLabel}`);
   return true;
 };
 
@@ -49304,6 +50402,9 @@ const pasteWhiteboardCard = ({ x, y } = {}) => {
     showToast("复制内容来自其他笔记本，请回到原笔记本粘贴");
     return false;
   }
+  // Persist any open generation bar before reading its source card's draft.
+  // This keeps copy/paste consistent with the explicit duplicate command.
+  flushWhiteboardGenerationDrafts();
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   const rect = elements.whiteboardEditor.getBoundingClientRect();
   const center = whiteboardWorldPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, documentState);
@@ -49332,6 +50433,22 @@ const pasteWhiteboardCard = ({ x, y } = {}) => {
     idMap.set(source.id, duplicateId);
   }
   if (!idMap.size) return false;
+  const sourceDocumentId = String(clipboard.documentId || state.activeDocument);
+  let generationDraftCache = readWhiteboardGenerationDraftCache();
+  for (const [sourceNodeId, targetNodeId] of idMap) {
+    generationDraftCache = duplicateWhiteboardGenerationDraftEntries(
+      generationDraftCache,
+      {
+        workspaceId: workspaceIdentity(),
+        sourceDocumentId,
+        targetDocumentId: state.activeDocument,
+        sourceNodeId,
+        targetNodeId,
+      },
+    );
+  }
+  writeWhiteboardGenerationDraftCache(generationDraftCache);
+  markWhiteboardGenerationDraftDurable();
   const edgeById = new Map(records.flatMap((record) => record.edges || []).map((edge) => [edge.id, edge]));
   for (const edge of edgeById.values()) {
     if (!idMap.has(edge.fromNode) || !idMap.has(edge.toNode)) continue;
@@ -49348,7 +50465,6 @@ const pasteWhiteboardCard = ({ x, y } = {}) => {
   documentState.canvas = nextCanvas;
   documentState.updatedAt = nowTime();
   const cutClipboard = clipboard.mode === "cut";
-  const sourceDocumentId = String(clipboard.documentId || "");
   const sourceDocument = sourceDocumentId ? state.documents[sourceDocumentId] : null;
   const sourceRecords = records.filter((record) => record?.node?.id);
   let removedSourceCount = 0;
@@ -49692,12 +50808,12 @@ elements.whiteboardRedo.addEventListener("click", () => {
 
 elements.whiteboardZoomOut.addEventListener("click", () => {
   const zoom = normalizeCanvas(activeWhiteboardDocument()?.canvas).viewport.zoom;
-  zoomWhiteboardAt({ zoom: zoom / 1.2 });
+  zoomWhiteboardAt({ zoom: zoom / 1.2, deferCommit: true });
 });
 
 elements.whiteboardZoomIn.addEventListener("click", () => {
   const zoom = normalizeCanvas(activeWhiteboardDocument()?.canvas).viewport.zoom;
-  zoomWhiteboardAt({ zoom: zoom * 1.2 });
+  zoomWhiteboardAt({ zoom: zoom * 1.2, deferCommit: true });
 });
 
 elements.whiteboardSnapToggle.addEventListener("click", () => {
@@ -49769,6 +50885,7 @@ elements.whiteboardArrange.addEventListener("click", (event) => {
     workspaceId: workspaceIdentity(),
     documentId: state.activeDocument,
     scope: "global",
+    layoutMode: "grid",
     layoutCanvas: whiteboardCanvasSnapshot(layoutCanvas),
   };
   updateWhiteboardArrangeDecisionCopy("global");
@@ -49782,17 +50899,31 @@ elements.whiteboardArrange.addEventListener("click", (event) => {
 elements.whiteboardArrangeDecision.addEventListener("click", (event) => {
   const button = event.target.closest("[data-whiteboard-arrange-decision]");
   if (!button) return;
-  resolveWhiteboardArrangePreview(button.dataset.whiteboardArrangeDecision);
+  const decision = button.dataset.whiteboardArrangeDecision;
+  if (decision.startsWith("layout-")) {
+    refreshWhiteboardArrangePreview(decision.slice("layout-".length));
+    return;
+  }
+  resolveWhiteboardArrangePreview(decision);
 });
 
 const WHITEBOARD_AUTO_OPEN_DISABLED_KEY = "shensi-whiteboard-generation-auto-open-disabled-v1";
 const whiteboardAutoOpenScopeKey = (nodeId) => [workspaceIdentity(), state.activeDocument, nodeId].map(encodeURIComponent).join("::");
+let whiteboardAutoOpenDisabledRaw = null;
+let whiteboardAutoOpenDisabledCache = new Set();
 const readWhiteboardAutoOpenDisabled = () => {
-  try { return new Set(JSON.parse(localStorage.getItem(WHITEBOARD_AUTO_OPEN_DISABLED_KEY) || "[]")); } catch { return new Set(); }
+  try {
+    const raw = localStorage.getItem(WHITEBOARD_AUTO_OPEN_DISABLED_KEY) || "[]";
+    if (raw !== whiteboardAutoOpenDisabledRaw) {
+      whiteboardAutoOpenDisabledCache = new Set(JSON.parse(raw));
+      whiteboardAutoOpenDisabledRaw = raw;
+    }
+    return whiteboardAutoOpenDisabledCache;
+  } catch { return new Set(); }
 };
 const setWhiteboardAutoOpenDisabled = (nodeId, disabled) => {
   if (!nodeId) return;
-  const values = readWhiteboardAutoOpenDisabled();
+  const values = new Set(readWhiteboardAutoOpenDisabled());
   const key = whiteboardAutoOpenScopeKey(nodeId);
   if (disabled) values.add(key); else values.delete(key);
   try { localStorage.setItem(WHITEBOARD_AUTO_OPEN_DISABLED_KEY, JSON.stringify([...values].slice(-500))); } catch {}
@@ -49859,6 +50990,10 @@ elements.whiteboardEditor.addEventListener("dblclick", (event) => {
     if (preview) openAttachmentPreview(preview);
     return;
   }
+  if (node?.kind === "audio") {
+    openWhiteboardAudioTrimDialog(node.id);
+    return;
+  }
   if (["skill", "reference"].includes(node?.kind)) {
     openWhiteboardTextCardPreview(node.id);
     return;
@@ -49878,9 +51013,10 @@ elements.whiteboardEditor.addEventListener("webkitendfullscreen", (event) => {
 elements.whiteboardEditor.addEventListener("pointermove", (event) => {
   const documentState = activeWhiteboardDocument();
   if (!documentState) return;
+  if (ui.whiteboardDrag?.mode === "pan") return;
   ui.whiteboardPointer = {
     documentId: state.activeDocument,
-    ...whiteboardWorldPoint(event.clientX, event.clientY, documentState),
+    ...whiteboardWorldPoint(event.clientX, event.clientY, documentState, ui.whiteboardDrag?.editorRect),
   };
   scheduleWhiteboardFindPanelPosition();
 });
@@ -49899,18 +51035,11 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
   // Generation popovers live inside the whiteboard DOM so they can stay
   // anchored to a card. Their controls must never fall through to the canvas
   // selection/click pipeline, which can clear focus from the rich prompt.
-  if (event.target.closest(".whiteboard-generation-popover")) return;
+  if (event.target.closest(".whiteboard-generation-popover, .whiteboard-card-toolbar")) return;
   // View controls reframe the canvas but do not leave the card/composer task.
   // Let their dedicated handlers run without treating the toolbar click as a
   // blank-canvas click that dismisses the attached generation surface.
   if (event.target.closest(".whiteboard-tool-controls, .whiteboard-zoom-controls, .whiteboard-find-panel")) return;
-  const imageEditButton = event.target.closest("[data-edit-whiteboard-image]");
-  if (imageEditButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    await openWhiteboardImageEditor(imageEditButton.dataset.editWhiteboardImage);
-    return;
-  }
   if (ui.whiteboardIgnoreClick) {
     ui.whiteboardIgnoreClick = false;
     event.preventDefault();
@@ -50024,6 +51153,7 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
   }
   const editingCard = event.target.closest(`[data-canvas-node="${CSS.escape(ui.whiteboardEditingNodeId || "__none__")}"]`);
   if (!editingCard) finishWhiteboardEditing();
+  closeWhiteboardSubmenuPanel();
   elements.whiteboardMenu.hidden = true;
   if (card && event.detail === 1) scheduleWhiteboardCardOpen(card.dataset.canvasNode);
 });
@@ -50071,9 +51201,15 @@ const applyWhiteboardDragPreview = (drag) => {
 const startWhiteboardPan = (event, documentState) => {
   event.preventDefault();
   event.stopPropagation();
-  finishWhiteboardEditing();
+  // Starting a space-drag must not force a full board render.  The pointerdown
+  // path already closes an active editor when needed; doing it unconditionally
+  // here caused a duplicate render on every pan and produced a one-frame flash
+  // on large boards.
+  if (ui.whiteboardEditingNodeId) finishWhiteboardEditing();
+  cancelWhiteboardMediaHydration();
+  ui.whiteboardViewportDeferredRender = false;
   elements.whiteboardEditor.setPointerCapture?.(event.pointerId);
-  const viewport = normalizeCanvas(documentState.canvas).viewport;
+  const viewport = whiteboardViewport(documentState);
   ui.whiteboardDrag = {
     mode: "pan",
     documentId: state.activeDocument,
@@ -50083,7 +51219,8 @@ const startWhiteboardPan = (event, documentState) => {
     viewportX: viewport.x,
     viewportY: viewport.y,
     zoom: viewport.zoom,
-    beforeCanvas: whiteboardCanvasSnapshot(documentState.canvas),
+    editorRect: elements.whiteboardEditor.getBoundingClientRect(),
+    beforeViewport: { ...viewport },
     pending: null,
     frame: 0,
   };
@@ -50107,7 +51244,7 @@ const whiteboardNativeMediaControlHit = (event) => {
 };
 
 const createWhiteboardConnectedEdgePreview = (canvas, nodeIds = []) => {
-  const normalized = normalizeCanvas(canvas);
+  const normalized = canonicalCanvas(canvas);
   const movingIds = new Set(nodeIds.filter(Boolean));
   const nodesById = new Map(normalized.nodes.map((node) => [node.id, node]));
   return {
@@ -50296,7 +51433,7 @@ const syncWhiteboardGenerationMenuCapabilities = (target) => {
   const cardTarget = target === "card";
   const toggle = elements.whiteboardMenu.querySelector('[data-whiteboard-action="toggle-generate"]');
   const directText = elements.whiteboardMenu.querySelector("[data-whiteboard-direct-generation]");
-  const submenu = elements.whiteboardMenu.querySelector("#whiteboardGenerateMenu");
+  const submenu = elements.whiteboardSubmenuPanel?.querySelector("#whiteboardGenerateMenu");
   const imageGenerate = submenu?.querySelector('[data-whiteboard-action="generate-image"]');
   const videoGenerate = submenu?.querySelector('[data-whiteboard-action="generate-video"]');
   if (toggle) {
@@ -50329,9 +51466,7 @@ const syncWhiteboardGenerationMenuCapabilities = (target) => {
 
 const collapseWhiteboardContextMenu = ({ hide = true } = {}) => {
   closeWhiteboardNodeCreateMenu();
-  elements.whiteboardMenu.querySelectorAll("[data-whiteboard-collapsible]").forEach((item) => {
-    item.hidden = true;
-  });
+  closeWhiteboardSubmenuPanel();
   elements.whiteboardMenu.querySelectorAll('[data-whiteboard-action^="toggle-"]').forEach((item) => {
     item.setAttribute("aria-expanded", "false");
   });
@@ -50376,8 +51511,13 @@ elements.whiteboardEditor.addEventListener("pointerdown", (event) => {
     event.stopPropagation();
     return;
   }
-  flushWhiteboardWheelZoom();
-  commitWhiteboardViewportGesture();
+  // A space-drag is a pure viewport transform.  Flushing a pending wheel zoom
+  // and committing its history on the same pointerdown schedules an avoidable
+  // full render, which is the source of the visible flash before panning.
+  if (!ui.whiteboardSpacePressed) {
+    flushWhiteboardWheelZoom();
+    commitWhiteboardViewportGesture();
+  }
   collapseWhiteboardContextMenu();
   if (ui.whiteboardSpacePressed) restoreWhiteboardSpaceTextSnapshotForPan();
   if (whiteboardGenerationDialogs().some((dialog) => dialog.open && dialog.contains(document.activeElement))) {
@@ -50513,7 +51653,7 @@ elements.whiteboardEditor.addEventListener("pointerdown", (event) => {
   if (event.target.closest("a, button, input, select, [contenteditable='true']") && !event.target.closest("[data-whiteboard-drag-handle]")) return;
   if (whiteboardNativeMediaControlHit(event)) return;
   if (card) {
-    const normalizedCanvas = normalizeCanvas(documentState.canvas);
+    const normalizedCanvas = canonicalCanvas(documentState.canvas);
     const node = normalizedCanvas.nodes.find((item) => item.id === card.dataset.canvasNode);
     if (!node) return;
     const selectionIds = selectedWhiteboardNodeIds();
@@ -50605,10 +51745,10 @@ document.addEventListener("pointermove", (event) => {
       && Math.abs(verticalWidth - drag.nodeWidth) > Math.abs(horizontalWidth - drag.nodeWidth)
       ? verticalWidth
       : horizontalWidth;
-    const width = snapCanvasValue(Math.max(180, rawWidth), drag.canvasSettings);
+    const width = Math.max(180, rawWidth);
     const height = ["image", "video", "audio"].includes(drag.nodeKind)
       ? Math.max(100, width / aspectRatio)
-      : snapCanvasValue(Math.max(100, drag.nodeHeight + (north ? -worldDeltaY : worldDeltaY)), drag.canvasSettings);
+      : Math.max(100, drag.nodeHeight + (north ? -worldDeltaY : worldDeltaY));
     drag.pending = {
       x: west ? drag.nodeX + drag.nodeWidth - width : drag.nodeX,
       y: north ? drag.nodeY + drag.nodeHeight - height : drag.nodeY,
@@ -50633,8 +51773,11 @@ document.addEventListener("pointermove", (event) => {
       });
   }
   if (drag.mode === "card") event.preventDefault();
-  const x = snapCanvasValue(drag.nodeX + deltaX / drag.zoom, drag.canvasSettings);
-  const y = snapCanvasValue(drag.nodeY + deltaY / drag.zoom, drag.canvasSettings);
+  // Keep the visual preview at the exact pointer position. Grid snapping is
+  // applied once on pointerup; snapping every move makes a card visibly chase
+  // the pointer on dense boards.
+  const x = drag.nodeX + deltaX / drag.zoom;
+  const y = drag.nodeY + deltaY / drag.zoom;
   drag.pending = { x, y };
   scheduleWhiteboardDragPreview(drag);
 });
@@ -50727,6 +51870,24 @@ document.addEventListener("pointerup", (event) => {
     else selectWhiteboardEdges(edgeIds);
     selectionChanged = true;
   }
+  // Commit grid snapping once, after the pointer has been released. During
+  // the drag itself the preview remains pixel-accurate and follows the
+  // pointer without the old stepwise chase.
+  if (documentState && drag.pending && drag.mode === "card") {
+    drag.pending = {
+      ...drag.pending,
+      x: snapCanvasValue(drag.pending.x, drag.canvasSettings),
+      y: snapCanvasValue(drag.pending.y, drag.canvasSettings),
+    };
+  } else if (documentState && drag.pending && drag.mode === "resize") {
+    drag.pending = {
+      ...drag.pending,
+      x: snapCanvasValue(drag.pending.x, drag.canvasSettings),
+      y: snapCanvasValue(drag.pending.y, drag.canvasSettings),
+      width: snapCanvasValue(drag.pending.width, drag.canvasSettings),
+      height: snapCanvasValue(drag.pending.height, drag.canvasSettings),
+    };
+  }
   const changed = ["card", "pan", "resize"].includes(drag.mode) && Boolean(drag.pending);
   const canFinalizeGeometryInPlace = Boolean(
     documentState
@@ -50791,6 +51952,8 @@ document.addEventListener("pointerup", (event) => {
     setTimeout(() => { ui.whiteboardIgnoreClick = false; }, 160);
   }
   ui.whiteboardDrag = null;
+  const deferredViewportRender = ui.whiteboardViewportDeferredRender;
+  ui.whiteboardViewportDeferredRender = false;
   if (documentState && changed) {
     documentState.updatedAt = nowTime();
     persist({ documentIds: [state.activeDocument] });
@@ -50799,7 +51962,8 @@ document.addEventListener("pointerup", (event) => {
     documentState.updatedAt = nowTime();
     persist({ documentIds: [state.activeDocument] });
   }
-  if (documentState && drag.beforeCanvas && (["card", "resize", "pan"].includes(drag.mode) || (["edge", "multi-edge"].includes(drag.mode) && edgeChanged))) {
+  if (documentState && changed && drag.mode === "pan") pushWhiteboardViewportHistory(drag.beforeViewport);
+  if (documentState && drag.beforeCanvas && (["card", "resize"].includes(drag.mode) || (["edge", "multi-edge"].includes(drag.mode) && edgeChanged))) {
     const label = drag.mode === "card" ? drag.groupMembers?.length ? "移动选中节点" : "移动卡片" : drag.mode === "resize" ? "调整卡片大小" : ["edge", "multi-edge"].includes(drag.mode) ? createdNodeId ? "新建并连接节点" : drag.mode === "multi-edge" ? "批量连接节点" : "连接卡片" : "移动白板视图";
     pushWhiteboardHistory(drag.beforeCanvas, { label });
   }
@@ -50808,7 +51972,7 @@ document.addEventListener("pointerup", (event) => {
   } else if (documentState && canFinalizeGeometryInPlace) {
     renderWhiteboardMultiSelection(documentState);
     scheduleWhiteboardGenerationDialogPosition();
-  } else if (documentState && (changed || selectionChanged || drag.deferredRender || ["edge", "multi-edge"].includes(drag.mode))) {
+  } else if (documentState && (changed || selectionChanged || drag.deferredRender || deferredViewportRender || ["edge", "multi-edge"].includes(drag.mode))) {
     renderWhiteboard(documentState);
     if (createdNodeId) selectWhiteboardNode(createdNodeId);
   }
@@ -50821,6 +51985,8 @@ document.addEventListener("pointercancel", (event) => {
   if (ui.whiteboardModifierSelectionPointer?.pointerId === event.pointerId) ui.whiteboardModifierSelectionPointer = null;
   if (ui.whiteboardDrag?.pointerId !== event.pointerId) return;
   if (["edge", "multi-edge"].includes(ui.whiteboardDrag.mode)) ui.whiteboardEdgeDraft = null;
+  elements.whiteboardEditor.classList.remove("panning");
+  ui.whiteboardViewportDeferredRender = false;
   delete elements.whiteboardEditor.dataset.edgeTargetHandle;
   ui.whiteboardDrag = null;
   const documentState = activeWhiteboardDocument();
@@ -50832,12 +51998,14 @@ elements.whiteboardEditor.addEventListener("wheel", (event) => {
   const documentState = activeWhiteboardDocument();
   if (!documentState) return;
   event.preventDefault();
-  const rect = elements.whiteboardEditor.getBoundingClientRect();
   const identity = `${workspaceIdentity()}::${state.activeDocument}`;
   const pending = ui.whiteboardWheelZoom?.identity === identity ? ui.whiteboardWheelZoom : null;
-  const viewport = normalizeCanvas(documentState.canvas).viewport;
+  const gesture = ui.whiteboardViewportGesture?.identity === identity ? ui.whiteboardViewportGesture : null;
+  const rect = pending?.editorRect ?? gesture?.editorRect ?? elements.whiteboardEditor.getBoundingClientRect();
+  const viewport = whiteboardViewport(documentState);
   scheduleWhiteboardWheelZoom({
     identity,
+    editorRect: rect,
     zoom: (pending?.zoom ?? viewport.zoom) * Math.exp(-event.deltaY * 0.0015),
     localX: event.clientX - rect.left,
     localY: event.clientY - rect.top,
@@ -50935,6 +52103,7 @@ elements.whiteboardEditor.addEventListener("contextmenu", (event) => {
   const documentState = activeWhiteboardDocument();
   if (!documentState) return;
   closeWhiteboardNodeCreateMenu();
+  closeWhiteboardSubmenuPanel();
   event.preventDefault();
   event.stopPropagation();
   const card = event.target.closest("[data-canvas-node]");
@@ -50962,7 +52131,7 @@ elements.whiteboardEditor.addEventListener("contextmenu", (event) => {
   };
   elements.whiteboardMenu.dataset.multiSelection = String(keepMultiSelection);
   const batchActions = new Set(["toggle-generate", "generate-text", "generate-image", "generate-video", "copy", "cut", "duplicate", "save-as", "focus", "arrange", "toggle-color", "delete"]);
-  elements.whiteboardMenu.querySelectorAll("[data-whiteboard-target]").forEach((item) => {
+  [...elements.whiteboardMenu.querySelectorAll("[data-whiteboard-target]"), ...(elements.whiteboardSubmenuPanel?.querySelectorAll("[data-whiteboard-target]") || [])].forEach((item) => {
     const action = item.dataset.whiteboardAction || "";
     item.hidden = (keepMultiSelection && !batchActions.has(action))
       || !String(item.dataset.whiteboardTarget || "").split(/\s+/).includes(target)
@@ -51021,14 +52190,14 @@ elements.whiteboardNodeCreateMenu.addEventListener("click", (event) => {
   commitWhiteboardNodeCreateIntent(button.dataset.whiteboardNodeCreate);
 });
 
-elements.whiteboardMenu.addEventListener("click", async (event) => {
+const handleWhiteboardMenuClick = async (event) => {
   event.stopPropagation();
   const color = event.target.closest("[data-whiteboard-color]")?.dataset.whiteboardColor;
   const action = event.target.closest("[data-whiteboard-action]")?.dataset.whiteboardAction;
   const context = ui.whiteboardContext;
   if (color && context?.nodeId) {
     const contextNodeIds = context.multiSelection ? context.nodeIds : [context.nodeId];
-    elements.whiteboardMenu.hidden = true;
+    collapseWhiteboardContextMenu();
     updateWhiteboardCardsColor(contextNodeIds, color);
     return;
   }
@@ -51039,10 +52208,14 @@ elements.whiteboardMenu.addEventListener("click", async (event) => {
     "toggle-transform": "whiteboardTransformMenu",
   }[action];
   if (collapsibleMenuId && context?.nodeId) {
-    const menu = elements.whiteboardMenu.querySelector(`#${collapsibleMenuId}`);
+    const menu = elements.whiteboardSubmenuPanel?.querySelector(`#${collapsibleMenuId}`);
     const toggle = elements.whiteboardMenu.querySelector(`[data-whiteboard-action="${action}"]`);
+    if (!menu) return;
     const expanded = menu.hidden;
-    elements.whiteboardMenu.querySelectorAll("[data-whiteboard-collapsible]").forEach((item) => {
+    if (expanded) elements.whiteboardSubmenuPanel.dataset.anchorAction = action;
+    else delete elements.whiteboardSubmenuPanel.dataset.anchorAction;
+    elements.whiteboardSubmenuPanel.hidden = !expanded;
+    elements.whiteboardSubmenuPanel.querySelectorAll("[data-whiteboard-collapsible]").forEach((item) => {
       item.hidden = item !== menu || !expanded;
     });
     elements.whiteboardMenu.querySelectorAll('[data-whiteboard-action^="toggle-"]').forEach((item) => {
@@ -51051,16 +52224,13 @@ elements.whiteboardMenu.addEventListener("click", async (event) => {
     requestAnimationFrame(() => {
       // A submenu action can open a generation dialog before this positioning
       // frame runs. Do not resurrect the now-closed context menu over the form.
-      if (elements.whiteboardMenu.hidden) return;
-      positionContextMenu(elements.whiteboardMenu, {
-        x: Number.parseFloat(elements.whiteboardMenu.style.left) || 8,
-        y: Number.parseFloat(elements.whiteboardMenu.style.top) || 8,
-      });
+      if (elements.whiteboardMenu.hidden || !expanded) return;
+       positionWhiteboardSubmenuPanel(toggle);
     });
     return;
   }
   if (!action || !context) return;
-  elements.whiteboardMenu.hidden = true;
+  collapseWhiteboardContextMenu();
   const contextNodeIds = context.multiSelection
     ? [...new Set((context.nodeIds || []).map(String).filter(Boolean))]
     : context.nodeId ? [context.nodeId] : [];
@@ -51206,7 +52376,7 @@ elements.whiteboardMenu.addEventListener("click", async (event) => {
     }
     if (ui.whiteboardArrangePreview) resolveWhiteboardArrangePreview("restore", { announce: false });
     finishWhiteboardEditing();
-    const layoutCanvas = localWhiteboardArrangeLayout(documentState.canvas, contextNodeIds);
+    const layoutCanvas = localWhiteboardArrangeLayout(documentState.canvas, contextNodeIds, "grid");
     if (!layoutCanvas) {
       showToast("当前选中的卡片不足以生成整理方案");
       return;
@@ -51216,6 +52386,7 @@ elements.whiteboardMenu.addEventListener("click", async (event) => {
       documentId: state.activeDocument,
       scope: "selection",
       nodeIds: [...contextNodeIds],
+      layoutMode: "grid",
       layoutCanvas: whiteboardCanvasSnapshot(layoutCanvas),
     };
     updateWhiteboardArrangeDecisionCopy("selection");
@@ -51259,7 +52430,10 @@ elements.whiteboardMenu.addEventListener("click", async (event) => {
     if (context.multiSelection) deleteWhiteboardNodes(contextNodeIds);
     else deleteWhiteboardNode(context.nodeId);
   }
-});
+};
+
+elements.whiteboardMenu.addEventListener("click", handleWhiteboardMenuClick);
+elements.whiteboardSubmenuPanel?.addEventListener("click", handleWhiteboardMenuClick);
 
 document.addEventListener("keydown", (event) => {
   if (!activeWhiteboardDocument() || document.querySelector("dialog[open]:not(.whiteboard-generation-popover)")) return;
@@ -52051,6 +53225,7 @@ let whiteboardGenerationPositionFrame = 0;
 const positionWhiteboardGenerationSurfaces = () => {
   whiteboardGenerationDialogs().forEach((dialog) => positionWhiteboardGenerationDialog(dialog));
   positionWhiteboardGenerationCollapsedSessions();
+  positionWhiteboardCardToolbar();
 };
 
 const flushWhiteboardGenerationDialogPosition = () => {
@@ -52062,7 +53237,8 @@ const flushWhiteboardGenerationDialogPosition = () => {
 const scheduleWhiteboardGenerationDialogPosition = () => {
   const hasOpenDialog = whiteboardGenerationDialogs().some((dialog) => dialog.open);
   const hasGuidanceSession = Boolean(whiteboardGenerationCollapsedLayerElement?.querySelector("[data-whiteboard-guidance-session]"));
-  if (whiteboardGenerationPositionFrame || (!hasOpenDialog && !hasGuidanceSession)) return;
+  const hasCardToolbar = Boolean(elements.whiteboardCardToolbar && !elements.whiteboardCardToolbar.hidden);
+  if (whiteboardGenerationPositionFrame || (!hasOpenDialog && !hasGuidanceSession && !hasCardToolbar)) return;
   whiteboardGenerationPositionFrame = requestAnimationFrame(() => {
     whiteboardGenerationPositionFrame = 0;
     positionWhiteboardGenerationSurfaces();
@@ -54133,6 +55309,14 @@ const mediaConnectionOptionsMarkup = (channel, profiles) => {
 const imageModelsForConnection = (profile) => {
   if (!profile) return [];
   const models = getProviderImageModelOptions(profile.provider, profile.adapter).filter((model) => model.available !== false);
+  const probe = mediaCapabilityProbeFor("image", profile);
+  for (const slug of probeModelIds(probe?.models)) {
+    if (models.some((model) => model.slug === slug)) continue;
+    models.push({ slug, label: String(probe?.modelNames?.[slug] || slug), capabilities: ["image_generation"] });
+  }
+  if (profile.model && !models.some((model) => model.slug === profile.model)) {
+    models.unshift({ slug: profile.model, label: String(probe?.modelNames?.[profile.model] || profile.model), capabilities: ["image_generation"] });
+  }
   if (getProviderPreset(profile.provider).custom === true && profile.model && !models.some((model) => model.slug === profile.model)) {
     return [{ slug: profile.model, label: profile.model }, ...models];
   }
@@ -54155,6 +55339,8 @@ const whiteboardAspectRatioGlyphMarkup = (value) => {
   return `<span class="whiteboard-aspect-ratio-glyph" style="--aspect-glyph-width:${width}px;--aspect-glyph-height:${height}px" aria-hidden="true"></span>`;
 };
 
+const isGptImage25Model = (model = "") => String(model || "").trim().toLowerCase() === "gpt-image-2.5";
+
 const selectedOptionLabel = (field, fallback = "") => String(
   field?.selectedOptions?.[0]?.textContent || field?.value || fallback,
 ).trim();
@@ -54162,7 +55348,7 @@ const selectedOptionLabel = (field, fallback = "") => String(
 const syncWhiteboardImageSettingsControls = () => {
   const form = elements.whiteboardImageForm;
   if (!form?.elements?.aspectRatio || !elements.whiteboardImageSettingsSummary) return;
-  const aspectOrder = new Map(["auto", "21:9", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"].map((value, index) => [value, index]));
+  const aspectOrder = new Map(["auto", "21:9", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16", "9:21"].map((value, index) => [value, index]));
   const aspectValues = [...form.elements.aspectRatio.options]
     .map((option) => option.value)
     .sort((left, right) => (aspectOrder.get(left) ?? 99) - (aspectOrder.get(right) ?? 99));
@@ -54178,6 +55364,27 @@ const syncWhiteboardImageSettingsControls = () => {
     const selected = form.elements.quality.value === value;
     return `<button type="button" data-image-setting="quality" data-image-setting-value="${escapeHtml(value)}" aria-pressed="${selected}" class="${selected ? "selected" : ""}">${escapeHtml(label)}</button>`;
   }).join("");
+  const resolutionValues = [...(form.elements.resolution?.options || [])].map((option) => ({
+    value: option.value,
+    label: String(option.textContent || option.value).trim(),
+  }));
+  if (elements.whiteboardImageResolutionChoices) {
+    elements.whiteboardImageResolutionChoices.innerHTML = resolutionValues.map(({ value, label }) => {
+      const selected = form.elements.resolution.value === value;
+      return `<button type="button" data-image-setting="resolution" data-image-setting-value="${escapeHtml(value)}" aria-pressed="${selected}" class="${selected ? "selected" : ""}">${escapeHtml(label)}</button>`;
+    }).join("");
+  }
+  const backgroundLabels = { auto: "自动", opaque: "保留背景", transparent: "透明背景" };
+  const backgroundValues = [...(form.elements.background?.options || [])].map((option) => ({
+    value: option.value,
+    label: backgroundLabels[option.value] || String(option.textContent || option.value).trim(),
+  }));
+  if (elements.whiteboardImageBackgroundChoices) {
+    elements.whiteboardImageBackgroundChoices.innerHTML = backgroundValues.map(({ value, label }) => {
+      const selected = form.elements.background.value === value;
+      return `<button type="button" data-image-setting="background" data-image-setting-value="${escapeHtml(value)}" aria-pressed="${selected}" class="${selected ? "selected" : ""}">${escapeHtml(label)}</button>`;
+    }).join("");
+  }
   const selectedCount = String(form.elements.imageCount?.value || "1");
   elements.whiteboardImageCountChoices.querySelectorAll("[data-image-setting-value]").forEach((button) => {
     const selected = button.dataset.imageSettingValue === selectedCount;
@@ -54186,8 +55393,37 @@ const syncWhiteboardImageSettingsControls = () => {
   });
   const ratio = whiteboardAspectRatioShortLabel(form.elements.aspectRatio.value || "auto");
   const quality = selectedOptionLabel(form.elements.quality, "标准");
-  elements.whiteboardImageSettingsSummary.textContent = `${ratio} · ${quality} · ${selectedCount}张`;
-  elements.whiteboardImageSettingsTrigger.title = `比例 ${ratio}；清晰度 ${quality}；生成 ${selectedCount} 张`;
+  // GPT Image 2.5 exposes 1K/2K through the separate resolution field.  A
+  // hidden compatibility fallback must not be repeated in the summary.
+  const hasVisibleResolutionChoice = Boolean(
+    form.elements.resolution
+    && !elements.whiteboardImageResolutionField?.hidden
+    && form.elements.resolution.options?.length,
+  );
+  const resolution = hasVisibleResolutionChoice
+    ? selectedOptionLabel(form.elements.resolution, "")
+    : "";
+  // The background select is kept in the form as a compatibility fallback for
+  // providers that do not support background modes.  It must not leak that
+  // fallback value into the visible summary (for example, Dreamina and GPT
+  // Image 2.0 used to show a misleading “自动”).  Only a model capability
+  // that actually exposes background choices may contribute this field.
+  const imageProfile = whiteboardPickerProfile("image", form.elements.connectionId?.value, form.elements.model?.value);
+  const imageCapabilities = imageProfile
+    ? imageModelCapabilities(imageProfile.provider, form.elements.model?.value, dynamicModelsForChannel(imageProfile.provider, imageProfile.adapter))
+    : null;
+  const hasBackgroundCapability = Boolean(imageCapabilities?.backgrounds?.length);
+  const background = hasBackgroundCapability && !elements.whiteboardImageBackgroundField?.hidden
+    ? backgroundLabels[form.elements.background?.value] || ""
+    : "";
+  const gptImage25 = isGptImage25Model(form.elements.model?.value);
+  const summaryParts = gptImage25
+    ? [ratio, resolution, quality, background, `${selectedCount}张`]
+    : [ratio, quality, resolution, background, `${selectedCount}张`];
+  elements.whiteboardImageSettingsSummary.textContent = summaryParts.filter(Boolean).join(" · ");
+  elements.whiteboardImageSettingsTrigger.title = gptImage25
+    ? `比例 ${ratio}；清晰度 ${resolution}${quality ? `；画质 ${quality}` : ""}${background ? `；背景 ${background}` : ""}；生成 ${selectedCount} 张`
+    : `比例 ${ratio}；画质 ${quality}${resolution ? `；分辨率 ${resolution}` : ""}${background ? `；背景 ${background}` : ""}；生成 ${selectedCount} 张`;
 };
 
 const setWhiteboardImageSetting = (name, value) => {
@@ -54200,25 +55436,52 @@ const setWhiteboardImageSetting = (name, value) => {
   return true;
 };
 
-const syncWhiteboardImageCapabilityOptions = () => {
+const syncWhiteboardImageCapabilityOptions = ({ preferGptImage25Defaults = false } = {}) => {
   const form = elements.whiteboardImageForm;
   const profile = whiteboardPickerProfile("image", form.elements.connectionId.value, form.elements.model.value);
   if (!profile) return;
   const model = String(form.elements.model.value || profile.model || "").trim();
+  const gptImage25 = isGptImage25Model(model);
   const capabilities = imageModelCapabilities(profile.provider, model, dynamicModelsForChannel(profile.provider, profile.adapter));
   const previousRatio = form.elements.aspectRatio.value || "auto";
   const previousQuality = form.elements.quality.value || DEFAULT_IMAGE_GENERATION_QUALITY;
-  const ratioLabels = { auto: "自适应", "21:9": "21:9 超宽屏", "16:9": "16:9 横屏", "3:2": "3:2 横向", "4:3": "4:3 横向", "1:1": "1:1 方形", "3:4": "3:4 竖向", "2:3": "2:3 竖向", "9:16": "9:16 竖屏" };
-  const qualityLabels = { standard: "标准", high: "高清", "1k": "1K", "2k": "2K", "4k": "4K" };
+  const previousResolution = form.elements.resolution?.value || "1k";
+  const previousBackground = form.elements.background?.value || "auto";
+  const ratioLabels = { auto: "自适应", "21:9": "21:9 超宽屏", "16:9": "16:9 横屏", "3:2": "3:2 横向", "4:3": "4:3 横向", "1:1": "1:1 方形", "3:4": "3:4 竖向", "2:3": "2:3 竖向", "9:16": "9:16 竖屏", "9:21": "9:21 超长竖屏" };
+  const qualityLabels = { low: "低画质", standard: "标准画质", medium: "标准画质", high: "高清", ultra: "超高画质", xhigh: "超高画质", max: "极致画质", "1k": "1K", "2k": "2K", "4k": "4K" };
   const aspectRatios = [...new Set(["auto", ...capabilities.aspectRatios])];
   form.elements.aspectRatio.innerHTML = aspectRatios.map((value) => `<option value="${value}">${ratioLabels[value] || value}</option>`).join("");
-  form.elements.quality.innerHTML = capabilities.resolutions.map((value) => `<option value="${value}">${qualityLabels[value] || value.toUpperCase()}</option>`).join("");
+  const qualityOptions = capabilities.qualityOptions?.length ? capabilities.qualityOptions : capabilities.resolutions;
+  form.elements.quality.innerHTML = qualityOptions.map((value) => `<option value="${value}">${qualityLabels[value] || value.toUpperCase()}</option>`).join("");
+  const resolutionOptions = capabilities.outputResolutions || [];
+  if (form.elements.resolution) form.elements.resolution.innerHTML = (resolutionOptions.length ? resolutionOptions : ["1k"]).map((value) => `<option value="${value}">${value.toUpperCase()}</option>`).join("");
+  if (form.elements.background) form.elements.background.innerHTML = (capabilities.backgrounds?.length ? capabilities.backgrounds : ["auto"]).map((value) => `<option value="${value}">${value === "auto" ? "自动" : value === "opaque" ? "保留背景" : "透明背景"}</option>`).join("");
   form.elements.aspectRatio.value = aspectRatios.includes(previousRatio) ? previousRatio : "auto";
-  form.elements.quality.value = capabilities.resolutions.includes(previousQuality)
-    ? previousQuality
-    : capabilities.resolutions.includes(DEFAULT_IMAGE_GENERATION_QUALITY)
-      ? DEFAULT_IMAGE_GENERATION_QUALITY
-      : capabilities.resolutions[0] || "standard";
+  const defaultGptImage25Quality = gptImage25 && qualityOptions.includes("standard") ? "standard" : "";
+  const defaultGptImage25Resolution = gptImage25 && resolutionOptions.includes("2k") ? "2k" : "";
+  form.elements.quality.value = preferGptImage25Defaults && defaultGptImage25Quality
+    ? defaultGptImage25Quality
+    : capabilities.resolutions.includes(previousQuality)
+      ? previousQuality
+      : qualityOptions.includes(previousQuality)
+        ? previousQuality
+        : qualityOptions.includes(DEFAULT_IMAGE_GENERATION_QUALITY)
+          ? DEFAULT_IMAGE_GENERATION_QUALITY
+          : qualityOptions[0] || "standard";
+  if (form.elements.resolution) form.elements.resolution.value = preferGptImage25Defaults && defaultGptImage25Resolution
+    ? defaultGptImage25Resolution
+    : resolutionOptions.includes(previousResolution) ? previousResolution : resolutionOptions[0] || "1k";
+  if (form.elements.background) form.elements.background.value = (capabilities.backgrounds || ["auto"]).includes(previousBackground) ? previousBackground : "auto";
+  if (elements.whiteboardImageQualityField) {
+    const legend = elements.whiteboardImageQualityField.querySelector("legend");
+    if (legend) legend.textContent = "清晰度";
+  }
+  if (elements.whiteboardImageResolutionField) {
+    const legend = elements.whiteboardImageResolutionField.querySelector("legend");
+    if (legend) legend.textContent = gptImage25 ? "画质" : "输出分辨率";
+  }
+  elements.whiteboardImageResolutionField?.toggleAttribute("hidden", !resolutionOptions.length);
+  elements.whiteboardImageBackgroundField?.toggleAttribute("hidden", !(capabilities.backgrounds?.length));
   syncWhiteboardImageSettingsControls();
 };
 
@@ -54373,7 +55636,7 @@ const syncWhiteboardMediaPickers = (...selects) => {
   }
 };
 
-const syncWhiteboardImageModelOptions = (preferredModel = "") => {
+const syncWhiteboardImageModelOptions = (preferredModel = "", { preferGptImage25Defaults = false } = {}) => {
   const form = elements.whiteboardImageForm;
   const input = form.elements.model;
   const profile = whiteboardPickerProfile("image", form.elements.connectionId.value);
@@ -54388,7 +55651,7 @@ const syncWhiteboardImageModelOptions = (preferredModel = "") => {
     : models.some((model) => model.slug === profile?.model)
       ? profile.model
       : models[0]?.slug || profile?.model || "";
-  syncWhiteboardImageCapabilityOptions();
+  syncWhiteboardImageCapabilityOptions({ preferGptImage25Defaults });
   syncWhiteboardMediaPickers(form.elements.connectionId, input);
 };
 
@@ -54546,6 +55809,8 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
     elements.whiteboardImageForm.elements.prompt.value = whiteboardGenerationPromptFor(node, "image");
     elements.whiteboardImageForm.elements.aspectRatio.value = aspectRatio || DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
     elements.whiteboardImageForm.elements.quality.value = DEFAULT_IMAGE_GENERATION_QUALITY;
+    if (elements.whiteboardImageForm.elements.resolution) elements.whiteboardImageForm.elements.resolution.value = "1k";
+    if (elements.whiteboardImageForm.elements.background) elements.whiteboardImageForm.elements.background.value = "auto";
     elements.whiteboardImageForm.elements.imageCount.value = "1";
     elements.whiteboardImageForm.elements.connectionId.innerHTML = mediaConnectionOptionsMarkup("image", profiles);
     const rememberedValues = whiteboardRememberedGenerationProfile("image");
@@ -54568,7 +55833,9 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
     // Applying a draft can change the connection after the first model list
     // was built. Rebuild once more so the selected model always belongs to the
     // restored connection instead of falling back to its first option.
-    syncWhiteboardImageModelOptions(String(draftValues?.model || cardValues.model || rememberedValues.model || ""));
+    syncWhiteboardImageModelOptions(String(draftValues?.model || cardValues.model || rememberedValues.model || ""), {
+      preferGptImage25Defaults: !draftValues,
+    });
     syncWhiteboardMediaPickers(elements.whiteboardImageForm.elements.connectionId, elements.whiteboardImageForm.elements.model);
     elements.whiteboardImageForm.elements.prompt.value = sanitizeMediaProviderPrompt(elements.whiteboardImageForm.elements.prompt.value);
     renderWhiteboardGenerationInlineMentions(elements.whiteboardImageForm, { force: true });
@@ -54810,7 +56077,7 @@ const syncWhiteboardVideoModeLayout = ({ renderReferences = false } = {}) => {
   if (renderReferences && form.dataset.nodeId) renderWhiteboardGenerationReferences(elements.whiteboardVideoReferences, form.dataset.nodeId);
 };
 
-const syncWhiteboardVideoCapabilityOptions = ({ preferredMode = "" } = {}) => {
+const syncWhiteboardVideoCapabilityOptions = ({ preferredMode = "", preferDefaultDuration = false } = {}) => {
   const form = elements.whiteboardVideoForm;
   const profile = whiteboardPickerProfile("video", form.elements.connectionId.value, form.elements.model.value);
   if (!profile) return;
@@ -54847,7 +56114,11 @@ const syncWhiteboardVideoCapabilityOptions = ({ preferredMode = "" } = {}) => {
     ...generationModes.map((value) => `<option value="${value}">${modeLabels[value] || value}</option>`),
     ...unavailableGenerationModes.map((item) => `<option value="${escapeHtml(item.id)}" disabled title="${escapeHtml(item.reason || "当前连接暂不可用")}">${escapeHtml(item.label || modeLabels[item.id] || item.id)} · 当前 CLI 未开放</option>`),
   ].join("");
-  if ([...form.elements.duration.options].some((option) => option.value === previousDuration)) form.elements.duration.value = previousDuration;
+  const defaultDuration = durationOptions.some((value) => String(value) === "4")
+    ? "4"
+    : String(durationOptions[0] ?? "0");
+  if (preferDefaultDuration) form.elements.duration.value = defaultDuration;
+  else if ([...form.elements.duration.options].some((option) => option.value === previousDuration)) form.elements.duration.value = previousDuration;
   const defaultResolution = resolutions.includes("720p") ? "720p" : resolutions[0] || "";
   form.elements.resolution.value = resolutions.includes(previousResolution) ? previousResolution : defaultResolution;
   form.elements.generationMode.value = resolvedMode;
@@ -54855,7 +56126,7 @@ const syncWhiteboardVideoCapabilityOptions = ({ preferredMode = "" } = {}) => {
   syncWhiteboardVideoModeLayout();
 };
 
-const syncWhiteboardVideoModelOptions = (preferredModel = "", preferredMode = "") => {
+const syncWhiteboardVideoModelOptions = (preferredModel = "", preferredMode = "", { preferDefaultDuration = false } = {}) => {
   const form = elements.whiteboardVideoForm;
   const profile = whiteboardPickerProfile("video", form.elements.connectionId.value);
   if (!profile) return;
@@ -54867,7 +56138,7 @@ const syncWhiteboardVideoModelOptions = (preferredModel = "", preferredMode = ""
     : models.some((model) => model.slug === profile.model)
       ? profile.model
       : models[0]?.slug || "";
-  syncWhiteboardVideoCapabilityOptions({ preferredMode });
+  syncWhiteboardVideoCapabilityOptions({ preferredMode, preferDefaultDuration });
   syncWhiteboardMediaPickers(form.elements.connectionId, form.elements.model);
 };
 
@@ -54931,6 +56202,7 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
     syncWhiteboardVideoModelOptions(
       defaultWhiteboardVideoModel(String(draftValues?.model || cardValues.model || rememberedValues.model || "")),
       draftValues?.generationMode,
+      { preferDefaultDuration: !draftValues },
     );
     syncWhiteboardMediaPickers(elements.whiteboardVideoForm.elements.connectionId, elements.whiteboardVideoForm.elements.model);
     elements.whiteboardVideoForm.elements.prompt.value = sanitizeMediaProviderPrompt(elements.whiteboardVideoForm.elements.prompt.value);
@@ -55440,6 +56712,310 @@ const addWhiteboardImageCard = ({ attachment, aspectRatio = 16 / 9, generation =
   return nodeId;
 };
 
+const createWhiteboardDerivedMediaNodes = ({ sourceNodeId, outputs = [], historyLabel = "创建媒体下游卡片" } = {}) => {
+  const documentState = activeWhiteboardDocument();
+  const sourceNode = whiteboardNodeById(sourceNodeId, documentState);
+  const normalizedOutputs = outputs.filter((output) => output?.attachment?.relativePath && ["image", "video", "audio"].includes(output.kind));
+  if (!documentState || !sourceNode || !normalizedOutputs.length || normalizedOutputs.length !== outputs.length) return [];
+  const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
+  let canvas = documentState.canvas;
+  const nodeIds = [];
+  const createdAt = new Date().toISOString();
+  for (const output of normalizedOutputs) {
+    const nodeId = uid("canvas-image");
+    const duplicated = duplicateCanvasNodeRight(canvas, sourceNodeId, { id: nodeId, inheritEdges: "none" });
+    if (!duplicated.nodeId) return [];
+    canvas = duplicated.canvas;
+    const attachment = output.attachment;
+    const aspectRatio = output.kind === "audio"
+      ? 3.2
+      : Math.max(0.1, Number(output.aspectRatio)
+        || (Number(attachment.videoWidth) > 0 && Number(attachment.videoHeight) > 0 ? Number(attachment.videoWidth) / Number(attachment.videoHeight) : Number(sourceNode.aspectRatio) || 16 / 9));
+    canvas = updateCanvasNode(canvas, nodeId, {
+      kind: output.kind,
+      file: attachment.relativePath,
+      name: attachment.name || (output.kind === "audio" ? "音频片段" : output.kind === "video" ? "静音视频" : "图片"),
+      mimeType: attachment.mimeType,
+      aspectRatio,
+      durationMs: attachment.durationMs,
+      width: output.kind === "audio" ? Math.max(360, Number(sourceNode.width) || 360) : Number(sourceNode.width) || 320,
+      thumbnailRelativePath: attachment.thumbnailRelativePath || "",
+      thumbnailMimeType: attachment.thumbnailMimeType || "",
+      mediaBatchDirectory: "",
+      mediaBatchIndexPath: "",
+      whiteboardMediaDirectory: output.whiteboardMediaDirectory || "",
+      whiteboardMediaIndexPath: output.whiteboardMediaIndexPath || "",
+      generation: null,
+    });
+    canvas = addCanvasEdge(canvas, { fromNode: sourceNodeId, toNode: nodeId });
+    const eventAt = attachment.sourceEventAt || attachment.createdAt || attachment.uploadedAt || createdAt;
+    canvas = appendCanvasAsset(canvas, {
+      id: uid("canvas-asset"),
+      kind: output.kind,
+      origin: "generated",
+      prompt: output.operationLabel || historyLabel,
+      attachment,
+      aspectRatio,
+      sourceNodeId: nodeId,
+      nodeName: attachment.name || "",
+      source: "whiteboard",
+      sourceDocumentId: state.activeDocument,
+      createdAt: eventAt,
+      completedAt: eventAt,
+      sourceEventAt: eventAt,
+    });
+    nodeIds.push(nodeId);
+  }
+  documentState.canvas = canvas;
+  documentState.updatedAt = nowTime();
+  pushWhiteboardHistory(beforeCanvas, { label: historyLabel });
+  persist({ documentIds: [state.activeDocument] });
+  renderWhiteboard(documentState);
+  selectWhiteboardNodes(nodeIds);
+  return nodeIds;
+};
+
+const requestWhiteboardMediaEdit = async (endpoint, body) => {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) throw new Error(payload.message || "媒体处理失败");
+  return payload;
+};
+
+const separateWhiteboardVideoAudio = async (nodeId) => {
+  const documentState = activeWhiteboardDocument();
+  const node = whiteboardNodeById(nodeId, documentState);
+  if (!documentState || node?.kind !== "video" || !node.file) return showToast("当前卡片没有可分离的视频");
+  if (whiteboardMediaEditBusyNodeIds.has(nodeId)) return showToast("当前视频正在处理中");
+  const source = { workspaceId: workspaceIdentity(), workspacePath: state.settings.workspacePath, documentId: state.activeDocument, nodeId, relativePath: node.file };
+  whiteboardMediaEditBusyNodeIds.add(nodeId);
+  renderWhiteboardCardToolbar();
+  showToast("正在分离音视频，原视频不会改变");
+  try {
+    const payload = await requestWhiteboardMediaEdit("/api/workspace/video-separate", {
+      workspacePath: source.workspacePath,
+      documentId: source.documentId,
+      relativePath: source.relativePath,
+    });
+    if (workspaceIdentity() !== source.workspaceId || state.activeDocument !== source.documentId) throw new Error("音视频已分离，但当前白板已经切换，请回到原白板查看结果");
+    if (!whiteboardNodeById(nodeId)) throw new Error("音视频已分离，但原视频卡片已经不存在");
+    const nodeIds = createWhiteboardDerivedMediaNodes({
+      sourceNodeId: nodeId,
+      historyLabel: "分离音视频并创建下游卡片",
+      outputs: [
+        { kind: "video", attachment: payload.silentVideo, aspectRatio: payload.aspectRatio, operationLabel: "音视频分离：静音视频" },
+        { kind: "audio", attachment: payload.audio, operationLabel: "音视频分离：音频" },
+      ],
+    });
+    if (nodeIds.length !== 2) throw new Error("分离结果已保存，但下游卡片创建失败");
+    showToast("已生成静音视频和纯音频两个下游卡片");
+    return true;
+  } catch (error) {
+    showToast(error.message || "音视频分离失败");
+    return false;
+  } finally {
+    whiteboardMediaEditBusyNodeIds.delete(nodeId);
+    renderWhiteboardCardToolbar();
+  }
+};
+
+let whiteboardAudioTrimContext = null;
+
+const formatWhiteboardAudioTrimTime = (milliseconds) => {
+  const total = Math.max(0, Number(milliseconds) || 0);
+  const minutes = Math.floor(total / 60_000);
+  const seconds = (total - minutes * 60_000) / 1_000;
+  return `${String(minutes).padStart(2, "0")}:${seconds.toFixed(2).padStart(5, "0")}`;
+};
+
+const configureWhiteboardAudioTrimRange = (durationMs, { preserveSelection = false } = {}) => {
+  const duration = Math.max(100, Math.round(Number(durationMs) || 0));
+  if (!whiteboardAudioTrimContext) return;
+  whiteboardAudioTrimContext.durationMs = duration;
+  for (const input of [elements.whiteboardAudioTrimStart, elements.whiteboardAudioTrimEnd]) {
+    input.max = String(duration);
+    input.step = "10";
+  }
+  if (!preserveSelection) {
+    elements.whiteboardAudioTrimStart.value = "0";
+    elements.whiteboardAudioTrimEnd.value = String(duration);
+  } else {
+    elements.whiteboardAudioTrimStart.value = String(Math.min(duration - 100, Number(elements.whiteboardAudioTrimStart.value) || 0));
+    elements.whiteboardAudioTrimEnd.value = String(Math.min(duration, Math.max(100, Number(elements.whiteboardAudioTrimEnd.value) || duration)));
+  }
+};
+
+const syncWhiteboardAudioTrimControls = (changed = "") => {
+  if (!whiteboardAudioTrimContext) return;
+  const duration = Math.max(100, Number(whiteboardAudioTrimContext.durationMs) || 100);
+  let start = Math.max(0, Math.min(duration - 100, Number(elements.whiteboardAudioTrimStart.value) || 0));
+  let end = Math.max(100, Math.min(duration, Number(elements.whiteboardAudioTrimEnd.value) || duration));
+  if (end - start < 100) {
+    if (changed === "start") start = Math.max(0, end - 100);
+    else end = Math.min(duration, start + 100);
+  }
+  elements.whiteboardAudioTrimStart.value = String(Math.round(start));
+  elements.whiteboardAudioTrimEnd.value = String(Math.round(end));
+  elements.whiteboardAudioTrimTrack.style.setProperty("--trim-start", `${(start / duration) * 100}%`);
+  elements.whiteboardAudioTrimTrack.style.setProperty("--trim-end", `${(end / duration) * 100}%`);
+  elements.whiteboardAudioTrimStartOutput.textContent = formatWhiteboardAudioTrimTime(start);
+  elements.whiteboardAudioTrimEndOutput.textContent = formatWhiteboardAudioTrimTime(end);
+  elements.whiteboardAudioTrimDurationOutput.textContent = formatWhiteboardAudioTrimTime(end - start);
+  if (changed === "start" && Number.isFinite(elements.whiteboardAudioTrimPreview.duration)) elements.whiteboardAudioTrimPreview.currentTime = start / 1_000;
+  if (changed === "end" && (elements.whiteboardAudioTrimPreview.currentTime * 1_000 < start || elements.whiteboardAudioTrimPreview.currentTime * 1_000 >= end)) elements.whiteboardAudioTrimPreview.currentTime = start / 1_000;
+};
+
+const whiteboardAudioTrimPreviewBounds = () => ({
+  startMs: Math.max(0, Number(elements.whiteboardAudioTrimStart.value) || 0),
+  endMs: Math.max(100, Number(elements.whiteboardAudioTrimEnd.value) || Number(whiteboardAudioTrimContext?.durationMs) || 100),
+});
+
+const resetWhiteboardAudioTrimPreviewToStart = () => {
+  const { startMs } = whiteboardAudioTrimPreviewBounds();
+  if (Number.isFinite(elements.whiteboardAudioTrimPreview.duration)) elements.whiteboardAudioTrimPreview.currentTime = startMs / 1_000;
+};
+
+const openWhiteboardAudioTrimDialog = (nodeId) => {
+  const documentState = activeWhiteboardDocument();
+  const node = whiteboardNodeById(nodeId, documentState);
+  if (!documentState || node?.kind !== "audio" || !node.file) return showToast("当前卡片没有可截取的音频");
+  if (state.readOnly || whiteboardCandidateFor(nodeId)) return showToast("当前卡片暂不可编辑");
+  whiteboardAudioTrimContext = {
+    workspaceId: workspaceIdentity(),
+    workspacePath: state.settings.workspacePath,
+    documentId: state.activeDocument,
+    nodeId,
+    relativePath: node.file,
+    durationMs: Math.max(0, Number(node.durationMs) || 0),
+  };
+  elements.whiteboardAudioTrimPreview.pause();
+  elements.whiteboardAudioTrimPreview.src = whiteboardAttachmentUrl(node);
+  configureWhiteboardAudioTrimRange(whiteboardAudioTrimContext.durationMs || 1_000);
+  syncWhiteboardAudioTrimControls();
+  if (!elements.whiteboardAudioTrimDialog.open) elements.whiteboardAudioTrimDialog.showModal();
+  elements.whiteboardAudioTrimPreview.load();
+  return true;
+};
+
+const closeWhiteboardAudioTrimDialog = () => {
+  if (elements.whiteboardAudioTrimDialog.open) elements.whiteboardAudioTrimDialog.close();
+};
+
+elements.whiteboardAudioTrimPreview.addEventListener("loadedmetadata", () => {
+  if (!whiteboardAudioTrimContext || !(Number(elements.whiteboardAudioTrimPreview.duration) > 0)) return;
+  configureWhiteboardAudioTrimRange(Math.round(elements.whiteboardAudioTrimPreview.duration * 1_000));
+  syncWhiteboardAudioTrimControls();
+  resetWhiteboardAudioTrimPreviewToStart();
+});
+elements.whiteboardAudioTrimPreview.addEventListener("play", () => {
+  if (!whiteboardAudioTrimContext) return;
+  const { startMs, endMs } = whiteboardAudioTrimPreviewBounds();
+  const currentMs = elements.whiteboardAudioTrimPreview.currentTime * 1_000;
+  if (!(currentMs >= startMs && currentMs < endMs)) resetWhiteboardAudioTrimPreviewToStart();
+});
+elements.whiteboardAudioTrimPreview.addEventListener("seeking", () => {
+  if (!whiteboardAudioTrimContext) return;
+  const { startMs, endMs } = whiteboardAudioTrimPreviewBounds();
+  const currentMs = elements.whiteboardAudioTrimPreview.currentTime * 1_000;
+  if (currentMs < startMs || currentMs > endMs) {
+    elements.whiteboardAudioTrimPreview.currentTime = (currentMs < startMs ? startMs : Math.max(startMs, endMs - 1)) / 1_000;
+  }
+});
+elements.whiteboardAudioTrimPreview.addEventListener("timeupdate", () => {
+  if (!whiteboardAudioTrimContext || elements.whiteboardAudioTrimPreview.paused) return;
+  const { startMs, endMs } = whiteboardAudioTrimPreviewBounds();
+  if (elements.whiteboardAudioTrimPreview.currentTime * 1_000 < endMs) return;
+  elements.whiteboardAudioTrimPreview.pause();
+  elements.whiteboardAudioTrimPreview.currentTime = startMs / 1_000;
+});
+elements.whiteboardAudioTrimPreview.addEventListener("ended", resetWhiteboardAudioTrimPreviewToStart);
+elements.whiteboardAudioTrimStart.addEventListener("input", () => syncWhiteboardAudioTrimControls("start"));
+elements.whiteboardAudioTrimEnd.addEventListener("input", () => syncWhiteboardAudioTrimControls("end"));
+elements.closeWhiteboardAudioTrim.addEventListener("click", closeWhiteboardAudioTrimDialog);
+elements.cancelWhiteboardAudioTrim.addEventListener("click", closeWhiteboardAudioTrimDialog);
+elements.whiteboardAudioTrimDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeWhiteboardAudioTrimDialog();
+});
+elements.whiteboardAudioTrimDialog.addEventListener("close", () => {
+  elements.whiteboardAudioTrimPreview.pause();
+  elements.whiteboardAudioTrimPreview.removeAttribute("src");
+  elements.whiteboardAudioTrimPreview.load();
+  whiteboardAudioTrimContext = null;
+});
+elements.whiteboardAudioTrimForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const context = whiteboardAudioTrimContext ? { ...whiteboardAudioTrimContext } : null;
+  if (!context || whiteboardMediaEditBusyNodeIds.has(context.nodeId)) return;
+  const startMs = Math.round(Number(elements.whiteboardAudioTrimStart.value) || 0);
+  const endMs = Math.round(Number(elements.whiteboardAudioTrimEnd.value) || 0);
+  if (endMs - startMs < 100) return showToast("请选择至少 0.1 秒的音频片段");
+  whiteboardMediaEditBusyNodeIds.add(context.nodeId);
+  elements.confirmWhiteboardAudioTrim.disabled = true;
+  try {
+    const payload = await requestWhiteboardMediaEdit("/api/workspace/audio-trim", {
+      workspacePath: context.workspacePath,
+      documentId: context.documentId,
+      relativePath: context.relativePath,
+      startMs,
+      endMs,
+    });
+    if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("音频片段已保存，但当前白板已经切换，请回到原白板查看结果");
+    if (!whiteboardNodeById(context.nodeId)) throw new Error("音频片段已保存，但原音频卡片已经不存在");
+    const nodeIds = createWhiteboardDerivedMediaNodes({
+      sourceNodeId: context.nodeId,
+      historyLabel: "截取音频并创建下游卡片",
+      outputs: [{ kind: "audio", attachment: payload.attachment, operationLabel: "截取音频片段" }],
+    });
+    if (nodeIds.length !== 1) throw new Error("截取结果已保存，但下游卡片创建失败");
+    closeWhiteboardAudioTrimDialog();
+    showToast("已创建所选音频片段的下游卡片");
+  } catch (error) {
+    showToast(error.message || "音频截取失败");
+  } finally {
+    whiteboardMediaEditBusyNodeIds.delete(context.nodeId);
+    elements.confirmWhiteboardAudioTrim.disabled = false;
+    renderWhiteboardCardToolbar();
+  }
+});
+
+elements.whiteboardCardToolbar.addEventListener("pointerdown", (event) => event.stopPropagation());
+elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
+  const action = event.target.closest("[data-whiteboard-card-tool]");
+  if (!action || action.disabled) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const nodeId = elements.whiteboardCardToolbar.dataset.nodeId || "";
+  const node = whiteboardNodeById(nodeId);
+  if (!node) return renderWhiteboardCardToolbar();
+  const tool = action.dataset.whiteboardCardTool;
+  if (tool === "edit-image") return void openWhiteboardImageEditor(nodeId);
+  if (tool === "separate-av") return void separateWhiteboardVideoAudio(nodeId);
+  if (tool === "trim-audio") return void openWhiteboardAudioTrimDialog(nodeId);
+  if (tool === "composite-process") return void renderCompositeLongVideoProcessDialog(nodeId);
+  if (tool === "save-as") return void exportWhiteboardCards([nodeId]);
+  const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(nodeId)}"]`);
+  if (tool === "preview") {
+    const preview = card?.querySelector(`[data-attachment-preview="${CSS.escape(node.kind)}"]`);
+    if (preview) openAttachmentPreview(preview);
+    else showToast("当前卡片没有可预览的媒体");
+    return;
+  }
+  if (tool === "extract-frame") {
+    action.dataset.videoFrameTrigger = "true";
+    action.dataset.frameDestination = "whiteboard";
+    action.dataset.frameSourceNode = nodeId;
+    action.dataset.attachmentPath = node.file;
+    action.dataset.attachmentWorkspacePath = state.settings.workspacePath;
+    action.dataset.attachmentDocumentId = state.activeDocument;
+    openVideoFrameMenu(event, action);
+  }
+});
+
 const refreshWhiteboardGenerationReferences = (targetNodeId) => {
   [
     [elements.whiteboardGenerateForm, elements.whiteboardTextReferences],
@@ -55512,12 +57088,13 @@ const openVideoFrameMenu = (event, trigger) => {
   }
   event?.preventDefault?.();
   event?.stopPropagation?.();
-  const sourceVideo = videoElementForFrameTrigger(trigger);
-  const sourceCard = trigger?.closest?.("[data-canvas-node]");
+  const sourceNodeId = String(trigger?.dataset?.frameSourceNode || trigger?.closest?.("[data-canvas-node]")?.dataset?.canvasNode || "");
+  const sourceCard = trigger?.closest?.("[data-canvas-node]")
+    || (sourceNodeId ? elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(sourceNodeId)}"]`) : null);
+  const sourceVideo = videoElementForFrameTrigger(trigger) || sourceCard?.querySelector?.("video") || null;
   const destination = (trigger?.dataset?.frameDestination === "whiteboard" || sourceCard)
     ? "whiteboard"
     : "conversation";
-  const sourceNodeId = String(trigger?.dataset?.frameSourceNode || sourceCard?.dataset?.canvasNode || "");
   ui.videoFrameExtraction = {
     relativePath,
     destination,
@@ -56273,8 +57850,12 @@ const whiteboardMediaReferencePlan = ({ channel, settings, modelAttachments, gen
   if (channel === "image") {
     const mode = imageGenerationMode(settings, dynamicModelsForChannel(settings.provider, settings.adapter));
     const template = String(settings.cliArgs || (settings.cliPath === OPENAI_IMAGE_CLI_ALIAS ? OPENAI_IMAGE_CLI_ARGS : settings.cliPath === DREAMINA_IMAGE_CLI_ALIAS ? DREAMINA_IMAGE_CLI_ARGS : ""));
+    const libTvImageCli = settings.adapter === "cli"
+      && settings.cliPath === LIBTV_CLI_ALIAS
+      && String(settings.provider || "").toLowerCase() === "libtv";
     const supportsImagesDirectly = mode === "responses_tool"
       || mode === "images_api"
+      || libTvImageCli
       || (mode === "media_cli" && (template.includes("{referenceImagesFile}") || template.includes("{referenceMediaFile}")));
     const limits = modelReferenceLimits(settings, { channel: "image", dynamicModels: dynamicModelsForChannel(settings.provider, settings.adapter) });
     const unsupportedReferences = [
@@ -57034,14 +58615,14 @@ document.addEventListener("click", (event) => {
 });
 
 elements.whiteboardImageForm.elements.connectionId.addEventListener("change", () => {
-  syncWhiteboardImageModelOptions();
+  syncWhiteboardImageModelOptions("", { preferGptImage25Defaults: true });
   persistWhiteboardGenerationProfile("image", whiteboardGenerationFormValues(elements.whiteboardImageForm));
   renderWhiteboardGenerationCredit("image");
   const settings = currentImageGenerationSettings(elements.whiteboardImageForm.elements.connectionId.value, elements.whiteboardImageForm.elements.model.value);
   ensureDreaminaGenerationAccountAvailable(settings, { channel: "image" }).catch(() => {});
 });
 elements.whiteboardImageForm.elements.model.addEventListener("change", () => {
-  syncWhiteboardImageCapabilityOptions();
+  syncWhiteboardImageCapabilityOptions({ preferGptImage25Defaults: true });
   persistWhiteboardGenerationProfile("image", whiteboardGenerationFormValues(elements.whiteboardImageForm));
   renderWhiteboardGenerationCredit("image");
 });
@@ -57115,6 +58696,10 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
     const selectedModel = String(formData.get("model") ?? "").trim();
     const imageCount = Math.max(1, Math.min(4, Number(formData.get("imageCount")) || 1));
     const imageSettings = currentImageGenerationSettings(connectionId, selectedModel);
+    updateWhiteboardGenerationCandidate(candidateKey, {
+      provider: imageSettings?.provider || "",
+      adapter: imageSettings?.adapter || "",
+    });
     if (!(await ensureDreaminaGenerationAccountAvailable(imageSettings, { channel: "image" }))) {
       cancelWhiteboardSubmissionFeedback(candidateKey, { workspacePath: sourceWorkspacePath, documentId: sourceDocumentId });
       finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "image", form: elements.whiteboardImageForm });
@@ -57190,6 +58775,8 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
         generationProfile: whiteboardGenerationProfileFromSettings(imageSettings, "chat"),
         aspectRatio,
         quality: formData.get("quality"),
+        resolution: formData.get("resolution"),
+        background: formData.get("background"),
         imageCount,
         referenceMedia: referencePlan.directReferences,
         novelCover: isNovelCoverRequest(prompt)
@@ -57201,6 +58788,7 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
       jobId: durableJob.id,
       status: durableJob.status,
       providerStatus: durableJob.providerStatus,
+      provider: String(durableJob.request?.settings?.provider || durableJob.settings?.provider || imageSettings?.provider || ""),
       model: String(durableJob.request?.settings?.model || durableJob.settings?.model || imageSettings?.model || ""),
       providerTaskId: durableJob.providerTaskId,
       submissionState: durableJob.submissionState,
@@ -57397,7 +58985,7 @@ const materializeWhiteboardVideoGenerationTargets = (nodeId, requestedCount, {
   let canvas = documentState.canvas;
   const nodeIds = [nodeId];
   for (let index = 1; index < count; index += 1) {
-    const duplicated = duplicateCanvasNodeBelow(canvas, nodeId, {
+    const duplicated = duplicateCanvasNodeRight(canvas, nodeId, {
       id: uid(["image", "video", "audio"].includes(source.kind) ? "canvas-file" : "canvas-node"),
       inheritEdges: "upstream",
     });
@@ -57701,13 +59289,6 @@ const recoverCompositeLongVideoChildJob = async (job) => {
 };
 
 document.addEventListener("click", (event) => {
-  const processButton = event.target.closest("[data-composite-long-video-process]");
-  if (processButton) {
-    event.preventDefault();
-    event.stopPropagation();
-    renderCompositeLongVideoProcessDialog(processButton.dataset.compositeLongVideoProcess);
-    return;
-  }
   const retryButton = event.target.closest("[data-composite-long-video-retry]");
   if (retryButton) {
     const dialog = retryButton.closest("#compositeLongVideoProcessDialog");
@@ -57757,6 +59338,10 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
     const connectionId = String(formData.get("connectionId") ?? "");
     const selectedModel = String(formData.get("model") ?? "").trim();
     const videoSettings = currentVideoGenerationSettings(connectionId, selectedModel);
+    updateWhiteboardGenerationCandidate(initialCandidateKey, {
+      provider: videoSettings?.provider || "",
+      adapter: videoSettings?.adapter || "",
+    });
     if (!(await ensureDreaminaGenerationAccountAvailable(videoSettings, { channel: "video" }))) {
       cancelSubmissionFeedback();
       finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "video", form: elements.whiteboardVideoForm });
@@ -57931,6 +59516,7 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
           jobId: durableJob.id,
           status: durableJob.status,
           providerStatus: durableJob.providerStatus,
+          provider: String(durableJob.request?.settings?.provider || durableJob.settings?.provider || videoSettings?.provider || ""),
           model: String(durableJob.request?.settings?.model || durableJob.settings?.model || videoSettings?.model || ""),
           providerTaskId: durableJob.providerTaskId,
           submissionState: durableJob.submissionState,
@@ -58147,6 +59733,7 @@ elements.whiteboardAudioForm.addEventListener("submit", async (event) => {
       jobId: durableJob.id,
       status: durableJob.status,
       providerStatus: durableJob.providerStatus,
+      provider: String(durableJob.request?.settings?.provider || audioSettings.provider || ""),
       model: String(durableJob.request?.settings?.model || audioSettings.model || ""),
       providerTaskId: durableJob.providerTaskId,
       submissionState: durableJob.submissionState,
@@ -58520,10 +60107,15 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
     startWhiteboardGenerationHeaderDrag(event, dialog);
   });
   dialog.addEventListener("click", (event) => {
-    recoverWhiteboardGenerationDialogForInteraction(
-      dialog,
-      event.target.closest?.(".whiteboard-generation-inline-mentions"),
-    );
+    const editor = event.target.closest?.(".whiteboard-generation-inline-mentions");
+    recoverWhiteboardGenerationDialogForInteraction(dialog, editor);
+    // A native dialog can repaint or lose focus between pointerdown and click
+    // while its references/provider controls are being restored.  Keep the
+    // click on the prompt itself actionable: restore focus without replacing
+    // Chromium's click-position caret or the user's live selection.
+    if (editor?.isConnected && !dialog.inert && document.activeElement !== editor) {
+      editor.focus({ preventScroll: true });
+    }
     if (!event.target.closest("[data-whiteboard-generation-add-reference], [data-whiteboard-generation-reference-add-menu]")) {
       setWhiteboardGenerationReferenceAddMenuOpen(dialog.querySelector(".whiteboard-generation-references"), false);
     }
@@ -58561,7 +60153,13 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
         && editor.contains(selection.anchorNode)
         && editor.contains(selection.focusNode);
       editor.focus({ preventScroll: true });
-      if (!hasLiveSelection) placeWhiteboardRichPromptCaretAtEnd(editor.closest("form"), { focus: false });
+      // Let Chromium place the native caret for the actual pointer target.
+      // Placing the caret at the end during capture used to win the race
+      // against the native click after a late redraw, making a click on the
+      // middle of the prompt appear to do nothing. The click handler below
+      // resolves the target position and falls back to the end only when the
+      // browser still did not produce a valid range.
+      if (hasLiveSelection) rememberWhiteboardRichPromptSelection(editor.closest("form"));
     }
   }, true);
   dialog.addEventListener("close", () => {
@@ -59003,10 +60601,15 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
     placeWhiteboardRichPromptCaretAtOffset(form, offset, { focus: true });
     rememberRichSelection();
   });
-  editor?.addEventListener("click", () => {
+  editor?.addEventListener("click", (event) => {
     if (document.activeElement !== editor) editor.focus({ preventScroll: true });
     const selection = document.getSelection();
-    if (!selection?.rangeCount || !editor.contains(selection.anchorNode)) placeWhiteboardRichPromptCaretAtEnd(form, { focus: true });
+    if (!selection?.rangeCount || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode)) {
+      // A late reference/status redraw can leave Chromium with a detached
+      // Range. Resolve the caret from the actual click point instead of
+      // silently moving it to the end of the prompt.
+      placeWhiteboardGenerationReferenceDropCaret(editor, event.clientX, event.clientY);
+    }
     rememberRichSelection();
   });
   editor?.addEventListener("dragover", (event) => {
@@ -59205,6 +60808,21 @@ document.addEventListener("pointerdown", (event) => {
 }, true);
 
 whiteboardGenerationDialogs().forEach((dialog) => {
+  // A reused native dialog can receive a submit from an older deferred
+  // callback during rapid card switching.  Reject it before the form handler
+  // reads the stale nodeId and starts a task for the wrong card.
+  dialog.addEventListener("submit", (event) => {
+    const form = event.target?.closest?.("form");
+    const anchorNodeId = String(dialog.dataset.anchorNodeId || "");
+    const formNodeId = String(form?.dataset?.nodeId || "");
+    if (!anchorNodeId || !formNodeId || anchorNodeId !== formNodeId
+      || dialog.dataset.anchorDocumentId !== String(state.activeDocument || "")
+      || dialog.dataset.anchorWorkspaceId !== workspaceIdentity()) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showToast("生成目标已切换，已阻止旧操作栏提交；请在当前卡片重新生成");
+    }
+  }, true);
   dialog.addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-whiteboard-generation-type-trigger]");
     if (trigger) {
@@ -59326,7 +60944,7 @@ const composerMediaAttachments = ({ referenceIds = [], attachments = [] } = {}) 
 };
 
 const requestedMediaAspectRatio = (prompt, fallback, supported = []) => {
-  const match = String(prompt).match(/(?:^|\D)(21:9|16:9|9:16|3:2|2:3|4:3|3:4|1:1)(?:\D|$)/);
+  const match = String(prompt).match(/(?:^|\D)(21:9|9:21|16:9|9:16|3:2|2:3|4:3|3:4|1:1)(?:\D|$)/);
   return match && supported.includes(match[1]) ? match[1] : fallback;
 };
 
@@ -59481,6 +61099,7 @@ const conversationMediaModelsForConnection = (channel, profile) => {
 const CONVERSATION_IMAGE_ASPECT_LABELS = {
   auto: "自适应",
   "21:9": "21:9 超宽屏",
+  "9:21": "9:21 超长竖屏",
   "16:9": "16:9 横屏",
   "3:2": "3:2 横向",
   "4:3": "4:3 横向",
@@ -59969,6 +61588,7 @@ const generateMediaFromComposer = async (promptInput = elements.chatInput.value,
     sourceMessageId: userMessage.id,
     cleared: userMessage.referenceContextSnapshot.cleared === true,
   });
+  consumeConversationComposerAttachments(conversation);
   consumeConversationComposerReferences(conversation);
   const routeReason = [
     `已识别为直接${mediaLabel}生成请求，跳过创作引导链`,
@@ -60299,12 +61919,15 @@ const renderCodexAgentPanel = () => {
     (activeConversationTurnId && run.turnId === activeConversationTurnId)
     || run.conversationId === state.activeConversationId
   )) || null;
+  if (!activeRun) ui.codexAgent.stopRequested = false;
   const missingRunnerLabel = AGENT_RUNNER_LABELS[agentEngine] || (agentEngine === "deepseek_opencode" ? "OpenCode" : "Codex");
   const externalRunnerCapability = EXTERNAL_AGENT_RUNNER_IDS.includes(agentEngine)
     ? agentRunnerCapability(agentEngine)
     : null;
   const runnerInstalled = externalRunnerCapability?.installed ?? status.installed;
   elements.stopCodexAgent.hidden = !isAgent || !activeRun;
+  elements.stopCodexAgent.disabled = Boolean(ui.codexAgent.stopRequested);
+  elements.stopCodexAgent.textContent = ui.codexAgent.stopRequested ? "正在停止" : "停止";
   elements.stopCodexAgent.dataset.turnId = activeRun?.turnId || ui.codexAgent.activeTurnId || "";
   const statusText = !isAgent
     ? ""
@@ -61317,6 +62940,7 @@ const handleCodexAgentEvent = (event) => {
     if (payload.success !== true && ui.temporaryCodexSelected) ui.temporaryCodexLoginRequested = false;
     showToast(payload.success === true ? "Codex 登录成功" : payload.error || "Codex 登录失败");
   } else if (["run_starting", "run_started", "run_progress"].includes(event.type)) {
+    ui.codexAgent.stopRequested = false;
     if (eventIsActive) ui.codexAgent.activeTurnId = payload.turnId || ui.codexAgent.activeTurnId;
     updateEventPending({
       ...codexAgentRuntimePatch(payload),
@@ -61328,7 +62952,8 @@ const handleCodexAgentEvent = (event) => {
       agentUndoAvailable: payload.mutation?.undoAvailable === true || pending?.execution?.agentUndoAvailable === true,
     });
   } else if (event.type === "text_delta" && pending) {
-    pending.streamText = `${pending.streamText || ""}${payload.delta || ""}`;
+    const nextStreamText = appendAgentDisplayRawText(pending, payload.delta || "");
+    pending.streamText = sanitizeAgentDisplayText(nextStreamText, { final: false });
     pending.streamDisplayText = pending.streamText;
     updateEventPending({ agentPhase: "responding", result: codexAgentPhaseLabel("responding") });
     const textNode = eventIsActive ? elements.chatFeed.querySelector(`[data-message="${CSS.escape(pending.id)}"] [data-stream-text]`) : null;
@@ -61408,6 +63033,7 @@ const handleCodexAgentEvent = (event) => {
     updateEventPending({ agentPhase: "executing", result: codexAgentPhaseLabel("executing") });
   } else if (event.type === "run_retrying") {
     if (payload.resetText && pending) {
+      clearAgentDisplayRawText(pending);
       pending.streamText = "";
       pending.content = "";
     }
@@ -61429,7 +63055,11 @@ const handleCodexAgentEvent = (event) => {
     if (eventIsActive) ui.codexAgent.activeTurnId = payload.turnId || ui.codexAgent.activeTurnId;
     if (pending) {
       const runLabel = codexAgentRunLabel(payload);
-      const finalText = payload.text || pending.streamText || (payload.status === "interrupted" ? `当前 ${runLabel} 任务已中断。` : `${runLabel} 任务已完成。`);
+      const finalText = sanitizeAgentDisplayText(
+        payload.text || agentDisplayRawText(pending) || pending.streamText || (payload.status === "interrupted" ? `当前 ${runLabel} 任务已中断。` : `${runLabel} 任务已完成。`),
+        { final: true },
+      );
+      clearAgentDisplayRawText(pending);
       const previewed = payload.status === "completed" && adoptCodexAgentCandidatePreview(pending, finalText, completedConversation);
       const landingProofMissing = codexAgentCompletionNeedsLandingProof({
         route: pending.execution?.taskRoute,
@@ -61508,9 +63138,11 @@ const handleCodexAgentEvent = (event) => {
     const failedConversationId = pending?.execution?.conversationId || payload.conversationId || state.activeConversationId;
     if (pending) {
       const runLabel = codexAgentRunLabel(payload);
+      const failureText = sanitizeAgentDisplayText(payload.error || payload.message || "Agent 运行异常", { final: true }) || "Agent 运行异常";
+      clearAgentDisplayRawText(pending);
       pending.pending = false;
-      pending.content = `${runLabel} 失败：${payload.error || payload.message || "Agent 运行异常"}`;
-      finalizeCodexAgentExecution(pending, payload, { status: "failed", result: `${runLabel} 调用失败` });
+      pending.content = `${runLabel} 失败：${failureText}`;
+      finalizeCodexAgentExecution(pending, { ...payload, error: failureText }, { status: "failed", result: `${runLabel} 调用失败` });
     }
     if (eventIsActive) ui.codexAgent.pendingMessageId = "";
     scheduleConversationQueueDrain(failedConversationId);
@@ -61991,8 +63623,9 @@ const presentAgentOperationProposalFromDecision = async ({ prompt, conversation,
 };
 
 let activeAgentProfileSwitchPromise = Promise.resolve();
+let agentProfileSwitchSequence = 0;
 
-const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInstructionId = "", conversationId = "", skipOperationProposal = false, selfRepairAuthorization = "", mediaDispatch = null, taskContextSnapshot = null, displayContent = "" } = {}) => {
+const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInstructionId = "", conversationId = "", skipOperationProposal = false, selfRepairAuthorization = "", mediaDispatch = null, taskContextSnapshot = null, displayContent = "", referenceScope = null } = {}) => {
   if (ui.conversationPreview && !queuedItem) return false;
   const prompt = String(content || "").trim();
   // Queue recovery can invoke this function with a detached workspace state
@@ -62044,6 +63677,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       mediaDispatch,
       taskContextSnapshot: submittedTaskContextSnapshot,
       workspaceState: taskWorkspaceSourceState,
+      referenceScope,
     });
   }
   const taskWorkspaceScope = existingRuntime?.workspaceScope || {
@@ -62060,7 +63694,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
     if (queuedItem) {
       nackQueuedConversationItem(conversation, queuedItem, "dispatch_competition_or_provider_switch");
       persistAgentRuntimeView(existingRuntime);
-    } else enqueueMessage(prompt, { executionSurface: "agent", conversationId: conversation.id, mediaDispatch, taskContextSnapshot: submittedTaskContextSnapshot });
+    } else enqueueMessage(prompt, { executionSurface: "agent", conversationId: conversation.id, mediaDispatch, taskContextSnapshot: submittedTaskContextSnapshot, referenceScope });
     return;
   }
   try {
@@ -62289,9 +63923,20 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       target,
       executionSurface: "agent",
     });
-    const continuesCreativeThread = Boolean(contextualRepair) || recoverableContextGateRetry || continuesPriorCreativeTask({
+    const previousAssistantRequestMode = String(previousAssistantMessage?.execution?.taskRoute?.mode
+      || previousAssistantMessage?.taskRouteMode
+      || previousAssistantMessage?.requestMode
+      || "");
+    const continuesGuidanceSession = previousAssistantRequestMode === "creative_guidance" && continuesPriorCreativeTask({
       text: prompt,
-      previousRequestMode: previousUserMessage?.taskRouteMode || previousUserMessage?.requestMode,
+      previousRequestMode: previousAssistantRequestMode,
+      previousAssistantAwaitingChoice: previousAssistantMessage?.execution?.result === "等待作者确认关键创作取舍",
+      previousAssistantHasCreativeContext: true,
+      hasResources,
+    });
+    const continuesCreativeThread = Boolean(contextualRepair) || recoverableContextGateRetry || continuesGuidanceSession || continuesPriorCreativeTask({
+      text: prompt,
+      previousRequestMode: previousAssistantRequestMode || previousUserMessage?.taskRouteMode || previousUserMessage?.requestMode,
       previousAssistantAwaitingChoice: previousAssistantMessage?.execution?.result === "等待作者确认关键创作取舍",
       previousAssistantHasCreativeContext: Boolean(contextualPreviousAssistant && /(?:自检|检查|诊断|问题|不足|修复|章节|正文|剧情|设定|人物|节奏|伏笔)/u.test(String(contextualPreviousAssistant.content || ""))),
       hasResources,
@@ -62337,6 +63982,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       contextDomain: target.contextDomain || inTaskWorkspace(() => documentContextDomain(target.documentId)),
       hasResources,
       continuesCreativeThread,
+      guidanceActive: continuesGuidanceSession,
       preparedCreativeContext: inTaskWorkspace(() => preparedNovelProductionContext(target)),
       workspaceKind: taskWorkspaceSourceState.workspaceKind,
       batch: Number(target?.batchRequest?.count) > 1,
@@ -62373,13 +64019,14 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
       standaloneNotebookDeliverable: true,
     });
     if (!agentRouteUsesShensi(taskRoute) && !agentRouteUsesWorkspaceAgent(taskRoute)) {
-      return await sendMessage(prompt, { queuedItem, dispatchToken, executionSurface: "agent", immediateInstructionId, conversationId: conversation.id, taskContextSnapshot: submittedTaskContextSnapshot, workspaceState: taskWorkspaceSourceState });
+      return await sendMessage(prompt, { queuedItem, dispatchToken, executionSurface: "agent", immediateInstructionId, conversationId: conversation.id, taskContextSnapshot: submittedTaskContextSnapshot, workspaceState: taskWorkspaceSourceState, conversationChoiceInstruction: options.conversationChoiceInstruction === true });
     }
     const userMessage = {
       id: userMessageId,
       role: "user",
       time: nowTime(),
       content: displayContent || (queuedItem?.runtimeSupplement ? queuedItem.displayContent || queuedItem.content : prompt),
+      ...(options.conversationChoiceInstruction ? { conversationChoiceInstruction: true } : {}),
       ...((displayContent || queuedItem?.runtimeSupplement) ? { modelContent: prompt, runtimeGuidance: true } : {}),
       requestMode: "codex_agent",
       taskRouteMode: taskRoute.mode,
@@ -62399,6 +64046,7 @@ const sendCodexAgentMessage = async (content, { queuedItem = null, immediateInst
         cleared: conversation.referenceContext?.cleared === true,
       }),
     };
+    consumeConversationComposerAttachments(conversation);
     consumeConversationComposerReferences(conversation);
     const threadScopeId = activeCandidateThreadScope(conversation, taskMessages);
     const agentTaskPacket = createTaskPacket({
@@ -62989,16 +64637,33 @@ const configureConversationMediaDefault = async (content, intent = conversationM
 
 const dispatchComposerContent = (content, {
   conversationId = "", taskContextSnapshot = null, displayContent = "", mediaDispatch = null, retryContext = null,
+  conversationChoiceInstruction = false,
 } = {}) => {
   const targetConversationId = String(conversationId || state.activeConversationId || "");
+  const targetConversation = conversationById(targetConversationId) || activeConversation();
+  // Freeze the pending composer references into this turn before the async
+  // route/preflight begins.  This makes the hand-off visible immediately and
+  // prevents the same attachment from silently following the next prompt.
+  const referenceScope = targetConversation
+    ? clone(resolveConversationReferenceContext(targetConversation))
+    : { references: [], workspaceReferences: [], skillReferences: [], attachments: [] };
+  if (targetConversation && referenceScope.attachments?.length) {
+    consumeConversationComposerAttachments(targetConversation);
+  }
+  if (targetConversation && conversationComposerReferencesPending(targetConversation)) {
+    consumeConversationComposerReferences(targetConversation);
+  }
   const snapshot = clone(retryContext?.sourceMessage
     ? retryContext.sourceMessage.turnContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(targetConversationId)
     : taskContextSnapshot || captureTaskContextSnapshot(targetConversationId));
   clearActiveComposerDraft();
+  if (targetConversation?.id === state.activeConversationId) renderContextChips();
   const immediateInstructionId = showImmediateConversationInstruction(displayContent || content);
   dispatchAfterImmediateInstructionPaint(() => {
     void sendMessage(content, { immediateInstructionId, conversationId: targetConversationId,
       taskContextSnapshot: snapshot, executionSurface: "agent", displayContent,
+      conversationChoiceInstruction,
+      referenceScope,
       mediaDispatch: normalizeConversationMediaDispatchContract(mediaDispatch) });
   });
   return true;
@@ -63178,6 +64843,9 @@ document.querySelector("#codexSettingsDisconnect").addEventListener("click", dis
 
 elements.quickAgentEngine?.addEventListener("change", async (event) => {
   const requestedProfileId = String(event.target.value || "");
+  const switchSequence = ++agentProfileSwitchSequence;
+  const isLatestSwitch = () => switchSequence === agentProfileSwitchSequence
+    && String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId;
   try {
     const profile = exactAgentTextProfile(requestedProfileId);
     if (!profile) throw new Error("所选 Agent 配置不存在");
@@ -63199,23 +64867,23 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.message || "Agent 配置切换失败");
-      if (String(state.settings.activeTextAgentConnectionId || "") !== requestedProfileId) return;
+      if (!isLatestSwitch()) return;
       ui.codexAgent.status = payload;
       if (payload.provider === "codex_agent") await ensureCodexAgentProject();
       renderCodexAgentPanel();
       renderQuickModelSelector();
     })();
     await activeAgentProfileSwitchPromise;
-    if (String(state.settings.activeTextAgentConnectionId || "") !== requestedProfileId) return;
+    if (!isLatestSwitch()) return;
     void hydrateAgentProfileModelCatalog(profile)
       .then(() => {
-        if (String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId) {
+        if (isLatestSwitch()) {
           renderQuickModelSelector();
           renderCodexAgentPanel();
         }
       })
       .catch((error) => {
-        if (String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId) showToast(error.message || "Agent 模型目录读取失败");
+        if (isLatestSwitch()) showToast(error.message || "Agent 模型目录读取失败");
       });
     schedulePublicTextConnectionVerification(activeAgentTextProfile(state.settings), {
       scope: "quick-agent",
@@ -63223,7 +64891,7 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
       currentProfile: () => activeAgentTextProfile(state.settings),
     });
   } catch (error) {
-    if (String(state.settings.activeTextAgentConnectionId || "") !== requestedProfileId
+    if (!isLatestSwitch()
       || String(elements.quickAgentEngine?.value || "") !== requestedProfileId) return;
     showToast(error.message || "Agent 引擎切换失败");
     await refreshCodexAgentStatus();
@@ -63345,6 +65013,20 @@ elements.resetCodexProject.addEventListener("click", async () => {
 });
 
 const stopCodexAgentTurn = async (turnId = "", requestId = "") => {
+  ui.codexAgent.stopRequested = true;
+  elements.stopCodexAgent.disabled = true;
+  elements.stopCodexAgent.textContent = "正在停止";
+  // Update the visible task card before waiting for the network cancellation
+  // acknowledgement.  The old implementation waited for status polling,
+  // making a valid click appear ineffective during a slow runner response.
+  const immediatePending = codexAgentPendingMessage({ turnId: String(turnId || ""), requestId: String(requestId || "") });
+  if (immediatePending) {
+    immediatePending.execution = { ...(immediatePending.execution || {}), cancelling: true, result: "正在终止当前任务" };
+    immediatePending.streamText = "";
+    immediatePending.streamDisplayText = "";
+    clearAgentDisplayRawText(immediatePending);
+    renderConversationIfActive(immediatePending.execution?.conversationId || state.activeConversationId);
+  }
   const normalizedRequestId = String(requestId || "");
   const normalizedTurnId = String(turnId || (!normalizedRequestId ? ui.codexAgent.activeTurnId : "") || "");
   if (!normalizedTurnId && normalizedRequestId) {
@@ -63359,7 +65041,11 @@ const stopCodexAgentTurn = async (turnId = "", requestId = "") => {
         startedAt: pending.execution?.startedAt || Date.now(),
       });
     }
-    if (preparation) return cancelConversationPreparation(normalizedRequestId);
+    if (preparation) {
+      const cancelled = await cancelConversationPreparation(normalizedRequestId);
+      ui.codexAgent.stopRequested = false;
+      return cancelled;
+    }
   }
   repairCodexAgentPendingMessageLinks();
   const pending = codexAgentPendingMessage({ turnId: normalizedTurnId, requestId: normalizedRequestId });
@@ -63369,6 +65055,7 @@ const stopCodexAgentTurn = async (turnId = "", requestId = "") => {
     pending.streamText = "";
     pending.streamDisplayText = "";
     pending.content = "当前 Agent 任务已停止。未完成内容没有进入候选、记忆或正文。";
+    clearAgentDisplayRawText(pending);
     finalizeCodexAgentExecution(pending, {
       turnId: normalizedTurnId || pending.execution?.agentTurnId || "",
       startedAt: pending.execution?.startedAt,
@@ -63383,6 +65070,8 @@ const stopCodexAgentTurn = async (turnId = "", requestId = "") => {
   }
   interruptCodexAgentInBackground({ turnId: normalizedTurnId, requestId: normalizedRequestId }, { notifyFailure: true });
   showToast("Agent 任务已停止；可立即退回或继续发送其他指令");
+  ui.codexAgent.stopRequested = false;
+  renderCodexAgentPanel();
   return true;
 };
 
@@ -65338,24 +67027,134 @@ document.querySelector("#accountEntryButton").addEventListener("click", () => {
   ui.settingsSection = "account";
   document.querySelector("#settingsButton").click();
 });
-document.querySelector(".account-login-tabs").addEventListener("click", (event) => {
+elements.accountLoginDialog.addEventListener("click", (event) => {
   const mode = event.target.closest("[data-account-login-mode]")?.dataset.accountLoginMode;
   if (!mode) return;
   ui.account.loginMode = mode;
   renderAccountLoginMode();
   setAccountLoginStatus();
-  elements.accountLoginForm.elements[mode === "sms" ? "phone" : "account"]?.focus();
+  const focusName = mode === "register" ? "registerAccount" : mode === "recover" ? "recoverAccount" : "account";
+  elements.accountLoginForm.elements[focusName]?.focus();
 });
 document.querySelector("#closeAccountLogin").addEventListener("click", () => elements.accountLoginDialog.close());
 document.querySelector("#cancelAccountLogin").addEventListener("click", () => elements.accountLoginDialog.close());
-document.querySelector("#requestAccountSms").addEventListener("click", () => {
-  setAccountLoginStatus("短信登录 API 尚未连接，当前不会发送验证码。");
+const accountApi = async (path, { method = "GET", body } = {}) => {
+  const response = await fetch(path, {
+    method,
+    headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(ui.account.token ? { Authorization: `Bearer ${ui.account.token}` } : {}) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.ok === false) throw new Error(payload.message || "账户服务请求失败");
+  return payload;
+};
+
+const syncAccountProfile = (user, token = ui.account.token) => {
+  const profile = user || {};
+  ui.account.authenticated = Boolean(user);
+  ui.account.token = token || "";
+  ui.account.profile = { nickname: profile.displayName || "神思用户", accountId: profile.account || profile.email || "--", account: profile.account || profile.email || "" };
+  renderAccountSettings();
+  const membershipState = document.querySelector("#membershipAccountState");
+  if (membershipState) membershipState.textContent = user ? `已登录：${ui.account.profile.accountId}` : "尚未登录";
+};
+
+const rememberAccountSession = ({ account = "", token = "", remember = false } = {}) => {
+  const storage = remember ? localStorage : sessionStorage;
+  const otherStorage = remember ? sessionStorage : localStorage;
+  storage.setItem("shensi-account-token", token);
+  otherStorage.removeItem("shensi-account-token");
+  if (remember && account) localStorage.setItem("shensi-account-remembered-account", account);
+  else localStorage.removeItem("shensi-account-remembered-account");
+};
+
+const clearRememberedAccountSession = () => {
+  localStorage.removeItem("shensi-account-token");
+  sessionStorage.removeItem("shensi-account-token");
+};
+
+const restoreRememberedAccountSession = async () => {
+  const token = localStorage.getItem("shensi-account-token") || sessionStorage.getItem("shensi-account-token") || "";
+  if (!token) return false;
+  ui.account.token = token;
+  try {
+    const payload = await accountApi("/api/account/me");
+    syncAccountProfile(payload.user, token);
+    return true;
+  } catch {
+    clearRememberedAccountSession();
+    syncAccountProfile(null, "");
+    return false;
+  }
+};
+
+const accountPasswordInput = (button) => elements.accountLoginForm.elements[button?.dataset.accountPasswordReveal || ""];
+document.querySelectorAll("[data-account-password-reveal]").forEach((button) => {
+  const show = () => {
+    const input = accountPasswordInput(button);
+    if (!input) return;
+    input.type = "text";
+    button.setAttribute("aria-pressed", "true");
+    button.innerHTML = passwordVisibilityIcon(true, "松开隐藏密码");
+  };
+  const hide = () => {
+    const input = accountPasswordInput(button);
+    if (!input) return;
+    input.type = "password";
+    button.setAttribute("aria-pressed", "false");
+    button.innerHTML = passwordVisibilityIcon(false, "按住显示密码");
+  };
+  button.addEventListener("pointerdown", (event) => { event.preventDefault(); button.setPointerCapture?.(event.pointerId); show(); });
+  button.addEventListener("pointerup", hide);
+  button.addEventListener("pointercancel", hide);
+  button.addEventListener("lostpointercapture", hide);
+  button.addEventListener("keydown", (event) => { if ([" ", "Enter"].includes(event.key)) { event.preventDefault(); show(); } });
+  button.addEventListener("keyup", (event) => { if ([" ", "Enter"].includes(event.key)) hide(); });
+  button.addEventListener("blur", hide);
 });
-elements.accountLoginForm.addEventListener("submit", (event) => {
+
+elements.accountLoginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  setAccountLoginStatus(ui.account.loginMode === "sms"
-    ? "短信登录 API 尚未连接，当前不会提交手机号或验证码。"
-    : "账号登录 API 尚未连接，当前不会提交账号或密码。");
+  const mode = ui.account.loginMode;
+  const form = elements.accountLoginForm.elements;
+  const submit = elements.accountLoginForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    if (mode === "password") {
+      const remember = form.rememberPassword.checked === true;
+      const account = form.account.value.trim();
+      const payload = await accountApi("/api/account/login", { method: "POST", body: { account, password: form.password.value, rememberMe: remember } });
+      syncAccountProfile(payload.user, payload.token);
+      rememberAccountSession({ account, token: payload.token, remember });
+      elements.accountLoginDialog.close();
+      showToast("神思账号已登录");
+    } else if (mode === "register") {
+      const payload = await accountApi("/api/account/register", { method: "POST", body: { account: form.registerAccount.value.trim(), displayName: form.displayName.value.trim(), contact: form.contact.value.trim(), password: form.registerPassword.value, securityQuestion: form.securityQuestion.value.trim(), securityAnswer: form.securityAnswer.value, rememberMe: false } });
+      syncAccountProfile(payload.user, payload.token);
+      rememberAccountSession({ account: form.registerAccount.value.trim(), token: payload.token, remember: false });
+      elements.accountLoginDialog.close();
+      showToast("账号注册成功，已自动登录");
+    } else {
+      const payload = await accountApi("/api/account/recover", { method: "POST", body: { account: form.recoverAccount.value.trim(), securityAnswer: form.recoverAnswer.value, newPassword: form.newPassword.value } });
+      setAccountLoginStatus(payload.message || "密码已重置，请使用新密码登录");
+      ui.account.loginMode = "password";
+      renderAccountLoginMode();
+    }
+  } catch (error) {
+    setAccountLoginStatus(error.message || "账户服务请求失败");
+  } finally {
+    submit.disabled = false;
+  }
+});
+document.querySelector("#loadAccountRecoveryQuestion").addEventListener("click", async () => {
+  const account = elements.accountLoginForm.elements.recoverAccount.value.trim();
+  if (!account) return setAccountLoginStatus("请先填写账号");
+  try {
+    const payload = await accountApi("/api/account/recovery-question", { method: "POST", body: { account } });
+    document.querySelector("#accountRecoveryQuestionText").textContent = payload.question || "";
+    document.querySelector("#accountRecoveryQuestion").hidden = false;
+    setAccountLoginStatus("请回答密保问题并设置新密码");
+  } catch (error) { setAccountLoginStatus(error.message || "密保问题读取失败"); }
 });
 elements.accountLoginDialog.addEventListener("close", () => {
   if (elements.accountLoginDialog.open) return;
@@ -65376,17 +67175,13 @@ document.querySelector("#membershipLogin").addEventListener("click", () => {
 elements.membershipDialog.addEventListener("click", (event) => {
   const plan = event.target.closest("[data-membership-plan]");
   if (!plan) return;
-  if (!MEMBERSHIP_SERVICE_AVAILABLE) {
-    showToast(uiText("暂无此服务"));
-    return;
-  }
   if (!ui.account.authenticated) {
     showToast("请先登录账户");
     openAccountLogin();
     setAccountLoginStatus("请先登录账户，再继续选择试用、会员套餐或加量包。");
     return;
   }
-  elements.membershipActionStatus.textContent = uiText("支付与会员 API 尚未连接，当前不会创建订单或扣费。");
+  elements.membershipActionStatus.textContent = uiText("当前支付渠道尚未配置，暂不会创建订单或扣费；登录状态已通过校验。");
 });
 window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
   if (appTheme === "system") renderAll();
@@ -65510,7 +67305,7 @@ const renderAccountSettings = () => {
 
   const profile = ui.account.profile ?? {};
   const nickname = String(profile.nickname || "神思用户");
-  const accountId = String(profile.accountId || "--");
+  const accountId = String(profile.accountId || profile.account || "--");
   const nicknameField = document.querySelector("[data-account-profile-nickname]");
   const accountIdField = document.querySelector("[data-account-profile-id]");
   if (nicknameField) nicknameField.textContent = nickname;
@@ -65518,8 +67313,8 @@ const renderAccountSettings = () => {
 
   const accountEntry = document.querySelector("#accountEntryButton");
   accountEntry.dataset.accountState = signedIn ? "signed-in" : "signed-out";
-  accountEntry.title = uiText(signedIn ? nickname : "账户服务未开放，查看说明");
-  accountEntry.setAttribute("aria-label", uiText(signedIn ? `${nickname}，打开账户设置` : "账户服务未开放，查看账户设置说明"));
+  accountEntry.title = uiText(signedIn ? `${nickname}，打开账户设置` : "登录神思账号");
+  accountEntry.setAttribute("aria-label", uiText(signedIn ? `${nickname}，打开账户设置` : "登录神思账号"));
 
   const signOut = document.querySelector("#accountSignOut");
   if (signOut) signOut.disabled = !signedIn;
@@ -66262,7 +68057,9 @@ const renderSettingsSection = () => {
 };
 
 const renderAccountLoginMode = () => {
-  const mode = ui.account.loginMode === "sms" ? "sms" : "password";
+  const mode = ["password", "register", "recover"].includes(ui.account.loginMode)
+    ? ui.account.loginMode
+    : "password";
   document.querySelectorAll("[data-account-login-mode]").forEach((button) => {
     const active = button.dataset.accountLoginMode === mode;
     button.classList.toggle("active", active);
@@ -66271,23 +68068,33 @@ const renderAccountLoginMode = () => {
   document.querySelectorAll("[data-account-login-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.accountLoginPanel !== mode;
   });
+  const submit = elements.accountLoginForm.querySelector('button[type="submit"]');
+  if (submit) submit.textContent = mode === "register" ? "注册" : mode === "recover" ? "重置密码" : "登录";
 };
 
-const setAccountLoginStatus = (message = "账户 API 尚未连接，不会提交或保存登录信息。") => {
+const setAccountLoginStatus = (message = "可使用神思账号登录、注册或通过密保问题找回密码。") => {
   elements.accountLoginStatus.textContent = uiText(message);
 };
 
-const ACCOUNT_LOGIN_AVAILABLE = false;
+const ACCOUNT_LOGIN_AVAILABLE = true;
 const MEMBERSHIP_SERVICE_AVAILABLE = false;
 
 const openAccountLogin = (mode = "password") => {
-  ui.account.loginMode = mode === "sms" ? "sms" : "password";
+  ui.account.loginMode = ["password", "register", "recover"].includes(mode) ? mode : "password";
   elements.accountLoginForm.reset();
+  document.querySelector("#accountRecoveryQuestion").hidden = true;
+  document.querySelector("#accountRecoveryQuestionText").textContent = "";
+  const rememberedAccount = localStorage.getItem("shensi-account-remembered-account") || "";
+  if (rememberedAccount) {
+    elements.accountLoginForm.elements.account.value = rememberedAccount;
+    elements.accountLoginForm.elements.rememberPassword.checked = true;
+  }
   renderAccountLoginMode();
   setAccountLoginStatus();
   translateStaticUi();
   if (!elements.accountLoginDialog.open) elements.accountLoginDialog.showModal();
-  requestAnimationFrame(() => elements.accountLoginForm.elements[ui.account.loginMode === "sms" ? "phone" : "account"]?.focus());
+  const focusName = ui.account.loginMode === "register" ? "registerAccount" : ui.account.loginMode === "recover" ? "recoverAccount" : "account";
+  requestAnimationFrame(() => elements.accountLoginForm.elements[focusName]?.focus());
 };
 
 const requestAccountLogin = (mode = "password") => {
@@ -67945,10 +69752,11 @@ const openSkillDetail = async ({ kind = "mine", id = "", version = "" } = {}) =>
   const capabilityAsset = kind === "capability-asset";
   const localOfficial = kind === "mine"
     && (ui.skillCatalog.user ?? []).some((skill) => skill.id === id && skill.trustLevel === "official");
+  const historicalVersion = Boolean(String(version || "").trim());
   const response = await fetch(capabilityAsset ? "/api/skills/capability-assets/read" : official ? "/api/skills/official/read" : marketplace ? "/api/skill-marketplace/read" : "/api/skills/read", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, version, includePayload: capabilityAsset || marketplace, includeContent: official || marketplace || localOfficial }),
+    body: JSON.stringify({ id, version, includePayload: capabilityAsset || marketplace, includeContent: official || marketplace || localOfficial || historicalVersion }),
   });
   const payload = await response.json();
   if (!response.ok || !payload.ok) throw new Error(payload.message || "详情读取失败");
@@ -67972,7 +69780,7 @@ const openSkillDetail = async ({ kind = "mine", id = "", version = "" } = {}) =>
     reviews,
     item: skill,
   };
-  document.querySelector("#skillDetailTitle").textContent = skill.name || `${typeLabel}详情`;
+  document.querySelector("#skillDetailTitle").textContent = `${skill.name || `${typeLabel}详情`}${historicalVersion ? ` · v${version}` : ""}`;
   document.querySelector("#skillDetailDescription").textContent = skill.description || "";
   document.querySelector("#skillDetailBoundary").textContent = assetType === "skill"
     ? skill.capabilityBoundary || skill.description || "未声明"
@@ -67993,8 +69801,8 @@ const openSkillDetail = async ({ kind = "mine", id = "", version = "" } = {}) =>
   const inputs = (skill.inputRequirements ?? []).join("、") || "仅使用当前任务明确授权的内容";
   const triggers = [...(skill.triggerKeywords ?? []), ...(skill.triggerConditions ?? [])].join("、") || "仅在显式引用或兼容插槽命中时使用";
   if (assetType === "skill") {
-    const fullSource = (official || skill.trustLevel === "official") && skill.content
-      ? `<details class="official-skill-source" open><summary>完整开源 Skill 内容</summary><pre>${escapeHtml(skill.content)}</pre></details>` : "";
+    const fullSource = (official || marketplace || historicalVersion || skill.trustLevel === "official") && skill.content
+      ? `<details class="official-skill-source skill-history-full-source" open><summary>${historicalVersion ? `完整历史版本内容 · v${escapeHtml(version)}` : "完整 Skill 内容"}</summary><pre>${escapeHtml(skill.content)}</pre></details>` : "";
     document.querySelector("#skillDetailContent").innerHTML = `<dl class="skill-detail-key-points"><div><dt>主要用途</dt><dd>${authored(skill.description)}</dd></div><div><dt>能力说明</dt><dd>${escapeHtml(capabilities)}</dd></div><div><dt>输入要求</dt><dd>${authored(inputs)}</dd></div><div><dt>输出约定</dt><dd>${authored(skill.outputContract, "生成候选内容，不直接获得落盘或系统权限")}</dd></div><div><dt>调用条件</dt><dd>${authored(triggers)}</dd></div></dl>${fullSource}`;
   } else {
     const assetBundle = skill.payload?.bundle;
@@ -68008,7 +69816,7 @@ const openSkillDetail = async ({ kind = "mine", id = "", version = "" } = {}) =>
       : skill.active ? "当前运行面板" : assetType === "template" ? "未启用，不参与任务路由" : "下载到能力库，放入当前面板后生效";
     document.querySelector("#skillDetailContent").innerHTML = `<div class="capability-detail-content"><dl class="skill-detail-key-points"><div><dt>结构类型</dt><dd>${escapeHtml(typeLabel)}</dd></div><div><dt>包含节点</dt><dd>${nodeCount} 个模块或模组</dd></div><div><dt>包含插槽</dt><dd>${slotCount} 个 Skill 插槽</dd></div><div><dt>关系</dt><dd>${escapeHtml(capabilityRelationLabel(skill.relationType || assetBundle?.template?.relationType || "parallel"))}</dd></div><div><dt>运行状态</dt><dd>${runtimeStatus}</dd></div>${compositeDetails}</dl>${renderCapabilityStructureDetail(skill)}</div>`;
   }
-  document.querySelector("#skillDetailMetadata").innerHTML = `<div><dt>作者</dt><dd>${escapeHtml(skill.author || "未声明")}</dd></div><div><dt>版本</dt><dd>${escapeHtml(skill.version || "-")}</dd></div><div><dt>类型</dt><dd>${escapeHtml(typeLabel)}</dd></div><div><dt>能力板块</dt><dd>${escapeHtml(capabilities)}</dd></div><div><dt>来源</dt><dd>${escapeHtml(skill.sourceLabel || (official ? "神思官方内嵌固定插槽" : marketplace ? "Skill 广场" : githubCapabilityAsset ? "GitHub 下载" : importedCompositeAsset ? "本地 Skill 包" : capabilityAsset ? "Skill 广场" : "本地 Skill 库"))}</dd></div>`;
+  document.querySelector("#skillDetailMetadata").innerHTML = `<div><dt>作者</dt><dd>${escapeHtml(skill.author || "未声明")}</dd></div><div><dt>版本</dt><dd>${escapeHtml(historicalVersion ? version : skill.version || "-")}</dd></div><div><dt>类型</dt><dd>${escapeHtml(typeLabel)}</dd></div><div><dt>能力板块</dt><dd>${escapeHtml(capabilities)}</dd></div><div><dt>来源</dt><dd>${escapeHtml(skill.sourceLabel || (official ? "神思官方内嵌固定插槽" : marketplace ? "Skill 广场" : githubCapabilityAsset ? "GitHub 下载" : importedCompositeAsset ? "本地 Skill 包" : capabilityAsset ? "Skill 广场" : "本地 Skill 库"))}</dd></div>`;
   document.querySelector("#skillDetailRating").hidden = !ratingId;
   document.querySelector("#skillDetailRatingEditorTitle").textContent = `发表对这个${typeLabel}的评分与点评`;
   const aggregateRating = Number(skill.rating) || 0;
@@ -70776,8 +72584,12 @@ document.querySelectorAll("[data-account-requires-login]").forEach((button) => b
   else if (!ui.account.authenticated) openAccountLogin();
   else showToast("账户资料 API 尚未连接，当前不会修改账户信息");
 }));
-document.querySelector("#accountSignOut").addEventListener("click", () => {
-  if (ui.account.authenticated) showToast("账户 API 尚未连接，当前不会改变登录状态");
+document.querySelector("#accountSignOut").addEventListener("click", async () => {
+  if (!ui.account.authenticated) return;
+  try { await accountApi("/api/account/logout", { method: "POST" }); } catch {}
+  clearRememberedAccountSession();
+  syncAccountProfile(null, "");
+  showToast("已退出神思账号");
 });
 let settingsOpenPromise = null;
 
@@ -70795,6 +72607,7 @@ const openSettingsDialog = async () => {
     // controls. On large whiteboards the old synchronous path made the click
     // appear ignored for 200–300 ms even though the handler had already run.
     await new Promise((resolvePaint) => scheduleUiInitializationAfterPaint(resolvePaint, { timeout: 180 }));
+    if (!elements.settingsDialog.open) return;
     beginSettingsThemePreview();
     beginSettingsUiLanguagePreview();
     ui.generationDraftSettings = normalizeGenerationProfiles(
@@ -71213,8 +73026,18 @@ const dreaminaAccountStateLabel = (stateValue) => ({
   unavailable: "账号状态暂时无法读取",
 }[stateValue] || "账号状态未知");
 
+const dreaminaAccountHasDurableIdentity = (account = null) => Boolean(
+  account
+  && String(account.expectedUserId || account.verifiedUserId || "").trim()
+  && String(account.verifiedAt || "").trim()
+  && account.credentialExists !== false
+  && !["unbound", "mismatch", "duplicate", "invalid"].includes(String(account.state || "")),
+);
+
 const dreaminaAccountRequiresVerification = (account = null) => (
-  !account || ["unbound", "unverified", "mismatch", "duplicate", "invalid"].includes(String(account.state || ""))
+  !account
+  || (!dreaminaAccountHasDurableIdentity(account)
+    && ["unbound", "unverified", "mismatch", "duplicate", "invalid"].includes(String(account.state || "")))
 );
 
 const dreaminaStatusChannel = (preferredChannel = "") => {
@@ -72155,7 +73978,11 @@ const renderDreaminaAccountStatus = (profile = null, preferredChannel = "", erro
     const generationAccess = currentStatus.cliGenerationEligible === false
       ? "；当前账号有积分，但未开通即梦 CLI 生成权限"
       : "";
-    status.textContent = `${dreaminaAccountStateLabel(currentStatus.state)}；账号 ID：${account}${credit}${creditSource}${generationAccess}${duplicate}${accountError}`;
+    const stateLabel = dreaminaAccountHasDurableIdentity(currentStatus)
+      && ["unbound", "unverified", "pending"].includes(String(currentStatus.state || ""))
+      ? "已保存核验身份，暂不重复核验"
+      : dreaminaAccountStateLabel(currentStatus.state);
+    status.textContent = `${stateLabel}；账号 ID：${account}${credit}${creditSource}${generationAccess}${duplicate}${accountError}`;
     if (metrics) {
       metrics.hidden = false;
       const metric = (name, value) => {
@@ -72180,8 +74007,10 @@ const renderDreaminaAccountStatus = (profile = null, preferredChannel = "", erro
 let dreaminaAccountStatusRequest = null;
 let dreaminaAccountStatusRequestSequence = 0;
 let dreaminaAccountStatusAppliedSequence = 0;
+const dreaminaAccountStatusReads = new Map();
+let dreaminaAccountStatusSnapshotAt = 0;
 
-const refreshDreaminaAccountStatus = async ({ verifyLive = false, profileId = "", channel = "" } = {}) => {
+const readDreaminaAccountStatus = async ({ verifyLive = false, profileId = "", channel = "" } = {}) => {
   const panel = document.querySelector("#dreaminaAccountPanel");
   const activeChannel = dreaminaStatusChannel(channel);
   const id = String(profileId || currentDreaminaProfileId(activeChannel));
@@ -72217,6 +74046,7 @@ const refreshDreaminaAccountStatus = async ({ verifyLive = false, profileId = ""
     ui.dreaminaAccountStatuses = statuses;
   } else {
     ui.dreaminaAccountStatuses = received;
+    dreaminaAccountStatusSnapshotAt = Date.now();
     for (const profile of received) {
       if (profile?.profileId) ui.dreaminaStatusReadAt.set(`${activeChannel}:${profile.profileId}`, Date.now());
     }
@@ -72237,6 +74067,23 @@ const refreshDreaminaAccountStatus = async ({ verifyLive = false, profileId = ""
   } finally {
     if (dreaminaAccountStatusRequest === operation) dreaminaAccountStatusRequest = null;
   }
+};
+
+const refreshDreaminaAccountStatus = ({ verifyLive = false, profileId = "", channel = "" } = {}) => {
+  const id = String(profileId || currentDreaminaProfileId(channel) || "");
+  // Coalesce presentation reads across image/video settings. Explicit live
+  // credit refreshes still run and the generation preflight is unchanged.
+  if (!verifyLive && !profileId && Date.now() - dreaminaAccountStatusSnapshotAt < 1_500) {
+    const account = (ui.dreaminaAccountStatuses || []).find(item => item.profileId === id) || null;
+    renderDreaminaAccountStatus(account, channel);
+    return Promise.resolve(account);
+  }
+  const key = `${verifyLive}:${profileId || '*'}`;
+  if (dreaminaAccountStatusReads.has(key)) return dreaminaAccountStatusReads.get(key);
+  const request = readDreaminaAccountStatus({ verifyLive, profileId, channel })
+    .finally(() => dreaminaAccountStatusReads.delete(key));
+  dreaminaAccountStatusReads.set(key, request);
+  return request;
 };
 
 const dreaminaPostGenerationCreditRefreshes = new Map();
@@ -72469,6 +74316,15 @@ const finishDreaminaOAuth = async (profileId, expiresAt = "", { channel = "" } =
     if (currentDreaminaProfileId(verificationChannel) === profileId) {
       try {
         await persistVerifiedGenerationChannel(verificationChannel, { profileId });
+        // OAuth completion is the authoritative configuration-save boundary.
+        // Offer the cross-channel sync immediately; waiting for a later
+        // Settings Save made a successfully verified account look unusable in
+        // its other media channel.
+        const syncProposal = dreaminaConfigSyncProposal({
+          settings: state.settings,
+          sourceChannel: verificationChannel,
+        });
+        if (syncProposal) openDreaminaConfigSyncDialog(syncProposal);
         showToast(`${payload.remarkName} 已绑定独立即梦账号 ${payload.userId}，${channelLabel}连接配置已自动保存`);
       } catch (error) {
         showToast(`${payload.remarkName} 账号核验已生效，但连接配置自动保存失败：${error.message}`);
@@ -72565,6 +74421,7 @@ const continueDreaminaProfileVerification = (profileId, expiresAt, { trigger = n
 
 const syncProviderSpecificCliButtons = async () => {
   const form = elements.settingsForm.elements;
+  const panel = document.querySelector("#dreaminaAccountPanel");
   renderCustomApiCapabilityStatus();
   const isImageDreaminaCli = form.imageAdapter.value === "cli" && form.imageProvider.value === "即梦";
   const isVideoDreaminaCli = form.videoAdapter.value === "cli" && form.videoProvider.value === "即梦";
@@ -72777,6 +74634,12 @@ const openDreaminaReverifyDialog = ({ settings = null, account = null, checking 
 const openDreaminaProfileLockDialog = (decision = {}) => {
   elements.dreaminaProfileLockMessage.textContent = dreaminaProfileSwitchMessage(decision);
   if (!elements.dreaminaProfileLockDialog.open) elements.dreaminaProfileLockDialog.showModal();
+  // Always pair a lock explanation with the actionable occupant view. The
+  // latter is opened on the next turn so the dialog can paint its reason first.
+  setTimeout(() => {
+    if (elements.dreaminaProfileLockDialog?.open) elements.dreaminaProfileLockDialog.close();
+    void openDreaminaLockOccupantsDialog();
+  }, 0);
 };
 
 const renderDreaminaLockOccupants = (jobs = []) => {
@@ -72893,12 +74756,10 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
   }
   let account = dreaminaAccountForSettings(settings);
   let statusReadError = null;
-  const visiblyUnverified = dreaminaAccountRequiresVerification(account);
-  const hadReusableEvidence = Boolean(account?.state === "verified"
-    && String(account.expectedUserId || account.verifiedUserId || "").trim()
-    && String(account.verifiedAt || "").trim()
-    && account.credentialExists !== false);
-  if (visiblyUnverified || !hadReusableEvidence) openDreaminaReverifyDialog({ settings, account, checking: true });
+  const hadReusableEvidence = dreaminaAccountHasDurableIdentity(account);
+  // An empty startup cache means "not read yet", not "authorization expired".
+  // Read the durable verdict before opening the authorization dialog. The
+  // existing task card already displays preparation while this read runs.
   const statusCacheKey = `${channel}:${profileId}`;
   const statusReadAt = Number(ui.dreaminaStatusReadAt.get(statusCacheKey) || 0);
   const statusCacheFresh = hadReusableEvidence && Date.now() - statusReadAt < 5_000;
@@ -72928,7 +74789,7 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
       statusReadError = error;
     }
   }
-  if (account?.state === "verified") {
+  if (account?.state === "verified" || dreaminaAccountHasDurableIdentity(account)) {
     if (elements.dreaminaReverifyDialog?.open
       && elements.dreaminaReverifyDialog.dataset.profileId === profileId
       && elements.dreaminaReverifyDialog.dataset.channel === channel) {
@@ -74759,7 +76620,10 @@ document.addEventListener("click", (event) => {
   }
   if (!event.target.closest("#documentMenu") && !event.target.closest("[data-more]")) hideDocumentMenu();
   if (!event.target.closest("#directoryMenu, #folderMenu, #directoryBatchMenu, #scopeMenu")) hideDirectoryMenus();
-  if (!event.target.closest("#whiteboardMenu")) elements.whiteboardMenu.hidden = true;
+  if (!event.target.closest("#whiteboardMenu, #whiteboardSubmenuPanel")) {
+    closeWhiteboardSubmenuPanel();
+    elements.whiteboardMenu.hidden = true;
+  }
   if (!event.target.closest("#whiteboardNodeCreateMenu")) closeWhiteboardNodeCreateMenu();
   if (!event.target.closest("#mediaAssetMenu")) elements.mediaAssetMenu.hidden = true;
   if (!event.target.closest("#quickModelPanel, #quickModelButton")) {
@@ -74834,7 +76698,7 @@ document.addEventListener("keydown", (event) => {
     elements.capabilityNodeContextMenu.hidden = true;
     elements.settingsSectionContextMenu.hidden = true;
     elements.updateContextMenu.hidden = true;
-    elements.whiteboardMenu.hidden = true;
+    collapseWhiteboardContextMenu();
     closeWhiteboardNodeCreateMenu();
     elements.mediaAssetMenu.hidden = true;
     closeTextEditContextMenu();
@@ -75132,10 +76996,29 @@ elements.startCreativeJourney?.addEventListener("click", async () => {
 });
 elements.creativeStartWelcomeDialog?.addEventListener("cancel", markCreativeStartWelcomeSeen);
 
-const showCreativeStartWelcomeOnce = () => {
-  if (localStorage.getItem(CREATIVE_START_WELCOME_KEY) || elements.creativeStartWelcomeDialog?.open) return false;
-  elements.creativeStartWelcomeDialog?.showModal();
-  return true;
+const showCreativeStartWelcomeOnce = async () => {
+  const legacySeen = Boolean(localStorage.getItem(CREATIVE_START_WELCOME_KEY));
+  try {
+    const response = await fetch("/api/ui/creative-start-welcome/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ legacySeen }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "首次使用状态保存失败");
+    markCreativeStartWelcomeSeen();
+    if (!payload.show || elements.creativeStartWelcomeDialog?.open) return false;
+    elements.creativeStartWelcomeDialog?.showModal();
+    return true;
+  } catch (error) {
+    console.warn("Persistent first-run welcome unavailable:", error.message);
+    if (legacySeen || elements.creativeStartWelcomeDialog?.open) return false;
+    // Keep the previous browser-local behavior as a fallback when the local
+    // persistence service is temporarily unavailable.
+    markCreativeStartWelcomeSeen();
+    elements.creativeStartWelcomeDialog?.showModal();
+    return true;
+  }
 };
 
 const bootstrap = async () => {
@@ -75197,6 +77080,7 @@ const bootstrap = async () => {
   // waiting for the slower project/notebook directory refresh. This keeps a
   // refresh from hiding an already-saved candidate behind unrelated startup IO.
   renderAll();
+  void restoreRememberedAccountSession().catch(() => false);
   // Warm the external runner catalogue while the workspace finishes its
   // background hydration.  The settings page can therefore reuse the result
   // instead of blocking its first model interaction on a cold WorkBuddy CLI.
@@ -75257,7 +77141,7 @@ const bootstrap = async () => {
   // Workspace enumeration can replace the initial hydrated view with the
   // empty-workspace surface. Open the first-run guide only after that final
   // switch so a late directory refresh cannot silently dismiss it.
-  requestAnimationFrame(showCreativeStartWelcomeOnce);
+  requestAnimationFrame(() => { void showCreativeStartWelcomeOnce(); });
   // Generation drafts are UI state, not provider jobs. Restore the one active
   // draft only after the final startup workspace and its whiteboard DOM exist;
   // job reconciliation below cannot recreate an unsubmitted draft by itself.
@@ -75294,6 +77178,7 @@ const bootstrap = async () => {
   if (localCodexEnabled) {
     showToast(`${ui.localCodex.version} 已检测并载入配置`);
   }
+  document.documentElement.dataset.bootSettled = "true";
   document.documentElement.dataset.bootReady = "true";
 };
 

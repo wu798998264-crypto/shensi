@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LibTvMediaDriver, listLibTvModelCapabilities, resolveLibTvVideoMode } from "../src/server/media-provider-drivers.mjs";
@@ -88,11 +88,14 @@ assert.equal(motionArgs.some((value) => /^duration=/u.test(value)), false, "跟�
 const imageProArgs = await captureSubmission({
   channel: "image",
   model: "lib-image-2.5-s",
-  request: { imageCount: 1, aspectRatio: "1:1", resolution: "2K" },
+  request: { imageCount: 1, aspectRatio: "1:1", quality: "xhigh", resolution: "2K", background: "transparent" },
   references: [],
 });
 assert.ok(imageProArgs.includes("model=Lib Image 2.5 Pro"), "Lib Image 2.5 Pro 必须向 CLI 传递官方模型名");
 assert.equal(imageProArgs.includes("model=lib-image-2.5-s"), false, "不得把 2.5 Pro 的内部 key 当作模型名传给 CLI");
+assert.ok(imageProArgs.includes("quality=xhigh"), "Lib Image 2.5 Pro 必须透传官方画质枚举");
+assert.ok(imageProArgs.includes("resolution=2K"), "Lib Image 2.5 Pro 必须透传清晰度");
+assert.ok(imageProArgs.includes("background=transparent"), "Lib Image 2.5 Pro 必须透传背景模式");
 
 const imageFastArgs = await captureSubmission({
   channel: "image",
@@ -102,5 +105,22 @@ const imageFastArgs = await captureSubmission({
 });
 assert.ok(imageFastArgs.includes("model=Lib Image 2.5 Fast"), "Lib Image 2.5 Fast 必须向 CLI 传递官方模型名");
 assert.equal(imageFastArgs.includes("model=lib-image-2.5-f"), false, "不得把 2.5 Fast 的内部 key 当作模型名传给 CLI");
+
+const referenceRoot = await mkdtemp(join(tmpdir(), "shensi-libtv-image-reference-"));
+try {
+  const referencePath = join(referenceRoot, "reference.png");
+  await writeFile(referencePath, Buffer.from("reference-image-fixture"));
+  const imageReferenceArgs = await captureSubmission({
+    channel: "image",
+    model: "lib-image-2.5-s",
+    request: { imageCount: 1, aspectRatio: "21:9", quality: "high", resolution: "2K" },
+    references: [{ mimeType: "image/png", absolutePath: referencePath }],
+  });
+  const leftIndex = imageReferenceArgs.indexOf("--left");
+  assert.ok(leftIndex >= 0 && /^uploaded-/u.test(imageReferenceArgs[leftIndex + 1]), "LibTV 图片参考必须上传并连接到生成节点");
+  assert.ok(imageReferenceArgs.includes("ratio=21:9"), "LibTV 图片节点必须透传新增比例");
+} finally {
+  await rm(referenceRoot, { recursive: true, force: true });
+}
 
 console.log("LibTV 图片模型名、视频 Schema 时长与参考模式适配测试通过");

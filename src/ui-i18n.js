@@ -3454,6 +3454,9 @@ export const observeUiLocalization = (surface, languageProvider) => {
     }
   };
   const observer = new MutationObserver((records) => {
+    // Chinese is the authored language. Do not queue thousands of canvas
+    // mutations only to skip translation in localizeUi afterwards.
+    if (languageProvider() !== "en-US" && surface.dataset.uiLocalizationLanguage !== "en-US") return;
     for (const record of records) {
       if (record.type === "characterData" || record.type === "attributes") queueNode(record.target);
       else if (record.type === "childList") record.addedNodes.forEach(queueNode);

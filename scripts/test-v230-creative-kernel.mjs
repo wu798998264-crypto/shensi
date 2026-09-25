@@ -62,7 +62,8 @@ const guidanceOnlyRoute = buildAdaptiveTaskRoute({
   targetModuleId: "manuscript",
   workspaceKind: "project",
 });
-assert.equal(guidanceOnlyRoute.mode, "creative_guidance", "明确只做创作引导的新作请求不得进入正文生产链");
+assert.equal(guidanceOnlyRoute.mode, "creative", "明确只做创作引导的新作请求应保留创作边界并交由面板语义路由");
+assert.equal(guidanceOnlyRoute.panelRouteDelegated, true, "软件不得预选具体创作引导模块");
 assert.equal(guidanceOnlyRoute.commitDisposition, "no_artifact", "纯创作引导不得获得自动落盘授权");
 const recoveredGuidancePrompt = "请继续刚才的创作引导，只问一个问题，不生成正文；不要创建或修改任何文档。";
 assert.equal(buildAdaptiveTaskRoute({
@@ -71,7 +72,7 @@ assert.equal(buildAdaptiveTaskRoute({
   targetModuleId: "manuscript",
   workspaceKind: "project",
   continuesCreativeThread: true,
-}, { executionSurface: "agent" }).mode, "creative_guidance", "失败后继续引导不得因 chapter-1 目标或否定分句改道正文生产");
+}, { executionSurface: "agent" }).mode, "creative", "失败后继续引导应交由面板语义路由且不得取得正文写入授权");
 assert.equal(hasExplicitFormalAssetWriteIntent({ text: recoveredGuidancePrompt }), false, "恢复引导中的否定正文/文档动作不得取得正式写入授权");
 assert.equal(buildUnifiedCreativeTask({ instruction: "只追问，不写正文", operation: "assist" }).commitPolicy.defaultDisposition, "no_artifact");
 assert.equal(detectShensiRunProfile({

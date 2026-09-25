@@ -57,10 +57,12 @@ assert.match(app, /const effectiveDeadline = \(\) => Math\.max\(deadline, Number
 const ensureStart = app.indexOf("const ensureDreaminaGenerationAccountAvailable");
 const ensureEnd = app.indexOf('document.querySelector("#bindDreaminaAccount")', ensureStart);
 const ensureSource = app.slice(ensureStart, ensureEnd);
-assert.match(ensureSource, /const visiblyUnverified = dreaminaAccountRequiresVerification\(account\)/,
-  "生成前遇到旧的未核验状态必须显示当前 profile 的核验提示");
+assert.match(ensureSource, /const hadReusableEvidence = dreaminaAccountHasDurableIdentity\(account\)/,
+  "生成前必须优先复用持久核验身份，不得因启动缓存为空要求重复核验");
 assert.match(ensureSource, /const refreshed = await refreshDreaminaAccountStatus\(\{ verifyLive: true, profileId, channel \}\)/,
-  "每次收费生成前必须绑定当前 profile 和频道执行在线状态核验");
+  "缺少持久核验身份时必须绑定当前 profile 和频道执行在线状态核验");
+assert.match(ensureSource, /if \(dreaminaAccountRequiresVerification\(account\)\) openDreaminaReverifyDialog\(\{ settings, account \}\)/,
+  "真实未核验账号在生成受阻时必须显示当前 profile 的核验提示");
 
 assert.match(networkProxy, /ECONNREFUSED/,
   "网络连接失败分类必须保留，不得与即梦授权失败混淆");

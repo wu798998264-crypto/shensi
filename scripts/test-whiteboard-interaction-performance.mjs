@@ -176,7 +176,8 @@ try {
     const token = document.querySelector('meta[name="shensi-session-token"]')?.content || '';
     const headers = { 'content-type': 'application/json', 'x-shensi-session': token };
     const resume = await fetch('/api/recovery/session', { headers }).then((response) => response.json());
-    const workspacePath = resume.activeWorkspace?.workspacePath || '';
+    const localPointer = JSON.parse(localStorage.getItem('shensi-active-workspace-v1') || 'null');
+    const workspacePath = resume.activeWorkspace?.workspacePath || localPointer?.workspacePath || '';
     if (!workspacePath) throw new Error('隔离作品路径读取失败');
     const loaded = await fetch('/api/workspace/load', { method: 'POST', headers, body: JSON.stringify({ workspacePath }) }).then((response) => response.json());
     if (!loaded.ok || !loaded.state) throw new Error(loaded.message || '隔离作品状态读取失败');

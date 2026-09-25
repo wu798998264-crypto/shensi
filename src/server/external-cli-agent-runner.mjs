@@ -6,7 +6,8 @@ import { resolveRunnerLaunch } from "./agent-runner-launch.mjs";
 import { deepSeekAgentContextText } from "./deepseek-opencode-agent-runner.mjs";
 import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source-proof.mjs";
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
-import { sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
+import { hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
+import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -222,8 +223,17 @@ const defaultCliPath = (engine = "") => engine === "workbuddy" ? "codebuddy"
     : "";
 
 const defaultCliArgs = (engine = "") => engine === "workbuddy"
-    ? "-p {prompt} --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config"
+    // WorkBuddy's `-p/--print` is a boolean flag.  Passing the complete
+    // prompt as its following argument eventually hits Windows' command-line
+    // length limit (spawn ENAMETOOLONG) on routed tasks.  The prompt is sent
+    // through stdin below, which CodeBuddy supports in text print mode.
+    ? "-p --input-format text --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config"
     : "";
+
+const normalizeWorkBuddyTemplate = (template = "") => String(template || "")
+  // Existing user templates often contain `-p {prompt}`.  Preserve the print
+  // flag but remove the oversized positional prompt; stdin is authoritative.
+  .replace(/(?:^|\s)(?:-p|--print|--prompt|--prompt-file)\s+\{prompt(?:File)?\}(?=\s|$)/gu, " -p");
 
 const nativeInstruction = ({ engine, permissionMode }) => {
   const common = [
@@ -293,6 +303,56 @@ const errorForRunner = (engine, message, code = "EXTERNAL_CLI_AGENT_FAILED", pat
   suggestedAction: clean(patch.suggestedAction),
 });
 
+const workBuddyTerminalFailure = (...values) => {
+  const raw = values.map((value) => clean(value)).filter(Boolean).join("\n").trim();
+  if (!raw) return null;
+  // Provider terminal responses are short standalone diagnostics. Restricting
+  // classification to that shape prevents normal answers that discuss HTTP
+  // codes, quotas or login flows from being mistaken for runner failures.
+  const diagnostic = raw.length <= 2_000
+    && raw.split(/\r?\n/u).filter((line) => line.trim()).length <= 12;
+  if (!diagnostic) return null;
+  const quota = /(?:额度已用尽|额度不足[^。\n]{0,80}(?:购买|充值|访问)|购买加量包|codebuddy\.cn\/profile\/usage|quota\s+(?:has\s+been\s+)?(?:exhausted|exceeded)|usage\s+limit\s+(?:reached|exceeded))/iu.test(raw);
+  if (quota) {
+    return {
+      code: "WORKBUDDY_QUOTA_EXHAUSTED",
+      message: "WorkBuddy 账号额度已用尽，请补充额度后重试",
+      suggestedAction: "打开 WorkBuddy 账户用量页面补充额度，然后重新生成。",
+      retryable: false,
+    };
+  }
+  const rateLimited = /(?:^|\n)\s*(?:error\s*[:：]\s*)?429\b/iu.test(raw)
+    && /(?:rate\s*limit|too\s+many\s+requests|请求过多|限流|稍后重试)/iu.test(raw);
+  if (rateLimited) {
+    return {
+      code: "WORKBUDDY_RATE_LIMITED",
+      message: "WorkBuddy 当前请求过多，请稍后重试",
+      suggestedAction: "稍后重新生成；若持续出现，请检查 WorkBuddy 账户用量。",
+      retryable: true,
+    };
+  }
+  const authRequired = /(?:^|\n)\s*(?:(?:error\s*[:：]\s*)?(?:401|403)\b[^\n]*)?(?:当前)?(?:未登录|登录状态(?:已)?失效|请先登录|需要登录)|(?:^|\n)\s*(?:not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)\b/iu.test(raw);
+  if (authRequired) {
+    return {
+      code: "WORKBUDDY_AUTH_REQUIRED",
+      message: "WorkBuddy 登录状态无效，请先登录后重试",
+      suggestedAction: "打开 WorkBuddy 完成登录，再返回神思重新检测。",
+      retryable: false,
+    };
+  }
+  const unavailable = /(?:^|\n)\s*(?:error\s*[:：]\s*)?(?:502|503|504)\b/iu.test(raw)
+    || /(?:bad\s+gateway|service\s+unavailable|gateway\s+timeout)/iu.test(raw);
+  if (unavailable) {
+    return {
+      code: "WORKBUDDY_PROVIDER_UNAVAILABLE",
+      message: "WorkBuddy 上游服务暂时不可用，请稍后重试",
+      suggestedAction: "稍后重新生成；神思不会把本次错误保存为正常回答。",
+      retryable: true,
+    };
+  }
+  return null;
+};
+
 export const runExternalCliAgent = async ({
   engine = "",
   prompt = "",
@@ -311,6 +371,7 @@ export const runExternalCliAgent = async ({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   environment = process.env,
   signal = null,
+  isWaitingForUser = () => false,
   onEvent = null,
   onProcess = null,
   spawnProcess = spawn,
@@ -339,7 +400,8 @@ export const runExternalCliAgent = async ({
     }
   }
   if (!executable) throw errorForRunner(runner, "自定义运行器需要填写 CLI 程序路径", "EXTERNAL_CLI_PATH_REQUIRED");
-  const template = clean(cliArgs) || defaultCliArgs(runner);
+  const rawTemplate = clean(cliArgs) || defaultCliArgs(runner);
+  const template = runner === "workbuddy" ? normalizeWorkBuddyTemplate(rawTemplate) : rawTemplate;
   if (!template) throw errorForRunner(runner, "自定义运行器需要填写 CLI 参数模板", "EXTERNAL_CLI_ARGS_REQUIRED");
   const configuredAccessMode = normalizeAgentPermissionMode(agentPermissionMode);
   const contractAccessMode = normalizeAgentPermissionMode(permissionContract?.mode || configuredAccessMode);
@@ -399,7 +461,7 @@ export const runExternalCliAgent = async ({
       workspace,
       permissionMode: accessMode,
     })];
-    const usesPrompt = /\{prompt(?:File)?\}/u.test(template);
+    const usesPrompt = runner === "workbuddy" ? false : /\{prompt(?:File)?\}/u.test(template);
     // Templates without a prompt placeholder receive the same prompt through stdin.
     const sendPromptToStdin = !usesPrompt;
     if (runner === "workbuddy" && accessMode === "shensi_only" && !args.some((arg) => /^--tools(?:=|$)/u.test(arg))) {
@@ -440,19 +502,35 @@ export const runExternalCliAgent = async ({
       let stderr = "";
       let stdoutBytes = 0;
       let emittedText = "";
+      let workBuddyInternalStreamDetected = false;
       let settled = false;
       let aborted = false;
       let timer = null;
+      let effectiveTimeout = null;
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
+        effectiveTimeout?.clear();
         signal?.removeEventListener?.("abort", abort);
         if (error) rejectRun(error);
         else resolveRun(value);
       };
       const emitDeltas = () => {
         const parsed = parseExternalCliOutput(stdout);
+        if (runner === "workbuddy") {
+          workBuddyInternalStreamDetected ||= hasWorkBuddyInternalConversationMarker(parsed.text);
+          // Once WorkBuddy has started printing a route/schema/thought preface,
+          // hold all incremental output until close. The terminal result is
+          // sanitized and returned normally, so no internal fragment can flash
+          // in the conversation while still preserving the final answer.
+          if (workBuddyInternalStreamDetected) return;
+          // WorkBuddy sometimes emits quota/auth/provider failures as an
+          // ordinary assistant delta and still exits with code 0. Do not flash
+          // that diagnostic as successful conversation content while the
+          // terminal classifier below is waiting for process completion.
+          if (workBuddyTerminalFailure(parsed.text, parsed.error, stderr)) return;
+        }
         const next = uniqueAppend(emittedText, sanitizeExternalOutput(parsed.text, { final: false }));
         emittedText = next.text;
         if (next.delta) onEvent?.({
@@ -495,6 +573,22 @@ export const runExternalCliAgent = async ({
         const parsed = parseExternalCliOutput(stdout);
         emitDeltas();
         const text = sanitizeExternalOutput(parsed.text || emittedText);
+        const workBuddyFailure = runner === "workbuddy"
+          ? workBuddyTerminalFailure(text, parsed.error, stderr)
+          : null;
+        if (workBuddyFailure) {
+          finish(errorForRunner(
+            runner,
+            workBuddyFailure.message,
+            workBuddyFailure.code,
+            {
+              detail: sanitizeUserFacingError(redactAgentError(parsed.error || text || stderr, [apiKey])),
+              retryable: workBuddyFailure.retryable,
+              suggestedAction: workBuddyFailure.suggestedAction,
+            },
+          ));
+          return;
+        }
         if (Number(code) !== 0) {
           // WorkBuddy can exit non-zero after a recoverable MCP/bridge error
           // even though it has already emitted a complete assistant answer.
@@ -545,11 +639,15 @@ export const runExternalCliAgent = async ({
           ...(parsed.error ? { runnerWarnings: [sanitizeUserFacingError(redactAgentError(parsed.error, [apiKey]))] } : {}),
         });
       });
-      timer = setTimeout(() => {
-        try { child.kill(); } catch {}
-        finish(errorForRunner(runner, `${runnerLabel(runner)} 调用超过 ${Math.round(Math.max(1, Number(timeoutMs) || DEFAULT_TIMEOUT_MS) / 1000)} 秒，已停止`, "EXTERNAL_CLI_TIMEOUT"));
-      }, Math.max(30_000, Math.min(3_600_000, Number(timeoutMs) || DEFAULT_TIMEOUT_MS)));
-      timer.unref?.();
+      effectiveTimeout = createEffectiveAgentTimeout({
+        timeoutMs,
+        isWaitingForUser,
+        onTimeout: ({ reason, timeoutMs: activeTimeoutMs }) => {
+          try { child.kill(); } catch {}
+          const suffix = reason === "waiting_timeout" ? "等待用户决定超过上限" : "调用超过有效执行时限";
+          finish(errorForRunner(runner, `${runnerLabel(runner)} ${suffix}（${Math.round(activeTimeoutMs / 1000)} 秒）`, "EXTERNAL_CLI_TIMEOUT"));
+        },
+      });
       child.stdin?.end(sendPromptToStdin ? finalPrompt : undefined);
     });
   } finally {

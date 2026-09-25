@@ -157,6 +157,31 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   return job.availableActions?.dismissUncertain === true;
 };
 
+export const mediaRecoveryPromptCandidates = ({
+  scanKey = "",
+  blockingJobs = [],
+  baselinedScanKeys = new Set(),
+  promptedJobSignatures = new Map(),
+} = {}) => {
+  const normalizedScanKey = String(scanKey || "");
+  const baselineOnly = !baselinedScanKeys.has(normalizedScanKey);
+  const freshBlockingJobs = (Array.isArray(blockingJobs) ? blockingJobs : []).filter((job) => {
+    const signature = JSON.stringify([
+      job?.id,
+      job?.status,
+      job?.providerErrorCode,
+      job?.providerTaskId,
+      job?.updatedAt,
+      job?.availableActions || {},
+    ]);
+    if (promptedJobSignatures.get(job?.id) === signature) return false;
+    promptedJobSignatures.set(job?.id, signature);
+    return true;
+  });
+  baselinedScanKeys.add(normalizedScanKey);
+  return { baselineOnly, freshBlockingJobs: baselineOnly ? [] : freshBlockingJobs };
+};
+
 export const whiteboardMediaJobIsSupersededByNodeGeneration = (job = {}, node = {}) => {
   const failedJobId = String(job?.id || "");
   const currentJobId = String(node?.generation?.jobId || "");

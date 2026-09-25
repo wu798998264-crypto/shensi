@@ -265,10 +265,12 @@ try {
   await cdp("Page.bringToFront");
   await waitFor("document.querySelector('#projectButton')", "神思启动完成");
   await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "神思启动恢复完成", 30_000);
+  await waitFor("document.documentElement?.dataset?.bootSettled === 'true'", "神思启动后台恢复稳定", 30_000);
   if (!await evaluate(`document.querySelector('#creativeStartWelcomeDialog')?.open === true`)) {
     await evaluate(`localStorage.removeItem('shensi:creative-start-welcome:v1'); true`);
     await cdp("Page.reload", { ignoreCache: true });
     await waitFor("document.documentElement?.dataset?.bootReady === 'true'", "首次介绍重载完成", 30_000);
+    await waitFor("document.documentElement?.dataset?.bootSettled === 'true'", "首次介绍重载稳定", 30_000);
   }
   if (!await evaluate(`document.querySelector('#creativeStartWelcomeDialog')?.open === true`)) {
     await evaluate(`document.querySelector('#creativeStartWelcomeDialog')?.showModal(); true`);
@@ -806,6 +808,15 @@ try {
   await waitFor("document.querySelector('.toast:not([hidden])')?.textContent.includes('设置已保存')", "保存模型配置顺序");
   await evaluate(`document.querySelector('#closeSettings').click(); true`);
   await waitFor("!document.querySelector('#settingsDialog')?.open", "关闭模型设置");
+  await delay(300);
+  await evaluate(`(() => {
+    const syncDialog = document.querySelector('#dreaminaConfigSyncDialog');
+    if (syncDialog?.open) document.querySelector('#cancelDreaminaConfigSync')?.click();
+    const reverifyDialog = document.querySelector('#dreaminaReverifyDialog');
+    if (reverifyDialog?.open) reverifyDialog.querySelector('button[value="cancel"]')?.click();
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#dreaminaConfigSyncDialog')?.open !== true && document.querySelector('#dreaminaReverifyDialog')?.open !== true", "收起模型设置触发的即梦后续提示");
 
   await evaluate(`(() => { const button = document.querySelector('#workspaceKindButton'); button.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 120, clientY: 80 })); return true; })()`);
   const menuEvidence = await evaluate(`(() => {
@@ -961,12 +972,12 @@ try {
     return files.map((file) => ({ name: file.name, type: file.type, size: file.size }));
   })()`);
   assert.deepEqual(uploadEvidence.map((item) => item.type), ["image/png", "image/jpeg", "image/webp", "image/png"]);
-  await waitFor("document.querySelectorAll('[data-edit-whiteboard-image]').length === 4", "横竖图与三种格式上传并生成卡片", 30_000);
+  await waitFor("document.querySelectorAll('[data-canvas-node][data-card-kind=\"image\"]').length === 4", "横竖图与三种格式上传并生成卡片", 30_000);
 
   const formatResults = [];
   for (let index = 0; index < 4; index += 1) {
-    const sourceCount = await evaluate(`document.querySelectorAll('[data-edit-whiteboard-image]').length`);
-    await evaluate(`document.querySelectorAll('[data-edit-whiteboard-image]')[${index}].click(); true`);
+    const sourceCount = await evaluate(`document.querySelectorAll('[data-canvas-node][data-card-kind="image"]').length`);
+    await evaluate(`(() => { const card = document.querySelectorAll('[data-canvas-node][data-card-kind="image"]')[${index}]; card.click(); document.querySelector('#whiteboardCardToolbar [data-whiteboard-card-tool="edit-image"]')?.click(); return true; })()`);
     await waitFor("document.querySelector('.image-card-editor-dialog')?.open && !document.querySelector('[data-image-editor-canvas]').hidden", `第 ${index + 1} 张图片编辑器`);
     const pixels = await evaluate(`(() => {
       const canvas = document.querySelector('[data-image-editor-canvas]');
@@ -991,9 +1002,9 @@ try {
       document.querySelector('[data-image-editor-save]').click();
       return true;
     })()`);
-    await waitFor(`!document.querySelector('.image-card-editor-dialog')?.open && document.querySelectorAll('[data-edit-whiteboard-image]').length === ${sourceCount + 1}`, `第 ${index + 1} 种格式保存为下游卡片`, 30_000);
+    await waitFor(`!document.querySelector('.image-card-editor-dialog')?.open && document.querySelectorAll('[data-canvas-node][data-card-kind="image"]').length === ${sourceCount + 1}`, `第 ${index + 1} 种格式保存为下游卡片`, 30_000);
     const reopenedIndex = sourceCount;
-    await evaluate(`document.querySelectorAll('[data-edit-whiteboard-image]')[${reopenedIndex}].click(); true`);
+    await evaluate(`(() => { const card = document.querySelectorAll('[data-canvas-node][data-card-kind="image"]')[${reopenedIndex}]; card.click(); document.querySelector('#whiteboardCardToolbar [data-whiteboard-card-tool="edit-image"]')?.click(); return true; })()`);
     await waitFor("document.querySelector('.image-card-editor-dialog')?.open && !document.querySelector('[data-image-editor-canvas]').hidden", `第 ${index + 1} 种格式保存后重开`);
     const reopened = await evaluate(`(() => { const canvas = document.querySelector('[data-image-editor-canvas]'); const data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height).data; let alpha = 0; let color = 0; for (let offset = 0; offset < data.length; offset += 4) { alpha += data[offset + 3]; color += data[offset] + data[offset + 1] + data[offset + 2]; } return { alpha, color, width: canvas.width, height: canvas.height }; })()`);
     assert.ok(reopened.alpha > 0 && reopened.color > 0, `第 ${index + 1} 种格式保存后重开不得黑屏`);

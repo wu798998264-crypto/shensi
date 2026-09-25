@@ -757,9 +757,23 @@ export const videoModelCapabilities = (provider, slug, dynamicModels = []) => {
 
 export const imageModelCapabilities = (provider, slug, dynamicModels = []) => {
   const option = getModelOption(provider, slug, dynamicModels);
+  const normalizedSlug = String(slug || "").trim().toLowerCase();
+  const gptImage25 = normalizedSlug === "gpt-image-2.5";
+  const gptImage2Family = ["gpt-image-2.5", "gpt-image-2"].includes(normalizedSlug);
+  const libImage25 = provider === "LibTV" && ["lib-image-2.5-s", "lib-image-2.5-f"].includes(normalizedSlug);
+  const libImage2Family = provider === "LibTV" && ["lib-image-2.5-s", "lib-image-2.5-f", "lib-image-2"].includes(normalizedSlug);
+  const declaredAspectRatios = option?.aspectRatios?.length ? option.aspectRatios : ["1:1", "16:9", "9:16", "4:3", "3:4"];
+  const aspectRatios = gptImage2Family || libImage2Family
+    ? [...new Set(["21:9", ...declaredAspectRatios, "9:21"])]
+    : declaredAspectRatios;
   return {
     resolutions: option?.resolutions?.length ? option.resolutions : ["standard", "high"],
-    aspectRatios: option?.aspectRatios?.length ? option.aspectRatios : ["1:1", "16:9", "9:16", "4:3", "3:4"],
+    qualityOptions: gptImage25
+      ? ["low", "standard", "high", "ultra", "max"]
+      : libImage25 ? ["low", "medium", "high", "xhigh", "max"] : null,
+    outputResolutions: gptImage25 || libImage25 ? ["1k", "2k", "4k"] : [],
+    backgrounds: gptImage25 || libImage25 ? ["auto", "opaque", "transparent"] : [],
+    aspectRatios,
     exact: Boolean(option),
   };
 };

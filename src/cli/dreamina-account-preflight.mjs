@@ -145,9 +145,13 @@ export const verifiedDreaminaAccountWithControlPlaneFallback = async (readCredit
     // already-verified profile. Treat that response like a control-plane
     // read gap only when a durable local identity exists. An unbound profile
     // still fails closed and must complete browser verification first.
+    const errorCode = String(error?.code || error?.providerErrorCode || "").toUpperCase();
+    const reusableIdentity = cachedDreaminaAccountIdentity();
+    const readOnlySessionDeferred = errorCode === "DREAMINA_AUTH_REQUIRED" && reusableIdentity;
     const identity = (dreaminaControlPlaneFailureIsTransient(error)
-      || String(error?.code || error?.providerErrorCode || "").toUpperCase() === "DREAMINA_ACCOUNT_ID_MISSING")
-      ? cachedDreaminaAccountIdentity()
+      || readOnlySessionDeferred
+      || errorCode === "DREAMINA_ACCOUNT_ID_MISSING")
+      ? reusableIdentity
       : null;
     if (!identity) throw error;
     return {
@@ -155,6 +159,7 @@ export const verifiedDreaminaAccountWithControlPlaneFallback = async (readCredit
       identity,
       controlPlaneDeferred: true,
       controlPlaneWarning: clean(error?.message || error),
+      controlPlaneFailureCode: errorCode,
     };
   }
 };

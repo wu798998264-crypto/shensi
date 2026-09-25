@@ -16,6 +16,7 @@ import {
   whiteboardProviderIsDirectGeneration,
   whiteboardProviderQueueVisible,
 } from "../src/whiteboard-progress.js";
+import { whiteboardGenerationResult } from "../src/whiteboard.js";
 
 assert.equal(monotonicProgress(40, 18), 40, "进度不得回退");
 assert.equal(monotonicProgress(40, 65), 65, "正常前进进度必须保留");
@@ -41,6 +42,8 @@ assert.equal(formatGenerationDuration(1_240), "1秒", "卡片生成耗时不得�
 assert.equal(formatGenerationDuration(1_760), "2秒", "卡片生成耗时应四舍五入为整数秒");
 assert.equal(formatGenerationDuration(59_600), "1分00秒", "整数秒进位后不得显示 0分60秒");
 assert.equal(formatGenerationDuration(61_200, { english: true }), "1m 01s", "英文界面也不得显示小数秒");
+assert.equal(whiteboardGenerationResult({ candidate: "可直接写入卡片的正文", engineExecution: { status: "blocked", result: "余额不足" } }).accepted, true, "有效正文不得被晚到的余额状态降级为失败");
+assert.equal(whiteboardGenerationResult({ candidate: "", engineExecution: { status: "blocked", result: "余额不足" } }).accepted, false, "没有正文时仍必须保留真实失败状态");
 
 const connectingImage = {
   channel: "image",
@@ -89,6 +92,8 @@ assert.equal(whiteboardGenerationProgressActive({ ...acceptedQueuedImage, model:
 assert.equal(whiteboardProviderIsDirectGeneration({ model: "seedance2.5" }), true, "Seedance 2.5 必须识别为直连生成模型");
 assert.equal(whiteboardProviderIsDirectGeneration({ request: { settings: { model: "seedance2.5" } } }), true, "应从任务设置识别 Seedance 2.5");
 assert.equal(whiteboardProviderQueueVisible({ model: "seedance2.5", providerStatus: "queued", providerQueuePosition: 3, providerQueueLength: 12 }), true, "Seedance 2.5 返回真实队列位置时必须显示厂商排队");
+assert.equal(whiteboardProviderQueueVisible({ provider: "即梦", model: "5.0", providerStatus: "queued", providerQueuePosition: 1, providerQueueLength: null, providerQueueStatus: "" }), false, "即梦 queue_idx=0 的受理占位不得误显示为厂商排队");
+assert.equal(whiteboardProviderQueueVisible({ provider: "即梦", model: "5.0", providerStatus: "queued", providerQueuePosition: 1, providerQueueLength: 8, providerQueueStatus: "queued" }), true, "即梦返回真实队列总量时仍必须显示排队");
 assert.equal(whiteboardGenerationProgressActive({ ...acceptedQueuedImage, model: "seedance2.5", providerQueuePosition: 0, providerQueueLength: 0 }), true, "Seedance 2.5 只有 queued 占位状态且没有真实队列数据时应按处理中显示进度");
 assert.equal(whiteboardProviderQueueVisible({ model: "seedance2.0", providerStatus: "queued", providerQueuePosition: 0, providerQueueLength: 0 }), false, "缺少真实队列数据时不得显示共 0 人");
 assert.equal(whiteboardProviderQueueVisible({ model: "other-video", providerStatus: "queued", providerQueuePosition: 3, providerQueueLength: 12 }), true, "其他模型有真实队列数据时必须显示排队");
@@ -106,9 +111,20 @@ const verifiedImageResult = {
 assert.equal(whiteboardGenerationResultReady(verifiedImageResult), true, "已取得图片附件时必须识别为结果已就绪");
 assert.equal(whiteboardGenerationMeasurementActive(verifiedImageResult), false, "图片结果返回后生成计时必须冻结，保存阶段不能继续冒充生成");
 assert.equal(whiteboardGenerationProgressActive(verifiedImageResult), false, "图片结果返回后不得继续显示生成进度");
+const verifiedVideoResult = {
+  channel: "video",
+  status: "complete",
+  cardApplyStage: "saving",
+  resultReady: true,
+  attachment: { relativePath: "assets/result.mp4" },
+};
+assert.equal(whiteboardGenerationResultReady(verifiedVideoResult), true, "已取得视频附件时必须识别为结果已就绪");
+assert.equal(whiteboardGenerationMeasurementActive(verifiedVideoResult), false, "视频结果返回后生成计时必须冻结，保存阶段不能继续冒充生成");
+assert.equal(whiteboardGenerationProgressActive(verifiedVideoResult), false, "视频结果返回后不得继续显示生成进度");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete", cardApplyStage: "saving" }), true, "尚未取得附件时卡片保存阶段仍需继续累计总耗时");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "text", status: "complete", cardApplyStage: "verifying" }), true, "文字回读确认阶段也必须继续累计总耗时");
 assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete" }), false, "回读完成后计时必须冻结，不能继续增长");
+assert.equal(whiteboardGenerationMeasurementActive({ channel: "image", status: "complete", cardApplyStage: "verifying", providerResultReadyAt: Date.now() }), false, "供应商结果终态确认后回写阶段不得继续累计生成耗时");
 
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../src/styles.css", import.meta.url), "utf8");
@@ -116,6 +132,7 @@ assert.match(app, /whiteboardGenerationConnectionPhase, whiteboardGenerationMeas
 assert.doesNotMatch(app, /totalSeconds\.toFixed\(1\).*秒/u, "卡片与任务卡生成耗时不得再显示小数秒");
 assert.match(app, /normalizedPatch\.progressPercent = monotonicProgress\(/u);
 assert.match(app, /normalizedPatch\.elapsedMs = monotonicElapsedMs\(/u);
+assert.match(app, /normalizedPatch\.providerResultReadyAt = resultAt/u, "任务进入完成状态时必须记录供应商结果冻结点");
 assert.match(app, /Math\.max\(1, monotonicElapsedMs\(\{ previous: candidate\.elapsedMs, startedAt: candidate\.startedAt \}\)\)/u, "任务完成或停止时计时也不得回退");
 assert.match(app, /progressPercent: Math\.min\(92, Math\.max\(currentProgress, Math\.min\(textEstimate, currentProgress \+ 1\)\)\)/u);
 assert.match(app, /providerProgressPercent = monotonicProgress\(/u);
@@ -128,6 +145,7 @@ assert.match(app, /candidateConnecting[\s\S]{0,180}正在连接生成服务/u, "
 assert.match(app, /candidate && \(generationMeasurementActive \|\| generationResultReady \|\| \(candidateInterrupted && generationMeasurementStarted\)\)/u, "连接、排队和已返回结果的卡片必须保留准确耗时指标");
 assert.match(app, /厂商排队[\s\S]{0,220}当前第/u, "厂商排队必须明确显示当前位置语义");
 assert.match(app, /厂商排队[\s\S]{0,220}共/u, "厂商排队必须明确显示总人数语义");
+assert.match(app, /uiText\("正式生成"\)/u, "即梦受理占位状态必须显示正式生成，不能误写成排队");
 assert.match(app, /const beginWhiteboardSubmissionFeedback[\s\S]{0,520}status: "connecting"/u, "点击生成后必须立即建立卡片状态与计时");
 assert.match(app, /cardApplyStage: job\.status === "complete" \? "saving" : ""/u, "任务完成回包必须无缝进入卡片保存阶段，不能出现状态空窗");
 assert.match(app, /const applyCompletedWhiteboardGenerationJob[\s\S]{0,260}updateWhiteboardCompletedApplyStage\(job, "saving"\)/u, "落盘开始前必须先显示保存状态");

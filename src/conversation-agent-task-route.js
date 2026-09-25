@@ -1,9 +1,16 @@
-import { sanitizeConversationOutput, sanitizeUserFacingError } from "./conversation-output-guard.js";
+import { hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "./conversation-output-guard.js";
 const text = (value) => String(value ?? "").trim();
 
 const uniqueText = (values = []) => [...new Set((Array.isArray(values) ? values : [])
   .map(text)
   .filter(Boolean))];
+
+const sanitizeTerminalText = (value = "", { final = true } = {}) => {
+  const source = text(value);
+  return hasWorkBuddyInternalConversationMarker(source)
+    ? sanitizeWorkBuddyConversationOutput(source, { final })
+    : sanitizeConversationOutput(source, { final });
+};
 
 const terminalIssueLabel = (status = "") => ({
   failed: "任务失败",
@@ -22,10 +29,10 @@ export const nativeAgentTerminalPresentation = ({
 } = {}) => {
   const normalizedStatus = text(status).toLowerCase();
   const warnings = uniqueText([...pendingWarnings, ...resultWarnings]
-    .map((warning) => sanitizeConversationOutput(warning)));
+    .map((warning) => sanitizeTerminalText(warning)));
   const partial = text(partialText);
   if (normalizedStatus === "completed") {
-    const visibleFinalText = sanitizeConversationOutput(finalText) || sanitizeConversationOutput(partial) || "Agent 已完成任务。";
+    const visibleFinalText = sanitizeTerminalText(finalText) || sanitizeTerminalText(partial) || "Agent 已完成任务。";
     return {
       status: warnings.length ? "soft_warning" : "complete",
       content: visibleFinalText,
@@ -37,7 +44,7 @@ export const nativeAgentTerminalPresentation = ({
   const issue = sanitizeUserFacingError(text(error) || text(finalText) || "Agent 未返回具体失败原因", { fallback: "Agent 未返回具体失败原因" });
   const label = terminalIssueLabel(normalizedStatus);
   const issueLine = `${label}：${issue}`;
-  const visiblePartial = sanitizeConversationOutput(partial);
+  const visiblePartial = sanitizeTerminalText(partial);
   return {
     status: normalizedStatus || "failed",
     content: visiblePartial && !visiblePartial.includes(issue) ? `${visiblePartial}\n\n${issueLine}` : visiblePartial || issueLine,
@@ -92,6 +99,10 @@ export const agentTaskRouteFromMediaDispatch = (dispatch = null) => {
 export const agentTaskRouteFromDelivery = (payload = {}, currentRoute = {}) => {
   const mode = text(payload.mode);
   const mediaChannels = Array.isArray(payload.mediaChannels) ? payload.mediaChannels.map(text).filter(Boolean) : [];
+  const deliveryDocumentIds = uniqueText([
+    ...(Array.isArray(payload.documentIds) ? payload.documentIds : []),
+    ...(Array.isArray(payload.targets) ? payload.targets.map((target) => target?.documentId) : []),
+  ]);
   const explicitTaskType = text(payload.taskType);
   const structuredTaskType = text(currentRoute?.taskKind || currentRoute?.taskType || currentRoute?.intentEnvelope?.taskType);
   const inferredTaskType = mode === "media"
@@ -105,10 +116,44 @@ export const agentTaskRouteFromDelivery = (payload = {}, currentRoute = {}) => {
     mode: taskKind === "creative_guidance" ? "creative_guidance" : mode || "agent",
     taskKind,
     direct: ["image_generation", "video_generation"].includes(taskKind),
+    deliveryMode: mode,
+    deliveryDocumentIds,
     ...(["formal_creation", "writing", "content_generation", "multi_step"].includes(taskKind)
       ? { diagnosisIntent: false }
       : taskKind === "quality_review" ? { diagnosisIntent: true } : {}),
   };
+};
+
+export const agentTaskWritePresentation = ({ execution = {}, pending = false } = {}) => {
+  const route = execution?.taskRoute && typeof execution.taskRoute === "object" ? execution.taskRoute : {};
+  const intent = route.intentEnvelope && typeof route.intentEnvelope === "object" ? route.intentEnvelope : {};
+  const savedDocumentIds = uniqueText((execution.agentResultReferences || [])
+    .filter((reference) => reference?.type === "document_saved" && reference?.trustedDocumentSave === true)
+    .map((reference) => reference.documentId));
+  const deliveryTargetIds = uniqueText((execution.deliveryTargets || []).map((target) => target?.documentId));
+  const authorizedTargetIds = uniqueText(route.writeAuthorization?.targetDocumentIds || []);
+  const intentTargetIds = uniqueText([
+    ...(Array.isArray(intent.deliverables) ? intent.deliverables.map((item) => item?.targetDocumentId) : []),
+    ...(Array.isArray(intent.targetDocumentIds) ? intent.targetDocumentIds : []),
+  ]);
+  const targetDocumentIds = uniqueText([
+    ...savedDocumentIds,
+    ...(route.deliveryDocumentIds || []),
+    ...deliveryTargetIds,
+    ...authorizedTargetIds,
+    ...intentTargetIds,
+  ]);
+  const deliveryMode = text(route.deliveryMode);
+  const intentWriteMode = text(intent.writeMode);
+  const confirmedWrite = savedDocumentIds.length > 0
+    || deliveryMode === "documents"
+    || route.writeAuthorization?.state === "commit"
+    || intentWriteMode === "formal_auto";
+  if (confirmedWrite) return { resolved: true, mode: "formal_auto", targetDocumentIds };
+  if (deliveryMode === "conversation") return { resolved: true, mode: "conversation_only", targetDocumentIds: [] };
+  if (deliveryMode === "media") return { resolved: true, mode: "media", targetDocumentIds: [] };
+  if (!pending && intentWriteMode) return { resolved: true, mode: intentWriteMode, targetDocumentIds };
+  return { resolved: false, mode: "", targetDocumentIds };
 };
 
 export const nativeAgentTaskWayLabel = ({ execution = {}, guided = false, qualityReview = false } = {}) => {

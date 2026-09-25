@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
-import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
+import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 import {
   dreaminaCommandForVideoRequest,
   seedance25CapabilitiesFromCommandHelp,
@@ -260,11 +260,10 @@ const semanticAuthFailure = (command = "") => {
   const operationLabel = String(command || "").trim();
   const generationCommand = dreaminaVideoGenerationCommand(operationLabel);
   const error = new Error();
-  error.code = "DREAMINA_AUTH_REQUIRED";
+  error.code = generationCommand ? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED";
   error.message = generationCommand
-    ? `即梦视频生成命令 ${operationLabel || "unknown"} 的会话被厂商拒绝，且没有返回任务 ID。账号核验状态保持有效；神思将保留幂等记录并只读核对本次提交结果。`
+    ? `即梦视频生成命令 ${operationLabel || "unknown"} 的会话在提交阶段被厂商拒绝，且没有返回任务 ID。账号核验状态保持有效；神思将保留幂等记录并在有限时限内只读核对本次提交结果。`
     : `${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`;
-  if (generationCommand) error.code = "DREAMINA_GENERATION_SESSION_REJECTED";
   error.submissionOutcomeKnown = !generationCommand;
   return error;
 };
@@ -288,12 +287,16 @@ const runCli = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RET
       // implicit login that monopolizes the global credential slot. A bounded
       // retry of the same command handles transient authsdk starts safely.
       if (authRejected
+        && error.code !== "DREAMINA_AUTH_REQUIRED"
         && (dreaminaAuthRetryAllowed(args) || error.submissionOutcomeKnown === true)
         && attempt < authRetries) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, boundedRetryDelay(authRetryDelayMs(), attempt)));
         continue;
       }
       if (authRejected) throw semanticAuthFailure(args[0]);
+      if (dreaminaVideoGenerationCommand(args[0]) && isDreaminaAuthRequiredResponse(error?.message)) {
+        throw semanticAuthFailure(args[0]);
+      }
       if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_BROKER_BUSY" && attempt < authRetries) {
         await new Promise((resolveDelay) => setTimeout(resolveDelay, boundedRetryDelay(400, attempt, 4_000)));
         continue;
@@ -1203,7 +1206,19 @@ const listTasks = async ({ submitIdFilter = "", limit = 100 } = {}) => {
 };
 
 const ensureDreaminaTaskStoreSession = async () => {
-  await listTasks({ limit: 1 });
+  try {
+    await listTasks({ limit: 1 });
+    return { taskResourceChecked: true, taskResourceDeferred: false };
+  } catch (error) {
+    if (String(error?.code || "").toUpperCase() === "DREAMINA_AUTH_REQUIRED" && cachedDreaminaAccountIdentity()) {
+      return {
+        taskResourceChecked: false,
+        taskResourceDeferred: true,
+        taskResourceWarning: "即梦任务资源只读会话暂时报告未登录；保留已核验身份并由本次真实视频提交确认",
+      };
+    }
+    throw error;
+  }
 };
 
 const taskCreatedAt = (task) => {
@@ -1540,9 +1555,9 @@ const main = async () => {
     // A valid account/credit response is not sufficient for a paid video
     // submission. Verify the separate task resource session before reporting
     // this profile as generation-ready.
-    await ensureDreaminaTaskStoreSession();
+    const taskResource = await ensureDreaminaTaskStoreSession();
     const capabilities = await detectDreaminaVideoCapabilities({ version });
-    const result = { ok: true, version, credit: account.credit.total_credit, vipLevel: account.credit.vip_level || "", userId: account.identity.userId, profileId: account.identity.profileId, credentialFingerprint: String(process.env.SHENSI_DREAMINA_CREDENTIAL_FINGERPRINT || ""), controlPlaneDeferred: account.controlPlaneDeferred === true, taskResourceChecked: true, generationReady: true, capabilities };
+    const result = { ok: true, version, credit: account.credit.total_credit, vipLevel: account.credit.vip_level || "", userId: account.identity.userId, profileId: account.identity.profileId, credentialFingerprint: String(process.env.SHENSI_DREAMINA_CREDENTIAL_FINGERPRINT || ""), controlPlaneDeferred: account.controlPlaneDeferred === true, taskResourceChecked: taskResource.taskResourceChecked === true, taskResourceDeferred: taskResource.taskResourceDeferred === true, taskResourceWarning: taskResource.taskResourceWarning || "", generationReady: taskResource.taskResourceChecked === true || taskResource.taskResourceDeferred === true, capabilities };
     await atomicJson(connectionCachePath, { connectionIdentity, checkedAt: new Date().toISOString(), result }).catch(() => {});
     process.stdout.write(JSON.stringify(result));
     return;

@@ -77,6 +77,10 @@ const POLL_INTERVAL_MS = Math.max(100, Number(process.env.SHENSI_MEDIA_POLL_INTE
 const LOCK_STALE_MS = Math.max(3_000, Number(process.env.SHENSI_MEDIA_LOCK_STALE_MS) || 8_000);
 const MAX_TRANSIENT_FAILURES = Math.max(3, Number(process.env.SHENSI_MEDIA_MAX_TRANSIENT_FAILURES) || 12);
 const MAX_CAPACITY_AUTOMATIC_RETRIES = Math.max(1, Number(process.env.SHENSI_MEDIA_CAPACITY_RETRIES) || 3);
+const LIBTV_STALL_TIMEOUT_MS = Math.max(
+  60_000,
+  Number(process.env.SHENSI_LIBTV_STALL_TIMEOUT_MS) || 10 * 60_000,
+);
 const MAX_MEDIA_DOWNLOAD_INTEGRITY_RETRIES = Math.max(
   1,
   Number(process.env.SHENSI_MEDIA_DOWNLOAD_INTEGRITY_RETRIES) || 3,
@@ -657,6 +661,8 @@ const processImageJob = async (job, settings) => {
     spec: job.request.spec,
     aspectRatio: job.request.aspectRatio,
     quality: job.request.quality,
+    resolution: job.request.resolution,
+    background: job.request.background,
     imageCount: Math.max(1, Math.min(4, Number(job.request.imageCount) || 1)),
     referenceMedia,
     idempotencyKey: job.idempotencyKey,
@@ -1209,7 +1215,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       // the account/credit session.
       forceFresh: dreaminaCliMediaJob(job),
     });
-    if (dreaminaCliMediaJob(job) && capability.taskResourceChecked !== true) {
+    if (dreaminaCliMediaJob(job) && capability.taskResourceChecked !== true && capability.taskResourceDeferred !== true) {
       const capabilityCode = String(capability.taskResourceErrorCode || "DREAMINA_TASK_RESOURCE_UNVERIFIED").toUpperCase();
       const retryableCodes = new Set([
         "DREAMINA_PROFILE_BROKER_BUSY",
@@ -1493,6 +1499,24 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     }
     if (["complete", "cancelled", "superseded"].includes(polled.status)) return;
     job = polled;
+    const providerStateChangedAt = Date.parse(String(polled.providerStateChangedAt || ""));
+    if (driver.id === "libtv-cli"
+      && !providerTerminalStatus(status.providerStatus)
+      && Number.isFinite(providerStateChangedAt)
+      && Date.now() - providerStateChangedAt >= LIBTV_STALL_TIMEOUT_MS) {
+      await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
+        status: "retry_required",
+        providerStatus: status.providerStatus || "unknown",
+        providerErrorCode: "LIBTV_TASK_STALLED",
+        nextPollAt: "",
+        failedAt: "",
+        retryAllowed: true,
+        automaticRecoveryStoppedAt: new Date().toISOString(),
+        error: `LibTV 任务已连续 ${Math.round((Date.now() - providerStateChangedAt) / 60_000)} 分钟没有新的厂商状态；已停止无限等待，原任务号 ${job.providerTaskId || "未取得"} 已保留，请手动重试或停止。`,
+        heartbeatAt: new Date().toISOString(),
+      } });
+      return;
+    }
     if (status.providerStatus === "failed") throw Object.assign(new Error(status.error || "媒体厂商任务失败"), { providerErrorCode: status.errorCode || "PROVIDER_FAILED" });
     if (status.providerStatus === "cancelled") {
       await confirmMediaGenerationCancelled({ jobId: job.id, patch: { cancelledAt: new Date().toISOString(), heartbeatAt: new Date().toISOString() } });

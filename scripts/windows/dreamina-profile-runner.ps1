@@ -133,6 +133,14 @@ function Test-DreaminaVideoGenerationCommand([string]$Command) {
   return -not [string]::IsNullOrWhiteSpace($normalized) -and $normalized -match 'video'
 }
 
+function Test-DreaminaGenerationCommand([string]$Command) {
+  $normalized = ([string]$Command).Trim().ToLowerInvariant()
+  if (Test-DreaminaVideoGenerationCommand -Command $normalized) { return $true }
+  if ($normalized -in @('text2image', 'image2image')) { return $true }
+  if ($normalized -in @('version', 'user_credit', 'list_task', 'query_result', 'cancel_task', 'cancel', 'task_cancel', 'login', 'relogin', 'logout', '--help')) { return $false }
+  return -not [string]::IsNullOrWhiteSpace($normalized) -and $normalized -match 'image'
+}
+
 function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {
   if ([string]::IsNullOrWhiteSpace($Output)) { return $false }
   $matchesAuthFailure = $Output -match '(?is)authsdk:\s*not logged in' `
@@ -144,7 +152,7 @@ function Test-DreaminaSemanticAuthFailure([string]$Output, [string]$Command) {
   # a task record, even when its failure text mentions authsdk. Preserve the
   # task ID so the caller can query or surface that exact provider task rather
   # than incorrectly invalidating an already verified account.
-  if ((Test-DreaminaVideoGenerationCommand -Command $Command) -and (Test-DreaminaTaskIdentityOutput -Output $Output)) {
+  if ((Test-DreaminaGenerationCommand -Command $Command) -and (Test-DreaminaTaskIdentityOutput -Output $Output)) {
     return $false
   }
 
@@ -254,8 +262,8 @@ try {
     if (-not [string]::IsNullOrEmpty($stderrText)) { [Console]::Error.Write($stderrText) }
     $semanticOutput = ((@($commandOutput) | ForEach-Object { [string]$_ }) -join "`n") + "`n" + $stderrText
     if (Test-DreaminaSemanticAuthFailure -Output $semanticOutput -Command $firstArg) {
-      if (Test-DreaminaVideoGenerationCommand -Command $firstArg) {
-        [Console]::Error.WriteLine('[DREAMINA_GENERATION_SESSION_REJECTED] authsdk: not logged in; the video generation command did not return a provider task ID, so submission outcome is unknown and the verified account snapshot remains valid.')
+      if (Test-DreaminaGenerationCommand -Command $firstArg) {
+        [Console]::Error.WriteLine('[DREAMINA_GENERATION_SESSION_REJECTED] authsdk: not logged in; the media generation command did not return a provider task ID, so submission outcome is unknown and the verified account snapshot remains valid.')
         if ($exitCode -eq 0) { $exitCode = 79 }
       } else {
         [Console]::Error.WriteLine('[DREAMINA_AUTH_REQUIRED] authsdk: not logged in; Dreamina returned an authentication failure payload and the previous verified profile snapshot was preserved.')

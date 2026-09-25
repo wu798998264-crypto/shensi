@@ -7,6 +7,12 @@ let cached = null;
 let refreshInFlight = null;
 let consecutiveFailures = 0;
 let retryAt = 0;
+let remotePublicKeyPem = "";
+// The public skill subdomain is not DNS-provisioned on every installation yet.
+// Keep the marketplace on the existing HTTPS certificate and namespace until
+// skill.hexing.studio is explicitly provisioned; the server can later override
+// this through SHENSI_MARKETPLACE_URL without changing the client contract.
+const DEFAULT_MARKETPLACE_URL = "https://api.hexing.studio/skill";
 const REMOTE_PACKAGE_LIMITS = Object.freeze({ skill: 4 * 1024 * 1024, module: 2 * 1024 * 1024, group: 2 * 1024 * 1024, template: 2 * 1024 * 1024 });
 
 export const assertRemoteMarketplaceSkillIdentity = ({ artifactId, skillId } = {}) => {
@@ -17,7 +23,7 @@ export const assertRemoteMarketplaceSkillIdentity = ({ artifactId, skillId } = {
 };
 
 const configuredBaseUrl = () => {
-  const raw = String(process.env.SHENSI_MARKETPLACE_URL || "").trim().replace(/\/$/, "");
+  const raw = String(process.env.SHENSI_MARKETPLACE_URL || DEFAULT_MARKETPLACE_URL).trim().replace(/\/$/, "");
   if (!raw) return "";
   const url = new URL(raw);
   const localHttp = url.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
@@ -25,7 +31,7 @@ const configuredBaseUrl = () => {
   return url.href.replace(/\/$/, "");
 };
 
-const pinnedPublicKey = () => String(process.env.SHENSI_MARKETPLACE_PUBLIC_KEY_PEM || "").replace(/\\n/g, "\n").trim();
+const pinnedPublicKey = () => String(process.env.SHENSI_MARKETPLACE_PUBLIC_KEY_PEM || remotePublicKeyPem || "").replace(/\\n/g, "\n").trim();
 
 const disconnected = (message = "云端分享与下载服务尚未连接；当前仅显示本地官方目录") => ({
   connected: false,
@@ -33,6 +39,8 @@ const disconnected = (message = "云端分享与下载服务尚未连接；当�
   message,
   remoteItems: [],
   health: null,
+  baseUrl: DEFAULT_MARKETPLACE_URL,
+  adminUrl: `${DEFAULT_MARKETPLACE_URL}/admin`,
 });
 
 const fetchJson = async (url) => {
@@ -40,6 +48,34 @@ const fetchJson = async (url) => {
   if (!response.ok) throw new Error(`远程 Skill 广场返回 HTTP ${response.status}`);
   return response.json();
 };
+
+// 供桌面端账户与发布接口复用同一远程地址。令牌只在本次请求中转发，
+// 不写入作品、Skill 注册表或服务器日志。
+export const marketplaceServiceRequest = async (path, { method = "GET", token = "", body } = {}) => {
+  const baseUrl = configuredBaseUrl();
+  if (!baseUrl) throw new Error("云端 Skill 广场地址未配置");
+  const normalizedPath = String(path || "").startsWith("/") ? String(path) : `/${String(path || "")}`;
+  const response = await fetch(baseUrl + normalizedPath, {
+    method,
+    headers: {
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      "User-Agent": "ShensiCreativeEngine-MarketplaceClient",
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(String(payload.message || "云端请求失败"));
+    error.statusCode = response.status;
+    throw error;
+  }
+  return payload;
+};
+
+const normalizePublicKey = (value) => String(value || "").replace(/\\n/g, "\n").trim();
 
 export const marketplaceArtifactSignaturePayload = (record = {}) => Buffer.from(JSON.stringify({
   schemaVersion: 2,
@@ -113,27 +149,46 @@ const refreshRemoteMarketplace = (baseUrl) => {
   let refresh;
   refresh = (async () => {
     try {
-      const [health, catalog] = await Promise.all([
+      const [clientConfig, health, catalog] = await Promise.all([
+        fetchJson(`${baseUrl}/v1/client-config`),
         fetchJson(`${baseUrl}/health`),
         fetchJson(`${baseUrl}/v1/catalog?limit=100`),
       ]);
-      const requiredHealthy = health.connected === true
-        && health.postgres === true
+      const configuredKey = normalizePublicKey(process.env.SHENSI_MARKETPLACE_PUBLIC_KEY_PEM);
+      const advertisedKey = normalizePublicKey(clientConfig.publicKeyPem);
+      if (configuredKey && advertisedKey && configuredKey !== advertisedKey) throw new Error("远程 Skill 广场公钥与本机配置不匹配");
+      if (!configuredKey && advertisedKey) remotePublicKeyPem = advertisedKey;
+      if (clientConfig.connected !== true || health.connected !== true) throw new Error("远程 Skill 广场服务未就绪");
+      if (catalog.connected !== true || !Array.isArray(catalog.items)) throw new Error("远程 Skill 广场目录响应无效");
+      const keyReady = pinnedPublicKey().includes("PUBLIC KEY");
+      const catalogReady = health.artifactSigning === true && health.signedCatalog === true && keyReady;
+      const uploadInfrastructureReady = health.postgres === true
         && health.objectStorage === true
         && health.malwareScanner === true
-        && health.artifactSigning === true
-        && health.signedCatalog === true
-        && pinnedPublicKey().includes("PUBLIC KEY");
-      if (!requiredHealthy) throw new Error("远程 Skill 广场健康检查未全部通过");
-      if (catalog.connected !== true || !Array.isArray(catalog.items)) throw new Error("远程 Skill 广场目录响应无效");
+        && catalogReady;
+      const accountLogin = clientConfig.capabilities?.accountLogin === true;
+      const accountRegistration = clientConfig.capabilities?.accountRegistration === true;
       const value = {
         connected: true,
-        mode: "remote_service",
-        message: "已连接远程 Skill 广场；制品均需通过哈希、恶意文件扫描和服务端签名门禁。",
+        mode: uploadInfrastructureReady ? "remote_service" : "remote_service_limited",
+        message: uploadInfrastructureReady
+          ? "已连接远程 Skill 广场；账号、签名目录、下载与上传安全依赖均已就绪。"
+          : "已连接神思云端账号与签名目录；Skill 上传所需的存储或安全扫描依赖尚未全部就绪。",
         remoteItems: catalog.items.map(publicRemoteItem).filter((item) => item.remoteArtifactId && item.remoteVersion && item.downloadable),
         health,
         baseUrl,
-        capabilities: { catalog: true, download: true, publish: false, rating: false },
+        adminUrl: String(clientConfig.adminUrl || `${baseUrl}/admin`),
+        capabilities: {
+          service: true,
+          catalog: catalogReady,
+          download: catalogReady,
+          accountLogin,
+          accountRegistration,
+          adminConsole: clientConfig.capabilities?.adminConsole === true,
+          publish: uploadInfrastructureReady && clientConfig.capabilities?.publish === true,
+          uploadInfrastructureReady,
+          rating: false,
+        },
       };
       consecutiveFailures = 0;
       retryAt = 0;
@@ -181,6 +236,7 @@ const parseRemoteId = (value = "") => {
 export const downloadRemoteMarketplaceArtifact = async (id) => {
   const remote = await readRemoteMarketplace({ force: true });
   if (!remote.connected) throw new Error(remote.message || "远程 Skill 广场未连接");
+  if (!pinnedPublicKey().includes("PUBLIC KEY")) throw new Error("远程 Skill 广场已连接，但尚未取得制品验签公钥");
   const { artifactId, version } = parseRemoteId(id);
   const descriptor = await fetchJson(`${remote.baseUrl}/v1/artifacts/${encodeURIComponent(artifactId)}/${encodeURIComponent(version)}/download`);
   const artifact = descriptor.artifact ?? {};

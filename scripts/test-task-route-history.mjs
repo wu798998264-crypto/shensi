@@ -17,6 +17,7 @@ try {
   const initial = await listManagedSkills({ shensiRoot: join(process.cwd(), "packaging", "bundled", "skill", "神思") });
   assert.match(initial.routeBundle.panel.text, /# 面板路由/u);
   assert.match(initial.capabilityTemplate.current.template.routeDocument, /## 路由元数据/u, "当前面板必须持久化完整 routeDocument");
+  assert.match(initial.capabilityTemplate.current.template.routeDocument, /## 更新规则[\s\S]*微调必须保持最小差异/u, "当前面板路由必须持久化最小差异更新规则");
   assert.doesNotMatch(initial.capabilityTemplate.current.template.routeDocument, /可信任务路由读取完整模板/u, "当前面板 routeDocument 不得退化为 triggerRules");
   assert.match(initial.capabilityTemplate.history.template[0].routeDocument, /# 面板路由/u, "初始面板历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.routes.some((route) => route.kind === "group"), "默认面板必须生成模组路由");
@@ -25,6 +26,8 @@ try {
   const initialModule = initial.capabilityTemplate.current.modules[0];
   assert.match(initialGroup.routeDocument, /# 模组路由/u);
   assert.match(initialModule.routeDocument, /# 模块路由/u);
+  assert.match(initialGroup.routeDocument, /## 更新规则[\s\S]*不得因一次局部调整整体重写/u, "模组路由必须包含稳定更新规则");
+  assert.match(initialModule.routeDocument, /## 更新规则[\s\S]*不得因一次局部调整整体重写/u, "模块路由必须包含稳定更新规则");
   assert.match(initial.capabilityTemplate.history.groups[initialGroup.id][0].routeDocument, /# 模组路由/u, "初始模组历史必须有可恢复的详细路由文档");
   assert.match(initial.capabilityTemplate.history.modules[initialModule.id][0].routeDocument, /# 模块路由/u, "初始模块历史必须有可恢复的详细路由文档");
   assert.ok(initial.routeBundle.skillPlacements.length >= 20, "默认面板中启用的 Skill 必须生成真实位置目录");

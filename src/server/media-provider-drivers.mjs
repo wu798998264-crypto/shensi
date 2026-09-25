@@ -23,6 +23,35 @@ const asError = (message, code = "") => {
   return error;
 };
 
+export const classifyLibTvCliError = (error) => {
+  const raw = [error?.stderr, error?.stdout, error?.message]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n");
+  const payload = parsedJson(raw);
+  const nestedCode = payload?.code ?? payload?.error?.code ?? payload?.data?.code ?? payload?.ret;
+  const nestedMessage = payload?.msg ?? payload?.message ?? payload?.error?.message ?? payload?.data?.msg ?? "";
+  const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${raw} ${nestedCode || ""} ${nestedMessage || ""}`);
+  if (capacity) {
+    error.providerErrorCode = "LIBTV_CAPACITY_INSUFFICIENT";
+    error.submissionOutcomeKnown = true;
+    error.capacityLimited = true;
+    error.retryAfterMs = Math.max(Number(error.retryAfterMs) || 0, 60_000);
+    error.message = "LibTV 厂商当前算力不足，未能创建生成任务；请稍后重试。";
+    return error;
+  }
+  // LibTV's CLI emits provider-side JSON errors with a non-zero exit code.
+  // Preserve a stable provider code so the worker can finish the task instead
+  // of treating the response as an unknown transport interruption.
+  if (nestedCode !== undefined && nestedCode !== null && String(nestedCode).trim()) {
+    const code = String(nestedCode).trim().replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 80);
+    error.providerErrorCode = `LIBTV_PROVIDER_${code}`;
+    error.submissionOutcomeKnown = true;
+    if (nestedMessage) error.message = String(nestedMessage).trim();
+  }
+  return error;
+};
+
 const providerPrompt = (job = {}) => sanitizeMediaProviderPrompt(
   job.request?.executionPrompt || job.request?.prompt || "",
   { referenceTokens: job.request?.providerPromptReferenceTokens || [], preserveReferenceTokens: job.channel === "video" && String(job.request?.settings?.provider || "") === "即梦" && String(job.request?.settings?.adapter || "") === "cli" && job.request?.preserveReferenceTokens === true },
@@ -689,8 +718,10 @@ export class DreaminaImageDriver extends MediaProviderDriver {
     if (profileId !== requestedProfileId) throw asError("即梦图片 CLI 回执与当前配置不一致，已阻止串号", "DREAMINA_PROFILE_ID_MISMATCH");
     return {
       available: result.ok === true,
-      generationReady: result.ok === true && result.taskResourceChecked === true,
+      generationReady: result.ok === true && (result.taskResourceChecked === true || result.taskResourceDeferred === true),
       taskResourceChecked: result.taskResourceChecked === true,
+      taskResourceDeferred: result.taskResourceDeferred === true,
+      taskResourceWarning: String(result.taskResourceWarning || ""),
       userId: String(result.userId || ""),
       profileId,
       credentialFingerprint: String(result.credentialFingerprint || ""),
@@ -810,8 +841,10 @@ export class DreaminaVideoDriver extends MediaProviderDriver {
     if (profileId !== requestedProfileId) throw asError("即梦视频 CLI 回执与当前配置不一致，已阻止串号", "DREAMINA_PROFILE_ID_MISMATCH");
     return {
       available: result.ok === true,
-      generationReady: result.ok === true && result.taskResourceChecked === true,
+      generationReady: result.ok === true && (result.taskResourceChecked === true || result.taskResourceDeferred === true),
       taskResourceChecked: result.taskResourceChecked === true,
+      taskResourceDeferred: result.taskResourceDeferred === true,
+      taskResourceWarning: String(result.taskResourceWarning || ""),
       userId: String(result.userId || ""),
       profileId,
       credentialFingerprint: String(result.credentialFingerprint || ""),
@@ -987,8 +1020,19 @@ const libtvExecutable = (settings = {}) => {
   return configured || LIBTV_CLI_ALIAS;
 };
 
+// LibTV normally returns after the node has been accepted. If its `--run`
+// command blocks instead, let the durable worker switch to read-only status
+// polling using the already persisted node key. Never hold the generation
+// task in the submitting process for the provider's full 30-minute timeout.
+const LIBTV_RUN_TIMEOUT_MS = Math.max(
+  30_000,
+  Number(process.env.SHENSI_LIBTV_RUN_TIMEOUT_MS) || 90_000,
+);
+
 const libtvStatus = (value) => {
   const numeric = Number(value);
+  if (numeric === 0) return "queued";
+  if (numeric === 1) return "running";
   if (numeric === 2) return "completed";
   if (numeric === 3) return "failed";
   if (numeric === 4 || numeric === 5) return "cancelled";
@@ -996,24 +1040,67 @@ const libtvStatus = (value) => {
   if (["completed", "complete", "success", "succeeded", "done"].includes(normalized)) return "completed";
   if (["failed", "fail", "error"].includes(normalized)) return "failed";
   if (["cancelled", "canceled"].includes(normalized)) return "cancelled";
-  return ["queued", "pending", "created", "waiting"].includes(normalized) ? "queued" : "running";
+  if (["queued", "pending", "created", "waiting"].includes(normalized)) return "queued";
+  if (["running", "processing", "generating", "in_progress", "in-progress"].includes(normalized)) return "running";
+  // An empty/unknown LibTV response is not evidence that the task is still
+  // running. Returning running here caused the worker to poll forever and
+  // hide the real driver failure from the card.
+  return "unknown";
 };
 
-const libtvTaskFromPayload = (payload = {}) => {
+const libTvPayloadErrorCode = (payload = {}) => {
+  const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  const value = payload?.code ?? payload?.ret ?? data?.code ?? data?.ret ?? data?.errorCode ?? "";
+  return String(value ?? "").trim();
+};
+
+const libTvPayloadErrorMessage = (payload = {}) => {
+  const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  return String(
+    payload?.msg
+      ?? payload?.message
+      ?? payload?.error?.message
+      ?? data?.msg
+      ?? data?.message
+      ?? data?.error?.message
+      ?? "",
+  ).trim();
+};
+
+const libTvProviderFailure = (payload = {}) => {
+  const code = libTvPayloadErrorCode(payload);
+  const message = libTvPayloadErrorMessage(payload);
+  const nonZeroCode = code && !["0", "200", "success", "ok"].includes(code.toLowerCase());
+  return Boolean(nonZeroCode || /算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(message));
+};
+
+export const parseLibTvTaskPayload = (payload = {}) => {
   const data = payload.data || payload;
   const info = data.taskInfo || data.task_info || {};
   const taskId = String(payload.taskId || payload.task_id || info.taskId || info.task_id || "").trim();
-  const statusValue = info.status ?? info.taskStatus ?? data.status ?? payload.status ?? "queued";
+  const providerFailure = libTvProviderFailure(payload);
+  const statusValue = providerFailure ? "failed" : info.status ?? info.taskStatus ?? data.status ?? payload.status ?? "queued";
   const status = libtvStatus(statusValue);
   const urls = Array.isArray(data.url) ? data.url : [data.url || data.resultUrl || data.result_url].filter(Boolean);
-  const error = String(info.failedReason || info.error || data.failedReason || payload.message || "");
+  const error = String(info.failedReason || info.error || data.failedReason || libTvPayloadErrorMessage(payload) || "");
+  const rawCode = libTvPayloadErrorCode(payload);
+  const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${rawCode} ${error}`);
+  const providerErrorCode = capacity
+    ? "LIBTV_CAPACITY_INSUFFICIENT"
+    : rawCode && !["0", "200", "success", "ok"].includes(rawCode.toLowerCase())
+      ? `LIBTV_PROVIDER_${rawCode.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 80)}`
+      : "LIBTV_PROVIDER_FAILED";
   const progress = Number(info.progressPercent ?? info.progress ?? data.progressPercent);
   return {
     providerTaskId: taskId,
     providerStatus: status,
     rawStatus: String(statusValue),
     ...(urls[0] ? { resultUrl: String(urls[0]) } : {}),
-    ...(error ? { error, errorCode: status === "failed" ? "LIBTV_PROVIDER_FAILED" : "" } : {}),
+    ...(error ? { error, errorCode: status === "failed" ? providerErrorCode : "" } : {}),
+    ...(status === "unknown" ? {
+      error: error || "LibTV 返回了无法识别的任务状态",
+      errorCode: "LIBTV_STATUS_UNKNOWN",
+    } : {}),
     ...(Number.isFinite(progress) ? { progressPercent: progress } : {}),
     raw: payload,
   };
@@ -1175,7 +1262,15 @@ export const listLibTvModels = async ({ channel = "image", settings = {} } = {})
     cwd: process.cwd(),
     timeoutMs: 45_000,
   });
-  const models = (Array.isArray(payload.matches) ? payload.matches : []).map((item) => ({
+  const matches = [payload.matches, payload.data?.matches, payload.models, payload.data?.models]
+    .find((items) => Array.isArray(items)) || [];
+  const fallbackNames = channel === "image"
+    ? LIBTV_IMAGE_NAMES
+    : channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
+  const sourceModels = matches.length
+    ? matches
+    : Object.entries(fallbackNames).map(([modelKey, modelName]) => ({ modelKey, modelName }));
+  const models = sourceModels.map((item) => ({
     slug: String(item.modelKey || "").trim(),
     label: String(item.modelName || item.modelKey || "").trim(),
     description: String(item.description || "").trim(),
@@ -1318,25 +1413,29 @@ export class LibTvMediaDriver extends MediaProviderDriver {
 
   executable(settings = {}) { return libtvExecutable(settings); }
 
-  async invoke(args, { cwd, timeoutMs = 60_000, raw = false } = {}) {
-    const request = { executable: this.executable(), args, cwd, timeoutMs };
-    return raw ? spawnRaw(request) : spawnJson(request);
+  async invoke(args, { cwd, timeoutMs = 60_000, raw = false, settings = {} } = {}) {
+    const request = { executable: this.executable(settings), args, cwd, timeoutMs };
+    try {
+      return raw ? await spawnRaw(request) : await spawnJson(request);
+    } catch (error) {
+      throw classifyLibTvCliError(error);
+    }
   }
 
-  async project(workRoot) {
+  async project(workRoot, settings = {}) {
     const metadataPath = join(workRoot, "libtv-project.json");
     await mkdir(join(workRoot, ".libtv"), { recursive: true });
     try {
       const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
       if (metadata.projectUuid) {
-        await this.invoke(["project", "use", metadata.projectUuid], { cwd: workRoot, timeoutMs: 30_000 });
+        await this.invoke(["project", "use", metadata.projectUuid], { cwd: workRoot, timeoutMs: 30_000, settings });
         return metadata;
       }
     } catch {}
-    const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000 });
+    const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000, settings });
     const projectUuid = String(created.projectMeta?.uuid || created.uuid || "").trim();
     if (!projectUuid) throw asError("LibTV 创建临时画布未返回 UUID", "LIBTV_PROJECT_CREATE_FAILED");
-    await this.invoke(["project", "use", projectUuid], { cwd: workRoot, timeoutMs: 30_000 });
+    await this.invoke(["project", "use", projectUuid], { cwd: workRoot, timeoutMs: 30_000, settings });
     const metadata = { projectUuid };
     await writeFile(metadataPath, JSON.stringify(metadata), "utf8");
     return metadata;
@@ -1390,7 +1489,8 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         );
       }
     }
-    const project = await this.project(workRoot);
+    const settings = job.request.settings || {};
+    const project = await this.project(workRoot, settings);
     let node;
     try { node = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
     const nodeName = `神思-${job.channel}-${job.id}`;
@@ -1398,10 +1498,56 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
       const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${names[modelKey] || modelKey}`];
       if (job.channel === "image") {
-        if (job.request.aspectRatio) args.push("-s", `ratio=${job.request.aspectRatio}`);
-        if (job.request.quality) args.push("-s", `quality=${String(job.request.quality).toLowerCase()}`);
-        if (job.request.resolution) args.push("-s", `resolution=${String(job.request.resolution).replace(/p$/i, "K")}`);
-        args.push("-s", `count=${Math.max(1, Math.min(4, Number(job.request.imageCount) || 1))}`);
+        // LibTV image schemas vary: older models expose one output control,
+        // while the current 2.5 models expose independent quality and
+        // resolution controls. Read the schema before forwarding settings so
+        // unsupported fields are never sent to the provider.
+        let imageSchema = {};
+        try { imageSchema = (await loadLibTvModelSchema({ modelKey, settings: job.request.settings || {} }))?.schema || {}; } catch {}
+        const imageProperties = imageSchema?.properties && typeof imageSchema.properties === "object" ? imageSchema.properties : {};
+        const appendImageSetting = (field, requested, aliases = {}) => {
+          const property = imageProperties[field];
+          if (!property) return false;
+          const values = libTvEnumValues(property);
+          const source = normalizedLibTvUiValue(requested);
+          const alias = aliases[source] || source;
+          const selected = values.find((value) => normalizedLibTvUiValue(value) === source)
+            || values.find((value) => normalizedLibTvUiValue(value) === alias)
+            || values.find((value) => normalizedLibTvUiValue(value) === normalizedLibTvUiValue(property.default))
+            || property.default;
+          if (selected === undefined || selected === null || !String(selected).trim()) return false;
+          args.push("-s", `${String(property.originalField || field)}=${selected}`);
+          return true;
+        };
+        const hasQuality = Boolean(imageProperties.quality);
+        const hasResolution = Boolean(imageProperties.resolution);
+        if (hasQuality && hasResolution) {
+          // Current LibTV 2.5 schemas expose both controls: quality is the
+          // visual quality level and resolution is the output pixel size.
+          // They are independent settings and must both be forwarded.
+          appendImageSetting("quality", job.request.quality || "medium", { standard: "medium", ultra: "xhigh" });
+          appendImageSetting("resolution", job.request.resolution || "2K");
+        } else if (hasQuality) {
+          // Older schemas expose only one control. Preserve the legacy UI
+          // behaviour by mapping the requested resolution into that field.
+          appendImageSetting("quality", job.request.quality || job.request.resolution || "medium", { standard: "medium", ultra: "xhigh", "1k": "low", "2k": "medium", "4k": "high" });
+        } else if (hasResolution) {
+          appendImageSetting("resolution", job.request.resolution || job.request.quality || "2K");
+        } else {
+          // Keep compatibility with older cached LibTV model snapshots whose
+          // schema endpoint is temporarily unavailable; once a schema is
+          // available the branch above prevents unsupported duplicate fields.
+          if (job.request.quality) args.push("-s", `quality=${String(job.request.quality).toLowerCase()}`);
+          if (job.request.resolution) args.push("-s", `resolution=${String(job.request.resolution).replace(/p$/i, "K")}`);
+        }
+        const ratioProperty = imageProperties.ratio || imageProperties.aspectRatio;
+        const ratioValues = ratioProperty ? libTvEnumValues(ratioProperty) : [];
+        const requestedRatio = normalizedLibTvUiValue(job.request.aspectRatio);
+        const selectedRatio = ratioValues.find((value) => normalizedLibTvUiValue(value) === requestedRatio)
+          || ratioProperty?.default;
+        if (selectedRatio !== undefined && selectedRatio !== null && String(selectedRatio).trim()) args.push("-s", `${imageProperties.ratio ? "ratio" : "aspectRatio"}=${selectedRatio}`);
+        if (job.request.background && imageProperties.background) args.push("-s", `background=${String(job.request.background).toLowerCase()}`);
+        if (imageProperties.count || !Object.keys(imageProperties).length) args.push("-s", `count=${Math.max(1, Math.min(4, Number(job.request.imageCount) || 1))}`);
       } else if (job.channel === "video") {
         appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "ratio", job.request.aspectRatio);
         appendLibTvVideoParameter(args, libTvVideoSchema, libTvVideoMode, "duration", job.request.duration, { required: true });
@@ -1429,13 +1575,13 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       for (let index = 0; index < references.length; index += 1) {
         const reference = references[index];
         if (!reference?.absolutePath) continue;
-        const uploaded = await this.invoke(["upload", `神思参考-${index + 1}-${job.id}`, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000 });
+        const uploaded = await this.invoke(["upload", `神思参考-${index + 1}-${job.id}`, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000, settings });
         if (uploaded.nodeKey) {
           args.push("--left", String(uploaded.nodeKey));
           leftNodes.push(uploaded.nodeKey);
         }
       }
-      const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000 });
+      const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000, settings });
       node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || "").trim(), nodeName, leftNodes };
       if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
       await writeFile(metadataPath, JSON.stringify(node), "utf8");
@@ -1447,16 +1593,24 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         rawStatus: "node_created",
       });
     }
-    const run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: Math.max(Number(job.request.settings?.timeoutMs) || 0, 30 * 60_000) });
-    return { ...libtvTaskFromPayload(run), providerTaskId: libtvTaskFromPayload(run).providerTaskId || node.nodeKey };
+    const run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings });
+    return { ...parseLibTvTaskPayload(run), providerTaskId: parseLibTvTaskPayload(run).providerTaskId || node.nodeKey };
   }
 
   async getStatus({ job, workRoot }) {
     let node;
     try { node = JSON.parse(await readFile(join(workRoot, "libtv-node.json"), "utf8")); } catch { node = {}; }
     if (!node.nodeKey) return { providerTaskId: job.providerTaskId, providerStatus: "queued", rawStatus: "queued" };
-    const payload = await this.invoke(["node", node.nodeKey, "-p", node.projectUuid], { cwd: workRoot, timeoutMs: 45_000 });
-    return { ...libtvTaskFromPayload(payload), providerTaskId: libtvTaskFromPayload(payload).providerTaskId || job.providerTaskId || node.nodeKey };
+    const payload = await this.invoke(["node", node.nodeKey, "-p", node.projectUuid], {
+      cwd: workRoot,
+      timeoutMs: 45_000,
+      // Reconciliation can run from a durable task record created by an
+      // older client that did not persist request settings. Status lookup
+      // must still be able to read the node and classify the real provider
+      // state instead of crashing on an absent request object.
+      settings: job?.request?.settings || {},
+    });
+    return { ...parseLibTvTaskPayload(payload), providerTaskId: parseLibTvTaskPayload(payload).providerTaskId || job.providerTaskId || node.nodeKey };
   }
 
   async reconcileSubmission({ job, workRoot }) { return this.getStatus({ job, workRoot }); }
@@ -1478,7 +1632,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     const outputDir = join(workRoot, "libtv-download");
     await rm(outputDir, { recursive: true, force: true });
     await mkdir(outputDir, { recursive: true });
-    await this.invoke(["download", "-n", node.nodeKey, "-p", node.projectUuid, "-o", outputDir], { cwd: workRoot, timeoutMs: 10 * 60_000, raw: true });
+    await this.invoke(["download", "-n", node.nodeKey, "-p", node.projectUuid, "-o", outputDir], { cwd: workRoot, timeoutMs: 10 * 60_000, raw: true, settings: job.request.settings || {} });
     const files = (await readdir(outputDir, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => join(outputDir, entry.name));
     if (!files.length) throw asError("LibTV 任务已完成但没有下载到结果文件", "MISSING_RESULT_FILE");
     const sourcePath = files[0];

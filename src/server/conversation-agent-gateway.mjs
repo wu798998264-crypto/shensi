@@ -132,7 +132,7 @@ export const createConversationAgentGateway = ({
               ? externalRunners.externalCli || runExternalCliAgent
             : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
-      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract: runtimePermissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, environment: processEnvironment });
+      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract: runtimePermissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, isWaitingForUser: options.isWaitingForUser, environment: processEnvironment });
     } finally { await nativeHost.close(); }
   },
   mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {
@@ -144,7 +144,7 @@ export const createConversationAgentGateway = ({
       await archiveConversationMediaJob({ appRoot, request, job });
       await emit("media_saved", { jobId: job.id, messageId: job.target.messageId, attachment: job.result.attachment, channel: job.channel });
     }
-    return { id: job.id, status: job.status, attachment: job.result?.attachment, error: job.error || "", backedUpToAllAssets: archive };
+    return { id: job.id, status: job.status, channel: job.channel, profileId: job.request?.settings?.id || "", attachment: job.result?.attachment, error: job.error || "", backedUpToAllAssets: archive };
   },
   media: createConversationMediaExecutor({ appRoot, apiRequest }),
   browser: browser || createAgentBrowserService(),

@@ -2,8 +2,8 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, safe
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
-import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import { appendFile, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, isIP } from "node:net";
 import { createServer as createHttpServer, request } from "node:http";
 import { homedir } from "node:os";
@@ -613,14 +613,15 @@ const requestApplicationQuit = () => {
     finishApplicationQuit();
     return;
   }
-  mainWindow.webContents.send("shensi:prepare-close");
   clearTimeout(rendererCloseTimer);
   rendererCloseTimer = setTimeout(() => {
     rendererCloseTimer = null;
     console.error("[shensi-desktop-quit-timeout] renderer did not acknowledge tray exit; using the durable recovery checkpoint");
     finishApplicationQuit();
-  }, RENDERER_CLOSE_GRACE_MS);
+  }, rendererUnresponsive ? 2_000 : RENDERER_CLOSE_GRACE_MS);
   rendererCloseTimer.unref?.();
+  try { mainWindow.webContents.send("shensi:prepare-close"); }
+  catch { finishApplicationQuit(); }
 };
 
 const createApplicationTray = () => {
@@ -643,7 +644,8 @@ const createApplicationTray = () => {
   tray.setContextMenu(contextMenu);
   tray.on("click", showMainWindowFromBackground);
   tray.on("double-click", showMainWindowFromBackground);
-  tray.on("right-click", () => tray?.popUpContextMenu(contextMenu));
+  // setContextMenu already handles native right-click. Calling popUpContextMenu
+  // again from that event starts a second native menu while one is opening.
   return tray;
 };
 
@@ -858,8 +860,9 @@ const writeDiagnosticLog = (message) => {
     const logDirs = [machineLocalDataRoot];
     for (const dir of logDirs) {
       try {
-        mkdirSync(dir, { recursive: true });
-        appendFileSync(join(dir, "desktop-startup.log"), line);
+        void mkdir(dir, { recursive: true })
+          .then(() => appendFile(join(dir, "desktop-startup.log"), line))
+          .catch(() => {});
       } catch {}
     }
   } catch {}
@@ -974,7 +977,22 @@ const stopBackend = async () => {
     new Promise((resolveExit) => child.once("exit", () => resolveExit(true))),
     delay(5_000).then(() => false),
   ]);
-  if (!exited && child.exitCode == null) child.kill();
+  if (!exited && child.exitCode == null) {
+    if (process.platform === "win32" && Number(child.pid) > 0) {
+      // `ChildProcess.kill()` only targets the Node parent on Windows. The
+      // server can own Codex/CLI descendants, so terminate the verified PID
+      // tree to prevent an invisible backend keeping the taskbar app alive.
+      const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      await new Promise((resolveKill) => {
+        const timer = setTimeout(() => { killer.kill(); child.kill(); resolveKill(); }, 2_000);
+        const finish = () => { clearTimeout(timer); resolveKill(); };
+        killer.once("close", finish);
+        killer.once("error", () => { child.kill(); finish(); });
+      });
+    } else {
+      child.kill();
+    }
+  }
 };
 
 const windowStatePath = () => join(app.getPath("userData"), WINDOW_STATE_FILE);
@@ -1874,6 +1892,8 @@ const createMainWindowShell = async () => {
   mainWindow.on("unresponsive", () => {
     if (quitting || !desktopStartupComplete || rendererUnresponsive) return;
     rendererUnresponsive = true;
+    // Keep the existing native tray menu alive. Do not synchronously rebuild
+    // the Windows Jump List (shell COM) in the renderer-hang recovery path.
     writeDiagnosticLog(`renderer unresponsive; graceMs=${RENDERER_UNRESPONSIVE_GRACE_MS}`);
     mainWindow?.setTitle(`${PRODUCT_NAME_ZH} · 界面无响应，正在恢复`);
     mainWindow?.setProgressBar(2, { mode: "indeterminate" });
@@ -1899,8 +1919,10 @@ const createMainWindowShell = async () => {
   mainWindow.on("close", (event) => {
     if (rendererApprovedClose || quitting || mainWindow?.isDestroyed()) return;
     event.preventDefault();
-    void persistWindowState();
-    mainWindow.hide();
+    // The in-product frameless close button navigates to RECOVERY_CLOSE_URL
+    // and hides to tray. Native WM_CLOSE is the Windows taskbar "Close
+    // window" action and must fully exit, even when the renderer is frozen.
+    requestApplicationQuit();
   });
   mainWindow.on("closed", () => {
     clearTimeout(rendererCloseTimer);
@@ -1968,18 +1990,21 @@ app.on("before-quit", (event) => {
   clearTimeout(rendererCloseTimer);
   rendererCloseTimer = null;
   clearBackendStabilityTimer();
+  const exitTimer = setTimeout(() => app.exit(0), 12_000);
   void (async () => {
-    await persistWindowState();
-    await stopBackend();
-    await stopAgentBrowserBridge();
-    tray?.destroy();
-    tray = null;
-    app.exit(0);
+    try {
+      await Promise.allSettled([persistWindowState(), stopBackend(), stopAgentBrowserBridge()]);
+    } finally {
+      clearTimeout(exitTimer);
+      tray?.destroy();
+      tray = null;
+      app.exit(0);
+    }
   })();
 });
 
-// Closing the frameless window means "run in background". Only the tray Exit
-// command (or the operating system shutdown lifecycle) ends the process.
+// The in-product Close control hides to tray. Native Close window, tray Exit
+// and the operating-system shutdown lifecycle end the process.
 app.on("window-all-closed", () => {});
 
 const allowTrustedRendererPermission = (webContents, permission, requestingOrigin = "") => {

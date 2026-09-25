@@ -65,7 +65,7 @@ export const normalizeIllustrationPlan = ({ article = "", value = {}, maxItems =
       issues.push(`配图项 ${index + 1} 缺少有效提示词、用途或正文锚点`);
       continue;
     }
-    const aspectRatio = /^(?:1:1|4:3|3:4|16:9|9:16|3:2|2:3)$/.test(String(item?.aspectRatio || ""))
+    const aspectRatio = /^(?:1:1|4:3|3:4|16:9|9:16|3:2|2:3|21:9|9:21)$/.test(String(item?.aspectRatio || ""))
       ? String(item.aspectRatio)
       : "16:9";
     const idSeed = JSON.stringify(canonical({ anchor, purpose, prompt, aspectRatio }));

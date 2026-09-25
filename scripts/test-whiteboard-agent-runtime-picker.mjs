@@ -7,6 +7,7 @@ import {
 } from "../src/agent-engine-registry.js";
 
 const appSource = await readFile(resolve("src", "app.js"), "utf8");
+const serverSource = await readFile(resolve("server.mjs"), "utf8");
 
 for (const id of ["whiteboardTextAgentEngine", "whiteboardTextAgentConnection"]) {
   assert.match(appSource, new RegExp(`id=\\"${id}\\"`), `白板 Agent 选择器必须存在：${id}`);
@@ -19,6 +20,10 @@ assert.match(appSource, /agentEngine:\s*String\(formData\.get\("agentEngine"\)/u
 assert.match(appSource, /agentConnectionId:\s*String\(formData\.get\("agentConnectionId"\)/u, "提交时必须使用卡片选择的配置");
 assert.match(appSource, /selectedAgentEngine\s*=\s*AGENT_ENGINE_IDS\.includes\(textRequestSettings\?\.agentEngine\)/u, "运行器可用性校验必须针对卡片所选运行器");
 assert.match(appSource, /activeTextAgentConnectionId:\s*profile\.id/u, "Agent 请求必须锁定卡片所选配置 ID");
+assert.match(appSource, /agentSettings:\s*requestGenerationSettings/u, "白板请求必须把卡片所选 Agent 配置传给后端");
+assert.match(appSource, /const isSelectableTextModel\s*=\s*\(item\s*=\s*\{\}\)/u, "文字模型目录必须经过统一文本能力过滤");
+assert.match(appSource, /const sortTextModelsByCapability\s*=\s*\(models\s*=\s*\[\], profile\s*=\s*null\)/u, "文字模型列表必须按当前能力证据排序");
+assert.match(serverSource, /body\.agentSettings\s*=\s*body\.settings/u, "旧白板请求缺少 Agent 配置时必须兼容回退到本次设置");
 assert.match(appSource, /elements\.whiteboardTextAgentEngine\.addEventListener\("change"/u, "Agent 配置变化必须刷新卡片配置");
 assert.doesNotMatch(appSource, /elements\.whiteboardTextAgentConnection\.addEventListener\("change"/u, "隐藏的 Agent 配置字段不应提供独立选择事件");
 

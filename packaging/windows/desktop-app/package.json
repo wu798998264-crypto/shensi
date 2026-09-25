@@ -1,6 +1,6 @@
 {
   "name": "shensi-creative-engine-desktop",
-  "version": "6.9.0",
+  "version": "8.0.0",
   "private": true,
   "type": "module",
   "main": "main.mjs"

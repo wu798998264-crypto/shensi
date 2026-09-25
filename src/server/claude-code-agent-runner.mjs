@@ -4,6 +4,7 @@ import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
 import { toolsWithPermissionPrompt } from "./agent-permission-prompt-tools.mjs";
 import { startConversationAgentMcp } from "./conversation-agent-mcp.mjs";
+import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
 
 const safeError = (value = "") => String(value || "Claude Code 调用失败")
   .replace(/\b(?:sk-ant|sk)[-_][A-Za-z0-9_-]{10,}\b/giu, "[REDACTED]")
@@ -78,6 +79,7 @@ export const runClaudeCodeAgentTurn = async ({
   contextBlocks = [],
   environment = process.env,
   signal = null,
+  isWaitingForUser = () => false,
   timeoutMs = 1_800_000,
   launch = launchClaudeCode,
 } = {}) => {
@@ -149,7 +151,14 @@ export const runClaudeCodeAgentTurn = async ({
     const abort = () => controller.abort(signal?.reason);
     if (signal?.aborted) abort();
     else signal?.addEventListener?.("abort", abort, { once: true });
-    const timer = setTimeout(() => controller.abort(new Error("Claude Code 调用超时")), Math.max(5_000, Math.min(3_600_000, Number(timeoutMs) || 1_800_000)));
+    const effectiveTimeout = createEffectiveAgentTimeout({
+      timeoutMs,
+      isWaitingForUser,
+      onTimeout: ({ reason, timeoutMs: activeTimeoutMs }) => {
+        const suffix = reason === "waiting_timeout" ? "等待用户决定超过上限" : "调用超过有效执行时限";
+        controller.abort(new Error(`Claude Code ${suffix}（${Math.round(activeTimeoutMs / 1000)} 秒）`));
+      },
+    });
     let result;
     try {
       result = await launch(executable, args, {
@@ -160,7 +169,7 @@ export const runClaudeCodeAgentTurn = async ({
         windowsHide: true,
       });
     } finally {
-      clearTimeout(timer);
+      effectiveTimeout.clear();
       signal?.removeEventListener?.("abort", abort);
     }
     if (Number(result?.exitCode) !== 0) throw new Error(`Claude Code 退出码 ${result?.exitCode ?? "?"}：${safeError(result?.stderr)}`);

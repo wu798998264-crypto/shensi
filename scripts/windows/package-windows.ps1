@@ -55,6 +55,9 @@ Write-Host "==> Repo root: $repoRoot"
 $packageJsonPath = Join-Path $repoRoot "package.json"
 $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $packageJson.version
+if ($version -notmatch '^\d\.\d\.\d$') {
+    throw "正式版本号必须由三个单数字段组成；例如 7.7.9 的下一版应进位为 7.8.0"
+}
 
 # A formal installer version is immutable. Refuse to create a second package
 # with the same semantic version even though its timestamped buildId would be

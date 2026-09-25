@@ -82,10 +82,15 @@ assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,2200}�
 assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,1800}submissionState: "uncertain"[\s\S]{0,500}billingRisk: "submission_outcome_unknown"/u,
   "临时配置锁冲突必须保留原提交不确定性和计费保护");
 assert.match(app, /promptDreaminaSubmissionBlockForJob/u);
-assert.match(app, /const terminalJob = \["complete", "failed", "cancelled"\]\.includes\(jobStatus\)/u,
-  "已完成、已失败或已取消的旧任务不得在重启恢复时重新弹出即梦占锁门禁");
-assert.match(app, /DREAMINA_PROFILE_SWITCH_BLOCKED"[\s\S]{0,180}&& !terminalJob[\s\S]{0,100}&& !reconciliationOnly/u,
-  "只读找回或费用状态未知的旧任务不得伪装成当前生成锁冲突");
+assert.match(app, /DREAMINA_PROFILE_SWITCH_BLOCKED/u);
+assert.match(app, /!\["complete", "cancelled"\]\.includes\(jobStatus\)/u,
+  "失败的锁冲突任务仍必须显示可操作的占用任务入口；成功或取消任务不得重复弹出");
+assert.match(app, /showInterruptedConversationMediaJob\(job, \{ allowLockDialog: false \}\)/u,
+  "启动恢复对话媒体任务时不得重放历史即梦锁弹窗");
+assert.match(app, /showInterruptedDocumentArtifactJob\(job, \{ allowLockDialog: false \}\)/u,
+  "启动恢复文档媒体任务时不得重放历史即梦锁弹窗");
+assert.match(app, /showInterruptedWhiteboardGenerationJob\(job, \{ allowLockDialog: false \}\)/u,
+  "启动恢复白板媒体任务时不得重放历史即梦锁弹窗");
 assert.match(app, /凭证锁已经释放，不影响新的生成/u);
 assert.doesNotMatch(app, /已暂停新的提交；请查看占用任务/u);
 
@@ -187,8 +192,11 @@ try {
   const controlAuth = await runChild(process.execPath, [
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-control-auth-key",
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "control-auth" });
-  assert.notEqual(controlAuth.code, 0, "控制面未登录必须失败");
-  assert.match(controlAuth.stderr, /\[DREAMINA_AUTH_REQUIRED\]/u, "控制面未登录仍必须要求账号核验");
+  assert.equal(controlAuth.code, 0, `已有持久化身份时，控制面短暂未登录应交给真实生成端点最终判断：${controlAuth.stderr}`);
+  const controlAuthPayload = JSON.parse(controlAuth.stdout.trim());
+  assert.equal(controlAuthPayload.providerTaskId, "fixture-task-success-123");
+  assert.equal(controlAuthPayload.accountControlPlaneDeferred, true,
+    "控制面降级必须在回执中明确标记，不能伪装成实时核验成功");
 
   const preflightListFailure = await runChild(process.execPath, [
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-preflight-list-failure-key",

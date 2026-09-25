@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mediaRecoveryJobBlocksOperation, whiteboardMediaJobMayClearCandidate } from "../src/media-generation-coordination.js";
+import { mediaRecoveryJobBlocksOperation, mediaRecoveryPromptCandidates, whiteboardMediaJobMayClearCandidate } from "../src/media-generation-coordination.js";
 
 const [app, server, mediaWorker] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
@@ -42,6 +42,8 @@ assert.match(mediaWorker, /completed\.resultSuppressed && completionPatch\.resul
 assert.match(app, /data-media-job-action="dismiss"/u, "租约到期任务必须提供可见的忽略旧任务动作");
 assert.match(app, /旧任务已忽略，当前卡片和配置选择已恢复/u, "忽略旧任务后必须明确告知卡片与配置选择已经恢复");
 assert.match(app, /filter\(mediaRecoveryJobBlocksOperation\)/u, "待处理页面必须只显示真实阻塞软件操作的媒体任务");
+assert.match(app, /const mediaRecoveryBaselinedScanKeys = new Set\(\)/u, "启动恢复必须记录每个工作区的待处理基线");
+assert.match(app, /mediaRecoveryPromptCandidates\(\{[\s\S]{0,260}baselinedScanKeys: mediaRecoveryBaselinedScanKeys/u, "待处理自动弹窗必须使用启动基线门禁");
 assert.match(app, /当前没有阻塞软件运行的媒体任务，软件可正常使用/u, "阻塞任务处理完后必须明确恢复正常使用状态");
 assert.match(app, /const remaining = await readMediaRecoveryJobsForDialog\(\);[\s\S]{0,100}clearMediaRecoveryBanner\(\)/u, "处理完成后必须立即刷新列表并清除阻塞横幅");
 assert.match(app, /addCanvasGenerationRecoveryTombstone\(removed\.canvas, \{ nodeId, generationJobId \}\)/u, "单卡片删除必须持久化生成目标删除墓碑");
@@ -91,6 +93,32 @@ assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", appliedAt: new Date().toISOString() }), false, "回填完成的任务必须立即隐藏");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", billingRisk: "", availableActions: { dismissCompleted: true } }), false, "已完成任务不应以放弃动作形式进入待处理");
 assert.equal(mediaRecoveryJobBlocksOperation({ ...blockingJob, status: "complete", resultSuppressed: true, availableActions: { dismissCompleted: true } }), false, "已放弃并隐藏的完成任务不得继续阻塞");
+
+const baselinedScanKeys = new Set();
+const promptedJobSignatures = new Map();
+const firstStartupScan = mediaRecoveryPromptCandidates({
+  scanKey: "project:workspace-a",
+  blockingJobs: [blockingJob],
+  baselinedScanKeys,
+  promptedJobSignatures,
+});
+assert.equal(firstStartupScan.baselineOnly, true);
+assert.deepEqual(firstStartupScan.freshBlockingJobs, [], "软件首次打开只能登记历史待处理，不得自动弹窗");
+const unchangedScan = mediaRecoveryPromptCandidates({
+  scanKey: "project:workspace-a",
+  blockingJobs: [blockingJob],
+  baselinedScanKeys,
+  promptedJobSignatures,
+});
+assert.deepEqual(unchangedScan.freshBlockingJobs, [], "状态未变化的历史阻塞不得重复弹窗");
+const newlyBlockedJob = { ...blockingJob, id: "generation-new-block", updatedAt: new Date().toISOString() };
+const activeTaskScan = mediaRecoveryPromptCandidates({
+  scanKey: "project:workspace-a",
+  blockingJobs: [blockingJob, newlyBlockedJob],
+  baselinedScanKeys,
+  promptedJobSignatures,
+});
+assert.deepEqual(activeTaskScan.freshBlockingJobs.map((job) => job.id), ["generation-new-block"], "本次运行中新出现的真实阻塞必须立即弹出待处理");
 
 assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, null), true, "没有候选状态时可以执行幂等清理");
 assert.equal(whiteboardMediaJobMayClearCandidate({ id: "old-job" }, { jobId: "old-job" }), true, "任务可以清理自己的候选状态");

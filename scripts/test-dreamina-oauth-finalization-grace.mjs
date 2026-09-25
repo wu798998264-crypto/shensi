@@ -41,7 +41,7 @@ assert.match(source,
   /const finalizationDisposition = dreaminaOAuthFinalizationDisposition\(\{ pending, live \}\);[\s\S]{0,1500}restoreCredentialBackup\(id, pending\)/u,
   "OAuth 完成流程必须先经过有界宽限状态机，之后才允许回滚凭据");
 assert.match(source,
-  /providerApprovedAt: new Date\(\)\.toISOString\(\)[\s\S]{0,900}liveIdentity\(id\)/u,
+  /providerApprovedAt: new Date\(\)\.toISOString\(\)[\s\S]{0,900}confirmedLiveIdentity\(id\)/u,
   "checklogin 成功证据必须先持久化，再执行可能撞锁的身份回读");
 assert.doesNotMatch(source, /invokeProfile\(profileId, \["login", "--headless"\]/u,
   "OAuth 成功后的身份回读不得启动新的 Device Flow 并覆盖刚写入的凭据");

@@ -43,7 +43,7 @@ assert.match(appSource, /临时笔记只读，需要移动到正式目录中才�
 assert.match(appSource, /requestTemporaryNotebookPromotion\("rename", ui\.menuDocument\)/);
 assert.match(appSource, /requestTemporaryNotebookPromotion\("attachment", state\.activeDocument\)/);
 assert.match(appSource, /prefetchWorkspaceCollection\("notebook", 3\)/);
-assert.match(appSource, /const pendingPrefetch = ui\.workspacePrefetches\.get\(key\);\s*if \(pendingPrefetch\) await pendingPrefetch;/s);
+assert.match(appSource, /const pendingPrefetch = ui\.workspacePrefetches\.get\(key\);\s*if \(!ui\.workspaceStateCache\.has\(key\) && pendingPrefetch\) await pendingPrefetch;/s);
 assert.match(appSource, /clearTimeout\(ui\.workspacePrefetchTimer\);\s*ui\.workspacePrefetchTimer = null;/s);
 assert.match(appSource, /id="moveDocumentTree" role="tree"/);
 assert.match(appSource, /documentTransferDirectories: new Map\(\)/);
@@ -98,6 +98,14 @@ assert.equal(attachmentConversation.composerReferenceState.pending, false);
 assert.equal(removeConversationAttachmentReference(attachmentConversation, "missing"), false);
 assert.match(appSource, /removeConversationAttachmentReference\(conversation, attachment\)/);
 assert.match(appSource, /attachmentButton[\s\S]*?preventDefault\(\)[\s\S]*?stopPropagation\(\)/);
+assert.match(appSource, /const enqueueMessage = \(content, \{[\s\S]{0,520}referenceScope = null/u, "排队入口必须接收发送瞬间冻结的引用快照");
+assert.match(appSource, /const activeReferenceScope = referenceScope \? clone\(referenceScope\) : ensureConversationReferenceContext\(conversation\)/u, "排队消息不得重新读取已经清空的附件上下文");
+assert.match(appSource, /enqueueMessage\(content, \{[\s\S]{0,700}referenceScope: options\.referenceScope \?\? null/u, "并发转排队时必须把当前消息的附件快照传入队列");
+assert.match(appSource, /dispatchComposerContent[\s\S]{0,900}consumeConversationComposerAttachments\(targetConversation\)[\s\S]{0,900}referenceScope,/u, "发送后必须立即移除 composer 附件，同时只把冻结快照交给当前任务");
+assert.match(appSource, /history-preview-close[\s\S]{0,300}history-preview-header-row[\s\S]{0,450}data-jump-history-owner/u, "跨作品对话标题、作品和跳转按钮必须横向排列，并保留独立关闭按钮");
+assert.match(styles, /\.history-preview-close \{[\s\S]*?position: absolute;[\s\S]*?top: 10px;[\s\S]*?right: 12px;/u, "跨作品对话关闭按钮必须固定在右上角");
+assert.match(appSource, /const cancelConversationRun = async[\s\S]{0,900}taskRuntime\?\.messages \|\| conversationMessagesForTaskState[\s\S]{0,1800}pendingMessage\.pending = false[\s\S]{0,1800}conversationAgentRequest\(`\/api\/conversation-agent\/\$\{nativeRunId\}\/cancel`/u, "外部 Agent 停止必须从真实任务运行时同步结束任务卡，再后台确认终止");
+assert.match(appSource, /!execution\.agentTurnId && !execution\.nativeAgentRunId && execution\.sourceMessageId/u, "已启动的外部 Agent 不得重复显示准备阶段停止入口");
 
 const attachmentButtonRule = styles.match(/\.context-chip button\[data-remove-attachment\] \{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(attachmentButtonRule, /width: 20px/);
@@ -135,12 +143,12 @@ const restoredCliSettings = normalizeGenerationProfiles({
 assert.deepEqual(restoredCliSettings.videoConnections
   .filter(({ adapter, provider }) => adapter === "cli" && provider === "即梦")
   .map(({ dreaminaCliProfile, remarkName }) => ({ dreaminaCliProfile, remarkName })), [
-  { dreaminaCliProfile: "default", remarkName: "柏物语" },
+  { dreaminaCliProfile: "default", remarkName: "短剧最前线" },
   { dreaminaCliProfile: "guobazai", remarkName: "锅巴仔" },
   { dreaminaCliProfile: "xiaoyujie", remarkName: "小鱼姐" },
   { dreaminaCliProfile: "chenan", remarkName: "陈安" },
   { dreaminaCliProfile: "tashuo-juyougeng", remarkName: "她说剧有梗" },
-  { dreaminaCliProfile: "duanju-zuiqianxian", remarkName: "短剧最前线" },
+  { dreaminaCliProfile: "duanju-zuiqianxian", remarkName: "冰封初恋" },
   { dreaminaCliProfile: "yinou-shijie", remarkName: "银鸥师姐" },
 ]);
 const multipleAudioSettings = normalizeGenerationProfiles({

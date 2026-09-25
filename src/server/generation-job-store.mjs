@@ -414,6 +414,7 @@ const normalizedTarget = (target = {}) => ({
   workspacePath: String(target.workspacePath || "").trim() ? resolve(String(target.workspacePath).trim()) : "",
   documentId: String(target.documentId || ""),
   nodeId: String(target.nodeId || ""),
+  nodeName: String(target.nodeName || "").trim().slice(0, 240),
   targetType: ["document-artifact", "conversation-message", "capability-smoke", "composite-long-video-segment"].includes(target.targetType) ? target.targetType : "whiteboard-node",
   anchorId: String(target.anchorId || "").slice(0, 160),
   artifactId: String(target.artifactId || "").slice(0, 160),

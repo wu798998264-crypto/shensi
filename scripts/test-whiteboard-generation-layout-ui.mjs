@@ -266,15 +266,49 @@ try {
     return true;
   })()`);
   await waitFor("document.querySelector('#whiteboardMenu')?.hidden === false", "目标卡片右键菜单");
-  await evaluate(`(() => {
-    const direct = document.querySelector('[data-whiteboard-direct-generation]');
-    if (direct && direct.hidden === false) direct.click();
-    else {
-      document.querySelector('[data-whiteboard-action="toggle-generate"]').click();
-      document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-text"]').click();
+  for (const [toggle, submenu] of [["toggle-reference", "whiteboardReferenceMenu"], ["toggle-transform", "whiteboardTransformMenu"], ["toggle-color", "whiteboardColorPalette"]]) {
+    const toggleState = await evaluate(`(() => {
+      const button = document.querySelector('[data-whiteboard-action="${toggle}"]');
+      if (!button || button.hidden) return "hidden";
+      button.click();
+      return "opened";
+    })()`);
+    if (toggleState === "opened") {
+      await waitFor("document.querySelector('#whiteboardSubmenuPanel')?.hidden === false", `${toggle} 右侧子菜单`);
+      const panelState = await evaluate(`(() => {
+        const menuRect = document.querySelector('#whiteboardMenu')?.getBoundingClientRect();
+        const panelRect = document.querySelector('#whiteboardSubmenuPanel')?.getBoundingClientRect();
+        const submenu = document.querySelector('#${submenu}');
+        return { visible: Boolean(submenu && !submenu.hidden), main: menuRect && { left: menuRect.left, right: menuRect.right }, panel: panelRect && { left: panelRect.left, right: panelRect.right } };
+      })()`);
+      assert.equal(panelState.visible, true, `${toggle} 子菜单内容应可见`);
+      assert.ok(panelState.panel.left >= panelState.main.right - 1 || panelState.panel.right <= panelState.main.left + 1, `${toggle} 子菜单应位于主菜单侧边：${JSON.stringify(panelState)}`);
+      await evaluate(`document.querySelector('[data-whiteboard-action="${toggle}"]').click(); true`);
+      await waitFor("document.querySelector('#whiteboardSubmenuPanel')?.hidden === true", `${toggle} 右侧子菜单关闭`);
     }
-    return true;
+  }
+  const generationMenuMode = await evaluate(`(() => {
+    const direct = document.querySelector('[data-whiteboard-direct-generation]');
+    if (direct && direct.hidden === false) {
+      direct.click();
+      return "direct";
+    }
+    document.querySelector('[data-whiteboard-action="toggle-generate"]').click();
+    return "submenu";
   })()`);
+  if (generationMenuMode === "submenu") {
+    await waitFor("document.querySelector('#whiteboardSubmenuPanel')?.hidden === false", "右侧生成子菜单");
+    const submenuLayout = await evaluate(`(() => {
+      const main = document.querySelector('#whiteboardMenu')?.getBoundingClientRect();
+      const panel = document.querySelector('#whiteboardSubmenuPanel')?.getBoundingClientRect();
+      const action = document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-text"]');
+      return { main, panel, actionVisible: Boolean(action && !action.hidden) };
+    })()`);
+    assert.ok(submenuLayout?.main && submenuLayout?.panel, "右侧子菜单应同时呈现");
+    assert.ok(submenuLayout.panel.left >= submenuLayout.main.right - 1 || submenuLayout.panel.right <= submenuLayout.main.left + 1, "右侧子菜单应停靠在主菜单侧边");
+    assert.equal(submenuLayout.actionVisible, true, "生成文本子选项应可见");
+    await evaluate(`document.querySelector('#whiteboardGenerateMenu [data-whiteboard-action="generate-text"]').click(); true`);
+  }
   await waitFor("document.querySelector('#whiteboardGenerateDialog')?.open === true", "文本生成操作栏");
   await waitFor("document.querySelector('#whiteboardGenerateDialog')?.inert === false", "文本生成操作栏解除不可交互状态");
   await waitFor(`document.querySelectorAll('#whiteboardGenerateDialog [data-generation-reference-role="upstream"]').length === ${sourceIds.length}`, "七项参考呈现");
@@ -445,6 +479,22 @@ try {
   })()`);
   await waitFor("document.querySelector('#whiteboardImageDialog')?.open === true", "真实生成图片入口");
   await waitFor("document.querySelector('#whiteboardImageDialog')?.inert === false && !document.querySelector('#whiteboardImageDialog')?.hasAttribute('aria-busy')", "图片生成操作栏解除不可交互状态");
+  await evaluate(`(() => {
+    const form = document.querySelector('#whiteboardImageForm');
+    const connection = form?.elements?.connectionId;
+    if (!connection || ![...connection.options].some((option) => option.value === 'image-layout-interaction-test')) {
+      throw new Error('GPT Image 2.5 验收连接未进入图片选择器');
+    }
+    connection.value = 'image-layout-interaction-test';
+    connection.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor("document.querySelector('#whiteboardImageForm').elements.model.value === 'gpt-image-2.5' && [...document.querySelector('#whiteboardImageForm').elements.aspectRatio.options].some((option) => option.value === '9:21')", "GPT Image 2.5 新比例加载");
+  const imageAspectOptions = await evaluate(`[
+    ...document.querySelector('#whiteboardImageForm').elements.aspectRatio.options,
+  ].map((option) => option.value)`);
+  assert.ok(imageAspectOptions.includes("21:9"), `GPT Image 2.5 图片操作栏必须显示 21:9：${JSON.stringify(imageAspectOptions)}`);
+  assert.ok(imageAspectOptions.includes("9:21"), `GPT Image 2.5 图片操作栏必须显示 9:21：${JSON.stringify(imageAspectOptions)}`);
   await evaluate(`(() => {
     const openImageFor = (nodeId) => {
       const card = document.querySelector('[data-canvas-node="' + nodeId + '"]');

@@ -16,7 +16,7 @@ import {
   isImageAssetSourceExtractionRequest,
 } from "./image-asset-routing.js";
 
-export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 31;
+export const CAPABILITY_TEMPLATE_SCHEMA_VERSION = 32;
 export const CAPABILITY_TEMPLATE_ROUTE_SELECTION_LIMIT = 24;
 
 export const CAPABILITY_KERNEL_NODE_IDS = Object.freeze([]);
@@ -27,6 +27,16 @@ const CAPABILITY_KERNEL_WRAPPER_GROUP_IDS = new Set([
 const CAPABILITY_VISIBLE_GROUP_DESCRIPTIONS = Object.freeze({
   "group:novel": "长篇小说的引导、规划、主笔、自检、理论与创作经验能力版图。",
   "group:short-drama": "同时覆盖原创短剧与小说改短剧；当前不预留独立规划模块。",
+});
+
+const PANEL_SEMANTIC_ROUTE_RULES = "每轮由 Agent 结合用户本轮完整语义、当前创作阶段、对话上下文和明确交付要求读取本面板后选择能力，不用软件关键词替用户预判具体模块。用户在创作开始或进行中的任何阶段表达不确定、不知道怎么写、推进困难、感叹卡住、请求建议或明确要求创作引导时，选择与最终产物对应的创作引导模块；这类表达按真实语义判断，不要求固定关键词。用户明确要求直接写、继续写、执行、生成、修改或落盘时，不得强行进入引导，应选择规划、主笔、自检或其他实际任务模块。普通问答、软件问题和只读说明不因打开了创作文档而进入创作引导。";
+const GUIDANCE_SEMANTIC_TRIGGER_RULES = Object.freeze({
+  "module:novel-guidance": "长篇小说创作开始或进行中的任何阶段，只要作者真实语义是在表达不确定、没有思路、写不下去、询问下一步、请求建议或明确要求创作引导，就启用本模块；不要求固定关键词。若作者明确要求直接写、继续写、修改、执行或落盘，则不启用引导，改选对应规划或主笔模块。",
+  "module:short-drama-guidance": "原创短剧或小说改短剧在开始或进行中的任何阶段，只要作者真实语义是在表达不确定、推进困难、请求建议或明确要求创作引导，就启用本模块，并围绕当前阶段最关键的制作取舍继续；不要求固定关键词。明确要求直接生成、改编、修改或落盘时改选对应主笔模块。",
+  "module:short-fiction-guidance": "短篇小说创作开始或进行中的任何阶段，只要作者真实语义是在表达不确定、没有思路、写不下去、询问下一步、请求建议或明确要求创作引导，就启用本模块；不要求固定关键词。明确要求直接写、续写、修改或落盘时改选短篇小说主笔。",
+  "module:public-account-guidance": "公众号文章创作开始或进行中的任何阶段，只要作者真实语义是在表达选题、观点、结构或表达上的不确定，或者请求建议、明确要求创作引导，就启用本模块；不要求固定关键词。明确要求直接撰写、改写或落盘时改选公众号主笔。",
+  "module:short-video-guidance": "短视频剧本创作开始或进行中的任何阶段，只要作者真实语义是在表达形式、钩子、节奏、冲突或结尾上的不确定，或者请求建议、明确要求创作引导，就启用本模块；不要求固定关键词。明确要求直接写、改写、生成或落盘时改选短视频主笔。",
+  "module:prompt-guidance": "图片或视频提示词创作开始或进行中的任何阶段，只要作者真实语义是在表达画面、镜头、质感、动作、声音或生成效果上的不确定，或者请求建议、明确要求创作引导，就启用本模块；不要求固定关键词。明确要求直接生成提示词、转换分镜或执行媒体生成时改选对应提示词主笔或媒体能力。",
 });
 
 const CAPABILITY_KERNEL_NODE_ID_SET = new Set(CAPABILITY_KERNEL_NODE_IDS);
@@ -344,7 +354,7 @@ const kernelMemoryModule = () => capabilityModule({
 
 export const createInitialCapabilityTemplate = () => {
   const modules = [
-    singleFixedModule({ id: "module:novel-guidance", name: "小说创作引导模块", description: "确认题材、读者、目标效果与关键取舍。", triggerRules: "创作目标尚未形成完整创作合同时启用。", fixedId: "builtin:creative-guidance", skillName: "小说创作引导" }),
+    singleFixedModule({ id: "module:novel-guidance", name: "小说创作引导模块", description: "确认题材、读者、目标效果与关键取舍。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:novel-guidance"], fixedId: "builtin:creative-guidance", skillName: "小说创作引导" }),
     capabilityModule({
       id: "module:novel-planning",
       name: "小说规划模块",
@@ -448,11 +458,11 @@ export const createInitialCapabilityTemplate = () => {
         fixedSlot("builtin:otome-content-theory", "乙女向内容"),
       ],
     }),
-    singleFixedModule({ id: "module:short-drama-guidance", name: "短剧创作引导模块", description: "确认来源模式、平台、集数、核心冲突与制作约束。", triggerRules: "原创短剧或小说改短剧的创作合同尚未完整时启用。", fixedId: "builtin:short-drama-guidance", skillName: "短剧剧本创作引导" }),
+    singleFixedModule({ id: "module:short-drama-guidance", name: "短剧创作引导模块", description: "确认来源模式、平台、集数、核心冲突与制作约束。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:short-drama-guidance"], fixedId: "builtin:short-drama-guidance", skillName: "短剧剧本创作引导" }),
     singleFixedModule({ id: "module:original-drama-writer", name: "原创短剧主笔模块", description: "完成原创短剧大纲和正式剧本。", triggerRules: "来源模式为原创短剧时启用。", fixedId: "builtin:original-script-writer", skillName: "短剧原创剧本主笔" }),
     singleFixedModule({ id: "module:adapted-drama-writer", name: "小说改短剧主笔模块", description: "先抽取人物关系功能、冲突链、信息差、情绪曲线、爽点与集尾钩子，再完成原创化剧情功能对位改编。", triggerRules: "来源模式为小说、原作或章节改编时启用；必须区分结构迁移与逐句改写。", fixedId: "builtin:adapted-script-writer", skillName: "小说改短剧剧本主笔" }),
     singleFixedModule({ id: "module:short-drama-review", name: "短剧自检模块", description: "以 Essence Lock 精髓锁为核心，检查保真、冲突升级、爽点因果、节奏、对白、集尾钩子与制作可执行性。", triggerRules: "正式短剧候选生成后启用；先建立精髓锁，再分层审稿和增强。", fixedId: "builtin:short-drama-review", skillName: "短剧剧本自检" }),
-    singleFixedModule({ id: "module:short-fiction-guidance", name: "短篇小说创作引导模块", description: "确认篇幅、核心冲突、叙事方式与结尾效果。", triggerRules: "短篇小说创作合同尚未完整时启用。", fixedId: "builtin:short-fiction-guidance", skillName: "短篇小说创作引导" }),
+    singleFixedModule({ id: "module:short-fiction-guidance", name: "短篇小说创作引导模块", description: "确认篇幅、核心冲突、叙事方式与结尾效果。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:short-fiction-guidance"], fixedId: "builtin:short-fiction-guidance", skillName: "短篇小说创作引导" }),
     singleFixedModule({ id: "module:short-fiction-writer", name: "短篇小说主笔模块", description: "完成单篇场景、人物、冲突、叙事与收束。", triggerRules: "短篇小说正文生成、续写或改写。", fixedId: "builtin:short-fiction-writer", skillName: "短篇小说主笔" }),
     singleFixedModule({
       id: "module:short-fiction-review",
@@ -483,7 +493,7 @@ export const createInitialCapabilityTemplate = () => {
         }),
       ],
     }),
-    singleFixedModule({ id: "module:public-account-guidance", name: "公众号创作引导模块", description: "确认受众、选题、传播目标、观点、风格和结构。", triggerRules: "公众号文章创作合同尚未完整时启用。", fixedId: "builtin:public-account-guidance", skillName: "公众号文章创作引导" }),
+    singleFixedModule({ id: "module:public-account-guidance", name: "公众号创作引导模块", description: "确认受众、选题、传播目标、观点、风格和结构。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:public-account-guidance"], fixedId: "builtin:public-account-guidance", skillName: "公众号文章创作引导" }),
     singleFixedModule({ id: "module:public-account-writer", name: "公众号主笔模块", description: "完成公众号文章正文。", triggerRules: "公众号文章正式写作、续写或改写。", fixedId: "builtin:public-account-writer", skillName: "公众号文章主笔" }),
     publicAccountIllustrationModule(),
     capabilityModule({
@@ -497,7 +507,7 @@ export const createInitialCapabilityTemplate = () => {
         fixedSlot("builtin:alternative-popular-science-theory", "另类科普"),
       ],
     }),
-    singleFixedModule({ id: "module:short-video-guidance", name: "短视频创作引导模块", description: "确认时长、平台、形式、钩子、节奏和结尾动作。", triggerRules: "剧情短视频创作合同尚未完整时启用。", fixedId: "builtin:short-video-guidance", skillName: "短视频剧本创作引导" }),
+    singleFixedModule({ id: "module:short-video-guidance", name: "短视频创作引导模块", description: "确认时长、平台、形式、钩子、节奏和结尾动作。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:short-video-guidance"], fixedId: "builtin:short-video-guidance", skillName: "短视频剧本创作引导" }),
     singleFixedModule({ id: "module:short-video-writer", name: "短视频主笔模块", description: "完成适配时长、平台与共性节奏的剧情脚本。", triggerRules: "剧情短视频脚本正式写作。", fixedId: "builtin:short-video-writer", skillName: "短视频剧本主笔" }),
     singleFixedModule({ id: "module:short-video-review", name: "短视频自检模块", description: "复核观看问题、状态变化、情绪兑现、反转与制作压缩。", triggerRules: "短视频脚本候选生成后启用。", fixedId: "builtin:short-video-review", skillName: "短视频剧本自检" }),
     capabilityModule({
@@ -508,7 +518,7 @@ export const createInitialCapabilityTemplate = () => {
       relation: "organization",
       slots: [fixedSlot("builtin:short-video-general-theory", "短视频通用理论")],
     }),
-    singleFixedModule({ id: "module:prompt-guidance", name: "提示词创作引导模块", description: "确认媒介、模型、质感、构图、光线、表演、运镜与画幅。", triggerRules: "提示词目标或约束尚不完整时启用。", fixedId: "builtin:prompt-guidance", skillName: "提示词创作引导" }),
+    singleFixedModule({ id: "module:prompt-guidance", name: "提示词创作引导模块", description: "确认媒介、模型、质感、构图、光线、表演、运镜与画幅。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:prompt-guidance"], fixedId: "builtin:prompt-guidance", skillName: "提示词创作引导" }),
     capabilityModule({
       id: "module:prompt-writer",
       name: "AI 漫剧图片资产提示词模块",
@@ -588,7 +598,7 @@ export const createInitialCapabilityTemplate = () => {
       id: "group:novel-guidance",
       name: "小说创作引导模组",
       description: "集中管理长篇小说创作合同与关键取舍的引导能力。",
-      triggerRules: "长篇小说目标、读者、题材或关键效果尚未确认时启用。",
+      triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:novel-guidance"],
       relation: "parallel",
       items: [placement("place:novel-guidance:module", "module", "module:novel-guidance")],
     }),
@@ -658,7 +668,7 @@ export const createInitialCapabilityTemplate = () => {
       id: "group:short-drama-guidance",
       name: "短剧创作引导模组",
       description: "集中管理原创短剧与小说改短剧共用的创作引导。",
-      triggerRules: "短剧来源模式、平台、集数、冲突或制作约束尚未确认时启用。",
+      triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:short-drama-guidance"],
       relation: "parallel",
       items: [placement("place:short-drama-guidance:module", "module", "module:short-drama-guidance")],
     }),
@@ -790,7 +800,7 @@ export const createInitialCapabilityTemplate = () => {
       nodeType: "template",
       name: "Skill 面板",
       description: "神思的能力结构版图，决定可被任务路由调动的能力上限和边界。",
-      triggerRules: "可信任务路由读取完整模板，根据任务意图、文体、上下文与明确点名实时选择能力；不是线性工作流。",
+      triggerRules: PANEL_SEMANTIC_ROUTE_RULES,
       relationType: "parallel",
       items: [
         placement("place:template:novel", "group", "group:novel"),
@@ -885,12 +895,12 @@ const normalizeNode = (node, nodeType, index) => {
 };
 
 const V2_WRAPPER_GROUPS = Object.freeze([
-  { id: "group:novel-guidance", name: "小说创作引导模组", description: "集中管理长篇小说创作合同与关键取舍的引导能力。", triggerRules: "长篇小说目标、读者、题材或关键效果尚未确认时启用。", moduleId: "module:novel-guidance" },
+  { id: "group:novel-guidance", name: "小说创作引导模组", description: "集中管理长篇小说创作合同与关键取舍的引导能力。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:novel-guidance"], moduleId: "module:novel-guidance" },
   { id: "group:novel-planning", name: "小说规划模组", description: "集中管理大纲规划与受正史约束的设定规划能力。", triggerRules: "规划大纲、卷纲、章纲、人物、世界观或其他正史设定时启用。", moduleId: "module:novel-planning" },
   { id: "group:novel-writer", name: "小说主笔模组", description: "管理小说正文主笔模块；主要与备选主笔的替换关系在模块内部生效。", triggerRules: "小说正文、续写、改写与章节交付。", moduleId: "module:novel-writer" },
   { id: "group:novel-review", name: "小说自检模组", description: "集中管理小说候选的效果复核能力。", triggerRules: "小说候选生成后或用户明确要求审稿时启用。", moduleId: "module:novel-review" },
   { id: "group:long-form-memory", name: "长文记忆模组", description: "由长篇小说与连续短剧共享，提供状态、信息台阶与伏笔建议。", triggerRules: "长篇小说或连续短剧交付后启用；最终写入仍由可信内核执行。", moduleId: "module:shared-memory" },
-  { id: "group:short-drama-guidance", name: "短剧创作引导模组", description: "集中管理原创短剧与小说改短剧共用的创作引导。", triggerRules: "短剧来源模式、平台、集数、冲突或制作约束尚未确认时启用。", moduleId: "module:short-drama-guidance" },
+  { id: "group:short-drama-guidance", name: "短剧创作引导模组", description: "集中管理原创短剧与小说改短剧共用的创作引导。", triggerRules: GUIDANCE_SEMANTIC_TRIGGER_RULES["module:short-drama-guidance"], moduleId: "module:short-drama-guidance" },
   { id: "group:short-drama-review", name: "短剧自检模组", description: "集中管理原创与改编短剧共用的成稿自检能力。", triggerRules: "正式短剧候选生成后启用。", moduleId: "module:short-drama-review" },
 ]);
 
@@ -1664,6 +1674,23 @@ const upgradeCapabilityTemplate = (bundle, sourceVersion) => {
     const canonicalPrompt = canonical.modules.find((module) => module.id === "module:prompt-writer");
     const prompt = bundle.modules.find((module) => module.id === "module:prompt-writer" && module.official === true);
     if (canonicalPrompt && prompt && ["提示词主笔模块", "提示词模块"].includes(prompt.name)) prompt.name = canonicalPrompt.name;
+  }
+  if (sourceVersion < 32) {
+    // 创作引导的进入时机由面板语义路由判断。同步现有官方面板，
+    // 让写作中途的困惑与求助也能进入对应引导模块；用户自建节点不改。
+    const canonical = createInitialCapabilityTemplate();
+    if (bundle.template.official === true) bundle.template.triggerRules = canonical.template.triggerRules;
+    const guidanceModuleIds = new Set(Object.keys(GUIDANCE_SEMANTIC_TRIGGER_RULES));
+    const canonicalModules = new Map(canonical.modules.map((module) => [module.id, module]));
+    for (const module of bundle.modules) {
+      if (module.official !== true || !guidanceModuleIds.has(module.id)) continue;
+      module.triggerRules = canonicalModules.get(module.id)?.triggerRules || module.triggerRules;
+    }
+    const canonicalGroups = new Map(canonical.groups.map((group) => [group.id, group]));
+    for (const group of bundle.groups) {
+      if (group.official !== true || !["group:novel-guidance", "group:short-drama-guidance"].includes(group.id)) continue;
+      group.triggerRules = canonicalGroups.get(group.id)?.triggerRules || group.triggerRules;
+    }
   }
   // 工程化管理不再作为可路由 Skill。这里是持续成立的数据不变量，
   // 不能只按版本迁移一次，否则恢复被旧内容污染、但版本号较新的快照时会复活。

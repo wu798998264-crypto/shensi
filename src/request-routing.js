@@ -463,11 +463,27 @@ export const continuesPriorCreativeTask = ({
   previousAssistantHasCreativeContext = false,
   hasResources = false,
 } = {}) => {
+  const source = String(text).trim();
   const contextBackedFollowup = previousAssistantHasCreativeContext === true
-    && CONTEXT_BACKED_CREATIVE_FOLLOWUP_PATTERN.test(String(text).trim());
+    && CONTEXT_BACKED_CREATIVE_FOLLOWUP_PATTERN.test(source);
   if (!CREATIVE_THREAD_MODES.has(String(previousRequestMode)) && !contextBackedFollowup) return false;
+  const guidanceAnswer = previousRequestMode === "creative_guidance"
+    && source.length > 0
+    && !isExplicitFreshCreativeStart({ text: source })
+    && !isExplicitDirectCreationRequest({ text: source })
+    && !FAST_STATUS_PATTERN.test(source)
+    && !GENERAL_META_PATTERN.test(source)
+    && !NON_CREATIVE_DIAGNOSTIC_TARGET_PATTERN.test(source)
+    && !isNonShensiDeliverable({ text: source })
+    && !DOCUMENT_UTILITY_PATTERN.test(source)
+    && (
+      PLOT_OR_CRAFT_PATTERN.test(source)
+      || CREATIVE_WORK_TERM_PATTERN.test(source)
+      || (!/[？?]\s*$/u.test(source) && /[，,；;：:。！!]/u.test(source))
+    );
+  if (guidanceAnswer) return true;
   return isCreativeContinuationResponse({
-    text,
+    text: source,
     hasResources,
     allowImplicitAnswer: previousAssistantAwaitingChoice === true || contextBackedFollowup,
   });
@@ -689,6 +705,13 @@ export const shouldUseGeneralChat = ({ text = "", hasSelection = false, hasResou
   if (CREATIVE_KNOWLEDGE_PATTERN.test(source) && !CREATIVE_HELP_PATTERN.test(source)) return true;
   if (isCreativeAssetDiagnosis({ text: source, targetDocumentId, targetModuleId, workspaceKind })) return false;
   if (isContextualCreativeRevision({ text: source, targetDocumentId, targetModuleId, workspaceKind, continuesCreativeThread, hasSelection })) return false;
+  const hasCreativeRouteContext = continuesCreativeThread === true
+    || CREATIVE_ASSET_MODULES.has(String(targetModuleId))
+    || CREATIVE_ASSET_DOCUMENT_PATTERN.test(String(targetDocumentId));
+  if (hasCreativeRouteContext
+    && !NON_CREATIVE_DIAGNOSTIC_TARGET_PATTERN.test(source)
+    && !MECHANICAL_DOCUMENT_TASK_PATTERN.test(source)
+    && !DOCUMENT_UTILITY_PATTERN.test(source)) return false;
   if (isCreativeGuidanceRequest({ text: source })) return false;
   if (isDirectGenreCreationRequest(source)) return false;
   if (CREATIVE_TRANSFORMATION_PATTERN.test(source)) return false;
@@ -728,6 +751,7 @@ export const classifyRequestMode = ({
   hasSelection = false,
   hasResources = false,
   continuesCreativeThread = false,
+  guidanceActive = false,
   hasProjectTerms = false,
   preparedCreativeContext = false,
   targetModuleId = "",
@@ -741,9 +765,10 @@ export const classifyRequestMode = ({
   const freshStart = isExplicitFreshCreativeStart({ text: source });
   const explicitFormalAssetWrite = hasExplicitFormalAssetWriteIntent({ text: source });
   const directCreationRequested = isExplicitDirectCreationRequest({ text: source });
+  const explicitGuidanceDirective = /(?:开启|进入|进行|继续).{0,8}创作引导/u.test(source);
   const guidanceOnlyThisTurn = CREATIVE_GUIDANCE_ONLY_PATTERN.test(source)
     && !directCreationRequested
-    && Boolean(deliverableType || CREATIVE_GENRE_PATTERN.test(source) || SHENSI_CREATIVE_TARGET_PATTERN.test(source));
+    && Boolean(explicitGuidanceDirective || deliverableType || CREATIVE_GENRE_PATTERN.test(source) || SHENSI_CREATIVE_TARGET_PATTERN.test(source));
   const preparedNovelProduction = deliverableType === "novel"
     && preparedCreativeContext === true
     && /^chapter-\d+$/.test(String(targetDocumentId))
@@ -757,11 +782,12 @@ export const classifyRequestMode = ({
   //正文 write that the user explicitly prohibited.
   if (guidanceOnlyThisTurn && !explicitFormalAssetWrite) {
     return {
-      mode: "creative_guidance",
+      mode: "creative",
       reason: deliverableType
-        ? `用户明确要求本轮只进行${deliverableLabel}创作引导，不生成或写入正式内容`
-        : "用户明确要求本轮只进行创作引导，不生成或写入正式内容",
+        ? `用户要求讨论${deliverableLabel}创作方向；具体是否进入创作引导由 Agent 读取面板语义路由后决定`
+        : "用户要求讨论创作方向；具体模块由 Agent 读取面板语义路由后决定",
       shensiLed: true,
+      panelRouteDelegated: true,
       freshStart,
       ...deliverableMeta,
     };
@@ -770,6 +796,10 @@ export const classifyRequestMode = ({
   if (landing) return { mode: "creative", reason: "请求包含作品内容落盘或替换", shensiLed: true, ...deliverableMeta };
   if (inlineEdit) return { mode: "quick_revision", reason: "仅修改当前选中文字，使用局部快速链", shensiLed: true };
   const currentInstruction = currentConversationInstruction(source);
+  const currentCreativeRouteContext = guidanceActive === true
+    || continuesCreativeThread === true
+    || CREATIVE_ASSET_MODULES.has(String(targetModuleId))
+    || CREATIVE_ASSET_DOCUMENT_PATTERN.test(String(targetDocumentId));
   if (isLocalWriteCapabilityQuestion(currentInstruction)) {
     return { mode: "general", reason: "当前任务分析或改造神思的软件写入能力，不生成、修改或落盘创作资产", shensiLed: false, runtimeDiagnosisIntent: true };
   }
@@ -872,9 +902,10 @@ export const classifyRequestMode = ({
     && !CREATIVE_TRANSFORMATION_PATTERN.test(source);
   if (sparseProductionNeedsGuidance) {
     return {
-      mode: "creative_guidance",
-      reason: `已识别${deliverableLabel}生产意图，但当前只形成了方向声明；推荐先补齐一个最影响成品的决策，运行中发现现有资料已足够时可直接改道主笔`,
+      mode: "creative",
+      reason: `已识别${deliverableLabel}创作意图；由 Agent 读取面板语义路由后决定进入创作引导还是直接主笔`,
       shensiLed: true,
+      panelRouteDelegated: true,
       productionIntent: true,
       ...deliverableMeta,
     };
@@ -907,7 +938,7 @@ export const classifyRequestMode = ({
     };
   }
   if (!isExplicitDirectCreationRequest({ text: source }) && PROMPT_QUALITY_GUIDANCE_PATTERN.test(source)) {
-    return { mode: "creative_guidance", reason: "提示词效果反馈表明关键视觉控制量尚未明确，进入提示词专项创作引导", shensiLed: true, deliverableType: "visual_prompt", deliverableLabel: creativeDeliverableLabel("visual_prompt") };
+    return { mode: "creative", reason: "提示词效果反馈属于创作任务；由 Agent 读取面板语义路由后决定进入提示词引导或主笔", shensiLed: true, panelRouteDelegated: true, deliverableType: "visual_prompt", deliverableLabel: creativeDeliverableLabel("visual_prompt") };
   }
   if (!directProductionCommand && isCreativeGuidanceRequest({ text: source })) {
     if (deliverableType && (briefReady || preparedNovelProduction)) {
@@ -921,11 +952,12 @@ export const classifyRequestMode = ({
       };
     }
     return {
-      mode: "creative_guidance",
+      mode: "creative",
       reason: deliverableType
-        ? `已识别最终产物为${deliverableLabel}，创作信息仍有关键缺口，进入${deliverableLabel}专项创作引导`
-        : "已识别创作意图，进入对应类型的创作引导",
+        ? `已识别最终产物为${deliverableLabel}；由 Agent 读取面板语义路由后决定进入专项引导或主笔`
+        : "已识别创作上下文；具体能力由 Agent 读取面板语义路由后决定",
       shensiLed: true,
+      panelRouteDelegated: true,
       ...deliverableMeta,
     };
   }
@@ -936,9 +968,10 @@ export const classifyRequestMode = ({
     && !CREATIVE_TRANSFORMATION_PATTERN.test(source)
     && !briefReady) {
     return {
-      mode: "creative_guidance",
-      reason: "目标产物是提示词，但质感、构图、光线、表演、运镜、声音或连续性合同仍不完整，进入提示词专项创作引导",
+      mode: "creative",
+      reason: "目标产物是提示词；由 Agent 读取面板语义路由后决定进入提示词引导或直接主笔",
       shensiLed: true,
+      panelRouteDelegated: true,
       ...deliverableMeta,
     };
   }
@@ -975,6 +1008,7 @@ export const classifyRequestMode = ({
       ? deliverableType ? `用户要求直接生成${deliverableLabel}，调用对应专项写作技能` : "用户要求直接生成神思创作资产"
       : "任务将生成、修改或诊断神思创作资产",
     shensiLed: true,
+    ...(currentCreativeRouteContext ? { panelRouteDelegated: true } : {}),
     ...deliverableMeta,
   };
 };
@@ -1122,12 +1156,23 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
   const explicitCapabilitySelection = (Array.isArray(input.skillIds) && input.skillIds.length)
     || input.selectedModulePlacementId
     || input.selectedRoutePlacementId;
-  const capabilityRouteDecision = explicitCapabilitySelection ? {} : creativeCapabilityRouteDecision({
+  const inferredCapabilityRouteDecision = explicitCapabilitySelection ? {} : creativeCapabilityRouteDecision({
     text: input.text,
     deliverableType: route.deliverableType || classifiedRoute.deliverableType || "",
     mode: route.mode,
     diagnosisIntent: route.diagnosisIntent === true,
   });
+  // Native Agent runs receive the complete panel route and choose the concrete
+  // module semantically.  For unambiguous execution/review requests we retain
+  // only the coarse phase used by write policy; concrete top-level and module
+  // identities are never preselected.  Guidance candidates receive no phase
+  // hint at all, so the panel route decides guidance versus direct production.
+  const capabilityRouteDecision = surface !== "agent"
+    ? inferredCapabilityRouteDecision
+    : route.panelRouteDelegated === true
+      ? {}
+      : Object.fromEntries(Object.entries(inferredCapabilityRouteDecision)
+        .filter(([key]) => !["selectedCapabilityTopLevelId", "selectedCapabilityNodeId"].includes(key)));
   const suppliedTarget = input.target ?? {
     documentId: input.targetDocumentId ?? "",
     revision: input.targetRevision ?? "",
@@ -1205,6 +1250,8 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     taskContract: authoritativeTaskContract,
     confirmWhenLandingUncertain,
     semanticWritePlan: semanticDecision?.writePlan ?? null,
+    // Panel delegation selects the capability semantically; it does not by
+    // itself prove that the task is guidance-only or forbid a formal artifact.
     guidanceOnly: route.mode === "creative_guidance"
       && !taskContractDecision.authoritative
       && !["candidate", "commit"].includes(semanticWriteIntent)
@@ -1353,6 +1400,7 @@ export const resolveRequestedMode = ({
   hasResources = false,
   inlineEdit = false,
   continuesCreativeThread = false,
+  guidanceActive = false,
   workspaceOperation = false,
   landing = false,
   preparedCreativeContext = false,
@@ -1372,6 +1420,7 @@ export const resolveRequestedMode = ({
     hasResources,
     inlineEdit,
     continuesCreativeThread,
+    guidanceActive,
     workspaceOperation,
     landing,
     preparedCreativeContext,

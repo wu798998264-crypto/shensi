@@ -70,7 +70,7 @@ const atomicWrite = async (path, value) => {
 
 export const listGenerationProfileSettings = async (options = {}) => readStore(options);
 
-export const saveGenerationProfileSettings = async ({ settings = {}, expectedRevision = null, path = defaultStorePath() } = {}) => {
+export const saveGenerationProfileSettings = async ({ settings = {}, expectedRevision = null, path = defaultStorePath(), force = false } = {}) => {
   const prepared = normalizedStoredSettings(settings);
   const operation = writeQueue.catch(() => {}).then(async () => {
     const current = await readStore({ path });
@@ -80,7 +80,10 @@ export const saveGenerationProfileSettings = async ({ settings = {}, expectedRev
       error.statusCode = 409;
       throw error;
     }
-    if (current.exists && JSON.stringify(current.settings) === JSON.stringify(prepared)) return current;
+    // A normalized in-memory read can equal `prepared` while the on-disk JSON
+    // still carries stale legacy labels.  `force` lets an explicit migration
+    // rewrite that canonical representation without changing credentials.
+    if (!force && current.exists && JSON.stringify(current.settings) === JSON.stringify(prepared)) return current;
     const next = {
       schemaVersion: STORE_SCHEMA_VERSION,
       revision: current.revision + 1,

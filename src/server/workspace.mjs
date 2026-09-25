@@ -645,6 +645,34 @@ const atomicWriteIfChanged = async (path, content) => {
   return true;
 };
 
+// current-state.json and history-isolated are intentionally stored as
+// separate files because the latter is sharded.  A power loss between those
+// writes used to leave the loader with a new conversation list and an old
+// conversation-state shard (or the reverse).  Keep one small publication
+// marker as the last write of every workspace commit.  The marker is the
+// durable commit point; it is never used as the source of user content.
+const workspaceCommitPath = (workspaceRoot) => join(resolveWorkspaceInternalRoot(workspaceRoot), "commit.json");
+
+const workspaceCommitIsComplete = async (workspaceRoot, commitId) => {
+  const expected = String(commitId || "").trim();
+  if (!expected) return false;
+  const internalRoot = resolveWorkspaceInternalRoot(workspaceRoot);
+  const marker = await readJsonIfExists(workspaceCommitPath(workspaceRoot));
+  if (!marker || String(marker.commitId || "") !== expected) return false;
+  const [currentState, historyIndex, currentHash, historyHash, manifestHash] = await Promise.all([
+    readJsonIfExists(join(internalRoot, "current-state.json")),
+    readJsonIfExists(join(internalRoot, "history-isolated", "index.json")),
+    pathHashIfExists(join(internalRoot, "current-state.json")),
+    pathHashIfExists(join(internalRoot, "history-isolated", "index.json")),
+    pathHashIfExists(join(internalRoot, "manifest.json")),
+  ]);
+  return String(currentState?.workspaceCommitId || "") === expected
+    && String(historyIndex?.workspaceCommitId || "") === expected
+    && String(marker.currentStateHash || "") === String(currentHash || "")
+    && String(marker.historyIndexHash || "") === String(historyHash || "")
+    && String(marker.manifestHash || "") === String(manifestHash || "");
+};
+
 const runBounded = async (tasks, concurrency = 6) => {
   const queue = [...tasks];
   const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
@@ -853,11 +881,52 @@ const contentRevision = (value = "") => {
   return (hash >>> 0).toString(16).padStart(8, "0");
 };
 
+const atomicRecoveryCandidates = async (path) => {
+  const parent = dirname(path);
+  const name = basename(path);
+  try {
+    const entries = await readdir(parent, { withFileTypes: true });
+    const candidates = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !(entry.name.startsWith(`${name}.swap-`) || entry.name.startsWith(`${name}.tmp-`))) continue;
+      const candidatePath = join(parent, entry.name);
+      const info = await stat(candidatePath).catch(() => null);
+      if (info) candidates.push({ path: candidatePath, mtimeMs: info.mtimeMs });
+    }
+    return candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  } catch {
+    return [];
+  }
+};
+
+const readFileWithAtomicRecovery = async (path) => {
+  try {
+    const text = await readFile(path, "utf8");
+    JSON.parse(text);
+    return text;
+  } catch (error) {
+    if (error.code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
+    for (const candidate of await atomicRecoveryCandidates(path)) {
+      try {
+        const text = await readFile(candidate.path, "utf8");
+        JSON.parse(text);
+        return text;
+      } catch {}
+    }
+    if (error.code === "ENOENT") throw error;
+    throw new Error(`工作区状态文件损坏且没有可恢复的原子备份：${path}`, { cause: error });
+  }
+};
+
 const readJsonIfExists = async (path) => {
   try {
     return JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
-    if (error.code === "ENOENT") return null;
+    if (!(["ENOENT"].includes(error.code) || error instanceof SyntaxError)) throw error;
+    for (const candidate of await atomicRecoveryCandidates(path)) {
+      try { return JSON.parse(await readFile(candidate.path, "utf8")); } catch {}
+    }
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return null;
     throw error;
   }
 };
@@ -1026,12 +1095,13 @@ const writeHistoryShard = async ({ historyRoot, relativePath, scopeType, scopeId
   await atomicWriteIfChanged(target, JSON.stringify({ schemaVersion: 2, scopeType, scopeId, entries }, null, 2));
 };
 
-const saveIsolatedHistoryState = async ({ historyRoot, isolatedState }) => {
+const saveIsolatedHistoryState = async ({ historyRoot, isolatedState, commitId = "" }) => {
   const indexPath = join(historyRoot, "index.json");
   const previousIndex = await readJsonIfExists(indexPath);
   const rollbackDocumentObjects = isolatedState.rollbackDocumentObjects ?? {};
   const index = {
     schemaVersion: 3,
+    workspaceCommitId: String(commitId || isolatedState.workspaceCommitId || ""),
     documents: {},
     views: {},
     volumes: {},
@@ -1199,6 +1269,7 @@ const loadIsolatedHistoryState = async (historyRoot, { deferModuleHistories = fa
     ? Math.max(0, Number(index.rollbackObjectCount))
     : Object.keys(rollback?.rollbackDocumentObjects ?? rollbackDocumentObjects).length;
   return {
+    workspaceCommitId: String(index.workspaceCommitId || ""),
     histories,
     viewHistories,
     volumeHistories,
@@ -2559,7 +2630,11 @@ const whiteboardMediaRelativeDirectory = async (workspaceRoot, documentId = "") 
   const folderName = `${safeName(title).slice(0, 64)}-${whiteboardMediaIndexHash(normalizedDocumentId).slice(0, 8)}`;
   return join(await attachmentBaseRelativePath(workspaceRoot), "白板媒体", folderName).replaceAll("\\", "/");
 };
-const whiteboardMediaKindDirectory = (kind = "") => String(kind || "").toLowerCase() === "video" ? "视频" : "图片";
+const whiteboardMediaKindDirectory = (kind = "") => ({
+  video: "视频",
+  audio: "音频",
+  image: "图片",
+}[String(kind || "").toLowerCase()] || "图片");
 
 const attachmentDestination = async (workspaceRoot, name, {
   stableName = false,
@@ -3900,6 +3975,174 @@ const videoFrameError = (message, code = "VIDEO_FRAME_EXTRACTION_FAILED") => {
   return error;
 };
 
+const mediaEditError = (message, code = "MEDIA_EDIT_FAILED", statusCode = 400) => {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+};
+
+const runWorkspaceMediaEdit = ({ appRoot, args = [], label = "媒体处理", timeoutMs = 30 * 60_000 }) => new Promise((resolveEdit, rejectEdit) => {
+  const launch = ffmpegLaunch(appRoot);
+  let child;
+  let timer = null;
+  try {
+    child = spawn(launch.executable, [...launch.prefixArgs, "-hide_banner", "-loglevel", "error", ...args], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    rejectEdit(mediaEditError(`无法启动 FFmpeg：${error.message}`, "FFMPEG_UNAVAILABLE", 503));
+    return;
+  }
+  let stderr = "";
+  let settled = false;
+  const finish = (error = null) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (error) rejectEdit(error);
+    else resolveEdit();
+  };
+  child.stderr.on("data", (chunk) => {
+    if (stderr.length < 32_000) stderr += chunk.toString("utf8");
+  });
+  child.once("error", (error) => finish(mediaEditError(`${label}失败：${error.message}`, "FFMPEG_UNAVAILABLE", 503)));
+  child.once("close", (code) => {
+    if (code !== 0) finish(mediaEditError(`${label}失败（退出码 ${code ?? "unknown"}）：${stderr.slice(0, 1_000)}`, "MEDIA_EDIT_FFMPEG_FAILED"));
+    else finish();
+  });
+  timer = setTimeout(() => {
+    child.kill();
+    finish(mediaEditError(`${label}超时`, "MEDIA_EDIT_TIMEOUT", 504));
+  }, timeoutMs);
+});
+
+const workspaceMediaEditSource = async ({ appRoot, requestedPath, relativePath, expectedKind }) => {
+  const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
+  const { targetPath: sourcePath } = await secureManagedTarget(workspaceRoot, relativePath, { label: `${expectedKind === "video" ? "视频" : "音频"}附件` });
+  const sourceInfo = await lstat(sourcePath).catch((error) => {
+    if (error.code === "ENOENT") throw mediaEditError("找不到需要处理的媒体附件", "MEDIA_EDIT_SOURCE_MISSING", 404);
+    throw error;
+  });
+  if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink()) throw mediaEditError("媒体来源必须是工作区内的普通文件", "MEDIA_EDIT_SOURCE_INVALID");
+  const declaredMimeType = attachmentMimeByExtension(sourcePath) || "application/octet-stream";
+  const detected = await detectedAttachmentMime(sourcePath, declaredMimeType, basename(sourcePath));
+  if (!String(detected.mimeType).startsWith(`${expectedKind}/`)) {
+    throw mediaEditError(`所选附件不是可验证的${expectedKind === "video" ? "视频" : "音频"}文件`, "MEDIA_EDIT_SOURCE_INVALID");
+  }
+  const metadata = await probeMediaMetadata(sourcePath, detected.mimeType, appRoot);
+  if (metadata.probeErrorCode) throw mediaEditError(metadata.probeError || "无法读取媒体信息", metadata.probeErrorCode);
+  return { workspaceRoot, sourcePath, detected, metadata };
+};
+
+export const separateWorkspaceVideoAudio = async ({ appRoot = process.cwd(), requestedPath, relativePath, whiteboardDocumentId = "" } = {}) => {
+  const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath, expectedKind: "video" });
+  if (!source.metadata.videoCodec || !(Number(source.metadata.videoWidth) > 0) || !(Number(source.metadata.videoHeight) > 0)) {
+    throw mediaEditError("视频缺少可读取的画面流，无法分离", "MEDIA_EDIT_VIDEO_STREAM_MISSING");
+  }
+  if (!source.metadata.audioCodec) throw mediaEditError("该视频不包含音频流，无需分离", "MEDIA_EDIT_AUDIO_STREAM_MISSING");
+  const container = source.detected.signature === "webm"
+    ? { extension: "webm", mimeType: "video/webm" }
+    : source.detected.signature === "ogg"
+      ? { extension: "ogv", mimeType: "video/ogg" }
+      : { extension: "mp4", mimeType: "video/mp4" };
+  const temporaryDirectory = join(resolveWorkspaceInternalRoot(source.workspaceRoot), "temporary", "media-edit");
+  await mkdir(temporaryDirectory, { recursive: true });
+  const operationId = `${process.pid}-${randomUUID()}`;
+  const silentVideoPath = join(temporaryDirectory, `${operationId}-silent.${container.extension}`);
+  const audioPath = join(temporaryDirectory, `${operationId}-audio.m4a`);
+  const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || "视频");
+  try {
+    await runWorkspaceMediaEdit({
+      appRoot,
+      label: "音视频分离",
+      args: [
+        "-i", source.sourcePath,
+        "-map", "0:v:0", "-an", "-c:v", "copy", "-y", silentVideoPath,
+        "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-y", audioPath,
+      ],
+    });
+    const silentVideo = await saveWorkspaceAttachmentFromPath({
+      appRoot,
+      requestedPath,
+      sourcePath: silentVideoPath,
+      name: `${sourceName}-静音.${container.extension}`,
+      mimeType: container.mimeType,
+      expectedDurationMs: source.metadata.durationMs,
+      requirePlayableMedia: true,
+      whiteboardDocumentId,
+      whiteboardMediaKind: "video",
+    });
+    const audio = await saveWorkspaceAttachmentFromPath({
+      appRoot,
+      requestedPath,
+      sourcePath: audioPath,
+      name: `${sourceName}-音频.m4a`,
+      mimeType: "audio/mp4",
+      whiteboardDocumentId,
+      whiteboardMediaKind: "audio",
+    });
+    return {
+      silentVideo,
+      audio,
+      sourceDurationMs: Math.max(0, Number(source.metadata.durationMs) || 0),
+      aspectRatio: Number(source.metadata.videoWidth) / Math.max(1, Number(source.metadata.videoHeight)),
+    };
+  } finally {
+    await rm(silentVideoPath, { force: true }).catch(() => {});
+    await rm(audioPath, { force: true }).catch(() => {});
+  }
+};
+
+export const trimWorkspaceAudio = async ({ appRoot = process.cwd(), requestedPath, relativePath, startMs = 0, endMs = 0, whiteboardDocumentId = "" } = {}) => {
+  const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath, expectedKind: "audio" });
+  if (!source.metadata.audioCodec) throw mediaEditError("音频缺少可读取的声音流", "MEDIA_EDIT_AUDIO_STREAM_MISSING");
+  const sourceDurationMs = Math.max(0, Number(source.metadata.durationMs) || 0);
+  const normalizedStartMs = Math.max(0, Math.round(Number(startMs) || 0));
+  const requestedEndMs = Math.round(Number(endMs) || 0);
+  if (!sourceDurationMs) throw mediaEditError("无法读取音频时长，不能截取", "MEDIA_EDIT_DURATION_MISSING");
+  if (!Number.isFinite(requestedEndMs) || requestedEndMs <= 0 || requestedEndMs > sourceDurationMs + 250) {
+    throw mediaEditError("音频截取的结束时间超出有效范围", "MEDIA_EDIT_RANGE_INVALID");
+  }
+  const normalizedEndMs = Math.min(sourceDurationMs, requestedEndMs);
+  if (normalizedStartMs >= normalizedEndMs || normalizedEndMs - normalizedStartMs < 100) {
+    throw mediaEditError("请选择至少 0.1 秒的有效音频片段", "MEDIA_EDIT_RANGE_INVALID");
+  }
+  const temporaryDirectory = join(resolveWorkspaceInternalRoot(source.workspaceRoot), "temporary", "media-edit");
+  await mkdir(temporaryDirectory, { recursive: true });
+  const outputPath = join(temporaryDirectory, `${process.pid}-${randomUUID()}-trim.m4a`);
+  const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || "音频");
+  const selectionDurationMs = normalizedEndMs - normalizedStartMs;
+  try {
+    await runWorkspaceMediaEdit({
+      appRoot,
+      label: "音频截取",
+      args: [
+        "-ss", (normalizedStartMs / 1_000).toFixed(3),
+        "-i", source.sourcePath,
+        "-t", (selectionDurationMs / 1_000).toFixed(3),
+        "-map", "0:a:0", "-vn", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-y", outputPath,
+      ],
+      timeoutMs: 10 * 60_000,
+    });
+    const attachment = await saveWorkspaceAttachmentFromPath({
+      appRoot,
+      requestedPath,
+      sourcePath: outputPath,
+      name: `${sourceName}-${(normalizedStartMs / 1_000).toFixed(1)}s-${(normalizedEndMs / 1_000).toFixed(1)}s.m4a`,
+      mimeType: "audio/mp4",
+      whiteboardDocumentId,
+      whiteboardMediaKind: "audio",
+    });
+    if (!(Number(attachment.durationMs) > 0)) throw mediaEditError("截取结果缺少有效时长", "MEDIA_EDIT_OUTPUT_INVALID");
+    return { attachment, sourceDurationMs, startMs: normalizedStartMs, endMs: normalizedEndMs, selectionDurationMs };
+  } finally {
+    await rm(outputPath, { force: true }).catch(() => {});
+  }
+};
+
 const runVideoFrameExtraction = ({ appRoot, sourcePath, outputPath, frameTimeMs }) => new Promise((resolveFrame, rejectFrame) => {
   const launch = ffmpegLaunch(appRoot);
   let child;
@@ -4894,7 +5137,7 @@ const hydrateCurrentDocumentsFromWorkspace = async ({ workspaceRoot, documents =
   return hydrated;
 };
 
-const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocumentIds = null, transactionRollback = false }) => {
+const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocumentIds = null, transactionRollback = false, workspaceCommitId = "" }) => {
   const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
   const safeState = scrubConfidentialMetadata(state ?? {});
   safeState.moduleItems = Object.fromEntries(Object.entries(safeState.moduleItems ?? {}).map(([moduleId, items]) => [
@@ -4945,6 +5188,7 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     safeState.activeDocument = Object.keys(safeState.documents ?? {})[0] ?? null;
   }
   const workspaceKind = safeState.workspaceKind === "notebook" ? "notebook" : "project";
+  const commitId = String(workspaceCommitId || randomUUID());
   const structureLanguage = normalizeStructureLanguage(safeState.structureLanguage);
   await mkdir(workspaceRoot, { recursive: true });
   const internalRoot = resolveWorkspaceInternalRoot(workspaceRoot);
@@ -5202,6 +5446,7 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
   delete safeSettings.workspacePath;
   const currentState = scrubConfidentialMetadata({
     schemaVersion: 9,
+    workspaceCommitId: commitId,
     workspaceKind,
     mediaWorkspaceVersion: safeState.mediaWorkspaceVersion ?? 0,
     structureWorkspaceVersion: safeState.structureWorkspaceVersion ?? 0,
@@ -5246,6 +5491,7 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     savedAt: new Date().toISOString(),
   });
   const isolatedState = scrubConfidentialMetadata({
+    workspaceCommitId: commitId,
     histories: safeState.histories ?? {},
     viewHistories: safeState.viewHistories ?? {},
     volumeHistories: safeState.volumeHistories ?? {},
@@ -5259,15 +5505,37 @@ const saveWorkspaceStateCore = async ({ appRoot, requestedPath, state, dirtyDocu
     rollbackDocumentObjects: safeState.rollbackDocumentObjects ?? {},
   });
 
-  await atomicWrite(manifestPath, JSON.stringify({ schemaVersion: 2, manifest }, null, 2));
-  await atomicWrite(trashManifestPath, JSON.stringify({ schemaVersion: 1, entries: trashManifest }, null, 2));
-  await atomicWrite(join(internalRoot, "current-state.json"), JSON.stringify(currentState, null, workspaceKind === "notebook" ? 0 : 2));
-  await saveIsolatedHistoryState({ historyRoot, isolatedState });
+  const manifestText = JSON.stringify({ schemaVersion: 2, manifest }, null, 2);
+  const trashManifestText = JSON.stringify({ schemaVersion: 1, entries: trashManifest }, null, 2);
+  const currentStateText = JSON.stringify(currentState, null, workspaceKind === "notebook" ? 0 : 2);
+  await atomicWrite(manifestPath, manifestText);
+  await atomicWrite(trashManifestPath, trashManifestText);
+  await atomicWrite(join(internalRoot, "current-state.json"), currentStateText);
+  await saveIsolatedHistoryState({ historyRoot, isolatedState, commitId });
+  const historyIndexPath = join(historyRoot, "index.json");
+  const [historyIndexHash, manifestHash, currentStateHash] = await Promise.all([
+    pathHashIfExists(historyIndexPath),
+    Promise.resolve(hashText(manifestText)),
+    Promise.resolve(hashText(currentStateText)),
+  ]);
+  // Publish only after every shard and the current state have been flushed.
+  // Recovery can now distinguish a genuinely interrupted commit from a
+  // commit that finished just before the process was killed.
+  await atomicWrite(workspaceCommitPath(workspaceRoot), JSON.stringify({
+    schemaVersion: 1,
+    commitId,
+    currentStateHash,
+    historyIndexHash: historyIndexHash || "",
+    manifestHash,
+    savedAt: currentState.savedAt,
+    publishedAt: new Date().toISOString(),
+  }, null, 2));
   return {
     workspaceRoot,
     documentCount: Object.keys(manifest).length,
     manifest,
     savedAt: currentState.savedAt,
+    workspaceCommitId: commitId,
   };
 };
 
@@ -5448,6 +5716,22 @@ const recoverPendingWorkspaceTransactions = async ({ appRoot, workspaceRoot }) =
     if (!["applying", "rollback_pending", "pending", "recovering"].includes(journal.status)) {
       throw new Error(`未完成事务 ${journal.id} 状态未知，已停止自动处理`);
     }
+    // The process can die after saveWorkspaceStateCore has published all
+    // files but before the journal receives its final `committed` record.
+    // Treat the published commit as committed; rolling it back here would
+    // resurrect the previous conversation list after an upgrade or power
+    // loss.
+    if (journal.status === "applying" && await workspaceCommitIsComplete(workspaceRoot, journal.id)) {
+      await atomicWrite(journalPath, JSON.stringify({
+        ...journal,
+        status: "committed",
+        recoveredAsCommitted: true,
+        committedAt: new Date().toISOString(),
+      }, null, 2));
+      await rm(directory, { recursive: true, force: true });
+      recovered += 1;
+      continue;
+    }
     await atomicWrite(journalPath, JSON.stringify({
       ...journal,
       status: "rollback_pending",
@@ -5626,7 +5910,8 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
     maybeInjectWorkspaceTestFault("after-journal-applying");
     try {
       maybeInjectWorkspaceTestFault("before-save-core");
-      const result = await verifiedResult(await saveWorkspaceStateCore({ appRoot, requestedPath: workspaceRoot, state: desiredState, dirtyDocumentIds }));
+      const result = await verifiedResult(await saveWorkspaceStateCore({ appRoot, requestedPath: workspaceRoot, state: desiredState, dirtyDocumentIds, workspaceCommitId: transactionId }));
+      maybeInjectWorkspaceTestFault("after-save-core-before-journal-commit");
       await atomicWrite(journalPath, JSON.stringify({ ...journal, status: "committed", committedAt: new Date().toISOString() }, null, 2));
       await rm(transactionRoot, { recursive: true, force: true });
       const stateStamp = await workspaceStateStampForRoot(workspaceRoot);
@@ -5634,7 +5919,8 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
     } catch (firstError) {
       try {
         maybeInjectWorkspaceTestFault("before-save-core");
-        const result = await verifiedResult(await saveWorkspaceStateCore({ appRoot, requestedPath: workspaceRoot, state: desiredState, dirtyDocumentIds }));
+        const result = await verifiedResult(await saveWorkspaceStateCore({ appRoot, requestedPath: workspaceRoot, state: desiredState, dirtyDocumentIds, workspaceCommitId: transactionId }));
+        maybeInjectWorkspaceTestFault("after-save-core-before-journal-commit");
         await atomicWrite(journalPath, JSON.stringify({
           ...journal,
           status: "committed",
@@ -5721,6 +6007,7 @@ const workspaceStateStampForRoot = async (workspaceRoot) => {
     workspaceStampPart(join(internalRoot, "current-state.json")),
     workspaceStampPart(join(internalRoot, "history-isolated")),
     workspaceStampPart(join(internalRoot, "history-isolated", "index.json")),
+    workspaceStampPart(workspaceCommitPath(workspaceRoot)),
     workspaceStampPart(join(internalRoot, "transactions")),
     workspaceContentStampForRoot(workspaceRoot),
   ]);
@@ -5745,10 +6032,11 @@ export const loadWorkspaceState = async ({ appRoot, requestedPath }) => {
       : 0;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const beforeStamp = await workspaceStateStampForRoot(workspaceRoot);
-      const [currentText, isolatedText, manifestState] = await Promise.all([
-        readFile(join(internalRoot, "current-state.json"), "utf8"),
+      const [currentText, isolatedText, manifestState, commitMarker] = await Promise.all([
+        readFileWithAtomicRecovery(join(internalRoot, "current-state.json")),
         loadIsolatedHistoryState(join(internalRoot, "history-isolated"), { deferModuleHistories: true, deferRollbackObjects: true }),
         readJsonIfExists(join(internalRoot, "manifest.json")),
+        readJsonIfExists(workspaceCommitPath(workspaceRoot)),
       ]);
       const parsedCurrentState = JSON.parse(currentText);
       const migratedPaths = migrateLegacyBusinessPathsInValue(parsedCurrentState, {
@@ -5777,15 +6065,21 @@ export const loadWorkspaceState = async ({ appRoot, requestedPath }) => {
       }
       currentState.trash = pruneTrashEntries(currentState.trash ?? []).active;
       const isolatedState = scrubConfidentialMetadata(isolatedText ?? {});
+      const currentCommitId = String(currentState.workspaceCommitId || "");
+      const isolatedCommitId = String(isolatedState.workspaceCommitId || "");
+      const publishedCommitId = String(commitMarker?.commitId || "");
+      const commitsAgree = (!currentCommitId && !isolatedCommitId)
+        || (Boolean(currentCommitId) && currentCommitId === isolatedCommitId && (!publishedCommitId || publishedCommitId === currentCommitId));
       const conversations = (currentState.conversations ?? []).map((conversation) => ({
         ...conversation,
-        ...(isolatedState.conversationState?.[conversation.id] ?? {}),
+        ...(commitsAgree ? (isolatedState.conversationState?.[conversation.id] ?? {}) : {}),
       }));
       const rollbackObjectCount = Math.max(
         Number(isolatedState.rollbackDocumentObjectCount) || 0,
         Object.keys(isolatedState.rollbackDocumentObjects ?? {}).length,
       );
       const {
+        workspaceCommitId: _isolatedWorkspaceCommitId,
         conversationState: _mergedConversationState,
         rollbackDocumentObjectCount: _rollbackDocumentObjectCount,
         rollbackDocumentObjectsDeferred: _rollbackDocumentObjectsDeferred,
@@ -5793,6 +6087,7 @@ export const loadWorkspaceState = async ({ appRoot, requestedPath }) => {
       } = isolatedState;
       const lightweightIsolatedState = {
         ...isolatedStateWithoutConversationIndex,
+        workspaceCommitId: currentCommitId,
         // Conversation snapshots retain stable object keys. The corresponding
         // document bodies are fetched only when the author actually rolls a
         // message back, instead of transferring every historical document on

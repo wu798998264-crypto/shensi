@@ -62,8 +62,8 @@ for (const [name, source, invoke] of [
     `${name}桥接必须验证原命令，退出码 0 的未登录响应不得冒充成功`);
   assert.match(source, /isDreaminaAuthRefreshSessionRejected\(error\?\.message\)/,
     `${name}桥接必须识别 authsdk protocol server 10044 会话拒绝`);
-  assert.match(source, /const semanticAuthFailure = \(command = ""\) => \{[\s\S]{0,320}error\.code = "DREAMINA_AUTH_REQUIRED"/,
-    `${name}桥接静默恢复后仍被服务器拒绝时必须显示当前配置核验入口`);
+  assert.match(source, /const semanticAuthFailure = \(command = ""\) => \{[\s\S]{0,700}error\.code = generationCommand \? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED"/,
+    `${name}桥接必须区分生成阶段会话波动和真实配置失效`);
   assert.match(source, /continue;[\s\S]{0,100}if \(authRejected\) throw semanticAuthFailure\(args\[0\]\)/,
     `${name}桥接有界重试后仍被拒绝必须要求核验当前配置`);
   assert.match(source, /"DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY"/,
@@ -89,6 +89,8 @@ for (const [name, source] of [["图片", imageCli], ["视频", videoCli]]) {
     `${name}已经预备的新任务不得按相同提示词认领历史厂商任务`);
   assert.doesNotMatch(source, /DREAMINA_PROVIDER_SESSION_EXPIRED[\s\S]{0,220}runGenerationSubmit/u,
     `${name}会话失效不得重新执行生成提交`);
+  assert.doesNotMatch(source, /confirmGenerationAuthVerdict/u,
+    `${name}生成链路不得通过额外探测次数掩盖认证判断`);
 }
 assert.doesNotMatch(imageCli, /const refreshGenerationAuth/u,
   "图片已核验账号不得在每次生成前额外执行易失败的 login --headless");
@@ -98,9 +100,9 @@ assert.match(imageCli, /SHENSI_DREAMINA_AUTH_RETRIES", 2/u,
   "图片桥接认证恢复必须有界，避免同一失效会话长时间空转");
 assert.match(videoCli, /SHENSI_DREAMINA_AUTH_RETRIES", 2/u,
   "视频桥接认证恢复必须有界，避免同一失效会话长时间空转");
-assert.match(imageCli, /await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,560}taskResourceChecked: true[\s\S]{0,180}generationReady: true/u,
+  assert.match(imageCli, /(?:await ensureDreaminaTaskStoreSession\(\);|const taskResource = await ensureDreaminaTaskStoreSession\(\);)[\s\S]{0,700}(?:taskResourceChecked: true|taskResource\.taskResourceChecked)[\s\S]{0,220}(?:generationReady: true|generationReady: taskResource\.taskResourceChecked)/u,
   "图片连接检查必须验证任务资源会话后才报告可生成");
-assert.match(videoCli, /await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,560}taskResourceChecked: true[\s\S]{0,180}generationReady: true/u,
+assert.match(videoCli, /(?:await ensureDreaminaTaskStoreSession\(\);|const taskResource = await ensureDreaminaTaskStoreSession\(\);)[\s\S]{0,700}(?:taskResourceChecked: true|taskResource\.taskResourceChecked)[\s\S]{0,220}(?:generationReady: true|generationReady: taskResource\.taskResourceChecked)/u,
   "视频连接检查必须验证任务资源会话后才报告可生成");
 
 const errorTextStart = app.indexOf("const mediaGenerationErrorText");
@@ -116,6 +118,8 @@ assert.match(app, /status \|\| ""\) !== "waiting_credentials"[\s\S]{0,300}dreami
   "任务恢复时只有结构化核验错误可以自动打开账号核验");
 assert.match(app, /waiting_credentials" && accountVerificationRequired/,
   "卡片核验按钮只能在结构化协议确认需要核验时显示");
+assert.match(app, /mediaRecoveryJobNeedsAccountVerification\(job\)[\s\S]{0,120}!actions\.includes\('data-media-job-action="reverify"'\)/u,
+  "待处理窗口必须复用通用核验动作，同一任务不得显示两个核验账号按钮");
 assert.match(app, /const dreaminaReverifyPromptQueue = new Map\(\)/,
   "多个失效账号必须使用独立的核验弹窗队列");
 assert.match(app, /addEventListener\("close", \(\) => \{[\s\S]{0,300}showNextQueuedDreaminaReverification/,

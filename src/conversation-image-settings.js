@@ -2,7 +2,7 @@ export const DEFAULT_IMAGE_GENERATION_MODEL = "gpt-image-2.5";
 export const DEFAULT_IMAGE_GENERATION_QUALITY = "high";
 export const DEFAULT_IMAGE_GENERATION_ASPECT_RATIO = "auto";
 
-const ASPECT_RATIO_PATTERN = /(?:^|\D)(21:9|16:9|9:16|3:2|2:3|4:3|3:4|1:1)(?:\D|$)/u;
+const ASPECT_RATIO_PATTERN = /(?:^|\D)(21:9|9:21|16:9|9:16|3:2|2:3|4:3|3:4|1:1)(?:\D|$)/u;
 const REPEAT_IMAGE_PATTERN = /(?:^|[，,。！？!?；;\s])(?:请|麻烦|帮我|给我)?(?:按照|按|沿用)?[^，,。！？!?；;\n]{0,16}(?:再|重新)(?:来|生成|出|画|绘制|制作)(?:一|1)张(?:同样|一样|相同)?(?:的)?(?:图片|图像|图)?(?:[，,。！？!?；;\s]|$)/u;
 
 export const explicitConversationImageAspectRatio = (prompt = "") => (

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 import {
+  historyDiffIsFullReplacement,
   renderHistoryDiff,
   replayHistoryChangeSet,
   resolveHistoryDiffInput,
@@ -52,6 +53,27 @@ const explicit = resolveHistoryDiffInput({
 assert.equal(explicit.source, "stored-change-set", "正式补丁历史必须优先使用已保存的精确差异");
 assert.equal(explicit.before, "旧句正文");
 assert.equal(explicit.after, "新句正文");
+
+assert.equal(historyDiffIsFullReplacement({
+  operationType: "replace",
+  before: "旧全文",
+  after: "新全文",
+  hasDiff: false,
+}), true, "明确的全文替换历史必须使用全文覆盖预览");
+assert.equal(historyDiffIsFullReplacement({
+  operationType: "partial-replace",
+  before: "旧句正文",
+  after: "新句正文",
+  changeSet: explicit.changeSet,
+  hasDiff: true,
+}), false, "局部替换历史必须继续显示精确差异");
+assert.equal(historyDiffIsFullReplacement({
+  operationType: "patch",
+  before: "旧全文",
+  after: "新全文",
+  changeSet: [{ start: 0, end: 3, before: "旧全文", after: "新全文" }],
+  hasDiff: true,
+}), true, "旧历史中精确覆盖全文的单一 changeSet 也必须识别为全文覆盖");
 
 const exactChanges = [
   { editId: "added", start: 2, end: 2, before: "", after: "新增" },
@@ -185,7 +207,10 @@ assert.match(appSource, /snapshotDocument\(documentId, "用户点击版本保存
 assert.doesNotMatch(appSource, /snapshotDocument\(documentId, "用户点击版本保存", \{ force: true/u, "手动保存完全相同内容时不得强制创建重复版本");
 assert.match(appSource, /当前完整内容与最新历史版本完全相同，无需重复保存/u);
 assert.match(appSource, /const applyWorkspaceHistoryUpdates = \(workspaceState, updates\) =>/u, "后台工作区必须合并服务端生成的历史回执");
-assert.match(appSource, /single-history-preview\$\{diffInput\.hasDiff \? " has-history-diff" : ""\}/u, "单篇历史预览必须按是否存在差异标题栏选择布局");
+assert.match(appSource, /const showInlineHistoryDiff = diffInput\.hasDiff && !fullReplacement/u, "全文覆盖必须与局部差异预览分流");
+assert.match(appSource, /single-history-preview\$\{showInlineHistoryDiff \? " has-history-diff" : fullReplacement \? " has-history-status" : ""\}/u, "单篇历史预览必须按局部差异或全文覆盖状态选择布局");
+assert.match(appSource, /history-full-replacement-badge">全文覆盖</u, "全文覆盖历史必须显示黄色状态标签");
+assert.match(appSource, /showInlineHistoryDiff[\s\S]{0,520}renderHistoryDiff\(diffInput\)[\s\S]{0,120}previewDocumentHtml\(selectedDocument\)/u, "全文覆盖不得渲染整篇删除新增差异，必须显示完整历史快照");
 assert.match(appSource, /完整版本与修改标注/u);
 assert.match(appSource, /<i class="added">新增<\/i><i class="deleted">删除<\/i>/u);
 assert.doesNotMatch(appSource, /<i class="modified">修改<\/i>/u, "修改即删除后新增，不再重复展示修改图例");
@@ -195,7 +220,9 @@ assert.match(styles, /\.history-preview-body\s*\{[^}]*display:\s*grid;[^}]*grid-
 assert.match(styles, /\.history-preview-content\s*\{[^}]*height:\s*100%;[^}]*overflow:\s*hidden;/u,
   "历史预览内容区必须占满可用高度，并把滚动交给正文区域");
 assert.match(styles, /\.single-history-preview\s*\{[\s\S]{0,160}grid-template-rows:\s*minmax\(0, 1fr\)/u, "首个完整快照必须占满历史预览高度");
-assert.match(styles, /\.single-history-preview\.has-history-diff\s*\{[\s\S]{0,120}grid-template-rows:\s*48px minmax\(0, 1fr\)/u, "后续差异版本必须保留标题栏和完整正文滚动区");
+assert.match(styles, /\.single-history-preview\.has-history-diff,\s*\n\.single-history-preview\.has-history-status\s*\{[\s\S]{0,120}grid-template-rows:\s*48px minmax\(0, 1fr\)/u, "差异和全文覆盖版本必须保留标题栏和完整正文滚动区");
 assert.match(styles, /\.history-diff-added\s*\{[\s\S]{0,120}color:\s*var\(--success/u, "历史新增内容必须使用绿色文字");
+assert.match(styles, /\.history-full-replacement-badge\s*\{[\s\S]{0,260}#f5c542/u, "全文覆盖标签必须使用黄色状态样式");
+assert.match(styles, /\.history-preview-document\.full-replacement,[\s\S]{0,160}color:\s*var\(--text\)\s*!important/u, "全文覆盖正文必须保持正常文字颜色");
 
 console.log("v3.1.1 manual history snapshot diff tests passed");

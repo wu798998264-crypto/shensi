@@ -128,12 +128,41 @@ try {
           window.nativeAgentMocks.set(id, { id, status: 'failed', events, lastSequence: 3, text: '我将先读取短篇小说分支。', error, deliveryWarnings: [] });
           return Response.json({ok:true,id,status:'running'});
         }
+        if (['保留悬念，重点比较视角', '节奏；视角', '节奏'].includes(instruction)) {
+          const events = [
+            { sequence: 1, type: 'started', payload: { model: 'mock' } },
+            { sequence: 2, type: 'resource_read', payload: { kind: 'document', id: 'story-outline', title: '故事大纲', characters: 1200, fullText: true } },
+            { sequence: 3, type: 'resource_read', payload: { kind: 'skill', id: 'official:story-skill', title: '故事创作', characters: 800, fullText: true } },
+            { sequence: 4, type: 'candidates', payload: { variants: [{ title: '节奏方案', content: '第一份完整候选稿。' }, { title: '视角方案', content: '第二份完整候选稿。' }, { title: '融合方案', content: '第三份完整候选稿。' }] } },
+          ];
+          let sequence = 5;
+          const linkTarget = instruction === '节奏；视角' ? window.agentCreatedDocument : null;
+          if (linkTarget) {
+            const hash = 'a'.repeat(64);
+            const result = {targetDocumentId:linkTarget.id,requestedTitle:linkTarget.title,targetDirectoryId:'manuscript',verified:true,writtenHash:hash,verifiedHash:hash};
+            const landingManifest = {schemaVersion:2,nativeAgentDocumentSave:true,workspaceKind:'project',workspacePath:request.workspacePath,workspaceName:'Agent界面隔离验收',segments:[{documentId:linkTarget.id,title:linkTarget.title,requestedTitle:linkTarget.title,moduleId:'manuscript',receiptVerified:true,navigationTarget:{documentId:linkTarget.id,moduleId:'manuscript',workspaceKind:'project',workspacePath:request.workspacePath,workspaceName:'Agent界面隔离验收'}}],batchLandingReceipt:{verified:true,failed:0,results:[result]}};
+            events.push({sequence:sequence++,type:'document_saved',payload:{documentId:linkTarget.id,title:linkTarget.title,trustedDocumentSave:true,landingManifest}});
+          }
+          const run = { id, events, text: '已生成三份候选，未覆盖文档。', linkTarget, workspacePath: request.workspacePath };
+          if (linkTarget) {
+            run.completionAt = Date.now() + 3000;
+            run.pendingCompletionSequence = sequence;
+            run.lastSequence = sequence - 1;
+            run.status = 'running';
+          } else {
+            events.push({sequence,type:'completed',payload:{text:'已生成三份候选，未覆盖文档。'}});
+            run.status = 'completed';
+            run.lastSequence = sequence;
+          }
+          window.nativeAgentMocks.set(id, run);
+          return Response.json({ok:true,id,status:'running'});
+        }
         const questionId = 'question-' + window.nativeAgentStarts.length;
         const events = [
           { sequence: 1, type: 'started', payload: { model: 'mock' } },
           { sequence: 2, type: 'question', payload: { id: questionId, question: '你更希望比较哪些差异？', options: [{id:'a',label:'节奏'}, {id:'b',label:'视角'}], multiple: window.nativeAgentStarts.length === 1, allowFreeText: true } },
         ];
-        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: window.nativeAgentStarts.length === 1 ? window.agentCreatedDocument : null, workspacePath: request.workspacePath });
+        window.nativeAgentMocks.set(id, { id, status: 'waiting_input', events, lastSequence: 2, text: '', linkTarget: null, workspacePath: request.workspacePath });
         return Response.json({ok:true,id,status:'running'});
       }
       if (path.startsWith('/api/conversation-agent/')) {
@@ -231,7 +260,7 @@ try {
   await evaluate("document.querySelector('#closeQuickModel').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='不生成视频，只给三份不同视角的候选故事';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
   await waitFor("window.nativeAgentStarts.length === 1 && document.querySelectorAll('[data-native-task-card]').length === 1", "统一Agent接受");
-  await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false", "动态选择框");
+  await waitFor("document.querySelector('#conversationChoicePanel')?.hidden === false && document.querySelector('#chatFeed')?.innerText.includes('你更希望比较哪些差异') && document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_answer]').length === 2", "动态选择框");
   const first = await evaluate(`({
     input:document.querySelector('#chatInput').value,
     text:document.querySelector('#chatFeed').innerText,
@@ -261,24 +290,25 @@ try {
   assert.equal(await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').classList.contains('is-selected')"), true, "单选项目必须显示选中状态");
   assert.equal(await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').disabled"), false, "选中后确认按钮必须可用");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='保留悬念，重点比较视角';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
-  await waitFor("window.nativeAgentAnswers.length === 1", "自由回答");
+  await waitFor("window.nativeAgentStarts.length === 3", "自由回答作为持久用户指令继续");
+  assert.equal(await evaluate("window.nativeAgentAnswers.length"), 0, "普通选择不依赖旧等待运行的 answer 回调");
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "候选分支保留");
   const choiceResultOrder = await evaluate(`(() => {
     const nodes=[...document.querySelectorAll('#chatFeed [data-message]')];
     const answer=nodes.findIndex((item)=>item.textContent.includes('保留悬念，重点比较视角'));
-    const task=nodes.findIndex((item)=>item.querySelector('[data-native-task-card]'));
+    const task=nodes.findIndex((item,index)=>index>answer&&item.querySelector('[data-native-task-card]'));
     return {answer,task};
   })()`);
   assert.ok(choiceResultOrder.answer >= 0 && choiceResultOrder.task > choiceResultOrder.answer, "选择确认后任务卡和结果必须位于用户答案之后");
   const integratedTaskCard = await evaluate(`(() => {
-    const card = document.querySelector('[data-native-task-card]');
+    const card = [...document.querySelectorAll('[data-native-task-card]')].at(-1);
     return { text: card?.textContent || '', legacyCardCount: document.querySelectorAll('.native-agent-task-card').length, readoutCount: card?.querySelectorAll('.native-agent-reads').length || 0 };
   })()`);
   assert.equal(integratedTaskCard.legacyCardCount, 0, "不得在生成卡下方重复渲染第二张原生任务卡");
   assert.equal(integratedTaskCard.readoutCount, 1, "真实读取必须合并到同一张生成任务卡底部");
   assert.match(integratedTaskCard.text, /已读取[\s\S]*故事大纲[\s\S]*故事创作/u);
   assert.doesNotMatch(integratedTaskCard.text, /空文档|当前状态/u, "空文档和重复当前状态不得显示在生成任务卡中");
-  assert.equal(await evaluate("window.nativeAgentStarts.length"), 2, "回答不能新建额外任务");
+  assert.equal(await evaluate("window.nativeAgentStarts.length"), 3, "普通选择必须作为新的持久用户指令启动后续任务");
   await evaluate("document.querySelector('#conversationHistoryButton').click(); true");
   await waitFor("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]')", "原对话入口");
   await evaluate("document.querySelector('[data-conversation=\"'+window.nativeAgentStarts[0].conversationId+'\"]').click(); true");
@@ -286,12 +316,12 @@ try {
   await evaluate("document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_answer]')[0].click(); true");
   await evaluate("document.querySelectorAll('#conversationChoiceOptions [data-choice-type=native_agent_answer]')[1].click(); true");
   await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
-  await waitFor("window.nativeAgentAnswers.length === 2", "多选回答");
-  assert.equal(await evaluate("window.nativeAgentAnswers[1].answer"), "节奏；视角");
+  await waitFor("window.nativeAgentStarts.length === 4", "多选答案作为持久用户指令继续");
+  assert.equal(await evaluate("window.nativeAgentStarts.at(-1).messages.at(-1).content"), "节奏；视角");
   await waitFor("document.querySelector('[data-open-landed-document]')", "Agent 文档标题链接");
   await evaluate("document.querySelector('[data-module=manuscript]').click(); true");
   await waitFor(`${JSON.stringify(agentLinkTarget.id)} in Object.fromEntries([...document.querySelectorAll('[data-document]')].map((item)=>[item.dataset.document,true]))`, "可信写入回执立即进入左侧目录");
-  assert.equal(await evaluate("[...window.nativeAgentMocks.values()][0].status"), "running", "目录和链接必须在 Agent 整体结束前由可信写入回执立即更新");
+  assert.equal(await evaluate("[...window.nativeAgentMocks.values()].at(-1).status"), "running", "目录和链接必须在 Agent 整体结束前由可信写入回执立即更新");
   assert.equal(await evaluate("document.querySelector('[data-open-landed-document]').textContent.trim()"), agentLinkTarget.title, "链接文字必须与文档显示标题一致");
   await evaluate("document.querySelector('[data-module=memory]').click(); true");
   await waitFor("document.querySelector('[data-document=memory-snapshot]')", "跳转前文档");
@@ -299,7 +329,7 @@ try {
   await waitFor("document.querySelector('[data-document=memory-snapshot].active')", "切换离开链接目标");
   await evaluate("document.querySelector('[data-open-landed-document]').click(); true");
   await waitFor(`document.querySelector('[data-document].active')?.dataset.document === ${JSON.stringify(agentLinkTarget.id)}`, "点击标题链接跳回文档");
-  await waitFor("[...window.nativeAgentMocks.values()][0].status === 'completed'", "可信写入任务结束");
+  await waitFor("[...window.nativeAgentMocks.values()].at(-1).status === 'completed'", "可信写入任务结束");
   assert.equal(await evaluate("window.agentDocumentStateReads"), 1, "可信写入回执已经同步成功时，任务结束不得重复刷新并触发假冲突");
   assert.equal(await evaluate("window.agentProjectionFullStateSaves"), 0, "服务端已提交目录行后，前端投影不得再整份保存工作区并与流式对话竞态");
   assert.doesNotMatch(await evaluate("document.querySelector('#toast')?.textContent || ''"), /界面刷新失败|同一状态：conversations/u);
@@ -309,15 +339,15 @@ try {
   await writeFile(screenshotPath,Buffer.from(result.data,"base64"));
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='单选最后一问续跑验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
-  await waitFor("window.nativeAgentStarts.length === 3 && document.querySelector('#conversationChoicePanel')?.hidden === false", "单选最后一问");
+  await waitFor("window.nativeAgentStarts.length === 5 && document.querySelector('#conversationChoicePanel')?.hidden === false", "单选最后一问");
   await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_answer]').click(); true");
   await evaluate("document.querySelector('#conversationChoiceOptions [data-choice-type=native_agent_confirm]').click(); true");
-  await waitFor("window.nativeAgentAnswers.length === 3", "最后一问确认提交");
-  assert.equal(await evaluate("window.nativeAgentAnswers[2].answer"), '节奏');
+  await waitFor("window.nativeAgentStarts.length === 6", "最后一问作为持久用户指令提交");
+  assert.equal(await evaluate("window.nativeAgentStarts.at(-1).messages.at(-1).content"), '节奏');
   await waitFor("document.querySelector('#chatFeed').innerText.includes('查看候选稿')", "最后一问后完成成果交付");
   await evaluate("document.querySelector('#quickNewConversationButton').click(); true");
   await evaluate(`(() => {const input=document.querySelector('#chatInput');input.value='失败呈现验收';input.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#chatForm').requestSubmit();return true;})()`);
-  await waitFor("window.nativeAgentStarts.length === 4 && document.querySelector('[data-native-task-card][data-status=failed]')", "原生 Agent 失败终态");
+  await waitFor("window.nativeAgentStarts.length === 7 && document.querySelector('[data-native-task-card][data-status=failed]')", "原生 Agent 失败终态");
   const failurePresentation = await evaluate(`(() => {
     const card=document.querySelector('[data-native-task-card][data-status=failed]');
     const message=card?.closest('[data-message]');
@@ -335,7 +365,7 @@ try {
   await waitFor(`document.querySelector('[data-conversation="${emptyId}"]')`, "新建空对话仍存在", 30000);
   assert.equal(await evaluate(`document.querySelector('[data-conversation="${emptyId}"]').closest('.conversation-task-row').classList.contains('active')`), true, '恢复原活动对话');
   assert.equal(await evaluate("document.querySelector('#chatInput').value"), '');
-  console.log(JSON.stringify({ok:true,screenshotPath,checks:["ordinary tasks default to shensi-only without an abstract permission menu","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer same run","multi-select after switching back","three candidate branches","verified document title link click","native Agent failure reason remains visible"]}));
+  console.log(JSON.stringify({ok:true,screenshotPath,checks:["ordinary tasks default to shensi-only without an abstract permission menu","raw instruction preserved","no keyword media route","send before choice","two concurrent conversations","single-select confirmation","free answer continues as durable user instruction","multi-select after switching back","three candidate branches","verified document title link click","native Agent failure reason remains visible"]}));
 } catch (error) {
   console.log(JSON.stringify(await evaluate("({starts:window.nativeAgentStarts?.map(r=>({conversationId:r.conversationId,sourceMessageId:r.sourceMessageId})),answers:window.nativeAgentAnswers,input:document.querySelector('#chatInput')?.value,choices:document.querySelector('#conversationChoicePanel')?.hidden,feed:document.querySelector('#chatFeed')?.innerText.slice(-1400),toasts:document.querySelector('#toast')?.textContent,documentStateReads:window.agentDocumentStateReads,directoryIds:[...document.querySelectorAll('[data-document]')].map(item=>item.dataset.document),activeModuleButton:document.querySelector('[data-module].active')?.dataset.module||'',directoryText:document.querySelector('#documentList')?.innerText||'',manuscriptButtonCount:document.querySelectorAll('[data-module=manuscript]').length,manuscriptItems:typeof state === 'undefined' ? null : state.moduleItems?.manuscript,createdDocument:typeof state === 'undefined' ? null : state.documents?.['agent-created-article'],emptyWorkspaceKind:typeof ui === 'undefined' ? null : ui.emptyWorkspaceKind,workspacePath:typeof state === 'undefined' ? null : state.settings?.workspacePath,workspaceSaveError:typeof ui === 'undefined' ? null : ui.workspaceSaveError?.message,refreshErrors:typeof state === 'undefined' ? [] : state.messages?.filter(message=>message.execution?.refreshError).map(message=>message.execution.refreshError)})")));
   throw error;

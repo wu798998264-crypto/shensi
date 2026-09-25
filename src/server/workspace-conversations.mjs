@@ -13,9 +13,7 @@ const conversationEpoch = (conversation = {}) => {
   return match ? Number(match[1]) || 0 : 0;
 };
 
-export const workspaceConversationEntries = ({ workspace, state = {} }) => (state.conversations || [])
-  .filter((conversation) => conversation?.id)
-  .map((conversation, index) => {
+const conversationEntry = ({ workspace, state, conversation, index }) => {
     const owner = conversationWorkspaceOwner(conversation, { ...workspace, workspaceName: workspace.name || state.projectName });
     return {
       id: conversation.id,
@@ -29,9 +27,26 @@ export const workspaceConversationEntries = ({ workspace, state = {} }) => (stat
       key: JSON.stringify([workspace.workspaceKind, workspace.workspacePath, conversation.id]),
       _order: index,
     };
-  })
-  .sort((left, right) => (right.updatedAtEpoch - left.updatedAtEpoch) || (left._order - right._order))
-  .map(({ _order, ...entry }) => entry);
+};
+
+export const workspaceConversationEntries = ({ workspace, state = {} }) => {
+  const byId = new Map();
+  for (const [index, conversation] of (state.conversations || []).entries()) {
+    if (!conversation?.id) continue;
+    const next = conversationEntry({ workspace, state, conversation, index });
+    const previous = byId.get(next.id);
+    // A malformed/partially merged workspace may contain the same id more
+    // than once. Keep one complete record in the history picker.
+    if (!previous
+      || next.updatedAtEpoch > previous.updatedAtEpoch
+      || (next.updatedAtEpoch === previous.updatedAtEpoch && next.messageCount > previous.messageCount)) {
+      byId.set(next.id, next);
+    }
+  }
+  return [...byId.values()]
+    .sort((left, right) => (right.updatedAtEpoch - left.updatedAtEpoch) || (left._order - right._order))
+    .map(({ _order, ...entry }) => entry);
+};
 
 export const listWorkspaceConversations = async ({ appRoot }) => {
   const workspaces = await listWorkspaces(appRoot);
@@ -53,7 +68,9 @@ export const readWorkspaceConversation = async ({ appRoot, workspacePath, worksp
   const workspace = workspaces.find((item) => conversationWorkspaceKey(item) === conversationWorkspaceKey({ workspacePath, workspaceKind }));
   if (!workspace) throw Object.assign(new Error("所属作品或笔记本不存在或不可访问"), { statusCode: 404 });
   const { state } = await loadWorkspaceDirectoryState({ appRoot, requestedPath: workspace.workspacePath });
-  const conversation = state?.conversations?.find((item) => item.id === conversationId);
+  const conversation = (state?.conversations || [])
+    .filter((item) => item?.id === conversationId)
+    .sort((left, right) => (conversationEpoch(right) - conversationEpoch(left)) || ((right.messages?.length || 0) - (left.messages?.length || 0)))[0];
   if (!conversation) throw Object.assign(new Error("历史对话不存在"), { statusCode: 404 });
   const owner = conversationWorkspaceOwner(conversation, { ...workspace, workspaceName: workspace.name });
   return {

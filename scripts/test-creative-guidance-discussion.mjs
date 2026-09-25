@@ -185,7 +185,7 @@ for (const source of [orchestrator, guidanceDoc, moduleDoc, ruleDoc]) {
 }
 assert.match(orchestrator, /笔记中创建小说不得套用作品模式分卷/u);
 assert.match(appSource, /persistentCreativeGuidanceContract\(/u, "后续写作上下文必须通过来源模式边界读取长期合同");
-assert.match(appSource, /conversation\[persistentGuidanceContractKey\]/u, "完成引导后必须按产物和来源模式保存长期合同");
-assert.match(appSource, /guidanceState:\s*candidateTarget\?\.guidanceState/u, "正式推演记录必须消费本轮结构化引导状态");
+assert.match(appSource, /conversation\.creativeGuidance = clone\(next\)/u, "创作引导状态必须随对话持久保存，不依赖软件关键词重新判断");
+assert.match(appSource, /guidanceState:\s*clone\(guidanceState\)/u, "结构化引导状态必须按对话保存，供后续 Agent 轮次继续读取");
 
 console.log("creative guidance discussion-first tests passed");

@@ -69,9 +69,9 @@ const titledAcceptanceStoryRoute = buildAdaptiveTaskRoute({
 }, { executionSurface: "agent" });
 assert.equal(titledAcceptanceStoryRoute.deliverableType, "short_fiction");
 assert.equal(titledAcceptanceStoryRoute.mode, "creative", "请正式创作且无需询问必须直接进入主笔，不能降为创作引导");
-assert.equal(titledAcceptanceStoryRoute.routeStage, "produce");
-assert.equal(titledAcceptanceStoryRoute.selectedCapabilityTopLevelId, "group:short-fiction");
-assert.equal(titledAcceptanceStoryRoute.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(titledAcceptanceStoryRoute.routeStage, "produce", "明确正式创作可保留粗粒度生产阶段，但具体模块由 Agent 选择");
+assert.equal(titledAcceptanceStoryRoute.selectedCapabilityTopLevelId, undefined, "软件层不得提前锁定顶层创作分支");
+assert.equal(titledAcceptanceStoryRoute.selectedCapabilityNodeId, undefined, "软件层不得提前锁定具体主笔模块");
 assert.equal(titledAcceptanceStoryRoute.reviewDelivery.active, false, "标题中的“验收”只是标题内容，不能误建小说自检报告");
 assert.notEqual(titledAcceptanceStoryRoute.targetDocumentId, "report-novel");
 
@@ -87,8 +87,8 @@ const creationWithPostwriteReviewRoute = buildAdaptiveTaskRoute({
 }, { executionSurface: "agent" });
 assert.equal(creationWithPostwriteReviewRoute.mode, "creative");
 assert.equal(creationWithPostwriteReviewRoute.diagnosisIntent, undefined, "写后自检不得把整项创作误标为内容质检");
-assert.equal(creationWithPostwriteReviewRoute.routeStage, "produce", "写后自检任务必须先进入主笔生成链");
-assert.equal(creationWithPostwriteReviewRoute.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(creationWithPostwriteReviewRoute.routeStage, "produce", "写后自检任务必须先保留生产阶段，但具体模块由 Agent 选择");
+assert.equal(creationWithPostwriteReviewRoute.selectedCapabilityNodeId, undefined);
 assert.equal(creationWithPostwriteReviewRoute.formalArtifactExpected, true);
 assert.notEqual(creationWithPostwriteReviewRoute.intentEnvelope?.taskType, "diagnosis");
 
@@ -104,7 +104,7 @@ const reviewWithoutMutationRoute = buildAdaptiveTaskRoute({
   workspaceKind: "project",
 }, { executionSurface: "agent" });
 assert.equal(reviewWithoutMutationRoute.diagnosisIntent, true);
-assert.equal(reviewWithoutMutationRoute.routeStage, "review");
+assert.equal(reviewWithoutMutationRoute.routeStage, "review", "明确质检可保留粗粒度检查阶段，但具体模块由 Agent 选择");
 assert.equal(reviewWithoutMutationRoute.intentEnvelope?.taskType, "diagnosis", "“不要修改”不得反向触发修改任务");
 const semanticGuidanceProfile = detectShensiRunProfile({
   prompt: "直接写",
@@ -242,7 +242,7 @@ const directShortFictionWrite = buildAdaptiveTaskRoute({
   workspaceKind: "notebook",
 }, { executionSurface: "agent" });
 assert.equal(directShortFictionWrite.mode, "creative", "“无需创作引导”必须解释为跳过引导，不能反向降级成只做引导");
-assert.equal(directShortFictionWrite.selectedCapabilityNodeId, "module:short-fiction-writer");
+assert.equal(directShortFictionWrite.selectedCapabilityNodeId, undefined, "明确直写仍不得由软件层预选具体主笔模块");
 assert.equal(directShortFictionWrite.writeAuthorization.state, "commit");
 assert.equal(directShortFictionWrite.writeAuthorization.action, "create", "明确写入新文档必须获得 create 权限");
 assert.equal(directShortFictionWrite.capabilityInspectionOnly, undefined, "创作任务提到读取路由不等于纯路由检查");

@@ -7,12 +7,16 @@ export const LIBTV_CLI_ALIAS = "libtv";
 export const LIBTV_CLI_ARGS = "";
 
 export const DREAMINA_CLI_PROFILES = Object.freeze([
-  Object.freeze({ id: "default", remarkName: "柏物语" }),
+  // The profile IDs and credential folders are stable machine identities.
+  // These names are the user-facing account remarks for the browsers they
+  // belong to: Edge is the Short Drama Frontline account and Chrome is the
+  // Icebound First Love account.
+  Object.freeze({ id: "default", remarkName: "短剧最前线" }),
   Object.freeze({ id: "xiaoyujie", remarkName: "小鱼姐" }),
   Object.freeze({ id: "guobazai", remarkName: "锅巴仔" }),
   Object.freeze({ id: "chenan", remarkName: "陈安" }),
   Object.freeze({ id: "tashuo-juyougeng", remarkName: "她说剧有梗" }),
-  Object.freeze({ id: "duanju-zuiqianxian", remarkName: "短剧最前线" }),
+  Object.freeze({ id: "duanju-zuiqianxian", remarkName: "冰封初恋" }),
   Object.freeze({ id: "yinou-shijie", remarkName: "银鸥师姐" }),
 ]);
 
@@ -32,6 +36,8 @@ export const OPENAI_IMAGE_CLI_ARGS = [
   "--model {model}",
   "--aspect-ratio {aspectRatio}",
   "--quality {quality}",
+  "--resolution {resolution}",
+  "--background {background}",
   "--count {imageCount}",
   "--output {outputFile}",
 ].join(" ");

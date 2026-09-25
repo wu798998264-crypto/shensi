@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { createConversationAgentTools, conversationAgentInstructions } from "./conversation-agent-tools.mjs";
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { normalizeTextTaskExecutionContext } from "../text-task-execution-context.js";
-import { hasInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
+import { hasInternalConversationMarker, hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
 const laneFor = (request) => keyFor({ ...request, branchId: "conversation-lane" });
@@ -180,6 +180,8 @@ const normalizedChoiceDecision = ({ id, question, options = [], multiple = false
   if (choices.length < 2) throw new Error("选择问题必须提供至少两个不同选项；普通提问请直接回复文字");
   return {
     id,
+    kind: "conversation_choice",
+    durable: true,
     question: prompt,
     options: choices,
     multiple: multiple === true,
@@ -398,15 +400,25 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
   };
   const execute = async (entry, request) => {
     const { record, controller } = entry;
-    const sanitizeAgentText = (value, options = {}) => request.settings?.agentEngine === "workbuddy"
-      ? sanitizeWorkBuddyConversationOutput(value, options)
-      : sanitizeConversationOutput(value, options);
+    const sanitizeAgentText = (value, options = {}) => {
+      const source = String(value ?? "");
+      const engine = String(request.settings?.agentEngine || "").trim().toLowerCase();
+      // External CLIs share the same risk as WorkBuddy: a runner may echo the
+      // host route, tool receipt, or JSON contract into its answer.  Apply the
+      // narrow WorkBuddy protocol pass only when an actual internal marker is
+      // present, so ordinary JSON/code examples remain valid for every other
+      // configured runner.
+      return engine === "workbuddy" || hasWorkBuddyInternalConversationMarker(source)
+        ? sanitizeWorkBuddyConversationOutput(source, options)
+        : sanitizeConversationOutput(source, options);
+    };
     let textBuffer = "", textTimer = null;
     let internalStreamDetected = false;
-    const flushText = () => {
+    const deferTextUntilTerminal = String(request.settings?.agentEngine || "").trim().toLowerCase() === "workbuddy";
+    const flushText = ({ final = false } = {}) => {
       clearTimeout(textTimer); textTimer = null;
       if (!textBuffer) return Promise.resolve();
-      const text = sanitizeAgentText(textBuffer, { final: false }); textBuffer = "";
+      const text = sanitizeAgentText(textBuffer, { final }); textBuffer = "";
       if (!text) return Promise.resolve();
       return event(entry, "text_delta", { text });
     };
@@ -417,8 +429,9 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       // rest of that stream until the terminal result can be sanitized. This
       // prevents schema/route diagnostics from flashing in the conversation
       // while preserving normal streaming for ordinary answers.
-      internalStreamDetected ||= hasInternalConversationMarker(textBuffer);
-      if (internalStreamDetected) return;
+      internalStreamDetected ||= hasWorkBuddyInternalConversationMarker(textBuffer)
+        || hasInternalConversationMarker(textBuffer);
+      if (deferTextUntilTerminal || internalStreamDetected) return;
       if (!textTimer) textTimer = setTimeout(() => { void flushText().catch(() => {}); }, 160);
     };
     try {
@@ -606,8 +619,15 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
           delivery: finalDelivery,
         });
       }
-      record.text = sanitizeAgentText(result.text || "");
-      await flushText();
+      // WorkBuddy may emit the whole answer through the runner stream while
+      // also returning a final result.  Keep that stream hidden until the
+      // terminal boundary, then publish exactly one sanitized final payload;
+      // this prevents route/schema fragments from flashing in the chat and
+      // avoids duplicating the same answer as a late text_delta.
+      const terminalSource = result.text || textBuffer || "";
+      textBuffer = "";
+      record.text = sanitizeAgentText(terminalSource, { final: true });
+      if (!deferTextUntilTerminal) await flushText({ final: true });
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");
       if (deliveryFailures.length) {

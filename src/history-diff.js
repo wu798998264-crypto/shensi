@@ -137,6 +137,18 @@ export const resolveHistoryDiffInput = ({
   return { hasDiff: true, before: parent, after, changeSet: [], source: "parent-snapshot" };
 };
 
+export const historyDiffIsFullReplacement = ({ operationType = "", before = "", after = "", changeSet = [], hasDiff = false } = {}) => {
+  if (value(operationType).trim().toLowerCase() === "replace") return true;
+  if (!hasDiff || value(before) === value(after)) return false;
+  const verified = validateHistoryChangeSet(changeSet, before, after);
+  if (!verified.valid || verified.changes.length !== 1) return false;
+  const [change] = verified.changes;
+  return change.start === 0
+    && change.end === value(before).length
+    && change.before === value(before)
+    && change.after === value(after);
+};
+
 export const renderHistoryDiff = ({ before = "", after = "", changeSet = [] } = {}) => {
   const beforeSource = value(before);
   const changes = normalizeHistoryChangeSet(changeSet, before, after);

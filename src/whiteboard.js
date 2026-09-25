@@ -896,7 +896,7 @@ export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40,
   ...(normalizeGeneration(generation) ? { generation: normalizeGeneration(generation) } : {}),
 });
 
-export const createCanvasImageNode = ({ id, file, name = "图片", mimeType = "image/png", aspectRatio = 16 / 9, durationMs = 0, x = 40, y = 40, width = 320, color = "default", generation = null } = {}) => {
+export const createCanvasImageNode = ({ id, file, name = "图片", mimeType = "image/png", aspectRatio = 16 / 9, durationMs = 0, thumbnailRelativePath = "", thumbnailMimeType = "", mediaBatchDirectory = "", mediaBatchIndexPath = "", whiteboardMediaDirectory = "", whiteboardMediaIndexPath = "", x = 40, y = 40, width = 320, color = "default", generation = null } = {}) => {
   const ratio = clamp(finite(aspectRatio, 16 / 9), 0.1, 10);
   const normalizedWidth = Math.max(180, finite(width, 320));
   const kind = String(mimeType).startsWith("audio/") ? "audio" : String(mimeType).startsWith("video/") ? "video" : "image";
@@ -910,6 +910,12 @@ export const createCanvasImageNode = ({ id, file, name = "图片", mimeType = "i
     mimeType: String(mimeType),
     aspectRatio: ratio,
     ...(finite(durationMs, 0) > 0 ? { durationMs: Math.max(1, finite(durationMs, 0)) } : {}),
+    ...(thumbnailRelativePath ? { thumbnailRelativePath: String(thumbnailRelativePath) } : {}),
+    ...(thumbnailMimeType ? { thumbnailMimeType: String(thumbnailMimeType) } : {}),
+    ...(mediaBatchDirectory ? { mediaBatchDirectory: String(mediaBatchDirectory) } : {}),
+    ...(mediaBatchIndexPath ? { mediaBatchIndexPath: String(mediaBatchIndexPath) } : {}),
+    ...(whiteboardMediaDirectory ? { whiteboardMediaDirectory: String(whiteboardMediaDirectory) } : {}),
+    ...(whiteboardMediaIndexPath ? { whiteboardMediaIndexPath: String(whiteboardMediaIndexPath) } : {}),
     x: finite(x, 40),
     y: finite(y, 40),
     width: normalizedWidth,
@@ -972,6 +978,12 @@ export const pasteCanvasNode = (canvas, record, {
         mimeType: source.mimeType,
         aspectRatio: source.aspectRatio,
         durationMs: source.durationMs,
+        thumbnailRelativePath: source.thumbnailRelativePath,
+        thumbnailMimeType: source.thumbnailMimeType,
+        mediaBatchDirectory: source.mediaBatchDirectory,
+        mediaBatchIndexPath: source.mediaBatchIndexPath,
+        whiteboardMediaDirectory: source.whiteboardMediaDirectory,
+        whiteboardMediaIndexPath: source.whiteboardMediaIndexPath,
         color: source.color,
         generation: source.generation,
         width: limited(source.width, maxImageWidth),
@@ -1021,6 +1033,7 @@ export const duplicateCanvasNode = (canvas, nodeId, {
   const record = copyCanvasNode(canvas, nodeId);
   if (record && inheritEdges === "upstream") record.edges = record.edges.filter((edge) => edge.toNode === nodeId);
   if (record && inheritEdges === "downstream") record.edges = record.edges.filter((edge) => edge.fromNode === nodeId);
+  if (record && inheritEdges === "none") record.edges = [];
   return pasteCanvasNode(canvas, record, { id, x, y, includeEdges: true, maxTextWidth, maxTextHeight, maxImageWidth });
 };
 
@@ -1097,6 +1110,49 @@ export const duplicateCanvasNodeBelow = (canvas, nodeId, {
   return { ...duplicated, movedNodeIds: [...movedNodes.keys()] };
 };
 
+// Place a duplicate immediately to the right of its source. If another card
+// occupies that slot, walk rightward past each blocker instead of moving or
+// covering existing content. The original canvas and all upstream edges are
+// preserved by duplicateCanvasNode.
+export const duplicateCanvasNodeRight = (canvas, nodeId, {
+  id,
+  gap = 40,
+  inheritEdges = "upstream",
+} = {}) => {
+  const normalized = normalizeCanvas(canvas);
+  const source = normalized.nodes.find((node) => node.id === nodeId);
+  if (!source) return { canvas: normalized, nodeId: "", copiedEdges: 0, movedNodeIds: [] };
+  const spacing = canvasSpacing(normalized, gap);
+  const duplicateRect = {
+    x: snapCanvasValueUp(source.x + source.width + spacing, normalized),
+    y: source.y,
+    width: source.width,
+    height: source.height,
+  };
+  const blockers = normalized.nodes.filter((node) => node.id !== source.id);
+  let x = duplicateRect.x;
+  // A bounded scan protects against malformed canvases while still allowing
+  // long rows of cards to be skipped deterministically.
+  for (let step = 0; step < 10_000; step += 1) {
+    const candidate = { ...duplicateRect, x };
+    const blocker = blockers
+      .filter((node) => canvasRectsOverlap(candidate, node, 0))
+      .sort((left, right) => left.x - right.x || left.y - right.y)[0];
+    if (!blocker) break;
+    x = snapCanvasValueUp(blocker.x + blocker.width + spacing, normalized);
+  }
+  const duplicated = duplicateCanvasNode(normalized, nodeId, {
+    id,
+    x,
+    y: duplicateRect.y,
+    maxTextWidth: source.width,
+    maxTextHeight: source.height,
+    maxImageWidth: source.width,
+    inheritEdges,
+  });
+  return { ...duplicated, movedNodeIds: [] };
+};
+
 export const snapCanvasValue = (value, canvasOrSettings = {}) => {
   const settings = canvasOrSettings.settings ?? canvasOrSettings;
   if (settings.snapToGrid === false) return finite(value, 0);
@@ -1120,6 +1176,16 @@ const patchCanvasNode = (node, patch = {}) => {
     ...(Object.hasOwn(patch, "mimeType") && MEDIA_NODE_KINDS.has(node.kind) ? { mimeType: String(patch.mimeType ?? node.mimeType) } : {}),
     ...(Object.hasOwn(patch, "aspectRatio") && MEDIA_NODE_KINDS.has(node.kind) ? { aspectRatio: clamp(finite(patch.aspectRatio, node.aspectRatio), 0.1, 10) } : {}),
   };
+  if (MEDIA_NODE_KINDS.has(node.kind) && Object.hasOwn(patch, "durationMs")) {
+    if (finite(patch.durationMs, 0) > 0) next.durationMs = Math.max(1, finite(patch.durationMs, 0));
+    else delete next.durationMs;
+  }
+  for (const field of ["thumbnailRelativePath", "thumbnailMimeType", "mediaBatchDirectory", "mediaBatchIndexPath", "whiteboardMediaDirectory", "whiteboardMediaIndexPath"]) {
+    if (!MEDIA_NODE_KINDS.has(node.kind) || !Object.hasOwn(patch, field)) continue;
+    const value = String(patch[field] || "");
+    if (value) next[field] = value;
+    else delete next[field];
+  }
   if (Object.hasOwn(patch, "webSnapshot")) {
     const snapshot = normalizeWebSnapshot(patch.webSnapshot);
     if (snapshot) next.webSnapshot = snapshot;
@@ -1136,6 +1202,11 @@ const patchCanvasNode = (node, patch = {}) => {
     const reference = normalizeReference(patch.reference);
     if (reference) next.reference = reference;
     else delete next.reference;
+  }
+  if (Object.hasOwn(patch, "generation")) {
+    const generation = normalizeGeneration(patch.generation);
+    if (generation) next.generation = generation;
+    else delete next.generation;
   }
   return next;
 };
@@ -1276,10 +1347,14 @@ export const updateCanvasViewport = (canvas, patch = {}) => {
   // made the cost proportional to board size. Reuse the immutable canonical
   // projection and copy only the top-level object plus viewport instead.
   const normalized = canonicalCanvas(canvas);
-  return {
+  const next = {
     ...normalized,
     viewport: normalizeViewport({ ...normalized.viewport, ...patch }),
   };
+  // Only the viewport changed. Keep the already-normalized graph identity so
+  // the next wheel event does not normalize every asset and edge again.
+  canonicalCanvasCache.set(next, next);
+  return next;
 };
 
 export const setCanvasSnap = (canvas, enabled) => {
@@ -1398,6 +1473,35 @@ const canvasRectsOverlap = (left, right, padding = 20) => !(
   || left.y + left.height + padding <= right.y
   || right.y + right.height + padding <= left.y
 );
+
+const arrangeCanvasNodesLinear = (canvas, mode, {
+  startX = 40,
+  startY = 40,
+  horizontalGap = 88,
+  verticalGap = 36,
+} = {}) => {
+  const normalized = normalizeCanvas(canvas);
+  const nodes = [...normalized.nodes].sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id));
+  if (!nodes.length) return normalized;
+  if (mode === "horizontal") {
+    const centerY = nodes.reduce((sum, node) => sum + node.y + node.height / 2, 0) / nodes.length;
+    let cursor = startX;
+    for (const node of nodes) {
+      node.x = snapCanvasValue(cursor, normalized);
+      node.y = snapCanvasValue(Math.max(startY, centerY - node.height / 2), normalized);
+      cursor += node.width + horizontalGap;
+    }
+  } else {
+    const centerX = nodes.reduce((sum, node) => sum + node.x + node.width / 2, 0) / nodes.length;
+    let cursor = startY;
+    for (const node of nodes) {
+      node.x = snapCanvasValue(Math.max(startX, centerX - node.width / 2), normalized);
+      node.y = snapCanvasValue(cursor, normalized);
+      cursor += node.height + verticalGap;
+    }
+  }
+  return normalized;
+};
 
 export const addCanvasSplitTextNodes = (canvas, nodeId, parts = [], {
   ids = [],
@@ -1573,14 +1677,6 @@ export const whiteboardGenerationResult = (result = {}) => {
     ? result.engineExecution
     : {};
   const text = String(result?.candidate || result?.content || "").trim();
-  if (execution.status === "blocked") {
-    return {
-      accepted: false,
-      draft: false,
-      text: "",
-      message: String(execution.result || "本次生成未通过硬门禁，原卡片保持不变"),
-    };
-  }
   if (isUnusableWhiteboardGenerationText(text)) {
     return {
       accepted: false,
@@ -1589,6 +1685,20 @@ export const whiteboardGenerationResult = (result = {}) => {
       message: text.startsWith("本轮候选没有进入可落盘状态")
         ? "模型只返回了审查说明，原卡片保持不变"
         : "模型只返回了受保护内容提示，原卡片保持不变，请调整任务后重新生成",
+    };
+  }
+  // A provider may attach a late quota/transport warning to an otherwise
+  // complete text response. For an isolated whiteboard card, usable正文 is
+  // the authoritative success signal; only a blocked response with no正文
+  // remains a hard failure.
+  const blockedProviderError = execution.status === "blocked"
+    && /(?:余额不足|积分不足|额度不足|insufficient\s+balance|insufficient\s+quota|quota\s+(?:exceeded|exhausted)|(?:^|[\s{[])['"]?(?:error|code|message|providerErrorCode)['"]?\s*:)/iu.test(text);
+  if (execution.status === "blocked" && (!text || blockedProviderError)) {
+    return {
+      accepted: false,
+      draft: false,
+      text: "",
+      message: String(execution.result || "本次生成未通过硬门禁，原卡片保持不变"),
     };
   }
   return {
@@ -1654,6 +1764,7 @@ export const centeredCanvasViewport = (canvas, { width, height, padding = 80, ma
 };
 
 export const arrangeCanvasNodes = (canvas, {
+  layoutMode = "grid",
   startX = 40,
   startY = 40,
   horizontalGap = 88,
@@ -1664,6 +1775,9 @@ export const arrangeCanvasNodes = (canvas, {
 } = {}) => {
   const normalized = normalizeCanvas(canvas);
   if (!normalized.nodes.length) return normalized;
+  if (layoutMode === "horizontal" || layoutMode === "vertical") {
+    return arrangeCanvasNodesLinear(normalized, layoutMode, { startX, startY, horizontalGap, verticalGap });
+  }
 
   const nodesById = new Map(normalized.nodes.map((node) => [node.id, node]));
   const originalNodes = [...normalized.nodes]

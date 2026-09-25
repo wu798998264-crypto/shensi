@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
-import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
+import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 
 const argv = process.argv.slice(2);
 const OPERATIONS = new Set(["submit", "status", "download", "cancel", "reconcile", "run"]);
@@ -102,7 +102,17 @@ const runOnce = async (args) => {
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => finish(() => rejectRun(new Error(`Dreamina CLI 无法启动：${error.message}`))));
     child.on("close", (code) => finish(() => {
-      if (code === 0) return resolveRun({ stdout: stdout.trim(), stderr: stderr.trim() });
+      if (code === 0) {
+        const result = { stdout: stdout.trim(), stderr: stderr.trim() };
+        try {
+          Object.defineProperty(result, "__dreaminaCommand", {
+            value: String(args[0] || ""),
+            enumerable: false,
+            configurable: true,
+          });
+        } catch {}
+        return resolveRun(result);
+      }
       const detail = stderr.trim() || stdout.trim() || "没有错误输出";
       const markedCode = detail.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
       const error = new Error(`Dreamina CLI 退出码 ${code}：${detail.replace(/(?:^|\r?\n)\[DREAMINA_[A-Z0-9_]+\]\s*/, "\n").trim()}`);
@@ -112,10 +122,17 @@ const runOnce = async (args) => {
         error.submissionOutcomeKnown = true;
       }
       if (!markedCode && isDreaminaAuthRequiredResponse(detail)) {
-        error.code = "DREAMINA_AUTH_REQUIRED";
-        error.submissionOutcomeKnown = true;
+        error.code = dreaminaImageGenerationCommand(args[0])
+          ? "DREAMINA_GENERATION_SESSION_REJECTED"
+          : "DREAMINA_AUTH_REQUIRED";
+        error.submissionOutcomeKnown = error.code !== "DREAMINA_GENERATION_SESSION_REJECTED";
       }
-      if (["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_AUTH_REQUIRED", "DREAMINA_CLI_MEMBERSHIP_REQUIRED"].includes(markedCode)) error.submissionOutcomeKnown = true;
+      if (["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_AUTH_REQUIRED", "DREAMINA_CLI_MEMBERSHIP_REQUIRED"].includes(markedCode)) {
+        if (markedCode === "DREAMINA_AUTH_REQUIRED" && dreaminaImageGenerationCommand(args[0])) {
+          error.code = "DREAMINA_GENERATION_SESSION_REJECTED";
+        }
+        error.submissionOutcomeKnown = error.code !== "DREAMINA_GENERATION_SESSION_REJECTED";
+      }
       rejectRun(error);
     }));
   });
@@ -130,14 +147,54 @@ const authRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_A
 const uploadRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_UPLOAD_RETRY_DELAY_MS) || 1_200);
 const boundedRetryDelay = (base, attempt, cap = 10_000) => Math.min(cap, base * (2 ** Math.max(0, attempt)));
 const referenceUploadDidNotCreateTask = (value) => /upload resource[\s\S]*no file upload|upload (?:image|video|audio): upload phase, no file upload|no (?:reference )?files? (?:were )?uploaded|failed to upload (?:reference|image)[\s\S]*(?:before (?:task )?submit|without creating (?:a )?task)/i.test(String(value || ""));
+const DREAMINA_IMAGE_GENERATION_COMMANDS = new Set(["text2image", "image2image"]);
+const DREAMINA_CONTROL_COMMANDS = new Set([
+  "version", "user_credit", "list_task", "query_result", "cancel_task", "cancel", "task_cancel", "login", "relogin", "logout", "--help",
+]);
+const dreaminaImageGenerationCommand = (command = "") => {
+  const normalized = String(command || "").trim().toLowerCase();
+  if (DREAMINA_IMAGE_GENERATION_COMMANDS.has(normalized)) return true;
+  return Boolean(normalized) && !DREAMINA_CONTROL_COMMANDS.has(normalized) && /image/.test(normalized);
+};
+const PLACEHOLDER_DREAMINA_TASK_IDS = new Set([
+  "", "0", "-", "none", "null", "undefined", "unknown", "missing", "n/a", "na",
+]);
+const normalizeDreaminaTaskId = (value) => {
+  const normalized = String(value ?? "").trim().replace(/^['"]|['"]$/gu, "");
+  return PLACEHOLDER_DREAMINA_TASK_IDS.has(normalized.toLowerCase()) ? "" : normalized;
+};
+const dreaminaTaskIdInText = (value = "") => {
+  const matches = String(value || "").matchAll(/(?:^|[\r\n{,])\s*["']?(?:submit_id|submitId|task_id|taskId|providerTaskId)["']?\s*[=:]\s*["']?([^\s,"'}]+)["']?/gim);
+  for (const match of matches) {
+    const candidate = normalizeDreaminaTaskId(match?.[1]);
+    if (candidate) return candidate;
+  }
+  return "";
+};
+const tagDreaminaCommand = (result, command) => {
+  if (result && typeof result === "object") {
+    try {
+      Object.defineProperty(result, "__dreaminaCommand", {
+        value: String(command || ""),
+        enumerable: false,
+        configurable: true,
+      });
+    } catch {}
+  }
+  return result;
+};
 const dreaminaSessionMissing = (error) => String(error?.code || "") === "DREAMINA_AUTH_REQUIRED"
   && isDreaminaAuthRequiredResponse(error?.message);
 const dreaminaSessionMissingOutput = (result = {}) => {
   const source = `${result?.stdout || ""}\n${result?.stderr || ""}`.trim();
   if (!isDreaminaAuthRequiredResponse(source)) return false;
   const payload = parsePayload(source);
+  if (dreaminaImageGenerationCommand(result.__dreaminaCommand)
+    && (normalizeDreaminaTaskId(nestedValue(payload, ["submit_id", "submitId", "task_id", "taskId"])) || dreaminaTaskIdInText(source))) return false;
   const status = String(payload?.status || payload?.gen_status || payload?.task_status || "").trim().toLowerCase();
-  return ["fail", "failed", "error"].includes(status);
+  return ["fail", "failed", "error"].includes(status)
+    || !payload
+    || (typeof payload === "object" && !Object.keys(payload).length);
 };
 const dreaminaAuthRetryAllowed = (args = []) => [
   "version", "user_credit", "list_task", "query_result", "cancel_task", "cancel", "task_cancel", "--help",
@@ -145,20 +202,23 @@ const dreaminaAuthRetryAllowed = (args = []) => [
 const preserveDreaminaQueryErrorCode = (error) => {
   const code = String(error?.code || "").toUpperCase();
   return [
-    "DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY",
+    "DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_GENERATION_SESSION_REJECTED",
   ].includes(code) ? code : "DREAMINA_QUERY_TRANSIENT";
 };
 
 const semanticAuthFailure = (command = "") => {
   const operationLabel = String(command || "").trim();
-  const error = new Error(`${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`);
-  error.code = "DREAMINA_AUTH_REQUIRED";
-  error.submissionOutcomeKnown = true;
+  const generationCommand = dreaminaImageGenerationCommand(operationLabel);
+  const error = new Error(generationCommand
+    ? `即梦图片生成命令 ${operationLabel || "unknown"} 的会话在提交阶段被厂商拒绝，且没有返回任务 ID。账号核验状态保持有效；神思将保留幂等记录并在有限时限内只读核对本次提交结果。`
+    : `${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`);
+  error.code = generationCommand ? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED";
+  error.submissionOutcomeKnown = !generationCommand;
   return error;
 };
 
 const verifiedSemanticResult = (result = {}) => {
-  if (dreaminaSessionMissingOutput(result)) throw semanticAuthFailure();
+  if (dreaminaSessionMissingOutput(result)) throw semanticAuthFailure(result.__dreaminaCommand || "");
   return result;
 };
 
@@ -177,12 +237,16 @@ const run = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RETRIE
       // block every other profile. Retry the exact, known-safe command only;
       // explicit OAuth is the sole owner of login/relogin operations.
       if (authRejected
+        && error.code !== "DREAMINA_AUTH_REQUIRED"
         && (dreaminaAuthRetryAllowed(args) || error.submissionOutcomeKnown === true)
         && attempt < authRetries) {
         await sleep(boundedRetryDelay(authRetryDelayMs(), attempt));
         continue;
       }
       if (authRejected) throw semanticAuthFailure(args[0]);
+      if (dreaminaImageGenerationCommand(args[0]) && isDreaminaAuthRequiredResponse(error?.message)) {
+        throw semanticAuthFailure(args[0]);
+      }
       if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_BROKER_BUSY" && attempt < authRetries) {
         await sleep(boundedRetryDelay(400, attempt, 4_000));
         continue;
@@ -546,7 +610,19 @@ const listTasks = async ({ submitIdFilter = "", limit = 100 } = {}) => {
 };
 
 const ensureDreaminaTaskStoreSession = async () => {
-  await listTasks({ limit: 1 });
+  try {
+    await listTasks({ limit: 1 });
+    return { taskResourceChecked: true, taskResourceDeferred: false };
+  } catch (error) {
+    if (String(error?.code || "").toUpperCase() === "DREAMINA_AUTH_REQUIRED" && cachedDreaminaAccountIdentity()) {
+      return {
+        taskResourceChecked: false,
+        taskResourceDeferred: true,
+        taskResourceWarning: "即梦任务资源只读会话暂时报告未登录；保留已核验身份并由本次真实图片提交确认",
+      };
+    }
+    throw error;
+  }
 };
 
 const taskCreatedAt = (task) => {
@@ -806,9 +882,9 @@ const main = async () => {
     // Account/credit and task resources are separate auth surfaces. A
     // successful balance lookup alone must never make a paid image request
     // look ready when the result store session is expired or unavailable.
-    await ensureDreaminaTaskStoreSession();
+    const taskResource = await ensureDreaminaTaskStoreSession();
     const capabilities = { models: ["5.0Pro", "5.0", "4.7", "4.6", "4.5", "4.1", "4.0", "3.1", "3.0"], inputTypes: ["text", "image"], resolutions: ["1k", "2k", "4k"] };
-    const result = { ok: true, version, credit: account.credit.total_credit, vipLevel: account.credit.vip_level || "", userId: account.identity.userId, profileId: account.identity.profileId, credentialFingerprint: String(process.env.SHENSI_DREAMINA_CREDENTIAL_FINGERPRINT || ""), controlPlaneDeferred: account.controlPlaneDeferred === true, taskResourceChecked: true, generationReady: true, capabilities };
+    const result = { ok: true, version, credit: account.credit.total_credit, vipLevel: account.credit.vip_level || "", userId: account.identity.userId, profileId: account.identity.profileId, credentialFingerprint: String(process.env.SHENSI_DREAMINA_CREDENTIAL_FINGERPRINT || ""), controlPlaneDeferred: account.controlPlaneDeferred === true, taskResourceChecked: taskResource.taskResourceChecked === true, taskResourceDeferred: taskResource.taskResourceDeferred === true, taskResourceWarning: taskResource.taskResourceWarning || "", generationReady: taskResource.taskResourceChecked === true || taskResource.taskResourceDeferred === true, capabilities };
     await atomicJson(connectionCachePath, { connectionIdentity, checkedAt: new Date().toISOString(), result }).catch(() => {});
     process.stdout.write(JSON.stringify(result));
     return;

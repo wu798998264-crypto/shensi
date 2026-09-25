@@ -161,12 +161,54 @@ const mergeRecord = ({ baseline, current, persisted, path }) => mergeThreeWayObj
   },
 });
 
+const recordFreshness = (value = {}) => Math.max(
+  Date.parse(String(value?.updatedAt || "")) || 0,
+  Date.parse(String(value?.execution?.endedAt || "")) || 0,
+  Date.parse(String(value?.execution?.completedAt || "")) || 0,
+  Date.parse(String(value?.execution?.heartbeatAt || "")) || 0,
+  Number(value?.updatedAt) || 0,
+);
+
+// Conversation state is append-heavy and can be written by the foreground
+// renderer and a background task at the same time.  A true same-field content
+// conflict should not make every later conversation unusable; choose the
+// freshest record and union its task metadata instead.
+const mergeConversationRecord = ({ baseline, current, persisted, path }) => {
+  const strict = mergeRecord({ baseline, current, persisted, path });
+  if (strict.ok) return strict;
+  const local = current && typeof current === "object" ? current : {};
+  const remote = persisted && typeof persisted === "object" ? persisted : {};
+  const localTime = recordFreshness(local);
+  const remoteTime = recordFreshness(remote);
+  const preferred = remoteTime > localTime ? remote : local;
+  const result = { ...remote, ...local, ...preferred };
+  for (const key of MERGEABLE_LIST_FIELDS) {
+    if (!Array.isArray(local[key]) && !Array.isArray(remote[key])) continue;
+    const localItems = Array.isArray(local[key]) ? local[key] : [];
+    const remoteItems = Array.isArray(remote[key]) ? remote[key] : [];
+    const byId = new Map(remoteItems.map((item) => [itemIdentity(item), item]));
+    for (const item of localItems) {
+      const identity = itemIdentity(item);
+      const previous = byId.get(identity);
+      if (!previous) byId.set(identity, item);
+      else {
+        const newer = recordFreshness(item) >= recordFreshness(previous) ? item : previous;
+        byId.set(identity, { ...previous, ...item, ...newer });
+      }
+    }
+    result[key] = [...byId.values()];
+  }
+  if (local.snapshots || remote.snapshots) result.snapshots = { ...(remote.snapshots || {}), ...(local.snapshots || {}) };
+  if (local.execution || remote.execution) result.execution = { ...(remote.execution || {}), ...(local.execution || {}) };
+  return { ok: true, value: result };
+};
+
 const mergeConversationList = ({ baseline, current, persisted }) => mergeThreeWayList({
   baseline,
   current,
   persisted,
   path: "conversations",
-  mergeItem: mergeRecord,
+  mergeItem: mergeConversationRecord,
 });
 
 const chooseActiveConversationId = ({ current = {}, submitted = {}, persisted = {}, conversations = [] }) => {

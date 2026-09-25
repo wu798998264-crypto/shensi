@@ -6,13 +6,13 @@ import { dreaminaCliEnvironment, dreaminaCliRuntime } from "../src/server/dreami
 import { credentialFileFingerprint } from "../src/server/dreamina-profile-identity-store.mjs";
 
 assert.equal(normalizeDreaminaCliProfileId("tashuo-juyougeng"), "tashuo-juyougeng");
-assert.equal(normalizeDreaminaCliProfileId("default"), "default", "历史 ID default 必须继续明确表示柏物语");
-assert.equal(normalizeDreaminaCliProfileId(""), "", "未选择账号不得回退到柏物语");
+assert.equal(normalizeDreaminaCliProfileId("default"), "default", "历史 ID default 必须继续绑定 Edge 账号");
+assert.equal(normalizeDreaminaCliProfileId(""), "", "未选择账号不得回退到默认账号");
 assert.equal(validDreaminaCliProfileId(""), false, "空账号 ID 必须被阻断");
 assert.equal(validDreaminaCliProfileId("bad/profile"), false, "显式非法 profileId 必须被阻断，不能静默回退默认账号");
 assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "tashuo-juyougeng")?.remarkName, "她说剧有梗");
-assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "default")?.remarkName, "柏物语");
-assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "duanju-zuiqianxian")?.remarkName, "短剧最前线");
+assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "default")?.remarkName, "短剧最前线");
+assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "duanju-zuiqianxian")?.remarkName, "冰封初恋");
 assert.equal(DREAMINA_CLI_PROFILES.find((item) => item.id === "yinou-shijie")?.remarkName, "银鸥师姐");
 
 const migratedSettings = normalizeGenerationProfiles({
@@ -33,7 +33,7 @@ const migratedSettings = normalizeGenerationProfiles({
 assert.equal(migratedSettings.textConnections.find(({ id }) => id === "text-default")?.remarkName, "麻雀");
 assert.equal(migratedSettings.imageConnections.some(({ id }) => id === "image-default"), false, "旧内置 GPT 图片配置必须移除");
 assert.ok(migratedSettings.imageConnections.some(({ id }) => id === "image-cockpit-aggregate-api"), "聚合 API 必须接替内置 GPT 图片入口");
-assert.equal(migratedSettings.videoConnections.find(({ id }) => id === "video-dreamina-cli")?.remarkName, "柏物语");
+assert.equal(migratedSettings.videoConnections.find(({ id }) => id === "video-dreamina-cli")?.remarkName, "短剧最前线");
 assert.ok(migratedSettings.videoConnections
   .filter(({ provider, adapter }) => provider === "即梦" && adapter === "cli")
   .every(({ model }) => model === "seedance2.5"));

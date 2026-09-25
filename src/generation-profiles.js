@@ -96,7 +96,7 @@ const GLOBAL_GENERATION_CONFIGURATION_FIELDS = Object.freeze([
 ]);
 export const IMAGE_MODEL_SELECTION_VERSION = 5;
 export const VIDEO_CLI_DEFAULT_VERSION = 3;
-export const CLI_REMARK_MIGRATION_VERSION = 2;
+export const CLI_REMARK_MIGRATION_VERSION = 3;
 export const TEXT_CODEX_CLI_PROFILE_VERSION = 1;
 export const PROVIDER_MODEL_ISOLATION_VERSION = 1;
 export const AGGREGATE_IMAGE_API_PROFILE_VERSION = 1;
@@ -219,6 +219,11 @@ const BUILT_IN_WORKBUDDY_AGENT_PROFILE = {
   chatModelId: "",
   cliPath: "codebuddy",
   cliArgs: "-p {prompt} --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config",
+  // Formal writing and route/Skill loading can legitimately take longer than
+  // a short chat turn. User-choice waiting is excluded by the runner timer;
+  // this larger active budget prevents long outlines from being cut off at
+  // the old 120-second default without changing any routing or write rules.
+  timeoutMs: "600000",
   executionMode: "agent",
   executionModes: ["agent"],
   agentEngine: "workbuddy",
@@ -1106,7 +1111,16 @@ const ensureNamedDreaminaCliProfiles = (profiles, channel, secrets = {}) => {
     return normalizedProfile(channel, {
       ...profile,
       dreaminaCliProfile: cliProfile.id,
-      remarkName: profile.remarkName || cliProfile.remarkName,
+      // Keep the visible connection name and the verification panel aligned
+      // with the selected browser-bound account. The profile ID/credential
+      // directory remains unchanged; only stale legacy display remarks are
+      // migrated here.
+      // The visible connection name and the editable remark are one identity
+      // for built-in browser-bound accounts.  Keeping only remarkName here
+      // leaves a stale legacy name in persisted settings and lets the toolbar
+      // disagree with the verification panel after an account rebind.
+      name: cliProfile.remarkName,
+      remarkName: cliProfile.remarkName,
       cliPath: base.cliPath,
       cliArgs: profile.cliArgs || base.cliArgs,
     }, 0, secrets);
@@ -1188,8 +1202,15 @@ const migrateRequestedCliRemarks = (profiles, channel, activeId = "") => profile
     && profile.adapter === "cli"
     && profile.provider === "即梦"
     && String(profile.dreaminaCliProfile || "").trim() === "default"
-    && (!profile.remarkName || profile.remarkName === "默认即梦")) {
-    return { ...profile, remarkName: "柏物语" };
+    && (!profile.remarkName || profile.remarkName === "默认即梦" || profile.remarkName === "柏物语" || profile.remarkName === "短剧最前线")) {
+    return { ...profile, remarkName: "短剧最前线" };
+  }
+  if (["image", "video"].includes(channel)
+    && profile.adapter === "cli"
+    && profile.provider === "即梦"
+    && String(profile.dreaminaCliProfile || "").trim() === "duanju-zuiqianxian"
+    && (!profile.remarkName || profile.remarkName === "默认即梦" || profile.remarkName === "柏物语" || profile.remarkName === "短剧最前线" || profile.remarkName === "冰封初恋")) {
+    return { ...profile, remarkName: "冰封初恋" };
   }
   return profile;
 });

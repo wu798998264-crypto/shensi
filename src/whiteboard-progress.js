@@ -8,6 +8,14 @@ const generationModel = (candidate = {}) => String(
     || "",
 ).trim().toLowerCase();
 
+const generationProvider = (candidate = {}) => String(
+  candidate?.provider
+    || candidate?.request?.settings?.provider
+    || candidate?.settings?.provider
+    || candidate?.generationProfile?.provider
+    || "",
+).trim().toLowerCase();
+
 // Seedance 2.5 uses the provider's queued status as an accepted/processing
 // phase, not as a user-visible vendor queue. Keep this distinction local to
 // presentation so durable task state remains suitable for recovery/cancel.
@@ -22,9 +30,15 @@ export const whiteboardProviderQueueVisible = (candidate = {}) => {
   if (String(current.providerStatus || "").trim().toLowerCase() !== "queued") return false;
   const position = finiteNumber(current.providerQueuePosition);
   const length = finiteNumber(current.providerQueueLength);
+  const queueStatus = String(current.providerQueueStatus || "").trim().toLowerCase();
+  const provider = generationProvider(current);
+  const dreamina = provider === "即梦" || /dreamina/u.test(provider);
   // Empty/null/zero queue fields are placeholders, not evidence of a queue.
-  // Seedance 2.5 often uses queued for accepted/processing, but explicit
-  // position/length data is a real queue and must hide generation percentage.
+  // Dreamina can expose queue_idx=0 while merely acknowledging a task. The
+  // bridge normalizes that index to position 1, so require another queue
+  // signal before presenting it as a real vendor queue.
+  if (dreamina && position === 1 && !(length !== null && length > 0)
+    && !/(?:queue|wait|pending|排队)/u.test(queueStatus)) return false;
   return (position !== null && position > 0) || (length !== null && length > 0);
 };
 
@@ -66,7 +80,10 @@ export const whiteboardMediaProviderAccepted = (candidate = {}) => {
 export const whiteboardGenerationResultReady = (candidate = {}) => {
   const current = candidate && typeof candidate === "object" ? candidate : {};
   if (!current.resultReady && !current.result?.attachment?.relativePath && !current.attachment?.relativePath) return false;
-  return String(current.channel || "") === "image";
+  // A verified local attachment means provider generation has ended for every
+  // media channel. Card persistence/readback is a separate bookkeeping stage;
+  // it must never keep the provider stopwatch running for video/audio.
+  return ["image", "video", "audio"].includes(String(current.channel || ""));
 };
 
 export const whiteboardGenerationConnectionPhase = (candidate = {}) => {
@@ -84,6 +101,10 @@ export const whiteboardGenerationConnectionPhase = (candidate = {}) => {
 export const whiteboardGenerationMeasurementActive = (candidate = {}) => {
   const current = candidate && typeof candidate === "object" ? candidate : {};
   if (current.cardApplyFailed === true) return false;
+  // Provider generation time ends at the first durable terminal result.  Card
+  // save/readback is a separate status phase and must not keep the stopwatch
+  // moving when the provider has already finished.
+  if (current.providerResultReadyAt || current.generationElapsedFrozenAt) return false;
   if (whiteboardGenerationResultReady(current)) return false;
   // Provider completion is not the end of the user-visible task. Keep the
   // timer alive while the saved result is being written back and verified on

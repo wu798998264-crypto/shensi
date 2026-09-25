@@ -200,6 +200,19 @@ const placementIdentity = (parts = []) => list(parts).map((part) => clean(part))
 
 const scopedRouteTitle = (kind) => kind === "template" ? "面板路由" : kind === "group" ? "模组路由" : "模块路由";
 
+const routeUpdateRuleLines = (entry = {}) => {
+  const scopeLabel = entry.kind === "template" ? "面板" : entry.kind === "group" ? "模组" : "模块";
+  return [
+    "",
+    "## 更新规则",
+    "",
+    `- 本${scopeLabel}路由由可信编译器依据当前真实结构自动创建和更新，不接受脱离结构的自由改写。`,
+    "- 微调必须保持最小差异：只更新发生变化的元数据、成员条目、数量和确实受影响的派生规则；未受影响章节的标题、顺序和原文保持不变，不得因一次局部调整整体重写或扩写路由。",
+    "- 影响只沿必要路径传播：模块微调只更新该模块及直接祖先中的必要摘要，模组微调只更新该模组及直接祖先中的必要摘要，面板微调不改写下级路由。只有名称导致路径变化、成员增删或移动、关系调整、排序变化、启用状态变化时，才更新真实受影响的祖先、子树路径或协作规则。",
+    "- 路由版本和拓扑哈希可以随联合版本更新，仅用于追踪；它们的变化不代表未受影响的语义章节需要重写。",
+  ];
+};
+
 const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = "" } = {}) => {
   const node = entry.node || {};
   const childCount = children.length;
@@ -231,6 +244,7 @@ const scopedRouteText = ({ entry, children = [], revision = 0, topologyHash = ""
   for (const child of children) {
     lines.push(routeMemberDetail(child));
   }
+  lines.push(...routeUpdateRuleLines(entry));
   if (entry.kind === "template") {
     lines.push(
       "",

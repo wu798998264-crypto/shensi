@@ -17,6 +17,13 @@ assert.match(app, /scopeType === "template" \? "面板历史版本" : scopeType 
 const capabilityMenu = app.match(/<div class="context-menu" id="capabilityNodeContextMenu"[\s\S]*?<\/div>/u)?.[0] || "";
 assert.ok(capabilityMenu.indexOf('data-capability-context-action="disable"') < capabilityMenu.indexOf('data-capability-context-action="history"'), "层级节点历史版本必须紧跟在禁用下面");
 assert.ok(capabilityMenu.indexOf('data-capability-context-action="history"') < capabilityMenu.indexOf('data-capability-context-action="edit"'), "层级节点历史版本必须位于编辑之前");
+const skillMenu = app.match(/<div class="context-menu" id="skillContextMenu"[\s\S]*?<\/div>/u)?.[0] || "";
+assert.ok(skillMenu.indexOf('data-skill-context-action="detail"') < skillMenu.indexOf('data-skill-context-action="history"'), "Skill 历史版本必须位于右键菜单第三项");
+assert.ok(skillMenu.indexOf('data-skill-context-action="history"') < skillMenu.indexOf('data-skill-context-action="replace"'), "Skill 历史版本移动后必须位于替换之前");
+assert.match(app, /const historicalVersion = Boolean\(String\(version \|\| ""\)\.trim\(\)\)/u, "Skill 历史查看必须识别具体版本");
+assert.match(app, /includeContent: official \|\| marketplace \|\| localOfficial \|\| historicalVersion/u, "Skill 历史版本读取必须请求完整正文");
+assert.match(app, /完整历史版本内容 · v\$\{escapeHtml\(version\)\}/u, "Skill 历史版本详情必须提供全文查看入口");
+assert.match(app, /skill\.name \|\| `\$\{typeLabel\}详情`\}\$\{historicalVersion \? ` · v\$\{version\}`/u, "Skill 历史版本详情标题必须显示所查看的版本");
 assert.match(app, /scopeType === "template" \? "编辑面板信息" : scopeType === "group" \? "编辑模组" : "编辑模块"/u);
 assert.match(app, /data-capability-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);
 assert.match(app, /data-skill-context-action="copy"[^>]*>[\s\S]{0,80}>创建副本<\/span>/u);

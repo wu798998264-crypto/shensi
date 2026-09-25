@@ -1,0 +1,21 @@
+import { mkdir, copyFile, readFile, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+const installed=join(process.env.LOCALAPPDATA,'Programs/Shensi/resources/app');
+const build=JSON.parse(await readFile(join(installed,'release-build.json'),'utf8'));
+const name=`Shensi-Setup-${build.version}-${build.buildId}-x64.exe`;
+const source=join(process.cwd(),'release/windows',name);
+const target=join('E:/ShensiUserData/验收',`黄金基线-生成能力-${build.version}-${build.buildId}`);
+await mkdir(target,{recursive:true});
+const installer=join(target,name);
+if(!(await stat(installer).catch(()=>null)))await copyFile(source,installer);
+const hash=buffer=>createHash('sha256').update(buffer).digest('hex');
+const digest=hash(await readFile(installer));
+if(digest!==hash(await readFile(source)))throw Error('Baseline installer mismatch');
+const files=['src/app.js','src/whiteboard.js','src/whiteboard-progress.js','src/server/media-provider-drivers.mjs','src/server/media-generation-worker.mjs','src/server/generation-job-store.mjs','src/server/dreamina-cli-profile.mjs','src/server/dreamina-profile-oauth.mjs','src/server/conversation-agent-service.mjs','src/server/external-cli-agent-runner.mjs','packaging/windows/desktop-app/main.mjs','server.mjs'];
+const hashes={};
+for(const file of files) hashes[file]=hash(await readFile(join(installed,file)));
+const result={version:build.version,buildId:build.buildId,installer,sha256:digest,installedFiles:hashes,
+  evidence:'用户确认当前生成能力；7.5.5发布测试。不是新一轮真实付费生成。',createdAt:new Date().toISOString()};
+await writeFile(join(target,'baseline-manifest.json'),JSON.stringify(result,null,2));
+console.log(JSON.stringify({version:build.version,buildId:build.buildId,installer,sha256:digest}));

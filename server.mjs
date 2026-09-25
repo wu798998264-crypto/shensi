@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
+import { createImagePreviewCache } from "./src/server/image-preview-cache.mjs";
 import { detectCliProxyEnvironment, detectLocalClaudeCode, detectLocalCodex, detectLocalOpenCode, runModelAdapter as runUntrustedModelAdapter, terminateActiveCliProcesses, testModelAdapter as testUntrustedModelAdapter } from "./src/server/adapters.mjs";
 import { detectOpenCodeModelCatalog } from "./src/cli/opencode-model-catalog.mjs";
 import { openCodeCatalogCacheKey } from "./src/opencode-profile-ui-policy.js";
@@ -113,6 +114,7 @@ import {
 import { runIsolatedDesktopStartupDataVersionGuard } from "./src/server/startup-data-version-guard-runner.mjs";
 import { createUpdateWriteBarrier } from "./src/server/update-write-barrier.mjs";
 import { createDiagnosticManager } from "./src/server/diagnostic-manager.mjs";
+import { claimCreativeStartWelcome } from "./src/server/first-run-experience-store.mjs";
 import { createCodexAgentProvider } from "./src/server/codex-agent-provider.mjs";
 import { agentContextContentHash, compileHybridAgentContext } from "./src/server/agent-context-protocol.mjs";
 import { createAgentWorkspaceReadBroker } from "./src/server/agent-workspace-read-broker.mjs";
@@ -184,6 +186,7 @@ import { buildCommittedNativeArtifacts, buildNativeReviewArtifact } from "./src/
 import { scanInternalArtifactLeakage } from "./src/content-guard.js";
 import { applyLocalImport, previewLocalImport } from "./src/server/local-import.mjs";
 import { remoteCoreConfigured, remoteCoreRequired, remoteCoreStatus, runRemoteCoreTask } from "./src/server/remote-core.mjs";
+import { marketplaceServiceRequest } from "./src/server/marketplace-client.mjs";
 import { createWhiteboardDocx } from "./src/server/docx-export.mjs";
 import { createManuscriptExport } from "./src/server/document-export.mjs";
 import { QUANBEN_SOURCE, createQuanbenChapterReference, fetchQuanbenDirectory, previewQuanbenChapter, searchQuanbenBooks } from "./src/server/quanben-book-source.mjs";
@@ -330,6 +333,8 @@ import {
   migrateAllLegacyWorkspacesToPersistent,
   migrateLegacyWorkspaceToPersistent,
   probeVideoValidationRuntime,
+  separateWorkspaceVideoAudio,
+  trimWorkspaceAudio,
   permanentlyDeleteDeletedWorkspace,
   readWorkspaceAttachmentContent,
   readWorkspaceAttachments,
@@ -552,6 +557,10 @@ const shensiModelRuntimeRouter = createShensiModelRuntimeRouter({
   fallbackRuntime: runUntrustedModelAdapter,
 });
 const updateWriteBarrier = createUpdateWriteBarrier({ coordinationRoot: appDataRoot() });
+const imageCardPreview = createImagePreviewCache({
+  directory: join(appDataRoot(), "runtime", "image-card-previews-v1"),
+  executable: process.env.SHENSI_FFMPEG_PATH || join(root, "node_modules", "@ffmpeg-installer", "win32-x64", "ffmpeg.exe"),
+});
 const diagnosticManager = createDiagnosticManager({
   version: packageMetadata.version,
   runtime,
@@ -2191,6 +2200,7 @@ const rateLimits = new Map([
   ["/api/books/auth/status", { limit: 30, windowMs: 60_000 }],
   ["/api/books/auth/cancel", { limit: 12, windowMs: 60_000 }],
   ["/api/runtime/shutdown", { limit: 6, windowMs: 60_000 }],
+  ["/api/ui/creative-start-welcome/claim", { limit: 12, windowMs: 60_000 }],
   ["/api/sync/nutstore/test-connection", { limit: 8, windowMs: 60_000 }],
   ["/api/sync/nutstore/session-credentials", { limit: 12, windowMs: 60_000 }],
   ["/api/sync/nutstore/configure", { limit: 8, windowMs: 60_000 }],
@@ -2279,6 +2289,11 @@ const sendJson = (response, status, payload) => {
     "Content-Type": "application/json; charset=utf-8",
   });
   response.end(JSON.stringify(payload));
+};
+
+const remoteMarketplaceToken = (request) => {
+  const header = String(request.headers.authorization || "");
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
 };
 
 const sendDownload = (response, { bytes, fileName, mimeType, headers = {} }) => {
@@ -2763,6 +2778,12 @@ const handleApiRequest = async (request, response, pathname) => {
     sendJson(response, 200, { ok: true, message: "本地运行时正在安全关闭" });
     setTimeout(() => void shutdownLocalRuntime({ reason: "desktop-request", exitCode: 0 }), 30).unref?.();
     return;
+  }
+
+  if (pathname === "/api/ui/creative-start-welcome/claim" && request.method === "POST") {
+    const body = await readJsonBody(request, 4 * 1024);
+    const claim = await claimCreativeStartWelcome({ legacySeen: body.legacySeen === true });
+    return sendJson(response, 200, { ok: true, ...claim });
   }
 
   if (pathname === "/api/cloud-core/status" && request.method === "GET") {
@@ -5657,6 +5678,8 @@ const handleApiRequest = async (request, response, pathname) => {
       taskKind: `long-form:${operation}`,
       requestFingerprint,
       requestSnapshot,
+      conversationId: body.conversationId,
+      sourceMessageId: body.sourceMessageId || requestId,
       allowRestart: body.resume === true,
     });
     if (persistedAttempt.reused && persistedAttempt.resultData?.data) {
@@ -6223,6 +6246,13 @@ const handleApiRequest = async (request, response, pathname) => {
     // Every downstream route must execute the mode-bound profile, not the
     // stale legacy top-level fields left behind by the other Chat/Agent mode.
     body.settings = trustedChatSettings;
+    // Older whiteboard clients only sent the mode-bound settings field. Keep
+    // those requests compatible while preferring the explicit Agent profile
+    // supplied by current clients; otherwise the runner selector would fall
+    // back to the machine-wide Codex engine.
+    if (!body.agentSettings || typeof body.agentSettings !== "object" || !Object.keys(body.agentSettings).length) {
+      body.agentSettings = body.settings;
+    }
     const trustedChatCliName = String(trustedChatSettings.cliPath || "").split(/[\\/]/u).at(-1) || "";
     if (trustedChatSettings.adapter === "cli" && trustedChatSettings.provider === "OpenAI"
       && (trustedChatSettings.agentEngine === "codex" || /^codex(?:\.(?:exe|cmd|ps1))?$/iu.test(trustedChatCliName))) {
@@ -7575,6 +7605,8 @@ const handleApiRequest = async (request, response, pathname) => {
         taskKind: effectiveMode,
         requestFingerprint,
         requestSnapshot,
+        conversationId: body.conversationId,
+        sourceMessageId: body.sourceMessageId || requestId,
         allowRestart: body.resume === true,
       });
       activeRun.generationAttempt = true;
@@ -9159,6 +9191,34 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...catalog.marketplace });
   }
 
+  if (pathname === "/api/account/register" && request.method === "POST") {
+    const body = await readJsonBody(request, 32 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/register", { method: "POST", body })) });
+  }
+
+  if (pathname === "/api/account/login" && request.method === "POST") {
+    const body = await readJsonBody(request, 16 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/login", { method: "POST", body })) });
+  }
+
+  if (pathname === "/api/account/recovery-question" && request.method === "POST") {
+    const body = await readJsonBody(request, 16 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/recovery-question", { method: "POST", body })) });
+  }
+
+  if (pathname === "/api/account/recover" && request.method === "POST") {
+    const body = await readJsonBody(request, 16 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/recover", { method: "POST", body })) });
+  }
+
+  if (pathname === "/api/account/me" && request.method === "GET") {
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/me", { token: remoteMarketplaceToken(request) })) });
+  }
+
+  if (pathname === "/api/account/logout" && request.method === "POST") {
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/logout", { method: "POST", token: remoteMarketplaceToken(request) })) });
+  }
+
   if (pathname === "/api/skill-marketplace/install" && request.method === "POST") {
     const body = await readJsonBody(request);
     return sendJson(response, 200, { ok: true, ...(await installMarketplaceSkill({ id: body.id, shensiRoot: defaultShensiRoot, replaceLocalVersions: body.replaceLocalVersions === true })) });
@@ -9182,7 +9242,22 @@ const handleApiRequest = async (request, response, pathname) => {
 
   if (pathname === "/api/skill-marketplace/share" && request.method === "POST") {
     const body = await readJsonBody(request);
-    return sendJson(response, 200, { ok: true, ...(await submitMarketplaceSkill({ id: body.id })) });
+    const localResult = await submitMarketplaceSkill({ id: body.id });
+    const token = remoteMarketplaceToken(request);
+    if (!token) return sendJson(response, 200, { ok: true, ...localResult, remoteUploaded: false, message: "已保存到本机广场；登录神思账号后才能上传到云端" });
+    const source = await loadManagedSkill({ id: body.id, includeContent: true });
+    const remote = await marketplaceServiceRequest("/v1/skills/uploads", {
+      method: "POST",
+      token,
+      body: {
+        source: source.content,
+        skillId: source.id,
+        name: source.name,
+        version: source.version,
+        description: source.description,
+      },
+    });
+    return sendJson(response, 200, { ok: true, ...localResult, remoteUploaded: true, remote });
   }
 
   if (pathname === "/api/skill-marketplace/share-capability" && request.method === "POST") {
@@ -9468,6 +9543,35 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...frame });
   }
 
+  if (pathname === "/api/workspace/video-separate" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    const result = await separateWorkspaceVideoAudio({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      relativePath: body.relativePath,
+      whiteboardDocumentId: body.documentId,
+    });
+    await Promise.all([
+      nutstoreSyncEngine.noteLocalChange(result.silentVideo.relativePath).catch(() => {}),
+      nutstoreSyncEngine.noteLocalChange(result.audio.relativePath).catch(() => {}),
+    ]);
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
+  if (pathname === "/api/workspace/audio-trim" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    const result = await trimWorkspaceAudio({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      relativePath: body.relativePath,
+      startMs: body.startMs,
+      endMs: body.endMs,
+      whiteboardDocumentId: body.documentId,
+    });
+    await nutstoreSyncEngine.noteLocalChange(result.attachment.relativePath).catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
   if (pathname === "/api/workspace/video-concat" && request.method === "POST") {
     const body = await readJsonBody(request, 256 * 1024);
     const result = await concatWorkspaceVideos({
@@ -9518,7 +9622,7 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/workspace/attachment-content" && request.method === "GET") {
     const url = new URL(request.url, `http://${request.headers.host || "127.0.0.1"}`);
     const requestedPath = url.searchParams.get("workspacePath");
-    const content = isTemporaryNotebookPath(requestedPath)
+    let content = isTemporaryNotebookPath(requestedPath)
       ? await readTemporaryMarkdownAttachment({
           documentId: url.searchParams.get("documentId"),
           relativePath: url.searchParams.get("relativePath"),
@@ -9529,6 +9633,7 @@ const handleApiRequest = async (request, response, pathname) => {
           relativePath: url.searchParams.get("relativePath"),
           documentId: url.searchParams.get("documentId"),
         });
+    if (url.searchParams.get("preview") === "640") content = await imageCardPreview(content);
     const requestedDownloadName = String(url.searchParams.get("downloadName") || "").trim();
     const downloadName = requestedDownloadName ? sanitizeDownloadFileName(requestedDownloadName, "神思媒体") : "";
     const encodedDownloadName = downloadName ? encodeURIComponent(downloadName).replaceAll("'", "%27") : "";

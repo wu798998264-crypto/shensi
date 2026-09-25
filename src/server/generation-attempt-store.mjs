@@ -369,6 +369,8 @@ export const beginGenerationAttempt = async ({
   taskKind = "creative",
   requestFingerprint = "",
   requestSnapshot = null,
+  conversationId = "",
+  sourceMessageId = "",
   allowRestart = false,
 } = {}) => {
   const id = normalizedRequestId(requestId);
@@ -415,6 +417,8 @@ export const beginGenerationAttempt = async ({
         landingBlockReason: "任务已由用户明确续接，正在继续处理",
         requestFingerprint: fingerprint || current.requestFingerprint || "",
         requestSnapshot: safeJsonObject(requestSnapshot, 500_000) ?? current.requestSnapshot ?? null,
+        conversationId: text(conversationId, 160) || current.conversationId || "",
+        sourceMessageId: text(sourceMessageId, 160) || current.sourceMessageId || "",
         reviewArtifact: null,
         commitReceipt: null,
         projectionManifest: null,
@@ -433,6 +437,8 @@ export const beginGenerationAttempt = async ({
       taskKind: text(taskKind, 80) || "creative",
       requestFingerprint: fingerprint,
       requestSnapshot: safeJsonObject(requestSnapshot, 500_000),
+      conversationId: text(conversationId, 160),
+      sourceMessageId: text(sourceMessageId, 160),
       status: "running",
       executionStatus: "running",
       phase: "planning",
@@ -633,12 +639,18 @@ export const publicGenerationAttempt = (attempt) => {
   const lifecycle = normalizedAttemptLifecycle({ current: attempt });
   const active = RECOVERABLE_ACTIVE_STATUSES.has(lifecycle.status) && lifecycle.executionStatus !== "terminal";
   const executionStatus = active ? "running" : "terminal";
+  const sourcePrompt = (Array.isArray(attempt.requestSnapshot?.messages)
+    ? [...attempt.requestSnapshot.messages].reverse().find((message) => message?.role === "user")?.content
+    : attempt.requestSnapshot?.userPrompt) || "";
   const validationStatus = text(attempt.validationStatus, 40)
     || (attempt.execution?.validationStatus ? text(attempt.execution.validationStatus, 40) : landingEligible ? "passed" : "pending");
   const landingStatus = text(attempt.landingStatus, 40)
     || (landingEligible ? "ready" : attempt.status === "failed" ? "failed" : "not_requested");
   return {
     requestId: text(attempt.requestId, 100),
+    conversationId: text(attempt.conversationId, 160),
+    sourceMessageId: text(attempt.sourceMessageId, 160),
+    sourcePrompt: text(sourcePrompt, 20_000),
     targetDocumentId: text(attempt.targetDocumentId, 160),
     taskKind: text(attempt.taskKind, 80),
     status: lifecycle.status,

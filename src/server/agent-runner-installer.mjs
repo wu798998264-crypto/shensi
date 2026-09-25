@@ -226,78 +226,44 @@ const detectKnownAgentRunnerInstallationUncached = async ({
     let capabilityError = null;
     if (normalizedRunnerId === "workbuddy") {
       try {
-        const accountCatalog = await runProcess({
+        // WorkBuddy publishes the exact model IDs supported by the installed
+        // CLI in --help. Reading that catalogue is local, immediate and does
+        // not consume account quota. Login/quota remains a generation-time
+        // online check; it must never hold the model picker open for 30–45s.
+        const help = await runProcess({
           executable: launch.executable,
-          args: [...launch.prefixArgs, "-p", "/model list", "--output-format", "json", "--max-turns", "1"],
+          args: [...launch.prefixArgs, "--help"],
           cwd,
           environment,
-          timeoutMs: 30_000,
+          timeoutMs: 3_000,
           outputSource: "node",
           maxOutputBytes: MAX_MODEL_CATALOG_OUTPUT,
           operation: "probe",
+          acceptOutputOnTimeout: true,
         });
-        const output = `${accountCatalog.stdout || ""}\n${accountCatalog.stderr || ""}`;
-        if (runnerLoginStateFromOutput(output) === false) {
-          authenticated = false;
-          authState = "login_required";
-          state = "login_required";
-          message = "WorkBuddy 已安装，但尚未登录；登录后刷新即可读取当前账号的真实模型目录";
-        } else {
-          authenticated = true;
-          authState = "authenticated";
-          models = parseWorkBuddyModelCatalog(output);
-          if (models.length) catalogSource = "runner_account";
-        }
+        models = parseWorkBuddyModelCatalog(`${help.stdout || ""}\n${help.stderr || ""}`);
+        if (models.length) catalogSource = "runner_cli";
       } catch (error) {
         const detail = runnerProbeDetail(error);
-        if (runnerLoginStateFromOutput(detail) === false) {
-          authenticated = false;
-          authState = "login_required";
-          state = "login_required";
-          message = "WorkBuddy 已安装，但尚未登录；登录后刷新即可读取当前账号的真实模型目录";
-        } else {
-          authenticated = null;
-          authState = "failed";
-          state = "failed";
-          message = `WorkBuddy 已安装，但登录状态检查失败：${detail.slice(0, 300)}`;
-          capabilityError = runnerCapabilityError({
-            runnerId: normalizedRunnerId,
-            stage: "login_probe",
-            code: "AGENT_RUNNER_LOGIN_PROBE_FAILED",
-            summary: "WorkBuddy 登录状态检查失败",
-            detail,
-            suggestedAction: "打开 WorkBuddy 登录窗口，完成登录后重新检查",
-          });
-        }
+        capabilityError = runnerCapabilityError({
+          runnerId: normalizedRunnerId,
+          stage: "model_catalog",
+          code: "AGENT_RUNNER_MODEL_CATALOG_FAILED",
+          summary: "WorkBuddy 模型目录读取失败",
+          detail,
+          suggestedAction: "重新检查 WorkBuddy 安装，或留空跟随 CLI 默认模型",
+        });
       }
-      if (authenticated === true && !models.length) {
-        try {
-          const help = await runProcess({
-            executable: launch.executable,
-            args: [...launch.prefixArgs, "--help"],
-            cwd,
-            environment,
-            timeoutMs: 8_000,
-            outputSource: "node",
-            maxOutputBytes: MAX_MODEL_CATALOG_OUTPUT,
-            operation: "probe",
-          });
-          models = parseWorkBuddyModelCatalog(`${help.stdout || ""}\n${help.stderr || ""}`);
-          if (models.length) catalogSource = "runner_cli";
-        } catch (error) {
-          capabilityError ||= runnerCapabilityError({
-            runnerId: normalizedRunnerId,
-            stage: "model_catalog",
-            code: "AGENT_RUNNER_MODEL_CATALOG_FAILED",
-            summary: "WorkBuddy 模型目录读取失败",
-            detail: runnerProbeDetail(error),
-            suggestedAction: "保留模型为空以跟随 WorkBuddy 默认模型，或完成登录后重新检查",
-          });
-        }
-      }
+      authenticated = null;
+      authState = "generation_check_required";
     }
     modelCatalogChecked = models.length > 0;
-    if (authenticated === true) {
+    if (normalizedRunnerId === "workbuddy" && modelCatalogChecked) {
+      modelState = "catalog_available";
+      modelPolicy = "explicit";
+      state = "ready";
+      message = `已读取 ${models.length} 个 WorkBuddy CLI 支持模型；登录与额度将在真实生成时核验`;
+    } else if (authenticated === true) {
       if (modelCatalogChecked) {
         modelState = "catalog_available";
         modelPolicy = "explicit";
@@ -489,23 +455,26 @@ export const locateWindowsInstallTools = async ({
 export const runAgentRunnerInstallerProcess = ({
   executable,
   args = [],
+  stdinText = "",
   cwd = process.cwd(),
   environment = process.env,
   timeoutMs = INSTALL_TIMEOUT_MS,
   outputSource = "auto",
   maxOutputBytes = MAX_PROCESS_OUTPUT,
+  acceptOutputOnTimeout = false,
   signal = null,
   spawnProcess = spawn,
   operation = "install",
 } = {}) => new Promise((resolveProcess, rejectProcess) => {
   const probing = operation === "probe";
   if (!clean(executable)) return rejectProcess(new Error(probing ? "运行器检查没有找到可执行程序" : "安装器没有找到可执行程序"));
+  const input = String(stdinText || "");
   const child = spawnProcess(executable, args.map((item) => String(item)), {
     cwd,
     env: environment,
     shell: false,
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [input ? "pipe" : "ignore", "pipe", "pipe"],
   });
   const stdoutChunks = [];
   const stderrChunks = [];
@@ -531,6 +500,17 @@ export const runAgentRunnerInstallerProcess = ({
     stderrChunks.push(buffer);
     while (stderrBytes > maxOutputBytes && stderrChunks.length) stderrBytes -= stderrChunks.shift().length;
   });
+  if (input) {
+    child.stdin?.on?.("error", (error) => finish(rejectProcess, createAgentRunnerError({
+      stage: probing ? "login_probe" : "package_install",
+      code: probing ? "AGENT_RUNNER_PROBE_STDIN_FAILED" : "AGENT_RUNNER_INSTALL_STDIN_FAILED",
+      summary: probing ? "运行器检查输入失败" : "安装器输入失败",
+      detail: error?.message || error,
+      retryable: true,
+      suggestedAction: probing ? "重新检查运行器登录状态后重试" : "重新执行安装",
+    })));
+    child.stdin?.end?.(input);
+  }
   child.once("error", (error) => finish(rejectProcess, createAgentRunnerError({
     stage: error?.code === "ENOENT" ? "executable_resolution" : "package_install",
     code: String(error?.code || "AGENT_RUNNER_INSTALL_PROCESS_FAILED"),
@@ -544,8 +524,8 @@ export const runAgentRunnerInstallerProcess = ({
   child.once("close", (exitCode) => {
     const result = {
       exitCode: Number(exitCode ?? -1),
-      stdout: boundedOutput(decodeAgentRunnerOutput(Buffer.concat(stdoutChunks), outputSource)),
-      stderr: boundedOutput(decodeAgentRunnerOutput(Buffer.concat(stderrChunks), outputSource)),
+      stdout: clean(decodeAgentRunnerOutput(Buffer.concat(stdoutChunks), outputSource)).slice(-maxOutputBytes),
+      stderr: clean(decodeAgentRunnerOutput(Buffer.concat(stderrChunks), outputSource)).slice(-maxOutputBytes),
     };
     if (result.exitCode === 0) return finish(resolveProcess, result);
     const reason = result.stderr || result.stdout || `退出代码 ${result.exitCode}`;
@@ -567,6 +547,16 @@ export const runAgentRunnerInstallerProcess = ({
     } else signal.addEventListener("abort", () => { try { child.kill(); } catch {} }, { once: true });
   }
   timer = setTimeout(() => {
+    const timedOutResult = {
+      exitCode: 0,
+      stdout: clean(decodeAgentRunnerOutput(Buffer.concat(stdoutChunks), outputSource)).slice(-maxOutputBytes),
+      stderr: clean(decodeAgentRunnerOutput(Buffer.concat(stderrChunks), outputSource)).slice(-maxOutputBytes),
+    };
+    if (acceptOutputOnTimeout && (timedOutResult.stdout || timedOutResult.stderr)) {
+      finish(resolveProcess, timedOutResult);
+      try { child.kill(); } catch {}
+      return;
+    }
     try { child.kill(); } catch {}
     const error = createAgentRunnerError({
       stage: probing ? "version_probe" : "package_install",

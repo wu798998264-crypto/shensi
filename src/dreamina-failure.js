@@ -37,6 +37,20 @@ export const dreaminaFailureDiagnosis = ({
   const providerTaskCreated = Boolean(clean(providerTaskId));
   const submitted = providerTaskCreated || clean(submissionState).toLowerCase() === "submitted";
 
+  // The provider sometimes returns this billing code only inside the human
+  // message while leaving the durable error code as PROVIDER_FAILED.  Promote
+  // it to the stable semantic diagnosis so the UI reports 积分不足 instead of
+  // a generic generation failure or an account-login prompt.
+  if (errorCode !== "DREAMINA_INSUFFICIENT_CREDIT"
+    && /CreditPreDeductNotEnough|credit\s*(?:pre[-_ ]?deduct|balance)\s*(?:not enough|insufficient)|积分不足|余额不足/iu.test(`${errorCode} ${raw}`)) {
+    return dreaminaFailureDiagnosis({
+      code: "DREAMINA_INSUFFICIENT_CREDIT",
+      message: raw,
+      providerTaskId,
+      submissionState,
+    });
+  }
+
   let resolvedCode = errorCode;
   if (ACCOUNT_VERIFICATION_CODES.has(errorCode)) {
     return {
@@ -149,8 +163,8 @@ export const dreaminaFailureDiagnosis = ({
     }),
     DREAMINA_GENERATION_SESSION_REJECTED: diagnosis({
       category: "submission_outcome_unknown",
-      title: "即梦视频生成会话被拒绝，提交结果待核对",
-      cause: "账号与任务列表预检已经通过，但真实视频生成命令没有返回任务编号，并在生成阶段报告会话异常；这不能证明账号核验失效，也不能证明厂商没有创建任务。",
+      title: "即梦生成会话被拒绝，提交结果待核对",
+      cause: "真实图片或视频生成命令没有返回任务编号，并在提交阶段报告会话异常；这不能证明已核验的账号身份失效，也不能证明厂商没有创建任务。",
       resolution: "神思将保留原配置、提示词和幂等记录，只读核对厂商任务列表且不会重复提交。需要停止占用时，请在占用任务列表手动终止；无需重复核验账号。",
       retryable: true,
     }),

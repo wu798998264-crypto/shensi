@@ -41,7 +41,10 @@ assert.match(app, /conversationChoiceQuestion: true/u, "神思提出的选项问
 assert.match(app, /const appendPendingConversationTaskInstruction =/u,
   "发送后需要先确认的任务必须有统一的原指令入区入口");
 assert.doesNotMatch(app, /if \(workspaceBindingRequired &&/u, "不得在 Agent 理解前通过关键词判断是否需要工作区");
-assert.match(app, /taskMessages\.push\(userMessage\)[\s\S]{0,2000}await onPersist\(\)[\s\S]{0,500}yieldAfterImmediateInstructionRender/u, "用户消息先持久化和显示，再启动 Agent");
+const nativeAgentDispatchStart = app.indexOf("taskMessages.push(userMessage)", app.indexOf("const userMessage ="));
+const nativeAgentDispatchEnd = app.indexOf('const response = await fetch("/api/codex-agent/turn"', nativeAgentDispatchStart);
+const nativeAgentDispatch = app.slice(nativeAgentDispatchStart, nativeAgentDispatchEnd);
+assert.match(nativeAgentDispatch, /taskMessages\.push\(userMessage\)[\s\S]*renderConversationIfActive\(conversation\.id,[\s\S]*persistAgentRuntimeView\(agentTaskRuntime\)[\s\S]*await yieldAfterImmediateInstructionRender/u, "用户消息和任务卡必须先显示并持久化，再启动 Agent");
 const continuationChoiceStart = app.indexOf("const openContinuationDestinationChoice =");
 const continuationChoiceEnd = app.indexOf("const openLandingResolutionChoice", continuationChoiceStart);
 const continuationChoiceOpen = app.slice(continuationChoiceStart, continuationChoiceEnd);

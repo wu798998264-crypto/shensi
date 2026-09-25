@@ -630,12 +630,42 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
       });
       credentialChanged = false;
     }
+    // Browser-bound account remarks are a presentation identity, but they are
+    // still durable data.  Migrate old 柏物语/短剧最前线 labels as soon as the
+    // profile is read so the identity ledger and generation settings cannot
+    // drift apart after an upgrade.
+    if (expected.remarkName !== profile.remarkName) {
+      try {
+        expected = await saveDreaminaProfileIdentity({
+          ...expected,
+          profileId: profile.id,
+          remarkName: profile.remarkName,
+        });
+      } catch {
+        // A status read must remain observational if the ledger is briefly
+        // locked; the next explicit refresh will retry the name migration.
+      }
+    }
     const actualUserId = live?.ok ? live.userId : expected.verifiedUserId || expected.expectedUserId || "";
     const duplicate = actualUserId ? await duplicateIdentity(profile.id, actualUserId) : null;
+    // A failed read of `user_credit` is not by itself proof that the saved
+    // browser account was replaced. Repeated generations can temporarily
+    // invalidate the read-only session while the durable profile snapshot and
+    // credential file remain intact. Keep the profile verified in that narrow
+    // case; the real generation command still decides whether a fresh OAuth
+    // verification is truly required.
+    const durableIdentityEvidence = Boolean(
+      credentialExists
+      && expected.expectedUserId
+      && expected.verifiedUserId
+      && expected.verifiedAt,
+    );
     const liveRequiresReverification = live?.code === "DREAMINA_AUTH_REQUIRED";
+    const liveAuthReadDeferred = liveRequiresReverification && durableIdentityEvidence;
+    const effectiveLiveRequiresReverification = liveRequiresReverification && !liveAuthReadDeferred;
     const liveAccountIdMissing = live?.code === "DREAMINA_ACCOUNT_ID_MISSING";
     const state = !credentialExists ? "unbound"
-      : live && !live.ok && liveRequiresReverification ? "invalid"
+      : live && !live.ok && effectiveLiveRequiresReverification ? "invalid"
         : !expected.expectedUserId ? (oauthPending ? "pending" : "unverified")
           // The official CLI may rotate refresh material and rewrite auth.reg
           // after a normal command. A changed file hash is therefore not proof
@@ -679,9 +709,12 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
       verifiedAt: live?.ok ? new Date().toISOString() : expected.verifiedAt || "",
       liveVerified: live?.ok === true,
       creditSource: live?.ok ? "live" : "saved",
-      creditRefreshDeferred: live?.transient === true,
-      statusReadUnavailable: Boolean(live && !live.ok && !live.transient && !liveRequiresReverification && !liveAccountIdMissing),
-      error: live && !live.ok && !(expected.expectedUserId && live.code === "DREAMINA_ACCOUNT_ID_MISSING") ? live.error : "",
+      creditRefreshDeferred: live?.transient === true || liveAuthReadDeferred,
+      statusReadUnavailable: Boolean(live && !live.ok && !live.transient && !effectiveLiveRequiresReverification && !liveAccountIdMissing),
+      authReadDeferred: liveAuthReadDeferred,
+      error: liveAuthReadDeferred
+        ? "即梦实时账号读取暂时未响应，已保留已核验身份；生成时会用真实命令再次确认"
+        : live && !live.ok && !(expected.expectedUserId && live.code === "DREAMINA_ACCOUNT_ID_MISSING") ? live.error : "",
     });
   }
   return statuses;

@@ -4,7 +4,7 @@ import { PassThrough, Writable } from "node:stream";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeAgentRunnerOutput, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, installAgentRunnerFromOfficialSource, parseWorkBuddyModelCatalog, startKnownAgentRunnerLogin } from "../src/server/agent-runner-installer.mjs";
+import { decodeAgentRunnerOutput, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, installAgentRunnerFromOfficialSource, parseWorkBuddyModelCatalog, runAgentRunnerInstallerProcess, startKnownAgentRunnerLogin } from "../src/server/agent-runner-installer.mjs";
 import { agentRunnerRegistryPath, forgetAgentRunnerLaunch, rememberAgentRunnerLaunch, readAgentRunnerRegistry } from "../src/server/agent-runner-registry.mjs";
 import { runExternalCliAgent } from "../src/server/external-cli-agent-runner.mjs";
 import { resolveRunnerLaunch, workBuddyInstallRootsFromRegistryOutput } from "../src/server/agent-runner-launch.mjs";
@@ -85,38 +85,89 @@ const workBuddyCapability = await detectKnownAgentRunnerInstallation({
   resolveLaunch: async () => ({ executable: "C:\\Node\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"] }),
   runProcess: async ({ args }) => {
     workBuddyProbeCalls += 1;
-    return args.includes("/model list")
-      ? { exitCode: 0, stdout: JSON.stringify({ content: "- hy3\n- glm-5.2\n- deepseek-v4-pro\n- deepseek-v4-flash" }), stderr: "" }
+    return args.includes("--help")
+      ? { exitCode: 0, stdout: "--model <model> Currently supported: (hy3, glm-5.2, deepseek-v4-pro, deepseek-v4-flash)", stderr: "" }
       : { exitCode: 0, stdout: "2.151.0", stderr: "" };
   },
 });
 assert.equal(workBuddyProbeCalls, 2, "WorkBuddy 应分别探测版本和真实模型目录");
-assert.equal(workBuddyCapability.authState, "authenticated");
+assert.equal(workBuddyCapability.authState, "generation_check_required");
 assert.equal(workBuddyCapability.modelCatalogChecked, true);
 assert.deepEqual(workBuddyCapability.models, ["hy3", "glm-5.2", "deepseek-v4-pro", "deepseek-v4-flash"]);
+assert.match(workBuddyCapability.message, /登录与额度将在真实生成时核验/u);
 
 const loggedOutWorkBuddy = await detectKnownAgentRunnerInstallation({
   runnerId: "workbuddy",
   resolveLaunch: async () => ({ executable: "C:\\Node\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"] }),
-  runProcess: async ({ args }) => args.includes("/model list")
-    ? { exitCode: 0, stdout: "Please login first", stderr: "" }
+  runProcess: async ({ args }) => args.includes("--help")
+    ? { exitCode: 0, stdout: "--model <model> Currently supported: (hy3)", stderr: "" }
     : { exitCode: 0, stdout: "2.151.0", stderr: "" },
 });
-assert.equal(loggedOutWorkBuddy.state, "login_required");
-assert.equal(loggedOutWorkBuddy.authenticated, false);
+assert.equal(loggedOutWorkBuddy.state, "ready");
+assert.equal(loggedOutWorkBuddy.authenticated, null, "本地模型目录不得冒充在线登录验收");
+assert.equal(loggedOutWorkBuddy.authState, "generation_check_required");
 
 const defaultWorkBuddy = await detectKnownAgentRunnerInstallation({
   runnerId: "workbuddy",
   resolveLaunch: async () => ({ executable: "C:\\Node\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"] }),
   runProcess: async ({ args }) => args.includes("--help")
     ? { exitCode: 0, stdout: "--model <model>", stderr: "" }
-    : args.includes("/model list")
-      ? { exitCode: 0, stdout: JSON.stringify({ content: "Current model is managed by WorkBuddy" }), stderr: "" }
-      : { exitCode: 0, stdout: "2.151.0", stderr: "" },
+    : { exitCode: 0, stdout: "2.151.0", stderr: "" },
 });
-assert.equal(defaultWorkBuddy.state, "ready");
-assert.equal(defaultWorkBuddy.modelState, "verified_runner_default");
-assert.equal(defaultWorkBuddy.modelPolicy, "runner_default");
+assert.equal(defaultWorkBuddy.state, "failed");
+assert.equal(defaultWorkBuddy.modelState, "blocked_by_auth");
+
+let probeInput = "";
+let probeStdio = null;
+const probeChild = new EventEmitter();
+probeChild.stdout = new PassThrough();
+probeChild.stderr = new PassThrough();
+probeChild.stdin = new Writable({
+  write(chunk, _encoding, callback) { probeInput += String(chunk); callback(); },
+  final(callback) {
+    callback();
+    process.nextTick(() => {
+      probeChild.stdout.write("probe complete");
+      probeChild.stdout.end();
+      probeChild.stderr.end();
+      probeChild.emit("close", 0);
+    });
+  },
+});
+probeChild.kill = () => probeChild.emit("close", 1);
+const probeResult = await runAgentRunnerInstallerProcess({
+  executable: "C:\\Node\\node.exe",
+  args: ["C:\\WorkBuddy\\codebuddy.js", "-p"],
+  stdinText: "/model list",
+  operation: "probe",
+  spawnProcess: (_executable, _args, options) => {
+    probeStdio = options.stdio;
+    return probeChild;
+  },
+});
+assert.equal(probeInput, "/model list", "运行器探测指令必须真实写入 stdin");
+assert.deepEqual(probeStdio, ["pipe", "pipe", "pipe"]);
+assert.equal(probeResult.stdout, "probe complete");
+
+const timeoutOutputChild = new EventEmitter();
+timeoutOutputChild.stdout = new PassThrough();
+timeoutOutputChild.stderr = new PassThrough();
+timeoutOutputChild.kill = () => timeoutOutputChild.emit("close", 1);
+const timeoutOutputKeepAlive = setTimeout(() => {}, 80);
+const timeoutOutputResult = await runAgentRunnerInstallerProcess({
+  executable: "C:\\Node\\node.exe",
+  args: ["C:\\WorkBuddy\\codebuddy.js", "--help"],
+  timeoutMs: 20,
+  maxOutputBytes: 64_000,
+  acceptOutputOnTimeout: true,
+  operation: "probe",
+  spawnProcess: () => {
+    process.nextTick(() => timeoutOutputChild.stdout.write("Currently supported: (hy3, glm-5.2)"));
+    return timeoutOutputChild;
+  },
+});
+clearTimeout(timeoutOutputKeepAlive);
+assert.match(timeoutOutputResult.stdout, /Currently supported/u, "帮助命令已输出目录但进程未退出时应保留真实目录");
 
 const registryRoot = await mkdtemp(join(tmpdir(), "shensi-runner-registry-"));
 await rememberAgentRunnerLaunch({ machineRoot: registryRoot, runnerId: "workbuddy", launch: { executable: "C:\\Node\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy.js"] }, version: "2.0.0", installSource: "npm" });
@@ -167,7 +218,8 @@ assert.equal(cancelled, true);
 const child = new EventEmitter();
 child.stdout = new PassThrough();
 child.stderr = new PassThrough();
-child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+let workBuddyStdin = "";
+child.stdin = new Writable({ write(chunk, _encoding, callback) { workBuddyStdin += String(chunk); callback(); } });
 child.kill = () => child.emit("close", 0);
 let launchRequest = null;
 const run = runExternalCliAgent({
@@ -193,6 +245,8 @@ const run = runExternalCliAgent({
 await run;
 assert.equal(launchRequest.executable, "C:\\WorkBuddy\\node.exe");
 assert.deepEqual(launchRequest.args.slice(0, 1), ["C:\\WorkBuddy\\codebuddy.js"]);
+assert.equal(launchRequest.args.includes("测试 WorkBuddy 默认模型"), false, "WorkBuddy 不得把完整提示词拼进 Windows 命令行");
+assert.equal(workBuddyStdin.includes("测试 WorkBuddy 默认模型"), true, "WorkBuddy 任务必须通过 stdin 传递完整提示词");
 assert.equal(launchRequest.args.includes("--model"), false, "WorkBuddy 空模型不得传递 --model");
 const toolsFlagIndex = launchRequest.args.indexOf("--tools");
 assert.ok(toolsFlagIndex >= 0 && launchRequest.args[toolsFlagIndex + 1] === "DeferExecuteTool", "WorkBuddy 仅神思模式只能暴露 MCP 延迟调用桥，不能开放本地工具");

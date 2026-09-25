@@ -32,6 +32,7 @@ export const dreaminaMembershipFromPayload = (payload = {}, fallback = {}) => {
   const rawLevel = clean(firstValue(payload, [
     "vip_level", "vipLevel", "member_level", "memberLevel", "membership_level", "membershipLevel",
     "member_type", "memberType", "membership", "vip_type", "vipType", "plan_name", "planName",
+    "plan", "package_name", "packageName", "product_name", "productName", "tier",
   ]) || fallback.vipLevel || fallback.rawLevel);
   const expiresAt = clean(firstValue(payload, [
     "vip_expires_at", "vipExpiresAt", "vip_expire_time", "vipExpireTime", "membership_expires_at",
@@ -39,6 +40,7 @@ export const dreaminaMembershipFromPayload = (payload = {}, fallback = {}) => {
   ]) || fallback.vipExpiresAt || fallback.expiresAt);
   const premiumFlag = truthyFlag(payload, [
     "is_vip", "isVip", "is_member", "isMember", "is_premium", "isPremium", "vip_valid", "vipValid",
+    "is_pro", "isPro", "is_advanced", "isAdvanced", "premium_member", "premiumMember",
   ]);
   const tier = premiumFlag || PREMIUM_LEVEL_PATTERN.test(rawLevel)
     ? "advanced"
@@ -61,4 +63,3 @@ export const dreaminaMembershipDisplay = (value = {}) => {
   });
   return normalized.label;
 };
-

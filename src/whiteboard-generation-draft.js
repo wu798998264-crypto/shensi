@@ -132,12 +132,14 @@ export const updateWhiteboardGenerationDraftCache = (cache, scope, values, {
 export const duplicateWhiteboardGenerationDraftEntries = (cache, {
   workspaceId,
   documentId,
+  sourceDocumentId = documentId,
+  targetDocumentId = documentId,
   sourceNodeId,
   targetNodeId,
 } = {}, { updatedAt = Date.now() } = {}) => {
   let normalized = normalizeWhiteboardGenerationDraftCache(cache);
-  const sourceBase = whiteboardGenerationDraftScope({ workspaceId, documentId, nodeId: sourceNodeId });
-  const targetBase = whiteboardGenerationDraftScope({ workspaceId, documentId, nodeId: targetNodeId });
+  const sourceBase = whiteboardGenerationDraftScope({ workspaceId, documentId: sourceDocumentId, nodeId: sourceNodeId });
+  const targetBase = whiteboardGenerationDraftScope({ workspaceId, documentId: targetDocumentId, nodeId: targetNodeId });
   if (!sourceBase.workspaceId || !sourceBase.documentId || !sourceBase.nodeId || !targetBase.nodeId || sourceBase.nodeId === targetBase.nodeId) return normalized;
 
   let copied = 0;

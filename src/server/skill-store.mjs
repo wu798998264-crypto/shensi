@@ -1676,9 +1676,12 @@ const buildManagedSkillCatalog = async ({ shensiRoot = "" } = {}) => {
     marketplace: {
       connected: remoteMarketplace.connected === true,
       mode: remoteMarketplace.mode,
+      baseUrl: remoteMarketplace.baseUrl || "",
+      adminUrl: remoteMarketplace.adminUrl || "",
+      capabilities: remoteMarketplace.capabilities || {},
       automaticTrust: true,
       message: remoteMarketplace.connected
-        ? `${remoteMarketplace.message} 当前桌面端仅接通签名目录与下载；账号发布、评分和下架仍保持本地，不得显示为云端成功。`
+        ? remoteMarketplace.message
         : `当前使用本地 Skill 广场目录；${remoteMarketplace.message}。信任等级由软件自动评定，无需人工审核。`,
       health: remoteMarketplace.health,
       trustLevels: SKILL_TRUST_LEVELS,

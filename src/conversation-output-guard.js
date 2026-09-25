@@ -74,20 +74,23 @@ const removeProtocolBlocks = (source) => {
   let schemaDepth = 0;
   let droppingFence = false;
   let fenceInternal = false;
+  let fenceLines = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith("```") && !droppingFence) {
       droppingFence = true;
       fenceInternal = false;
+      fenceLines = [line];
       continue;
     }
     if (droppingFence) {
+      fenceLines.push(line);
       fenceInternal ||= lineLooksInternal(line) || PROTOCOL_INLINE_PATTERNS.some((pattern) => pattern.test(line));
-      if (trimmed.startsWith("```") && fenceInternal) droppingFence = false;
-      else if (trimmed.startsWith("```") && !fenceInternal) {
+      if (trimmed.startsWith("```")) {
         droppingFence = false;
-        visible.push(line);
+        if (!fenceInternal) visible.push(...fenceLines);
+        fenceLines = [];
       }
       continue;
     }
@@ -125,6 +128,7 @@ const removeProtocolBlocks = (source) => {
     if (PROTOCOL_INLINE_PATTERNS.some((pattern) => pattern.test(trimmed))) continue;
     visible.push(line);
   }
+  if (droppingFence && !fenceInternal) visible.push(...fenceLines);
   return visible.join("\n");
 };
 
@@ -182,8 +186,10 @@ const isInternalRouteObject = (value) => {
     || (keys.has("placementId") && (keys.has("routeContext") || keys.has("selectedPlacement")));
 };
 
-const jsonObjectEnd = (source, start) => {
-  let depth = 0;
+const jsonValueEnd = (source, start) => {
+  const opening = source[start];
+  if (opening !== "{" && opening !== "[") return -1;
+  const stack = [];
   let inString = false;
   let escaped = false;
   for (let index = start; index < source.length; index += 1) {
@@ -198,11 +204,12 @@ const jsonObjectEnd = (source, start) => {
       inString = true;
       continue;
     }
-    if (character === "{") depth += 1;
-    else if (character === "}") {
-      depth -= 1;
-      if (depth === 0) return index + 1;
-      if (depth < 0) return -1;
+    if (character === "{") stack.push("}");
+    else if (character === "[") stack.push("]");
+    else if (character === "}" || character === "]") {
+      if (stack.at(-1) !== character) return -1;
+      stack.pop();
+      if (!stack.length) return index + 1;
     }
   }
   return -1;
@@ -246,10 +253,138 @@ const isInternalToolResultObject = (value) => {
   return (hasIdentity && hasReceipt) || hasToolName;
 };
 
+const isInternalMediaProfileCatalog = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const channels = ["image", "video"].filter((channel) => Array.isArray(value[channel]));
+  if (!channels.length || Object.keys(value).some((key) => !["image", "video"].includes(key))) return false;
+  const profiles = channels.flatMap((channel) => value[channel]);
+  return profiles.length > 0 && profiles.every((profile) => profile && typeof profile === "object"
+    && typeof profile.id === "string"
+    && typeof profile.provider === "string"
+    && Object.hasOwn(profile, "model"));
+};
+
+const isInternalSkillCatalog = (value) => Array.isArray(value)
+  && value.length > 0
+  && value.every((skill) => skill && typeof skill === "object"
+    && typeof skill.id === "string"
+    && typeof skill.name === "string"
+    && (Array.isArray(skill.capabilities) || Array.isArray(skill.placements)));
+
+const isInternalMediaJobReceipt = (value) => value && typeof value === "object" && !Array.isArray(value)
+  && /^generation-[a-z0-9-]+$/iu.test(String(value.id || ""))
+  && /^(?:queued|submitting|running|polling|downloading|cancel_requested|complete|failed|cancelled)$/u.test(String(value.status || ""))
+  && (Object.hasOwn(value, "attachment") || Object.hasOwn(value, "error") || Object.hasOwn(value, "backedUpToAllAssets"));
+
+const isInternalBatchLandingReceipt = (value) => value && typeof value === "object" && !Array.isArray(value)
+  && Number(value.schemaVersion) === 1
+  && String(value.type || "").toLowerCase() === "shensibatchlanding_receipt"
+  && /^batch-[a-z0-9-]+$/iu.test(String(value.batchId || ""))
+  && /^(?:completed|failed|partial)$/u.test(String(value.status || ""))
+  && Array.isArray(value.results)
+  && typeof value.verified === "boolean";
+
 const workBuddySchemaStart = (line = "") => /^\s*["'](?:type|required|properties)["']\s*:/u.test(String(line));
-const workBuddySchemaLine = (line = "") => /^\s*["'](?:type|required|properties|additionalProperties|items|enum|const|description|mode|taskType|routingMode|routingReason|documentIds|mediaChannels)["']\s*:/u.test(String(line))
-  || /^\s*[\[\]{},]+\s*,?\s*$/u.test(String(line))
-  || /^\s*["'][A-Za-z_][A-Za-z0-9_.-]*["']\s*,?\s*$/u.test(String(line));
+const workBuddySchemaLine = (line = "") => /^\s*["'](?:type|required|properties|additionalProperties|items|enum|const|description|operation|documentId|mode|taskType|routingMode|routingReason|documentIds|mediaChannels|channel|prompt|operationId|profileId|quality|resolution|duration|aspectRatio|jobId|question|options|multiple|placementId|id|skillId|selection|name|upperParticipation|upperReason)["']\s*:/u.test(String(line))
+  || /^\s*[\[\]{},]+\s*,?\s*$/u.test(String(line));
+
+const workBuddySchemaContractKey = /["'](?:operation|documentId|mode|taskType|routingMode|routingReason|documentIds|mediaChannels|channel|prompt|operationId|profileId|jobId|question|options|placementId|skillId|selection|upperParticipation)["']\s*:/u;
+
+// WorkBuddy sometimes prints the interaction-delivery JSON schema without the
+// leading error object. Treat it as internal only when the nearby lines contain
+// schema structure and Shensi contract keys, keeping ordinary user JSON intact.
+const looksLikeWorkBuddySchema = (lines, startIndex) => {
+  const window = lines.slice(startIndex, startIndex + 64).join("\n");
+  const structuralCount = [
+    /["']required["']\s*:/u,
+    /["']properties["']\s*:/u,
+    /["']additionalProperties["']\s*:/u,
+  ].reduce((count, pattern) => count + (pattern.test(window) ? 1 : 0), 0);
+  return workBuddySchemaStart(lines[startIndex])
+    && structuralCount >= 2
+    && workBuddySchemaContractKey.test(window);
+};
+
+const isWorkBuddySchemaObject = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = new Set(Object.keys(value));
+  if (value.type !== "object" || !keys.has("properties")) return false;
+  const properties = value.properties && typeof value.properties === "object" ? new Set(Object.keys(value.properties)) : new Set();
+  return (keys.has("required") || keys.has("additionalProperties"))
+    && [...properties].some((key) => /^(?:mode|taskType|routingMode|routingReason|documentIds|mediaChannels|channel|prompt|operationId|profileId|jobId|question|options|placementId|skillId|selection|upperParticipation)$/u.test(key));
+};
+
+const isWorkBuddyInternalJsonValue = (value) => isInternalRouteObject(value)
+  || isInternalToolResultObject(value)
+  || isWorkBuddySchemaObject(value)
+  || isInternalMediaProfileCatalog(value)
+  || isInternalSkillCatalog(value)
+  || isInternalMediaJobReceipt(value)
+  || isInternalBatchLandingReceipt(value);
+
+const containsWorkBuddyInternalJsonValue = (source = "") => {
+  const text = String(source || "");
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== "{" && text[index] !== "[") continue;
+    const end = jsonValueEnd(text, index);
+    if (end < 0) continue;
+    try {
+      if (isWorkBuddyInternalJsonValue(JSON.parse(text.slice(index, end)))) return true;
+    } catch { /* Continue scanning later balanced values. */ }
+    index = end - 1;
+  }
+  return false;
+};
+
+const stripWorkBuddySchemaLineBlocks = (value = "") => {
+  const lines = String(value || "").split(/\r?\n/gu);
+  const visible = [];
+  let dropping = false;
+  let sawAdditionalProperties = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!dropping && looksLikeWorkBuddySchema(lines, index)) {
+      dropping = true;
+      sawAdditionalProperties = false;
+      continue;
+    }
+    if (!dropping) {
+      visible.push(line);
+      continue;
+    }
+    sawAdditionalProperties ||= /["']additionalProperties["']\s*:/u.test(line);
+    if (/^\s*\}\s*,?\s*$/u.test(trimmed)) {
+      const nextIndex = lines.findIndex((candidate, candidateIndex) => candidateIndex > index && candidate.trim());
+      const nextLine = nextIndex >= 0 ? lines[nextIndex] : "";
+      if (sawAdditionalProperties || !nextLine || !workBuddySchemaLine(nextLine)) {
+        dropping = false;
+        sawAdditionalProperties = false;
+      }
+    }
+  }
+  return visible.join("\n");
+};
+
+const workBuddyInternalPreface = (line = "") => {
+  const value = String(line || "").trim();
+  if (!value) return false;
+  return /^(?:I'll|I’ll)\s+(?:read|check|inspect|review|load|route|look at)\b.{0,180}$/iu.test(value)
+    || /^(?:first,?\s+)?(?:I'll|I’ll|I will|let me)\b.{0,180}\b(?:read|route|inspect|check|load|review|skill|panel|document|context)\b/iu.test(value)
+    || /^(?:我先|接下来我会|我会先)(?:读取|检查|查看|路由|加载|读文档|读面板)/u.test(value);
+};
+
+// Used before the service's 160ms stream flush. WorkBuddy's internal preface
+// and bare schema must lock the stream immediately, even without TOOL_FAILED.
+export const hasWorkBuddyInternalConversationMarker = (value = "") => {
+  const source = asText(value);
+  return hasInternalConversationMarker(source)
+    || source.split(/\r?\n/gu).some(workBuddyInternalPreface)
+    || /["'](?:type|required|properties|additionalProperties)["']\s*:/u.test(source)
+    || /["']type["']\s*:\s*["']shensibatchlanding_receipt["']/iu.test(source)
+    || likelyInternalRoutePrefix(source)
+    || containsWorkBuddyInternalJsonValue(source);
+};
 
 export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true } = {}) => {
   let source = sanitizeConversationOutput(value, { final });
@@ -260,8 +395,10 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
   let droppingSchema = false;
   let schemaSawAdditionalProperties = false;
   let removedToolResult = false;
-  for (const line of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
     const trimmed = line.trim();
+    if (workBuddyInternalPreface(line)) continue;
     if (isWorkBuddyToolErrorObject(trimmed)) {
       sawToolError = true;
       continue;
@@ -269,32 +406,33 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
     if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
       try {
         const parsed = JSON.parse(trimmed);
-        if (isInternalToolResultObject(parsed)) {
-          removedToolResult = true;
+        const isToolResult = isInternalToolResultObject(parsed);
+        if (isToolResult || isWorkBuddyInternalJsonValue(parsed)) {
+          removedToolResult ||= isToolResult;
           continue;
         }
       } catch { /* The embedded-object pass below handles non-line JSON. */ }
     }
-    if (sawToolError && !droppingSchema && workBuddySchemaStart(line)) {
+    if (!droppingSchema && looksLikeWorkBuddySchema(lines, lineIndex)) {
       droppingSchema = true;
       schemaSawAdditionalProperties = false;
       continue;
     }
     if (droppingSchema) {
       schemaSawAdditionalProperties ||= /["']additionalProperties["']\s*:/u.test(line);
-      if (schemaSawAdditionalProperties && /^\s*\}\s*,?\s*$/u.test(line)) {
-        droppingSchema = false;
-        schemaSawAdditionalProperties = false;
-      }
-      // The leaked schema is a line-oriented fragment rather than a valid
-      // JSON object in some WorkBuddy versions.  Before the final closing
-      // brace, consume the fragment even when individual enum/string lines do
-      // not look like property declarations.
-      else if (workBuddySchemaLine(line) || !trimmed) continue;
-      else {
-        droppingSchema = false;
-        schemaSawAdditionalProperties = false;
-        visibleLines.push(line);
+      if (/^\s*\}\s*,?\s*$/u.test(trimmed)) {
+        const nextIndex = lines.findIndex((candidate, index) => index > lineIndex && candidate.trim());
+        const nextLine = nextIndex >= 0 ? lines[nextIndex] : "";
+        // `},` can close the nested properties object. Keep dropping until the
+        // final schema brace; without additionalProperties a closing brace
+        // followed by a non-schema line is the same boundary.
+        const closesSchema = schemaSawAdditionalProperties
+          || !nextLine
+          || !workBuddySchemaLine(nextLine);
+        if (closesSchema) {
+          droppingSchema = false;
+          schemaSawAdditionalProperties = false;
+        }
       }
       continue;
     }
@@ -311,8 +449,8 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
   if (standaloneFences.length === 1) source = source.replace(/^\s*```(?:json)?\s*$/gimu, "");
   const removals = [];
   for (let index = 0; index < source.length; index += 1) {
-    if (source[index] !== "{") continue;
-    const end = jsonObjectEnd(source, index);
+    if (source[index] !== "{" && source[index] !== "[") continue;
+    const end = jsonValueEnd(source, index);
     if (end < 0) {
       const tail = source.slice(index);
       if (likelyInternalRoutePrefix(tail)) return source.slice(0, index).trim();
@@ -321,7 +459,7 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
     const candidate = source.slice(index, end);
     let parsed;
     try { parsed = JSON.parse(candidate); } catch { continue; }
-    if (!isInternalRouteObject(parsed) && !isInternalToolResultObject(parsed)) continue;
+    if (!isWorkBuddyInternalJsonValue(parsed)) continue;
     removedToolResult ||= isInternalToolResultObject(parsed);
     removals.push([index, end]);
     index = end - 1;
@@ -330,6 +468,10 @@ export const sanitizeWorkBuddyConversationOutput = (value = "", { final = true }
     const [start, end] = removals[index];
     source = `${source.slice(0, start)}${source.slice(end)}`;
   }
+  // Tool catalogs can be immediately followed by a schema fragment without
+  // an outer opening brace. Removing the balanced JSON values exposes that
+  // fragment, so scan schema lines once more before showing the answer.
+  source = stripWorkBuddySchemaLineBlocks(source);
   source = source
     .replace(/```(?:json)?\s*```/giu, "")
     .replace(/[ \t]+\n/gu, "\n")

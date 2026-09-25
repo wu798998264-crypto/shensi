@@ -9,6 +9,8 @@ assert.equal(dreaminaFailureDiagnosis({ code: "DREAMINA_PROFILE_REQUIRED" }).cat
 assert.equal(dreaminaFailureRequiresAccountVerification({ code: "DREAMINA_PROFILE_ID_INVALID" }), false);
 assert.equal(dreaminaFailureRequiresAccountVerification({ code: "DREAMINA_PROFILE_ID_MISMATCH" }), false);
 assert.equal(dreaminaFailureDiagnosis({ code: "DREAMINA_PROFILE_ID_MISMATCH" }).category, "profile_routing_mismatch");
+assert.equal(dreaminaFailureDiagnosis({ code: "PROVIDER_FAILED", message: "api error: CreditPreDeductNotEnough" }).code, "DREAMINA_INSUFFICIENT_CREDIT");
+assert.equal(dreaminaFailureDiagnosis({ code: "PROVIDER_FAILED", message: "api error: CreditPreDeductNotEnough" }).category, "insufficient_credit");
 
 const root = await mkdtemp(join(tmpdir(), "shensi-dreamina-explicit-profile-"));
 process.env.SHENSI_DATA_ROOT = root;

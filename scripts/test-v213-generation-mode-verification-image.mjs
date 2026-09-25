@@ -49,7 +49,8 @@ assert.match(app, /"seedance2\.5",\s*"seedance2\.0_vip",\s*"seedance2\.0fast_vip
 assert.match(styles, /\.whiteboard-card-generation-type[\s\S]+top: 50%;[\s\S]+left: 50%;[\s\S]+background: transparent/);
 assert.doesNotMatch(app, /<legend>生成音频\s*<small[^>]*>\?<\/small>/);
 
-const transformMenu = app.slice(app.indexOf('id="whiteboardTransformMenu"'), app.indexOf('data-whiteboard-action="toggle-color"'));
+const transformMenuStart = app.indexOf('id="whiteboardTransformMenu"');
+const transformMenu = app.slice(transformMenuStart, transformMenuStart + 1200);
 assert.match(transformMenu, /data-whiteboard-action="upload-skill"[\s\S]*<span>转化为 Skill<\/span>/);
 assert.doesNotMatch(transformMenu, /上传为 Skill/);
 

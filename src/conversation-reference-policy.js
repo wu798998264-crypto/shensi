@@ -106,6 +106,40 @@ export const consumeConversationComposerReferences = (conversation) => {
   return true;
 };
 
+// File/media attachments are turn-scoped inputs.  Keep document and Skill
+// references durable when a message is sent, but detach uploaded attachments
+// from the conversation-level context so the next instruction cannot inherit
+// the previous prompt's file by accident.  The current user message already
+// owns a snapshot of these attachments before this function is called.
+export const consumeConversationComposerAttachments = (conversation) => {
+  if (!conversation) return false;
+  const durable = conversation.referenceContext?.schemaVersion === 1
+    ? normalizeConversationReferenceScope(conversation.referenceContext)
+    : normalizeConversationReferenceScope(conversation);
+  const hadAttachments = durable.attachments.length > 0
+    || (conversation.composerReferenceState?.schemaVersion === 1
+      && normalizeConversationReferenceScope(conversation.composerReferenceState.scope).attachments.length > 0);
+  if (!hadAttachments) return false;
+  const nextScope = { ...durable, attachments: [] };
+  conversation.composerReferenceState = {
+    schemaVersion: 1,
+    pending: conversationComposerReferenceScope(conversation).references.length > 0
+      || conversationComposerReferenceScope(conversation).workspaceReferences.length > 0
+      || conversationComposerReferenceScope(conversation).skillReferences.length > 0,
+    scope: {
+      ...normalizeConversationReferenceScope(conversation.composerReferenceState?.scope || {}),
+      attachments: [],
+    },
+    updatedAt: Date.now(),
+  };
+  synchronizeConversationReferenceContext(conversation, {
+    scope: nextScope,
+    sourceMessageId: conversation.referenceContext?.sourceMessageId || "",
+    cleared: !conversationReferenceScopeHasContent(nextScope),
+  });
+  return true;
+};
+
 export const messageConversationReferenceScope = (message = {}) => normalizeConversationReferenceScope(
   message.referenceContextSnapshot ?? message,
 );

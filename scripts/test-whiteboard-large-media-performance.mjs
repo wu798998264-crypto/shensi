@@ -53,7 +53,9 @@ assert.match(app, /const whiteboardForegroundRelationState = \(canvas\)[\s\S]{0,
   "选中卡片必须提升它的直接上下游连线");
 assert.match(app, /data-foreground-canvas-edge=[\s\S]{0,2400}whiteboard-edge-foreground-layer/u,
   "活动关系必须使用独立的前景连线层");
-assert.match(app, /foregroundRelation\.nodeIds\.has\(node\.id\)[\s\S]{0,1800}relation-active/u,
+assert.match(app, /const relationActive = foregroundRelation\.nodeIds\.has\(node\.id\)/u,
+  "关系集合必须决定卡片的前景状态");
+assert.match(app, /\$\{relationActive \? "relation-active" : ""\}/u,
   "活动连线两端卡片必须进入关系前景层");
 assert.match(app, /foregroundGroup:[\s\S]{0,4000}\[group, foregroundGroup\]\.filter\(Boolean\)/u,
   "拖拽卡片时基础连线和前景连线必须同步更新");

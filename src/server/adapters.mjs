@@ -1485,7 +1485,7 @@ const parseMediaCliOutput = async ({ stdout, outputFile, cwd, kind }) => {
   throw new Error("媒体 CLI 未输出可读取的文件；请在参数模板中使用 {outputFile}，或让 CLI 输出文件绝对路径");
 };
 
-const runMediaCli = async ({ settings, prompt, kind, aspectRatio, quality = "standard", imageCount = 1, duration = 4, resolution = "720p", generationMode = "smart_params", multiframeTransitions = [], referenceImages = [], idempotencyKey = "", recoveryOnly = false, forceNewSubmission = false, recoveryStartedAt = "", recoveryEndedAt = "", signal }) => {
+const runMediaCli = async ({ settings, prompt, kind, aspectRatio, quality = "standard", imageCount = 1, duration = 4, resolution = "720p", background = "auto", generationMode = "smart_params", multiframeTransitions = [], referenceImages = [], idempotencyKey = "", recoveryOnly = false, forceNewSubmission = false, recoveryStartedAt = "", recoveryEndedAt = "", signal }) => {
   throwIfAborted(signal);
   const builtInOpenAiImage = kind === "image" && settings.cliPath === OPENAI_IMAGE_CLI_ALIAS;
   const builtInDreaminaImage = kind === "image" && settings.cliPath === DREAMINA_IMAGE_CLI_ALIAS;
@@ -1517,6 +1517,7 @@ const runMediaCli = async ({ settings, prompt, kind, aspectRatio, quality = "sta
       .replaceAll("{imageCount}", String(Math.max(1, Math.min(4, Number(imageCount) || 1))))
       .replaceAll("{duration}", String(duration ?? ""))
       .replaceAll("{resolution}", resolution ?? "")
+      .replaceAll("{background}", background ?? "")
       .replaceAll("{mode}", generationMode ?? "")
       .replaceAll("{idempotencyKey}", idempotencyKey)
       .replaceAll("{outputFile}", outputFile))
@@ -1549,7 +1550,7 @@ const runMediaCli = async ({ settings, prompt, kind, aspectRatio, quality = "sta
   }
 };
 
-const generateImageWithPreparedReferences = async ({ settings, prompt, signal, aspectRatio = "1:1", quality = "standard", spec = "standard", imageCount = 1, referenceImages = [], referencePromptTokens = [], idempotencyKey = "", recoveryOnly = false, forceNewSubmission = false, recoveryStartedAt = "", recoveryEndedAt = "" }) => {
+const generateImageWithPreparedReferences = async ({ settings, prompt, signal, aspectRatio = "1:1", quality = "standard", resolution = "", background = "auto", spec = "standard", imageCount = 1, referenceImages = [], referencePromptTokens = [], idempotencyKey = "", recoveryOnly = false, forceNewSubmission = false, recoveryStartedAt = "", recoveryEndedAt = "" }) => {
   const requestedImageCount = Math.max(1, Math.min(4, Number(imageCount) || 1));
   const mode = imageGenerationMode(settings);
   if (!mode) throw mediaPreflightError("当前所选模型不具备已接入的生图能力", "IMAGE_CAPABILITY_NOT_AVAILABLE");
@@ -1558,7 +1559,7 @@ const generateImageWithPreparedReferences = async ({ settings, prompt, signal, a
   if (mode === "media_cli") {
     const template = String(settings.cliArgs || (settings.cliPath === OPENAI_IMAGE_CLI_ALIAS ? OPENAI_IMAGE_CLI_ARGS : settings.cliPath === DREAMINA_IMAGE_CLI_ALIAS ? DREAMINA_IMAGE_CLI_ARGS : ""));
     if (referenceImages.length && !template.includes("{referenceImagesFile}") && !template.includes("{referenceMediaFile}")) throw mediaPreflightError("当前图片 CLI 没有配置 {referenceMediaFile} 或兼容的 {referenceImagesFile}，不能读取白板上游参考图", "IMAGE_REFERENCE_TEMPLATE_MISSING");
-    const generated = await runMediaCli({ settings, prompt: effectivePrompt, kind: "image", aspectRatio, quality, imageCount: requestedImageCount, referenceImages, idempotencyKey, recoveryOnly, forceNewSubmission, recoveryStartedAt, recoveryEndedAt, signal });
+    const generated = await runMediaCli({ settings, prompt: effectivePrompt, kind: "image", aspectRatio, quality, resolution, background, imageCount: requestedImageCount, referenceImages, idempotencyKey, recoveryOnly, forceNewSubmission, recoveryStartedAt, recoveryEndedAt, signal });
     const dataUrls = (generated.items?.length ? generated.items : [generated])
       .map((item) => `data:${item.mimeType};base64,${item.bytes.toString("base64")}`);
     return { dataUrl: dataUrls[0], dataUrls, requestedImageCount, returnedImageCount: dataUrls.length, revisedPrompt: "", providerResponseId: generated.providerResponseId ?? null };
@@ -1573,7 +1574,7 @@ const generateImageWithPreparedReferences = async ({ settings, prompt, signal, a
       ? "1536x1024"
       : "1024x1024";
   const requestedQuality = quality === "high" || spec === "large" ? "high" : "medium";
-  const ratioPrompt = `${String(effectivePrompt)}\n\n画幅要求：${aspectRatio}；规格：${spec === "large" ? "大图" : "标准图"}；精度：${quality === "high" ? "高清" : "标准"}。${requestedImageCount > 1 ? `请生成 ${requestedImageCount} 张彼此独立的候选图，每张都完整满足要求。` : ""}`;
+  const ratioPrompt = `${String(effectivePrompt)}\n\n画幅要求：${aspectRatio}；规格：${spec === "large" ? "大图" : "标准图"}；精度：${quality}；输出分辨率：${resolution || "自动"}；背景：${background || "自动"}。${requestedImageCount > 1 ? `请生成 ${requestedImageCount} 张彼此独立的候选图，每张都完整满足要求。` : ""}`;
   if (mode === "images_api" && referenceImages.length) {
     const headers = providerHeaders(settings, { idempotencyKey });
     delete headers["Content-Type"];
@@ -1654,6 +1655,10 @@ const generateImageWithPreparedReferences = async ({ settings, prompt, signal, a
     requestBody.quality = /dall-e/i.test(settings.model)
       ? requestedQuality === "high" ? "hd" : "standard"
       : requestedQuality;
+    if (settings.model === "gpt-image-2.5") {
+      requestBody.background = background || "auto";
+      requestBody.output_resolution = resolution || "1k";
+    }
   }
   if (settings.provider === "Gemini") requestBody.response_format = "b64_json";
   const response = await fetchProvider(`${baseUrl}/images/generations`, {

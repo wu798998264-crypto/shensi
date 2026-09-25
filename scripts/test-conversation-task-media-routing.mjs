@@ -12,6 +12,31 @@ import {
 import { createConversationMediaDispatchContract } from "../src/conversation-media-dispatch.js";
 import { conversationImagePromptKind } from "../src/conversation-media-prompt-intent.js";
 import { conversationImageRepeatRequest, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "../src/conversation-image-settings.js";
+import { agentTaskRouteFromDelivery, agentTaskWritePresentation } from "../src/conversation-agent-task-route.js";
+
+const unresolvedWrite = agentTaskWritePresentation({
+  pending: true,
+  execution: { taskRoute: { intentEnvelope: { taskType: "modification", writeMode: "conversation_only" } } },
+});
+assert.equal(unresolvedWrite.resolved, false, "运行早期只有不可靠的意图猜测时不得显示“不写入”");
+const writingNow = agentTaskWritePresentation({
+  pending: true,
+  execution: { taskRoute: { deliveryMode: "documents", intentEnvelope: { taskType: "modification", writeMode: "conversation_only" } } },
+});
+assert.equal(writingNow.resolved, true);
+assert.equal(writingNow.mode, "formal_auto", "documents.write 一旦开始必须覆盖早期错误的“不写入”展示");
+const written = agentTaskWritePresentation({
+  pending: false,
+  execution: {
+    taskRoute: { intentEnvelope: { taskType: "modification", writeMode: "conversation_only" } },
+    agentResultReferences: [{ type: "document_saved", documentId: "doc-1", trustedDocumentSave: true }],
+  },
+});
+assert.equal(written.mode, "formal_auto");
+assert.deepEqual(written.targetDocumentIds, ["doc-1"], "可信写入回执必须成为任务卡最终写入状态和目标证据");
+const deliveredConversation = agentTaskRouteFromDelivery({ mode: "conversation", taskType: "general_qa", documentIds: [] }, {});
+assert.equal(deliveredConversation.deliveryMode, "conversation");
+assert.equal(agentTaskWritePresentation({ pending: true, execution: { taskRoute: deliveredConversation } }).mode, "conversation_only", "明确对话交付后才显示不写入");
 
 const running = [{ role: "assistant", pending: true, execution: { status: "running" } }];
 const acceptedInstructions = [
