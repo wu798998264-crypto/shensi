@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.0-guidance-continuation";
+} from "./generation-profiles.js?v=8.0.1-card-toolbar";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -10554,6 +10554,7 @@ const openAttachmentPreview = (preview) => {
     setAttachmentPreviewScale(1);
     if (!elements.attachmentPreviewDialog.open) elements.attachmentPreviewDialog.showModal();
     (editable ? elements.toggleAttachmentTextEdit : elements.closeAttachmentPreview).focus();
+    if (preview?.dataset?.attachmentFullscreen === "true") void requestAttachmentFullscreen(null);
     return;
   }
   attachmentTextPreviewState = null;
@@ -49490,18 +49491,21 @@ const whiteboardNodeById = (nodeId, documentState = activeWhiteboardDocument()) 
 const whiteboardMediaEditBusyNodeIds = new Set();
 
 const whiteboardCardToolbarButtons = (node) => {
-  if (!node?.file || !["image", "video", "audio"].includes(node.kind)) return [];
+  const mediaCard = Boolean(node?.file && ["image", "video", "audio"].includes(node.kind));
+  const textCard = Boolean(node && ["text", "generated"].includes(node.kind) && String(node.text ?? "").trim());
+  if (!mediaCard && !textCard) return [];
   const editingDisabled = state.readOnly || Boolean(whiteboardCandidateFor(node.id)) || whiteboardMediaEditBusyNodeIds.has(node.id);
   const buttons = [];
+  if (textCard) buttons.push({ tool: "edit-text", label: "编辑文本", glyph: "\uE70F", disabled: editingDisabled });
   if (node.kind === "image") buttons.push({ tool: "edit-image", label: "编辑图片", glyph: "\uE70F", disabled: editingDisabled });
   if (node.kind === "video") {
-    buttons.push({ tool: "extract-frame", label: "提取关键帧", glyph: "\uE91B", disabled: editingDisabled });
+    buttons.push({ tool: "extract-frame", label: "截取关键帧", glyph: "\uE722", disabled: editingDisabled, compact: true });
     buttons.push({ tool: "separate-av", label: "分离音视频", glyph: "\uE8D6", disabled: editingDisabled });
     if (node.generation?.compositeLongVideo) buttons.push({ tool: "composite-process", label: "查看超长视频生成过程", glyph: "\uE9D9" });
   }
   if (node.kind === "audio") buttons.push({ tool: "trim-audio", label: "截取音频片段", glyph: "\uE8D6", disabled: editingDisabled });
-  if (["image", "video"].includes(node.kind)) buttons.push({ tool: "preview", label: `预览${node.kind === "video" ? "视频" : "图片"}`, glyph: "\uE890", compact: true });
-  buttons.push({ tool: "save-as", label: "另存为", glyph: "\uE74E", compact: true });
+  if (textCard || ["image", "video"].includes(node.kind)) buttons.push({ tool: "preview", label: `放大预览${node.kind === "video" ? "视频" : node.kind === "image" ? "图片" : "文本"}`, glyph: "\uE740", compact: true });
+  buttons.push({ tool: "save-as", label: "保存下载", glyph: "\uE896", compact: true });
   return buttons;
 };
 
@@ -50952,7 +50956,7 @@ const scheduleWhiteboardCardOpen = (nodeId) => {
   }, 120);
 };
 
-const openWhiteboardTextCardPreview = (nodeId) => {
+const openWhiteboardTextCardPreview = (nodeId, { fullscreen = false } = {}) => {
   const documentState = activeWhiteboardDocument();
   const node = whiteboardNodeById(nodeId, documentState);
   if (!documentState || !["text", "generated", "skill", "reference"].includes(node?.kind)) return false;
@@ -50962,6 +50966,7 @@ const openWhiteboardTextCardPreview = (nodeId) => {
   preview.dataset.whiteboardPreviewWorkspaceId = workspaceIdentity();
   preview.dataset.whiteboardPreviewNodeId = nodeId;
   preview.dataset.whiteboardPreviewText = String(node.text ?? "");
+  if (fullscreen) preview.dataset.attachmentFullscreen = "true";
   preview.title = node.reference?.title || node.name || `${whiteboardNodeKindLabel(node) || "文字卡片"}预览`;
   const body = document.createElement("pre");
   body.textContent = String(node.text || "空白文本");
@@ -56993,6 +56998,11 @@ elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
   const node = whiteboardNodeById(nodeId);
   if (!node) return renderWhiteboardCardToolbar();
   const tool = action.dataset.whiteboardCardTool;
+  if (tool === "edit-text") {
+    const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(nodeId)}"]`);
+    if (card) startWhiteboardEditing(card);
+    return;
+  }
   if (tool === "edit-image") return void openWhiteboardImageEditor(nodeId);
   if (tool === "separate-av") return void separateWhiteboardVideoAudio(nodeId);
   if (tool === "trim-audio") return void openWhiteboardAudioTrimDialog(nodeId);
@@ -57000,8 +57010,15 @@ elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
   if (tool === "save-as") return void exportWhiteboardCards([nodeId]);
   const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(nodeId)}"]`);
   if (tool === "preview") {
+    if (["text", "generated"].includes(node.kind)) {
+      openWhiteboardTextCardPreview(nodeId, { fullscreen: true });
+      return;
+    }
     const preview = card?.querySelector(`[data-attachment-preview="${CSS.escape(node.kind)}"]`);
-    if (preview) openAttachmentPreview(preview);
+    if (preview) {
+      preview.dataset.attachmentFullscreen = "true";
+      openAttachmentPreview(preview);
+    }
     else showToast("当前卡片没有可预览的媒体");
     return;
   }
@@ -57105,6 +57122,7 @@ const openVideoFrameMenu = (event, trigger) => {
     documentId: state.activeDocument,
     conversationId: activeConversation()?.id || "",
     sourceVideo,
+    currentTimeMs: Math.max(0, Math.round((Number(sourceVideo?.currentTime) || 0) * 1000)),
     busy: false,
   };
   const modalHost = trigger?.closest?.("dialog[open]");
@@ -57123,7 +57141,7 @@ const extractVideoFrameToTarget = async (position) => {
   if (!context || context.busy) return false;
   context.busy = true;
   closeVideoFrameMenu();
-  const currentTimeMs = Math.max(0, Math.round((Number(context.sourceVideo?.currentTime) || 0) * 1000));
+  const currentTimeMs = Math.max(0, Math.round(Number(context.currentTimeMs) || 0));
   showToast("正在本地提取关键帧…");
   try {
     const response = await fetch("/api/workspace/video-frame", {
@@ -66470,6 +66488,7 @@ elements.chatFeed.addEventListener("pointerleave", (event) => {
 const pausePlayingVideosWhenClickingOutside = (event) => {
   const pausePlayingVideo = globalUiPreferences.pauseVideoWhenClickOutside !== false;
   const target = event.target;
+  if (target?.closest?.(".whiteboard-card-toolbar")) return;
   const videos = [
     ...elements.whiteboardSurface.querySelectorAll(".whiteboard-card-video"),
     ...elements.chatFeed.querySelectorAll(".generated-video-preview video"),

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { separateWorkspaceVideoAudio, trimWorkspaceAudio } from "../src/server/workspace.mjs";
+import { extractWorkspaceVideoFrame, separateWorkspaceVideoAudio, trimWorkspaceAudio } from "../src/server/workspace.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const runtimeRoot = join(root, "runtime");
@@ -62,10 +62,34 @@ try {
   const durationMs = Number(trimmedProbe.format.duration) * 1_000;
   assert.ok(durationMs >= 850 && durationMs <= 1_200, `unexpected trim duration: ${durationMs}`);
 
+  const firstFrame = await extractWorkspaceVideoFrame({
+    appRoot: root,
+    requestedPath: workspacePath,
+    relativePath: "素材/source.mp4",
+    position: "first",
+    currentTimeMs: 0,
+  });
+  const currentFrame = await extractWorkspaceVideoFrame({
+    appRoot: root,
+    requestedPath: workspacePath,
+    relativePath: "素材/source.mp4",
+    position: "current",
+    currentTimeMs: 1_500,
+  });
+  assert.equal(firstFrame.frameTimeMs, 0);
+  assert.ok(currentFrame.frameTimeMs >= 1_000, `current frame fell back to first frame: ${currentFrame.frameTimeMs}`);
+
   const appSource = await readFile(join(root, "src", "app.js"), "utf8");
   const styles = await readFile(join(root, "src", "styles.css"), "utf8");
   assert.match(appSource, /id="whiteboardCardToolbar"/);
   assert.match(appSource, /data-whiteboard-card-tool="\$\{escapeHtml\(button\.tool\)\}"/);
+  assert.match(appSource, /tool: "edit-text"/);
+  assert.match(appSource, /const textCard = Boolean\(node && \["text", "generated"\]/);
+  assert.match(appSource, /tool: "extract-frame", label: "截取关键帧", glyph: "\\uE722",[\s\S]{0,100}compact: true/);
+  assert.match(appSource, /currentTimeMs: Math\.max\(0, Math\.round\(\(Number\(sourceVideo\?\.currentTime\)/);
+  assert.match(appSource, /Number\(context\.currentTimeMs\)/);
+  assert.match(appSource, /target\?\.closest\?\.\("\.whiteboard-card-toolbar"\)/);
+  assert.match(appSource, /preview\.dataset\.attachmentFullscreen = "true"/);
   assert.match(appSource, /data-whiteboard-card-tool="separate-av"|tool: "separate-av"/);
   assert.match(appSource, /tool: "trim-audio"/);
   assert.match(appSource, /if \(node\?\.kind === "audio"\) \{\s*openWhiteboardAudioTrimDialog\(node\.id\);\s*return;\s*\}/u);
