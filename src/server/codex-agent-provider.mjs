@@ -71,7 +71,14 @@ const assertKnownExternalRunnerReady = (capability = {}, { runnerId = "", label 
     throw Object.assign(new Error(capability.message || `${label} 已安装但尚未登录，请先完成登录`), { code: "AGENT_RUNNER_LOGIN_REQUIRED" });
   }
   const structuredCapability = Object.hasOwn(capability, "authState") || Object.hasOwn(capability, "modelState") || Object.hasOwn(capability, "ready");
-  if (structuredCapability && capability.authState !== "authenticated") {
+  // WorkBuddy deliberately defers account/session verification until the
+  // first real generation. Its local model catalogue is authoritative, but a
+  // CLI probe cannot read the desktop account without opening an interactive
+  // session. Do not block the selected profile on that deferred state; the
+  // generation boundary still returns WORKBUDDY_AUTH_REQUIRED when needed.
+  const deferredGenerationAuth = runnerId === "workbuddy"
+    && capability.authState === "generation_check_required";
+  if (structuredCapability && capability.authState !== "authenticated" && !deferredGenerationAuth) {
     throw Object.assign(new Error(capability.message || `${label} 登录状态尚未通过检查`), {
       code: "AGENT_RUNNER_AUTHENTICATION_UNVERIFIED",
       stage: capability.error?.stage || "login_probe",

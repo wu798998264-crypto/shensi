@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.2-depth-node";
+} from "./generation-profiles.js?v=8.0.3-depth-node";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -9451,6 +9451,14 @@ root.innerHTML = `
     </form>
   </dialog>
 
+  <dialog class="text-dialog depth-explorer-install-dialog" id="depthExplorerInstallDialog" aria-labelledby="depthExplorerInstallTitle">
+    <form method="dialog" id="depthExplorerInstallForm">
+      <header class="dialog-header"><div><small>本地能力装配</small><h2 id="depthExplorerInstallTitle">一键装配深度摸索</h2><p id="depthExplorerInstallCopy">将从深度摸索官方 GitHub Release 下载并校验离线运行时，安装包约 223 MB。</p></div><button class="icon-button bare" id="closeDepthExplorerInstall" type="button" title="关闭" aria-label="关闭深度摸索装配">${icon("\uE711", "关闭")}</button></header>
+      <div class="depth-explorer-install-progress" aria-live="polite"><div class="depth-explorer-install-progress-track"><span id="depthExplorerInstallProgressBar"></span></div><div class="depth-explorer-install-progress-meta"><strong id="depthExplorerInstallProgressPercent">0%</strong><span id="depthExplorerInstallProgressMessage">等待开始装配</span></div></div>
+      <footer><button class="secondary-button" id="cancelDepthExplorerInstall" type="button">取消</button><button class="primary-button" id="startDepthExplorerInstall" type="button">一键装配</button></footer>
+    </form>
+  </dialog>
+
   <dialog class="text-dialog dreamina-reverify-dialog" id="dreaminaReverifyDialog">
     <form method="dialog" id="dreaminaReverifyForm">
       <header><h2>即梦账号需要核验</h2><p id="dreaminaReverifyMessage">当前配置不可用，请重新核验账号后再生成。</p></header>
@@ -9897,6 +9905,15 @@ const elements = {
   closeWhiteboardVideoTrim: document.querySelector("#closeWhiteboardVideoTrim"),
   cancelWhiteboardVideoTrim: document.querySelector("#cancelWhiteboardVideoTrim"),
   confirmWhiteboardVideoTrim: document.querySelector("#confirmWhiteboardVideoTrim"),
+  depthExplorerInstallDialog: document.querySelector("#depthExplorerInstallDialog"),
+  depthExplorerInstallForm: document.querySelector("#depthExplorerInstallForm"),
+  depthExplorerInstallCopy: document.querySelector("#depthExplorerInstallCopy"),
+  depthExplorerInstallProgressBar: document.querySelector("#depthExplorerInstallProgressBar"),
+  depthExplorerInstallProgressPercent: document.querySelector("#depthExplorerInstallProgressPercent"),
+  depthExplorerInstallProgressMessage: document.querySelector("#depthExplorerInstallProgressMessage"),
+  closeDepthExplorerInstall: document.querySelector("#closeDepthExplorerInstall"),
+  cancelDepthExplorerInstall: document.querySelector("#cancelDepthExplorerInstall"),
+  startDepthExplorerInstall: document.querySelector("#startDepthExplorerInstall"),
   dreaminaReverifyDialog: document.querySelector("#dreaminaReverifyDialog"),
   dreaminaReverifyMessage: document.querySelector("#dreaminaReverifyMessage"),
   dreaminaReverifyConfirm: document.querySelector("#dreaminaReverifyConfirm"),
@@ -16485,7 +16502,7 @@ let mediaRecoveryFullScanKey = "";
 const mediaRecoveryPromptedJobSignatures = new Map();
 const mediaRecoveryBaselinedScanKeys = new Set();
 
-const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = false, manual = false } = {}) => {
+const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = false, manual = false, allowAttentionPrompt = false } = {}) => {
   if (manual) showMediaRecoveryBanner("正在重新读取本机媒体任务与厂商续接状态…", { checking: true });
   const recoveryScanKey = `${state.workspaceKind}:${normalizedWorkspacePath(state.settings.workspacePath)}`;
   const fullScan = manual || mediaRecoveryFullScanKey !== recoveryScanKey;
@@ -16515,7 +16532,11 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       baselinedScanKeys: mediaRecoveryBaselinedScanKeys,
       promptedJobSignatures: mediaRecoveryPromptedJobSignatures,
     });
-    if (freshBlockingJobs.length && document.visibilityState !== "hidden" && !elements.mediaRecoveryDialog?.open) {
+    // Startup/heartbeat reconciliation restores durable jobs silently. The
+    // modal is reserved for a manual check or a live generation that has just
+    // become blocked; opening the app must never look like an unexplained
+    // Dreamina-lock check.
+    if ((manual || allowAttentionPrompt) && freshBlockingJobs.length && document.visibilityState !== "hidden" && !elements.mediaRecoveryDialog?.open) {
       void openMediaRecoveryDialog();
     }
     let recovered = 0;
@@ -37885,7 +37906,12 @@ const monitorNativeConversation = (runtime, pending) => {
               }
             }
           }
-          pending.content = sanitizeAgentDisplayText(event.payload.text || agentDisplayRawText(pending) || pending.streamText, { final: true }) || "Agent 已完成任务。";
+          // Keep the completion payload as the first source for legacy task
+          // consumers, then immediately sanitize it before rendering. This
+          // preserves the terminal output boundary without exposing runner
+          // metadata or internal protocol text.
+          if (event.payload.text) pending.content = event.payload.text;
+          pending.content = sanitizeAgentDisplayText(pending.content || agentDisplayRawText(pending) || pending.streamText, { final: true }) || "Agent 已完成任务。";
           clearAgentDisplayRawText(pending);
           pending.execution.deliveryWarnings = event.payload.warnings || pending.execution.deliveryWarnings || [];
         } else if (["failed", "cancelled"].includes(event.type)) {
@@ -51107,6 +51133,9 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     if (action === "focus") {
       event.preventDefault();
       focusWhiteboardNodes([nodeId]);
+    } else if (action === "install") {
+      event.preventDefault();
+      openWhiteboardDepthExplorerInstallDialog();
     } else if (action === "generate") {
       event.preventDefault();
       await runWhiteboardDepthExplorerNode(nodeId);
@@ -51424,6 +51453,11 @@ const whiteboardNodeCreateChannelAvailable = (kind) => {
 
 const openWhiteboardNodeCreateMenu = (intent) => {
   setWhiteboardNodeCreateIntent(intent);
+  if (intent.sourceIds?.length && whiteboardDepthExplorerPreflight === null && !whiteboardDepthExplorerProbePromise) {
+    void ensureWhiteboardDepthExplorerPreflight().then(() => {
+      if (whiteboardNodeCreateIntent?.documentId === intent.documentId && whiteboardNodeCreateIntent?.sourceIds?.join(",") === intent.sourceIds.join(",")) openWhiteboardNodeCreateMenu(intent);
+    });
+  }
   const unavailableMessages = {
     text: "请先连接可用的 Chat 模型或 Agent 引擎",
     image: "请先配置可用的图片 API 或 CLI 连接",
@@ -51436,9 +51470,13 @@ const openWhiteboardNodeCreateMenu = (intent) => {
     const available = whiteboardNodeCreateChannelAvailable(kind);
     const sourceNodes = whiteboardNodeCreateIntent.sourceIds.map((nodeId) => whiteboardNodeById(nodeId)).filter(Boolean);
     const validDepthSources = !sourceNodes.length || (sourceNodes.length <= 10 && sourceNodes.every((node) => ["image", "video"].includes(node.kind) && node.file));
-    button.hidden = (kind !== "plain" && !available) || (kind === "depth" && !validDepthSources);
-    button.disabled = !available;
-    if (available) button.removeAttribute("title");
+    const runtimeAvailable = kind === "depth" ? whiteboardDepthExplorerPreflight?.available === true : available;
+    const depthInstallOnly = kind === "depth" && !runtimeAvailable && !sourceNodes.length;
+    const depthDropUnavailable = kind === "depth" && sourceNodes.length > 0 && (!runtimeAvailable || !validDepthSources);
+    button.hidden = (kind !== "plain" && kind !== "depth" && !available) || (kind === "depth" && (depthDropUnavailable || !validDepthSources && sourceNodes.length > 0));
+    button.disabled = Boolean(kind !== "depth" && !available);
+    if (kind === "depth") button.title = depthInstallOnly ? "先创建节点，随后可一键装配深度摸索" : "创建深度摸索节点";
+    else if (available) button.removeAttribute("title");
     else button.title = unavailableMessages[kind] || "当前生成类型不可用";
   });
   positionContextMenu(elements.whiteboardNodeCreateMenu, { x: intent.clientX, y: intent.clientY });
@@ -57254,19 +57292,21 @@ elements.whiteboardVideoTrimForm.addEventListener("submit", async (event) => {
 const whiteboardDepthExplorerRuntime = new Map();
 let whiteboardDepthExplorerPreflight = null;
 let whiteboardDepthExplorerProbePromise = null;
+let whiteboardDepthExplorerInstallPollTimer = 0;
+let whiteboardDepthExplorerInstallJobId = "";
 
 const whiteboardDepthExplorerRuntimeKey = (nodeId, documentId = state.activeDocument) => `${workspaceIdentity()}::${documentId}::${nodeId}`;
 
 const whiteboardDepthExplorerRuntimeState = (nodeId, documentId = state.activeDocument) => {
   const key = whiteboardDepthExplorerRuntimeKey(nodeId, documentId);
-  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "" };
+  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "", completed: 0, total: 0, currentPercent: 0, percent: 0, message: "" };
   whiteboardDepthExplorerRuntime.set(key, current);
   return current;
 };
 
 const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.activeDocument) => {
   const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
-  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
+  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
 };
 
 const whiteboardDepthExplorerInputs = (nodeId, documentState = activeWhiteboardDocument()) => {
@@ -57296,7 +57336,7 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     ? `${inputs.length} / 10${imageCount ? ` · 图片 ${imageCount}` : ""}${videoCount ? ` · 视频 ${videoCount}` : ""}`
     : "0 / 10 · 连接图片或视频";
   const status = runtime.busy
-    ? `正在按顺序处理 ${inputs.length} 个媒体，请勿关闭软件`
+    ? `${runtime.message || `正在按顺序处理 ${inputs.length} 个媒体，请勿关闭软件`}${runtime.total ? ` · 已完成 ${runtime.completed || 0}/${runtime.total}` : ""}`
     : runtime.error
       ? runtime.error
       : tooMany
@@ -57309,15 +57349,19 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
               ? `本地环境可用 · ${whiteboardDepthExplorerPreflight.cpuThreads} 线程 · 严格串行`
               : "本功能使用本地 CPU 或 GPU，配置较低不建议使用";
   const selected = (value, current) => value === current ? " selected" : "";
+  const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) || 0));
+  const progressMarkup = runtime.busy || runtime.completed > 0
+    ? `<div class="whiteboard-depth-progress" aria-label="深度摸索进度"><div class="whiteboard-depth-progress-track"><span style="width:${progressValue}%"></span></div><small>${runtime.completed || 0}/${runtime.total || inputs.length} · 当前任务 ${Math.round(Number(runtime.currentPercent) || 0)}%</small></div>`
+    : "";
   return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-node="${escapeHtml(node.id)}">
     <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
     <div class="whiteboard-depth-identity"><span>${icon("\uE945", "深度摸索")}</span><span><strong>深度摸索</strong><small>${escapeHtml(sourceSummary)}</small></span></div>
     <label class="whiteboard-depth-select"><span>质量档</span><select data-whiteboard-depth-field="quality"${runtime.busy ? " disabled" : ""}><option value="fast"${selected("fast", settings.quality)}>快速</option><option value="balanced"${selected("balanced", settings.quality)}>均衡</option><option value="quality"${selected("quality", settings.quality)}>精细</option></select></label>
     <label class="whiteboard-depth-select"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
-    <label class="whiteboard-depth-node-check"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
-    <label class="whiteboard-depth-node-check"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-    <button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}>${runtime.busy ? "处理中" : "生成深度结果"}</button>
-    <small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
+     <label class="whiteboard-depth-node-check stack"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
+     <label class="whiteboard-depth-node-check stack"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}>${runtime.busy ? "处理中" : "生成深度结果"}</button>`}
+     ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
   </div>`;
 };
 
@@ -57346,6 +57390,87 @@ const ensureWhiteboardDepthExplorerPreflight = async () => {
   });
   return whiteboardDepthExplorerProbePromise;
 };
+
+const renderDepthExplorerInstallProgress = ({ percent = 0, message = "等待开始装配", stage = "queued" } = {}) => {
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  if (elements.depthExplorerInstallProgressBar) elements.depthExplorerInstallProgressBar.style.width = `${value}%`;
+  if (elements.depthExplorerInstallProgressPercent) elements.depthExplorerInstallProgressPercent.textContent = `${Math.round(value)}%`;
+  if (elements.depthExplorerInstallProgressMessage) elements.depthExplorerInstallProgressMessage.textContent = message;
+  const running = !["complete", "failed", "missing"].includes(stage);
+  if (elements.startDepthExplorerInstall) {
+    elements.startDepthExplorerInstall.disabled = running;
+    elements.startDepthExplorerInstall.textContent = stage === "complete" ? "已完成" : running ? "装配中" : "一键装配";
+  }
+  if (elements.cancelDepthExplorerInstall) elements.cancelDepthExplorerInstall.disabled = stage === "complete";
+};
+
+const refreshWhiteboardDepthExplorerPreflight = async () => {
+  whiteboardDepthExplorerPreflight = null;
+  whiteboardDepthExplorerProbePromise = null;
+  await ensureWhiteboardDepthExplorerPreflight();
+  const documentState = activeWhiteboardDocument();
+  if (documentState) renderWhiteboard(documentState);
+  return whiteboardDepthExplorerPreflight;
+};
+
+const pollDepthExplorerInstall = async () => {
+  if (!whiteboardDepthExplorerInstallJobId) return;
+  const response = await fetch(`/api/workspace/depth-explorer/install/status?jobId=${encodeURIComponent(whiteboardDepthExplorerInstallJobId)}`, { cache: "no-store" }).catch(() => null);
+  const payload = response ? await response.json().catch(() => ({})) : {};
+  renderDepthExplorerInstallProgress(payload);
+  if (payload.stage === "complete") {
+    whiteboardDepthExplorerInstallPollTimer = 0;
+    whiteboardDepthExplorerInstallJobId = "";
+    await refreshWhiteboardDepthExplorerPreflight();
+    showToast("深度摸索已装配并可用");
+    return;
+  }
+  if (payload.stage === "failed" || payload.stage === "missing") {
+    whiteboardDepthExplorerInstallPollTimer = 0;
+    whiteboardDepthExplorerInstallJobId = "";
+    if (elements.depthExplorerInstallCopy) elements.depthExplorerInstallCopy.textContent = payload.message || "深度摸索装配失败，请稍后重试";
+    showToast(payload.message || "深度摸索装配失败");
+    return;
+  }
+  whiteboardDepthExplorerInstallPollTimer = window.setTimeout(() => { void pollDepthExplorerInstall(); }, 800);
+};
+
+const openWhiteboardDepthExplorerInstallDialog = () => {
+  if (!elements.depthExplorerInstallDialog) return;
+  if (!elements.depthExplorerInstallDialog.open) elements.depthExplorerInstallDialog.showModal();
+  renderDepthExplorerInstallProgress({ percent: 0, message: "等待开始装配", stage: "queued" });
+};
+
+const startWhiteboardDepthExplorerInstall = async () => {
+  if (whiteboardDepthExplorerInstallJobId) return;
+  renderDepthExplorerInstallProgress({ percent: 0, message: "正在准备装配", stage: "starting" });
+  const response = await fetch("/api/workspace/depth-explorer/install", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+  const payload = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok || payload.ok === false) {
+    renderDepthExplorerInstallProgress({ percent: 0, message: payload.message || "深度摸索装配启动失败", stage: "failed" });
+    return;
+  }
+  if (payload.alreadyInstalled || payload.stage === "complete") {
+    renderDepthExplorerInstallProgress({ percent: 100, message: payload.message || "深度摸索已安装", stage: "complete" });
+    await refreshWhiteboardDepthExplorerPreflight();
+    showToast("深度摸索已装配并可用");
+    return;
+  }
+  whiteboardDepthExplorerInstallJobId = String(payload.jobId || "");
+  if (!whiteboardDepthExplorerInstallJobId) {
+    renderDepthExplorerInstallProgress({ percent: 0, message: "装配任务未返回编号", stage: "failed" });
+    return;
+  }
+  await pollDepthExplorerInstall();
+};
+
+elements.startDepthExplorerInstall?.addEventListener("click", () => { void startWhiteboardDepthExplorerInstall(); });
+elements.closeDepthExplorerInstall?.addEventListener("click", () => elements.depthExplorerInstallDialog?.close());
+elements.cancelDepthExplorerInstall?.addEventListener("click", () => elements.depthExplorerInstallDialog?.close());
+elements.depthExplorerInstallDialog?.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  elements.depthExplorerInstallDialog.close();
+});
 
 const primeWhiteboardDepthExplorerNode = async (nodeId) => {
   const documentId = state.activeDocument;
@@ -57402,10 +57527,31 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     settings: whiteboardDepthExplorerSettings(node),
   };
   runtime.busy = true;
+  runtime.completed = 0;
+  runtime.total = inputs.length;
+  runtime.currentPercent = 0;
+  runtime.percent = 0;
+  runtime.message = "正在准备深度摸索";
   whiteboardMediaEditBusyNodeIds.add(nodeId);
   rerenderWhiteboardDepthExplorerNode(nodeId);
   try {
-    const payload = await requestWhiteboardMediaEdit("/api/workspace/depth-explorer/run", context);
+    const startResponse = await fetch("/api/workspace/depth-explorer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context) });
+    const startPayload = await startResponse.json().catch(() => ({}));
+    if (!startResponse.ok || startPayload.ok === false || !startPayload.jobId) throw new Error(startPayload.message || "深度摸索任务启动失败");
+    let payload = null;
+    for (;;) {
+      await new Promise((resolveWait) => window.setTimeout(resolveWait, 700));
+      const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store" });
+      const status = await statusResponse.json().catch(() => ({}));
+      runtime.completed = Number(status.completed) || 0;
+      runtime.total = Number(status.total) || inputs.length;
+      runtime.currentPercent = Number(status.currentPercent) || 0;
+      runtime.percent = Number(status.percent) || 0;
+      runtime.message = String(status.message || "正在处理");
+      rerenderWhiteboardDepthExplorerNode(nodeId);
+      if (status.status === "complete") { payload = status; break; }
+      if (status.status === "failed" || status.status === "missing") throw new Error(status.error || status.message || "深度摸索失败");
+    }
     if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
     if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
     const outputs = (payload.outputs || []).map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" }));
@@ -58850,8 +58996,14 @@ elements.whiteboardGenerateForm.addEventListener("submit", async (event) => {
     return;
   }
   const selectedAgentStatus = (ui.codexAgent.status?.agentEngines || []).find((item) => item.id === selectedAgentEngine);
-  const selectedAgentUnavailable = selectedAgentEngine !== "codex_api" && (selectedAgentStatus?.installed === false
-    || (!selectedAgentStatus && selectedAgentEngine === activeAgentEngine() && ui.codexAgent.status?.installed !== true));
+  // The card is bound to the selected profile, not to the global Codex
+  // runtime. WorkBuddy/custom runners perform their own capability check at
+  // the server boundary; using activeAgentEngine() here made a WorkBuddy card
+  // incorrectly report “未检测到 Codex Agent”.
+  const localAgentEngines = new Set(["codex", "deepseek_opencode", "opencode", "claude_code"]);
+  const selectedAgentUnavailable = localAgentEngines.has(selectedAgentEngine)
+    && (selectedAgentStatus?.installed === false
+      || (!selectedAgentStatus && selectedAgentEngine === activeAgentEngine() && ui.codexAgent.status?.installed !== true));
   if (executionSurface === "agent" && selectedAgentUnavailable) {
     cancelSubmissionFeedback();
     showToast(`当前未检测到可用的${["deepseek_opencode", "opencode"].includes(selectedAgentEngine) ? " OpenCode" : selectedAgentEngine === "claude_code" ? " Claude Code" : " Codex"} Agent，请先完成安装与连接`);
@@ -65211,7 +65363,9 @@ document.querySelector("#chatForm").addEventListener("submit", async (event) => 
   event.preventDefault();
   if (conversationPreviewBlocksComposerMutation()) return;
   const content = String(elements.chatInput.value || "").trim();
-  if (!content) return;
+  const conversation = activeConversation();
+  const hasAttachments = Boolean(conversation?.attachments?.length || ui.uploadingAttachments);
+  if (!content && !hasAttachments) return;
   if (temporaryNotebookMutationBlocked()) {
     await requestTemporaryNotebookPromotion(`chat:${content}`, state.activeDocument);
     return;
@@ -65221,7 +65375,7 @@ document.querySelector("#chatForm").addEventListener("submit", async (event) => 
     showToast("附件上传完成后会与当前文字一起发送");
     return;
   }
-  const question = activeConversation()?.agentQuestion;
+  const question = conversation?.agentQuestion;
   if (question?.kind === "native_agent") {
     await answerNativeConversationQuestion(question, content);
     return;
@@ -65297,10 +65451,12 @@ document.querySelector("#codexSettingsLogin").addEventListener("click", startCod
 document.querySelector("#codexSettingsDisconnect").addEventListener("click", disconnectCodex);
 
 elements.quickAgentEngine?.addEventListener("change", async (event) => {
+  const activeProfileSelection = String(state.settings.activeTextAgentConnectionId || "");
   const requestedProfileId = String(event.target.value || "");
+  const quickAgentElement = elements.quickAgentEngine;
   const switchSequence = ++agentProfileSwitchSequence;
   const isLatestSwitch = () => switchSequence === agentProfileSwitchSequence
-    && String(state.settings.activeTextAgentConnectionId || "") === requestedProfileId;
+    && String(state.settings.activeTextAgentConnectionId || activeProfileSelection) === requestedProfileId;
   try {
     const profile = exactAgentTextProfile(requestedProfileId);
     if (!profile) throw new Error("所选 Agent 配置不存在");
@@ -75088,14 +75244,14 @@ const openDreaminaReverifyDialog = ({ settings = null, account = null, checking 
 };
 
 const openDreaminaProfileLockDialog = (decision = {}) => {
-  elements.dreaminaProfileLockMessage.textContent = dreaminaProfileSwitchMessage(decision);
-  if (!elements.dreaminaProfileLockDialog.open) elements.dreaminaProfileLockDialog.showModal();
-  // Always pair a lock explanation with the actionable occupant view. The
-  // latter is opened on the next turn so the dialog can paint its reason first.
-  setTimeout(() => {
-    if (elements.dreaminaProfileLockDialog?.open) elements.dreaminaProfileLockDialog.close();
-    void openDreaminaLockOccupantsDialog();
-  }, 0);
+  const message = dreaminaProfileSwitchMessage(decision);
+  // A normal cross-account collision is expected while another Dreamina job
+  // is running. It is not an actionable recovery state, so keep the legacy
+  // dialog DOM only for compatibility and surface a non-blocking toast. The
+  // regular 待处理媒体任务 dialog is opened only by a real blocked job.
+  elements.dreaminaProfileLockMessage.textContent = message;
+  if (elements.dreaminaProfileLockDialog?.open) elements.dreaminaProfileLockDialog.close();
+  showToast(message);
 };
 
 const renderDreaminaLockOccupants = (jobs = []) => {

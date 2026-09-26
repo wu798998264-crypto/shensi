@@ -4,7 +4,7 @@ import { copyFile, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, 
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { cpus, freemem, homedir, totalmem } from "node:os";
-import { Transform } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { gzip as gzipCallback, gunzip as gunzipCallback } from "node:zlib";
@@ -19,7 +19,7 @@ import {
   structuredGroupForWorkspacePath,
 } from "../structure-schema.js";
 import { extractDocumentText } from "./document-extraction.mjs";
-import { appDataRoot, persistentNotesRoot, persistentWorksRoot } from "./app-data.mjs";
+import { appDataRoot, machineLocalDataRoot, persistentNotesRoot, persistentWorksRoot } from "./app-data.mjs";
 import { portableGenerationSettings } from "../generation-profiles.js";
 import { MAX_MODEL_MEDIA_REFERENCES } from "../model-presets.js";
 import { mergeImportedDocuments } from "../imported-workspace.js";
@@ -4207,11 +4207,118 @@ export const trimWorkspaceVideo = async ({ appRoot = process.cwd(), requestedPat
 
 const depthExplorerExecutableCandidates = (appRoot) => [
   String(process.env.SHENSI_DEPTH_EXPLORER_EXECUTABLE || "").trim(),
+  join(machineLocalDataRoot(), "runtimes", "depth-explorer", "0.1.0", "深度摸索.exe"),
   join(appRoot, "packaging", "bundled", "depth-explorer", "深度摸索.exe"),
   join(dirname(process.execPath), "resources", "depth-explorer", "深度摸索.exe"),
   resolve(appRoot, "..", "..", "深度摸索", "dist", "深度摸索", "深度摸索.exe"),
   join(homedir(), "Documents", "深度摸索", "dist", "深度摸索", "深度摸索.exe"),
 ].filter(Boolean);
+
+const DEPTH_EXPLORER_RELEASE = Object.freeze({
+  version: "0.1.0",
+  archiveUrl: "https://github.com/wu798998264-crypto/depth-explorer/releases/download/v0.1.0/Depth-Explorer-Portable-0.1.0.zip",
+  sha256: "4295e97fdac90c1679aa9d614df3fead41e1b42972461240043b74dba76c6709",
+  expectedBytes: 233707987,
+});
+
+const depthExplorerRuntimeRoot = () => join(machineLocalDataRoot(), "runtimes", "depth-explorer", DEPTH_EXPLORER_RELEASE.version);
+const depthExplorerInstallJobs = new Map();
+const depthExplorerJob = (jobId) => depthExplorerInstallJobs.get(jobId) || null;
+const psQuote = (value) => `'${String(value).replaceAll("'", "''")}'`;
+
+const spawnProcess = (executable, args, options = {}) => new Promise((resolveProcess, rejectProcess) => {
+  const child = spawn(executable, args, { windowsHide: true, ...options });
+  let stdout = "";
+  let stderr = "";
+  child.stdout?.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+  child.stderr?.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  child.once("error", rejectProcess);
+  child.once("close", (code) => resolveProcess({ code, stdout, stderr }));
+});
+
+const findDepthExplorerExecutable = async (root) => {
+  for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+    const candidate = join(root, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === "深度摸索.exe") return candidate;
+    if (entry.isDirectory()) {
+      const found = await findDepthExplorerExecutable(candidate);
+      if (found) return found;
+    }
+  }
+  return "";
+};
+
+const runDepthExplorerInstaller = async (job) => {
+  const root = machineLocalDataRoot();
+  const tempRoot = join(root, "temporary", "depth-explorer-installer", job.id);
+  const archivePath = join(tempRoot, "depth-explorer.zip");
+  const extractRoot = join(tempRoot, "extract");
+  const runtimeRoot = depthExplorerRuntimeRoot();
+  await mkdir(tempRoot, { recursive: true });
+  job.stage = "download";
+  job.percent = 5;
+  job.message = "正在下载深度摸索运行时";
+  const response = await fetch(DEPTH_EXPLORER_RELEASE.archiveUrl, { redirect: "follow", signal: AbortSignal.timeout(15 * 60_000) });
+  const finalHost = (() => { try { return new URL(response.url).hostname.toLowerCase(); } catch { return ""; } })();
+  if (!response.ok || !/^github\.com$|(?:^|\.)githubusercontent\.com$/u.test(finalHost)) {
+    throw new Error(`深度摸索下载地址不可用（HTTP ${response.status || "?"}）`);
+  }
+  if (!response.body) throw new Error("深度摸索下载没有返回文件流");
+  const declaredBytes = Number(response.headers.get("content-length") || 0);
+  if (declaredBytes > 0 && declaredBytes > 360 * 1024 * 1024) throw new Error("深度摸索下载包超过安全大小限制");
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(archivePath, { flags: "wx" }));
+  job.percent = 35;
+  job.message = "正在校验深度摸索安装包";
+  const digest = await fileSha256(archivePath);
+  if (digest !== DEPTH_EXPLORER_RELEASE.sha256) throw new Error("深度摸索安装包校验失败，已拒绝安装");
+  job.stage = "extract";
+  job.percent = 48;
+  job.message = "正在装配深度摸索本地运行时";
+  const extraction = await spawnProcess("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", `$ErrorActionPreference='Stop'; New-Item -ItemType Directory -Force -Path ${psQuote(extractRoot)} | Out-Null; Expand-Archive -LiteralPath ${psQuote(archivePath)} -DestinationPath ${psQuote(extractRoot)} -Force`]);
+  if (extraction.code !== 0) throw new Error(extraction.stderr.trim().slice(0, 500) || "深度摸索安装包解压失败");
+  const executable = await findDepthExplorerExecutable(extractRoot);
+  if (!executable) throw new Error("安装包中未找到深度摸索运行程序");
+  const sourceRoot = dirname(executable);
+  await rm(runtimeRoot, { recursive: true, force: true });
+  await mkdir(dirname(runtimeRoot), { recursive: true });
+  await cp(sourceRoot, runtimeRoot, { recursive: true, force: false, errorOnExist: false });
+  const installedExecutable = join(runtimeRoot, "深度摸索.exe");
+  const installedInfo = await stat(installedExecutable).catch(() => null);
+  if (!installedInfo?.isFile() || installedInfo.size < 1_000_000) throw new Error("深度摸索运行程序装配不完整");
+  await writeFile(join(runtimeRoot, "runtime.json"), JSON.stringify({ ...DEPTH_EXPLORER_RELEASE, installedAt: new Date().toISOString(), executable: installedExecutable }, null, 2), "utf8");
+  job.stage = "verify";
+  job.percent = 82;
+  job.message = "正在验证深度摸索运行环境";
+  const probe = await probeWorkspaceDepthExplorer({ appRoot: process.cwd() });
+  if (!probe.available) throw new Error(probe.reasons?.join("；") || "深度摸索运行环境验证失败");
+  job.stage = "complete";
+  job.percent = 100;
+  job.message = "深度摸索已装配并可用";
+  job.result = { ...probe, version: DEPTH_EXPLORER_RELEASE.version };
+  await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
+};
+
+export const startWorkspaceDepthExplorerInstall = async () => {
+  const existing = await resolveDepthExplorerExecutable(process.cwd());
+  if (existing) return { ok: true, alreadyInstalled: true, status: "complete", percent: 100, message: "深度摸索已安装", executable: basename(existing) };
+  const active = [...depthExplorerInstallJobs.values()].find((job) => !["complete", "failed"].includes(job.stage));
+  if (active) return { ok: true, jobId: active.id, ...active };
+  const id = randomUUID();
+  const job = { id, stage: "queued", percent: 0, message: "等待开始装配", createdAt: Date.now() };
+  depthExplorerInstallJobs.set(id, job);
+  runDepthExplorerInstaller(job).catch((error) => {
+    job.stage = "failed";
+    job.percent = 0;
+    job.message = String(error?.message || error).slice(0, 500);
+  });
+  return { ok: true, jobId: id, ...job };
+};
+
+export const workspaceDepthExplorerInstallStatus = async (jobId = "") => {
+  const job = depthExplorerJob(String(jobId));
+  if (!job) return { ok: false, stage: "missing", message: "找不到深度摸索装配任务" };
+  return { ok: true, ...job };
+};
 
 const resolveDepthExplorerExecutable = async (appRoot) => {
   for (const candidate of depthExplorerExecutableCandidates(appRoot)) {
@@ -4233,6 +4340,8 @@ export const probeWorkspaceDepthExplorer = async ({ appRoot = process.cwd() } = 
   if (cpuThreads < 2) reasons.push("可用 CPU 线程不足 2 个");
   return {
     available: reasons.length === 0,
+    installable: !executable,
+    installerVersion: DEPTH_EXPLORER_RELEASE.version,
     executable: executable ? basename(executable) : "",
     cpuThreads,
     memoryTotalBytes,
@@ -4241,7 +4350,7 @@ export const probeWorkspaceDepthExplorer = async ({ appRoot = process.cwd() } = 
   };
 };
 
-const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs }) => new Promise((resolveWorker, rejectWorker) => {
+const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs, onProgress = null }) => new Promise((resolveWorker, rejectWorker) => {
   let child;
   try {
     child = spawn(executable, ["--worker", "--request", requestPath], {
@@ -4255,10 +4364,16 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs 
   }
   let stderr = "";
   let settled = false;
+  const progressTimer = setInterval(async () => {
+    const event = String(await readFile(eventPath, "utf8").catch(() => ""))
+      .split(/\r?\n/u).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean).pop();
+    if (event) onProgress?.({ currentPercent: Math.max(0, Math.min(100, Number(event.progress) || 0)), message: String(event.message || "正在处理") });
+  }, 500);
   const finish = async (error = null) => {
     if (settled) return;
     settled = true;
     clearTimeout(timer);
+    clearInterval(progressTimer);
     const events = String(await readFile(eventPath, "utf8").catch(() => ""))
       .split(/\r?\n/u)
       .map((line) => {
@@ -4284,8 +4399,9 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs 
 });
 
 let depthExplorerQueue = Promise.resolve();
+const depthExplorerRuns = new Map();
 
-export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), requestedPath, relativePaths = [], settings = {}, whiteboardDocumentId = "" } = {}) => {
+export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), requestedPath, relativePaths = [], settings = {}, whiteboardDocumentId = "", onProgress = null } = {}) => {
   const inputs = [...new Set((Array.isArray(relativePaths) ? relativePaths : []).map(String).map((value) => value.trim()).filter(Boolean))];
   if (!inputs.length) throw mediaEditError("请先连接至少一张图片或一个视频", "DEPTH_EXPLORER_INPUT_REQUIRED");
   if (inputs.length > 10) throw mediaEditError("深度摸索一次最多处理 10 个上游媒体", "DEPTH_EXPLORER_BATCH_LIMIT");
@@ -4306,6 +4422,7 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
   };
   const execute = async () => {
     const outputs = [];
+    onProgress?.({ completed: 0, total: inputs.length, currentIndex: 0, currentPercent: 0, percent: 0, message: `准备处理 ${inputs.length} 个媒体` });
     for (let index = 0; index < inputs.length; index += 1) {
       const relativePath = inputs[index];
       const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath });
@@ -4341,6 +4458,13 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
           requestPath,
           eventPath,
           timeoutMs: source.kind === "video" ? 90 * 60_000 : 20 * 60_000,
+          onProgress: (progress) => onProgress?.({
+            completed: index,
+            total: inputs.length,
+            currentIndex: index + 1,
+            percent: Math.round((index / inputs.length) * 100 + ((Number(progress.currentPercent) || 0) / inputs.length)),
+            ...progress,
+          }),
         });
         const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || (source.kind === "image" ? "图片" : "视频"));
         const attachment = await saveWorkspaceAttachmentFromPath({
@@ -4363,6 +4487,7 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
           sourceRelativePath: relativePath,
           batchIndex: index,
         });
+        onProgress?.({ completed: index + 1, total: inputs.length, currentIndex: index + 1, currentPercent: 100, percent: Math.round(((index + 1) / inputs.length) * 100), message: `已完成 ${index + 1}/${inputs.length} 个任务` });
       } finally {
         await rm(jobDirectory, { recursive: true, force: true }).catch(() => {});
       }
@@ -4372,6 +4497,23 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
   const queued = depthExplorerQueue.then(execute, execute);
   depthExplorerQueue = queued.catch(() => {});
   return queued;
+};
+
+export const startWorkspaceDepthExplorerRun = async (params = {}) => {
+  const id = randomUUID();
+  const total = Array.isArray(params.relativePaths) ? params.relativePaths.length : 0;
+  const state = { id, status: "queued", completed: 0, total, currentIndex: 0, currentPercent: 0, percent: 0, message: "等待开始", outputs: [], error: "" };
+  depthExplorerRuns.set(id, state);
+  void runWorkspaceDepthExplorer({ ...params, onProgress: (progress) => Object.assign(state, { status: "running", ...progress }) })
+    .then((result) => Object.assign(state, { status: "complete", percent: 100, completed: total, currentPercent: 100, message: "深度摸索已完成", outputs: result.outputs }))
+    .catch((error) => Object.assign(state, { status: "failed", error: String(error?.message || error).slice(0, 1_000), message: String(error?.message || error).slice(0, 1_000) }));
+  return { ok: true, jobId: id, ...state };
+};
+
+export const workspaceDepthExplorerRunStatus = async (jobId = "") => {
+  const state = depthExplorerRuns.get(String(jobId));
+  if (!state) return { ok: false, status: "missing", message: "找不到深度摸索任务" };
+  return { ok: true, ...state };
 };
 
 const runVideoFrameExtraction = ({ appRoot, sourcePath, outputPath, frameTimeMs }) => new Promise((resolveFrame, rejectFrame) => {

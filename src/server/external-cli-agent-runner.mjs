@@ -336,7 +336,7 @@ const workBuddyTerminalFailure = (...values) => {
     return {
       code: "WORKBUDDY_AUTH_REQUIRED",
       message: "WorkBuddy 登录状态无效，请先登录后重试",
-      suggestedAction: "打开 WorkBuddy 完成登录，再返回神思重新检测。",
+      suggestedAction: "请打开 WorkBuddy 客户端或终端，使用当前账号完成登录并确认 hy3 可用；然后回到神思的模型设置重新检查/真实连接测试。",
       retryable: false,
     };
   }

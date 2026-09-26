@@ -334,6 +334,10 @@ import {
   migrateLegacyWorkspaceToPersistent,
   probeVideoValidationRuntime,
   probeWorkspaceDepthExplorer,
+  startWorkspaceDepthExplorerInstall,
+  workspaceDepthExplorerInstallStatus,
+  startWorkspaceDepthExplorerRun,
+  workspaceDepthExplorerRunStatus,
   runWorkspaceDepthExplorer,
   separateWorkspaceVideoAudio,
   trimWorkspaceAudio,
@@ -2175,6 +2179,9 @@ const rateLimits = new Map([
   ["/api/dreamina-profiles/oauth/reopen", { limit: 30, windowMs: 60_000 }],
   ["/api/dreamina-profiles/oauth/complete", { limit: 60, windowMs: 60_000 }],
   ["/api/media/capabilities/probe", { limit: 20, windowMs: 60_000 }],
+  ["/api/workspace/depth-explorer/install", { limit: 3, windowMs: 10 * 60_000 }],
+  ["/api/workspace/depth-explorer/install/status", { limit: 120, windowMs: 60_000 }],
+  ["/api/workspace/depth-explorer/run/status", { limit: 180, windowMs: 60_000 }],
   ["/api/models/list", { limit: 12, windowMs: 60_000 }],
   ["/api/opencode/models", { limit: 20, windowMs: 60_000 }],
   ["/api/update/check", { limit: 12, windowMs: 60_000 }],
@@ -9593,17 +9600,30 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...(await probeWorkspaceDepthExplorer({ appRoot: root })) });
   }
 
+  if (pathname === "/api/workspace/depth-explorer/install" && request.method === "POST") {
+    return sendJson(response, 202, await startWorkspaceDepthExplorerInstall());
+  }
+
+  if (pathname === "/api/workspace/depth-explorer/install/status" && request.method === "GET") {
+    return sendJson(response, 200, await workspaceDepthExplorerInstallStatus(requestUrl.searchParams.get("jobId") || ""));
+  }
+
   if (pathname === "/api/workspace/depth-explorer/run" && request.method === "POST") {
     const body = await readJsonBody(request, 256 * 1024);
-    const result = await runWorkspaceDepthExplorer({
+    const result = await startWorkspaceDepthExplorerRun({
       appRoot: root,
       requestedPath: body.workspacePath,
       relativePaths: Array.isArray(body.relativePaths) ? body.relativePaths : [],
       settings: body.settings || {},
       whiteboardDocumentId: body.documentId,
     });
-    await Promise.all(result.outputs.map((output) => nutstoreSyncEngine.noteLocalChange(output.attachment.relativePath).catch(() => {})));
-    return sendJson(response, 200, { ok: true, ...result });
+    return sendJson(response, 202, result);
+  }
+
+  if (pathname === "/api/workspace/depth-explorer/run/status" && request.method === "GET") {
+    const result = await workspaceDepthExplorerRunStatus(requestUrl.searchParams.get("jobId") || "");
+    if (result.status === "complete") await Promise.all((result.outputs || []).map((output) => nutstoreSyncEngine.noteLocalChange(output.attachment.relativePath).catch(() => {})));
+    return sendJson(response, 200, result);
   }
 
   if (pathname === "/api/workspace/video-concat" && request.method === "POST") {

@@ -1593,8 +1593,37 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         rawStatus: "node_created",
       });
     }
-    const run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings });
-    return { ...parseLibTvTaskPayload(run), providerTaskId: parseLibTvTaskPayload(run).providerTaskId || node.nodeKey };
+    let run;
+    try {
+      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings });
+    } catch (error) {
+      // Node creation is durable. If LibTV blocks on --run, switch to the
+      // read-only status path instead of leaving the card spinning forever or
+      // submitting the same node again. Explicit provider errors still pass
+      // through unchanged.
+      if (error?.code === "DRIVER_TIMEOUT" && node.nodeKey) {
+        return {
+          providerTaskId: node.nodeKey,
+          providerStatus: "running",
+          rawStatus: "run_timeout",
+          error: "LibTV 已接受任务，正在读取厂商状态",
+          errorCode: "",
+        };
+      }
+      throw error;
+    }
+    const parsed = parseLibTvTaskPayload(run);
+    if (parsed.providerStatus === "unknown" && node.nodeKey) {
+      return {
+        ...parsed,
+        providerTaskId: parsed.providerTaskId || node.nodeKey,
+        providerStatus: "running",
+        rawStatus: "node_created",
+        error: "LibTV 已创建任务，正在读取厂商状态",
+        errorCode: "",
+      };
+    }
+    return { ...parsed, providerTaskId: parsed.providerTaskId || node.nodeKey };
   }
 
   async getStatus({ job, workRoot }) {
