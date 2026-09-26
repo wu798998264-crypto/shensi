@@ -49,13 +49,13 @@ assert.match(
 );
 assert.match(
   appSource,
-  /id="whiteboardNodeCreateMenu"[\s\S]{0,1200}data-whiteboard-node-create="plain"[\s\S]{0,300}data-whiteboard-node-create="text"[\s\S]{0,300}data-whiteboard-node-create="image"[\s\S]{0,300}data-whiteboard-node-create="video"[\s\S]{0,300}data-whiteboard-node-create="audio" hidden/u,
-  "空白落点选择器必须按顺序提供普通、文本、图片和视频，并隐藏尚未接通的音频入口",
+  /id="whiteboardNodeCreateMenu"[\s\S]{0,1200}data-whiteboard-node-create="plain"[\s\S]{0,300}data-whiteboard-node-create="text"[\s\S]{0,300}data-whiteboard-node-create="image"[\s\S]{0,300}data-whiteboard-node-create="video"[\s\S]{0,300}data-whiteboard-node-create="audio" hidden[\s\S]{0,300}data-whiteboard-node-create="depth"/u,
+  "空白落点选择器必须按顺序提供普通、文本、图片、视频与深度摸索，并隐藏尚未接通的音频入口",
 );
 assert.match(
   appSource,
-  /data-whiteboard-action="create" data-whiteboard-target="canvas"[\s\S]{0,220}data-whiteboard-action="create-text"[\s\S]{0,260}data-whiteboard-action="create-image"[\s\S]{0,260}data-whiteboard-action="create-video"[\s\S]{0,260}data-whiteboard-action="create-audio"/u,
-  "空白白板右键菜单必须在添加节点下方直接平铺文本、图片、视频和音频生成入口",
+  /data-whiteboard-action="create" data-whiteboard-target="canvas"[\s\S]{0,220}data-whiteboard-action="create-text"[\s\S]{0,260}data-whiteboard-action="create-image"[\s\S]{0,260}data-whiteboard-action="create-video"[\s\S]{0,260}data-whiteboard-action="create-audio"[\s\S]{0,260}data-whiteboard-action="create-depth"/u,
+  "空白白板右键菜单必须在添加节点下方直接平铺生成入口与深度摸索",
 );
 assert.match(
   appSource,
@@ -69,8 +69,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /button\.hidden = kind !== "plain" && !available/u,
-  "本机没有对应生成能力时必须隐藏该类型，而不是留下不可用入口",
+  /button\.hidden = \(kind !== "plain" && !available\) \|\| \(kind === "depth" && !validDepthSources\)/u,
+  "本机没有对应生成能力时必须隐藏该类型，深度摸索还必须校验媒体来源",
 );
 assert.match(
   appSource,
@@ -87,9 +87,13 @@ assert.match(
   /const closeWhiteboardNodeCreateMenu = \(\) => \{[\s\S]{0,420}ui\.whiteboardEdgeDraft = null;[\s\S]{0,180}\.whiteboard-edge\.draft/u,
   "取消四选项时必须同时清理待创建意图和临时连线",
 );
+const commitCreateIntentSource = appSource.slice(
+  appSource.indexOf("const commitWhiteboardNodeCreateIntent"),
+  appSource.indexOf("const syncWhiteboardGenerationMenuCapabilities"),
+);
 assert.match(
-  appSource,
-  /const commitWhiteboardNodeCreateIntent[\s\S]{0,1500}intent\.direction === "input"[\s\S]{0,700}checkWhiteboardReferenceCapacity[\s\S]{0,900}persist\(\{ documentIds: \[state\.activeDocument\] \}\)/u,
+  commitCreateIntentSource,
+  /intent\.direction === "input"[\s\S]*checkWhiteboardReferenceCapacity[\s\S]*persist\(\{ documentIds: \[state\.activeDocument\] \}\)/u,
   "选择卡片类型后必须原子校验、创建、连接并定向保存",
 );
 assert.match(

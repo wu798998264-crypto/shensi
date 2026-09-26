@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.1-card-toolbar";
+} from "./generation-profiles.js?v=8.0.2-depth-node";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -8232,12 +8232,14 @@ root.innerHTML = `
     <button type="button" data-whiteboard-action="upload-card" data-whiteboard-target="card">${icon("\uE91B")}<span>上传</span></button>
     <button type="button" data-whiteboard-action="edit-text" data-whiteboard-target="card" data-whiteboard-text-only data-whiteboard-editable-text>${icon("\uE70F")}<span>编辑文字</span></button>
     <button type="button" data-whiteboard-action="smart-split" data-whiteboard-target="card" data-whiteboard-smart-split>${icon("\uE8C6")}<span>智能拆分</span></button>
+    <button type="button" data-whiteboard-action="depth-explorer" data-whiteboard-target="card" data-whiteboard-depth-entry>${icon("\uE945")}<span>深度摸索</span></button>
     <button type="button" data-whiteboard-action="generate-text" data-whiteboard-target="card" data-whiteboard-direct-generation hidden>${icon("\uE8D2")}<span>生成文本</span></button>
     <button type="button" data-whiteboard-action="create" data-whiteboard-target="canvas">${icon("\uE710")}<span>添加节点</span></button>
     <button type="button" data-whiteboard-action="create-text" data-whiteboard-target="canvas" data-whiteboard-canvas-create="text">${icon("\uE8D2")}<span>生成文本</span></button>
     <button type="button" data-whiteboard-action="create-image" data-whiteboard-target="canvas" data-whiteboard-canvas-create="image">${icon("\uE91B")}<span>生成图片</span></button>
     <button type="button" data-whiteboard-action="create-video" data-whiteboard-target="canvas" data-whiteboard-canvas-create="video">${icon("\uE714")}<span>生成视频</span></button>
     <button type="button" data-whiteboard-action="create-audio" data-whiteboard-target="canvas" data-whiteboard-canvas-create="audio" hidden>${icon("\uE8D6")}<span>生成音频</span></button>
+    <button type="button" data-whiteboard-action="create-depth" data-whiteboard-target="canvas" data-whiteboard-canvas-create="depth">${icon("\uE945")}<span>深度摸索</span></button>
     <button type="button" data-whiteboard-action="paste" data-whiteboard-target="canvas">${icon("\uE77F")}<span>粘贴</span></button>
     <button type="button" data-whiteboard-action="add-web" data-whiteboard-target="canvas">${icon("\uE774")}<span>添加网页</span></button>
     <button type="button" data-whiteboard-action="reference-document" data-whiteboard-target="canvas">${icon("\uE8A5")}<span>引用文档</span></button>
@@ -8296,6 +8298,7 @@ root.innerHTML = `
     <button type="button" role="menuitem" data-whiteboard-node-create="image">${icon("\uE91B", "生成图片")}<span>生成图片</span></button>
     <button type="button" role="menuitem" data-whiteboard-node-create="video">${icon("\uE714", "生成视频")}<span>生成视频</span></button>
     <button type="button" role="menuitem" data-whiteboard-node-create="audio" hidden>${icon("\uE8D6", "生成音频")}<span>生成音频</span></button>
+    <button type="button" role="menuitem" data-whiteboard-node-create="depth">${icon("\uE945", "深度摸索")}<span>深度摸索</span></button>
   </div>
   <div class="context-menu" id="mediaAssetMenu" hidden>
     <button type="button" data-media-asset-action="reveal">${icon("\uE8B7")}<span>打开所在文件夹</span></button>
@@ -9432,6 +9435,22 @@ root.innerHTML = `
     </form>
   </dialog>
 
+  <dialog class="text-dialog whiteboard-audio-trim-dialog whiteboard-video-trim-dialog" id="whiteboardVideoTrimDialog" aria-labelledby="whiteboardVideoTrimTitle">
+    <form method="dialog" id="whiteboardVideoTrimForm">
+      <header class="dialog-header"><div><small>视频编辑</small><h2 id="whiteboardVideoTrimTitle">截取视频片段</h2><p>拖动左右手柄选择保留区间；播放仅限当前选中片段，原视频不会改变。</p></div><button class="icon-button bare" id="closeWhiteboardVideoTrim" type="button" title="关闭" aria-label="关闭视频截取">${icon("\uE711", "关闭")}</button></header>
+      <div class="whiteboard-audio-trim-body whiteboard-video-trim-body">
+        <video id="whiteboardVideoTrimPreview" controls preload="metadata"></video>
+        <div class="whiteboard-audio-trim-track" id="whiteboardVideoTrimTrack" style="--trim-start:0%;--trim-end:100%">
+          <span class="whiteboard-audio-trim-selection" aria-hidden="true"></span>
+          <input id="whiteboardVideoTrimStart" type="range" min="0" max="1" step="0.01" value="0" aria-label="截取开始时间" />
+          <input id="whiteboardVideoTrimEnd" type="range" min="0" max="1" step="0.01" value="1" aria-label="截取结束时间" />
+        </div>
+        <div class="whiteboard-audio-trim-times" aria-live="polite"><span><small>开始</small><output id="whiteboardVideoTrimStartOutput">00:00.00</output></span><span><small>片段时长</small><output id="whiteboardVideoTrimDurationOutput">00:01.00</output></span><span><small>结束</small><output id="whiteboardVideoTrimEndOutput">00:01.00</output></span></div>
+      </div>
+      <footer><button class="secondary-button" id="cancelWhiteboardVideoTrim" type="button">取消</button><button class="primary-button" id="confirmWhiteboardVideoTrim" type="submit">生成所选片段</button></footer>
+    </form>
+  </dialog>
+
   <dialog class="text-dialog dreamina-reverify-dialog" id="dreaminaReverifyDialog">
     <form method="dialog" id="dreaminaReverifyForm">
       <header><h2>即梦账号需要核验</h2><p id="dreaminaReverifyMessage">当前配置不可用，请重新核验账号后再生成。</p></header>
@@ -9866,6 +9885,18 @@ const elements = {
   closeWhiteboardAudioTrim: document.querySelector("#closeWhiteboardAudioTrim"),
   cancelWhiteboardAudioTrim: document.querySelector("#cancelWhiteboardAudioTrim"),
   confirmWhiteboardAudioTrim: document.querySelector("#confirmWhiteboardAudioTrim"),
+  whiteboardVideoTrimDialog: document.querySelector("#whiteboardVideoTrimDialog"),
+  whiteboardVideoTrimForm: document.querySelector("#whiteboardVideoTrimForm"),
+  whiteboardVideoTrimPreview: document.querySelector("#whiteboardVideoTrimPreview"),
+  whiteboardVideoTrimTrack: document.querySelector("#whiteboardVideoTrimTrack"),
+  whiteboardVideoTrimStart: document.querySelector("#whiteboardVideoTrimStart"),
+  whiteboardVideoTrimEnd: document.querySelector("#whiteboardVideoTrimEnd"),
+  whiteboardVideoTrimStartOutput: document.querySelector("#whiteboardVideoTrimStartOutput"),
+  whiteboardVideoTrimEndOutput: document.querySelector("#whiteboardVideoTrimEndOutput"),
+  whiteboardVideoTrimDurationOutput: document.querySelector("#whiteboardVideoTrimDurationOutput"),
+  closeWhiteboardVideoTrim: document.querySelector("#closeWhiteboardVideoTrim"),
+  cancelWhiteboardVideoTrim: document.querySelector("#cancelWhiteboardVideoTrim"),
+  confirmWhiteboardVideoTrim: document.querySelector("#confirmWhiteboardVideoTrim"),
   dreaminaReverifyDialog: document.querySelector("#dreaminaReverifyDialog"),
   dreaminaReverifyMessage: document.querySelector("#dreaminaReverifyMessage"),
   dreaminaReverifyConfirm: document.querySelector("#dreaminaReverifyConfirm"),
@@ -18484,6 +18515,7 @@ const renderWhiteboard = (documentState) => {
     // and hit targets continue to use the canonical node object.
     const lowDetail = zoom <= 0.36
       && ["text", "generated", "web", "skill", "reference", "image", "video", "audio"].includes(visibleNode.kind)
+      && visibleNode.operation?.type !== "depth-explorer"
       && !editing
       && !candidate
       && !generating
@@ -18494,7 +18526,10 @@ const renderWhiteboard = (documentState) => {
     const dismissed = ui.whiteboardDismissedGenerationElapsed.has(whiteboardGenerationElapsedDismissKey(node));
     const previous = whiteboardCardRecords.get(node.id);
     const completionTime = whiteboardGenerationCompletedElapsedMs(node);
-    const renderContext = [editing, lowDetail, activeVideo, generating, cardOrigin, dismissed, completionTime, state.readOnly, generationDraftByNode.get(node.id), whiteboardAutoOpenIsDisabled(node.id)];
+    const depthExplorerRuntimeSignature = node.operation?.type === "depth-explorer"
+      ? whiteboardDepthExplorerRuntimeSignature(node.id, state.activeDocument)
+      : "";
+    const renderContext = [editing, lowDetail, activeVideo, generating, cardOrigin, dismissed, completionTime, state.readOnly, generationDraftByNode.get(node.id), whiteboardAutoOpenIsDisabled(node.id), depthExplorerRuntimeSignature];
     if (previous?.sourceNode === node && previous.candidate === candidate
       && previous.context.every((value, index) => value === renderContext[index])) {
       return { ...previous.record, selected, relationActive, focused };
@@ -18528,6 +18563,7 @@ const renderWhiteboard = (documentState) => {
       hasVisibleTextContent
       || hasGeneratedContent
       || visibleNode.file
+      || visibleNode.operation?.type === "depth-explorer"
       || (visibleNode.kind === "web" && (visibleNode.url || visibleNode.webSnapshot)),
     );
     const pendingGenerationType = !hasGeneratedContent && !hasVisibleTextContent && !candidate && !whiteboardAutoOpenIsDisabled(node.id)
@@ -18630,7 +18666,10 @@ const renderWhiteboard = (documentState) => {
         : visibleNode.kind === "audio"
           ? `<div class="whiteboard-card-low-detail media audio"><span class="whiteboard-card-overview-placeholder">${icon("\uE8D6", "音频")}</span></div>`
           : `<div class="whiteboard-card-low-detail" aria-hidden="true">${overviewLabel ? `<strong>${escapeHtml(overviewLabel)}</strong>` : ""}</div>`;
-    const content = lowDetail
+    const depthExplorerNode = visibleNode.operation?.type === "depth-explorer";
+    const content = depthExplorerNode
+      ? whiteboardDepthExplorerNodeMarkup(visibleNode, documentState)
+      : lowDetail
       ? lowDetailContent
       : visibleNode.kind === "image"
       ? `<img class="whiteboard-card-image" src="${escapeHtml(visibleImageUrl)}" alt="${escapeHtml(visibleNode.name || "白板图片")}" data-attachment-preview="image" data-attachment-preview-src="${escapeHtml(visibleImageUrl)}" data-attachment-src="${escapeHtml(visibleMediaUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="${escapeHtml(`拖拽移动；双击预览 ${visibleNode.name || "白板图片"}`)}" loading="lazy" decoding="async" draggable="false" />`
@@ -18644,12 +18683,12 @@ const renderWhiteboard = (documentState) => {
         ? `<div class="whiteboard-web-card" title="已读取网页正文；拖拽移动，双击或右键可修改链接"><span class="whiteboard-web-icon">${icon("\uE774")}</span><strong>${escapeHtml(whiteboardWebTitle(visibleNode))}</strong><small>${escapeHtml(visibleNode.webSnapshot ? `${visibleNode.webSnapshot.pages?.length || 1} 页 · ${visibleNode.webSnapshot.contentCharacters || visibleNode.webSnapshot.text?.length || 0} 字` : visibleNode.url)}</small><a class="whiteboard-web-open" href="${escapeHtml(visibleNode.url)}" target="_blank" rel="noopener noreferrer" title="打开网页" aria-label="打开 ${escapeHtml(whiteboardWebTitle(visibleNode))}">${icon("\uE8A7")}</a></div>`
         : textEditor;
     const usesFourCornerResize = ["image", "video", "audio"].includes(visibleNode.kind) || (visibleNode.type === "text" && visibleNode.kind !== "web");
-    const resizeHandles = lowDetail
+    const resizeHandles = lowDetail || depthExplorerNode
       ? ""
       : usesFourCornerResize
       ? ["nw", "ne", "sw", "se"].map((corner) => `<span class="whiteboard-resize-handle ${["image", "video", "audio"].includes(visibleNode.kind) ? "media-corner" : "text-corner"} ${corner}" data-canvas-resize="${corner}" title="拖拽调整卡片大小" aria-label="从${corner}角调整卡片大小"></span>`).join("")
       : '<span class="whiteboard-resize-handle se" data-canvas-resize="se" title="拖拽调整卡片大小" aria-label="拖拽调整卡片大小"></span>';
-    const markup = `<article class="whiteboard-card ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${relationActive ? "relation-active" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
+    const markup = `<article class="whiteboard-card ${depthExplorerNode ? "whiteboard-depth-node" : ""} ${lowDetail ? "low-detail" : ""} ${editing ? "editing" : ""} ${candidate ? "candidate-pending" : ""} ${ui.whiteboardFocusedNodeId === node.id ? "focused" : ""} ${selected ? "selected" : ""} ${relationActive ? "relation-active" : ""} ${generating ? "generating" : ""}" data-canvas-node="${escapeHtml(node.id)}" data-card-kind="${escapeHtml(visibleNode.kind)}" data-card-color="${escapeHtml(node.color)}" data-card-origin="${escapeHtml(cardOrigin)}" data-card-has-text="${hasVisibleTextContent ? "true" : "false"}" data-card-has-content="${hasCardContent ? "true" : "false"}"${visibleMediaIdentity ? ` data-whiteboard-media-identity="${escapeHtml(visibleMediaIdentity)}"` : ""}${hasGeneratedContent ? ' data-generated-content="true"' : ""}${candidate ? ` data-generation-job-id="${escapeHtml(candidate.jobId || "")}" data-generation-status="${escapeHtml(candidate.status || "")}" data-generation-channel="${escapeHtml(candidate.channel || "")}" data-generation-phase-key="${escapeHtml(whiteboardCandidatePhaseKey(candidate))}"` : ""} style="left:${node.x}px;top:${node.y}px;width:${node.width}px;height:${node.height}px">
       ${generatedNodeTitle}
       ${kindMarkup}
       ${generationTypeIndicator}
@@ -49493,19 +49532,23 @@ const whiteboardMediaEditBusyNodeIds = new Set();
 const whiteboardCardToolbarButtons = (node) => {
   const mediaCard = Boolean(node?.file && ["image", "video", "audio"].includes(node.kind));
   const textCard = Boolean(node && ["text", "generated"].includes(node.kind) && String(node.text ?? "").trim());
-  if (!mediaCard && !textCard) return [];
+  const depthCard = Boolean(node?.operation?.type === "depth-explorer");
+  const linkedContentCard = Boolean(node && ["web", "skill", "reference"].includes(node.kind) && (node.url || node.webSnapshot || String(node.text ?? "").trim()));
+  if (!mediaCard && !textCard && !depthCard && !linkedContentCard) return [];
+  if (depthCard) return [];
   const editingDisabled = state.readOnly || Boolean(whiteboardCandidateFor(node.id)) || whiteboardMediaEditBusyNodeIds.has(node.id);
-  const buttons = [];
+  const buttons = [{ tool: "focus", label: "聚焦卡片", glyph: "\uE81E", compact: true }];
   if (textCard) buttons.push({ tool: "edit-text", label: "编辑文本", glyph: "\uE70F", disabled: editingDisabled });
   if (node.kind === "image") buttons.push({ tool: "edit-image", label: "编辑图片", glyph: "\uE70F", disabled: editingDisabled });
   if (node.kind === "video") {
-    buttons.push({ tool: "extract-frame", label: "截取关键帧", glyph: "\uE722", disabled: editingDisabled, compact: true });
     buttons.push({ tool: "separate-av", label: "分离音视频", glyph: "\uE8D6", disabled: editingDisabled });
+    buttons.push({ tool: "trim-video", label: "截取视频片段", glyph: "\uE8C6", disabled: editingDisabled });
     if (node.generation?.compositeLongVideo) buttons.push({ tool: "composite-process", label: "查看超长视频生成过程", glyph: "\uE9D9" });
   }
   if (node.kind === "audio") buttons.push({ tool: "trim-audio", label: "截取音频片段", glyph: "\uE8D6", disabled: editingDisabled });
+  if (node.kind === "video") buttons.push({ tool: "extract-frame", label: "截取关键帧", glyph: "\uE722", disabled: editingDisabled, compact: true });
+  if (mediaCard || textCard) buttons.push({ tool: "save-as", label: "保存下载", glyph: "\uE896", compact: true });
   if (textCard || ["image", "video"].includes(node.kind)) buttons.push({ tool: "preview", label: `放大预览${node.kind === "video" ? "视频" : node.kind === "image" ? "图片" : "文本"}`, glyph: "\uE740", compact: true });
-  buttons.push({ tool: "save-as", label: "保存下载", glyph: "\uE896", compact: true });
   return buttons;
 };
 
@@ -51036,6 +51079,15 @@ elements.whiteboardSurface.addEventListener("input", (event) => {
   if (ui.whiteboardFind.open) renderWhiteboardFindPanel();
 });
 
+elements.whiteboardEditor.addEventListener("change", (event) => {
+  const control = event.target.closest("[data-whiteboard-depth-field]");
+  const card = control?.closest("[data-canvas-node]");
+  if (!control || !card) return;
+  const field = control.dataset.whiteboardDepthField;
+  const value = control instanceof HTMLInputElement && control.type === "checkbox" ? control.checked : control.value;
+  updateWhiteboardDepthExplorerSetting(card.dataset.canvasNode, field, value);
+});
+
 elements.whiteboardEditor.addEventListener("click", async (event) => {
   // Generation popovers live inside the whiteboard DOM so they can stay
   // anchored to a card. Their controls must never fall through to the canvas
@@ -51045,6 +51097,22 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
   // Let their dedicated handlers run without treating the toolbar click as a
   // blank-canvas click that dismisses the attached generation surface.
   if (event.target.closest(".whiteboard-tool-controls, .whiteboard-zoom-controls, .whiteboard-find-panel")) return;
+  const depthControl = event.target.closest("[data-whiteboard-depth-action], [data-whiteboard-depth-field]");
+  if (depthControl) {
+    const card = depthControl.closest("[data-canvas-node]");
+    const nodeId = card?.dataset.canvasNode || "";
+    if (!nodeId) return;
+    selectWhiteboardNode(nodeId);
+    const action = depthControl.dataset.whiteboardDepthAction || "";
+    if (action === "focus") {
+      event.preventDefault();
+      focusWhiteboardNodes([nodeId]);
+    } else if (action === "generate") {
+      event.preventDefault();
+      await runWhiteboardDepthExplorerNode(nodeId);
+    }
+    return;
+  }
   if (ui.whiteboardIgnoreClick) {
     ui.whiteboardIgnoreClick = false;
     event.preventDefault();
@@ -51346,6 +51414,7 @@ const closeWhiteboardNodeCreateMenu = () => {
 
 const whiteboardNodeCreateChannelAvailable = (kind) => {
   if (kind === "plain") return true;
+  if (kind === "depth") return true;
   if (kind === "text") return hasAvailableTextGenerationExecutor();
   if (kind === "image") return visibleGenerationPickerProfiles(state.settings, "image").length > 0;
   if (kind === "video") return visibleGenerationPickerProfiles(state.settings, "video").length > 0;
@@ -51360,11 +51429,14 @@ const openWhiteboardNodeCreateMenu = (intent) => {
     image: "请先配置可用的图片 API 或 CLI 连接",
     video: "请先配置可用的视频 API 或 CLI 连接",
     audio: "请先配置并核验可用的音频 API 或 CLI 连接",
+    depth: "当前设备未安装深度摸索本地运行时",
   };
   elements.whiteboardNodeCreateMenu.querySelectorAll("[data-whiteboard-node-create]").forEach((button) => {
     const kind = button.dataset.whiteboardNodeCreate;
     const available = whiteboardNodeCreateChannelAvailable(kind);
-    button.hidden = kind !== "plain" && !available;
+    const sourceNodes = whiteboardNodeCreateIntent.sourceIds.map((nodeId) => whiteboardNodeById(nodeId)).filter(Boolean);
+    const validDepthSources = !sourceNodes.length || (sourceNodes.length <= 10 && sourceNodes.every((node) => ["image", "video"].includes(node.kind) && node.file));
+    button.hidden = (kind !== "plain" && !available) || (kind === "depth" && !validDepthSources);
     button.disabled = !available;
     if (available) button.removeAttribute("title");
     else button.title = unavailableMessages[kind] || "当前生成类型不可用";
@@ -51375,7 +51447,7 @@ const openWhiteboardNodeCreateMenu = (intent) => {
 
 const commitWhiteboardNodeCreateIntent = (kind) => {
   const intent = whiteboardNodeCreateIntent;
-  if (!intent || !["plain", "text", "image", "video", "audio"].includes(kind)) return false;
+  if (!intent || !["plain", "text", "image", "video", "audio", "depth"].includes(kind)) return false;
   if (!whiteboardNodeCreateChannelAvailable(kind)) return false;
   const documentState = activeWhiteboardDocument();
   const sourceIds = intent.sourceIds.filter((nodeId) => whiteboardNodeById(nodeId, documentState));
@@ -51390,13 +51462,26 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     return false;
   }
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
+  if (kind === "depth") {
+    const sourceNodes = sourceIds.map((nodeId) => whiteboardNodeById(nodeId, documentState));
+    if (sourceNodes.length > 10 || sourceNodes.some((node) => !["image", "video"].includes(node?.kind) || !node.file)) {
+      closeWhiteboardNodeCreateMenu();
+      showToast(sourceNodes.length > 10 ? "深度摸索一次最多连接 10 个媒体" : "深度摸索只接受图片和视频上游");
+      return false;
+    }
+  }
   const nodeId = uid("canvas-node");
-  const width = 260;
-  const height = 160;
+  const width = kind === "depth" ? 820 : 260;
+  const height = kind === "depth" ? 126 : 160;
   let nextCanvas = addCanvasTextNode(documentState.canvas, {
     id: nodeId,
     text: "",
     kind: "text",
+    name: kind === "depth" ? "深度摸索" : "",
+    operation: kind === "depth" ? {
+      type: "depth-explorer",
+      settings: { quality: "balanced", provider: "auto", invertDepth: false, keepAudio: false },
+    } : null,
     width,
     height,
     x: snapCanvasValue(intent.point.x - width / 2, documentState.canvas),
@@ -51407,11 +51492,11 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     : { fromNode: sourceId, toNode: nodeId });
   nextCanvas = connections.reduce((canvas, connection) => addCanvasEdge(canvas, connection), nextCanvas);
   const channel = kind === "plain" ? "text" : kind;
-  const capacity = checkWhiteboardReferenceCapacity(nextCanvas, connections.map((connection) => connection.toNode), {
-    channel,
-    operation: kind === "plain" ? "connect" : "generate",
-    bulk: connections.length > 1,
-  });
+  const capacity = kind === "depth" ? { ok: true } : checkWhiteboardReferenceCapacity(nextCanvas, connections.map((connection) => connection.toNode), {
+      channel,
+      operation: kind === "plain" ? "connect" : "generate",
+      bulk: connections.length > 1,
+    });
   if (!capacity.ok) {
     closeWhiteboardNodeCreateMenu();
     return false;
@@ -51420,7 +51505,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
   documentState.canvas = nextCanvas;
   documentState.updatedAt = nowTime();
   const sourceLabel = intent.origin === "canvas-context" ? "右键" : "拖拽";
-  pushWhiteboardHistory(beforeCanvas, { label: kind === "plain" ? `${sourceLabel}新建普通卡片` : `${sourceLabel}新建${whiteboardGenerationSessionTitle(channel)}卡片` });
+  pushWhiteboardHistory(beforeCanvas, { label: kind === "plain" ? `${sourceLabel}新建普通卡片` : kind === "depth" ? `${sourceLabel}新建深度摸索节点` : `${sourceLabel}新建${whiteboardGenerationSessionTitle(channel)}卡片` });
   persist({ documentIds: [state.activeDocument] });
   renderWhiteboard(documentState);
   selectWhiteboardNode(nodeId);
@@ -51428,6 +51513,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
   else if (kind === "image") openWhiteboardImageDialog(nodeId);
   else if (kind === "video") openWhiteboardVideoDialog(nodeId);
   else if (kind === "audio") openWhiteboardAudioDialog(nodeId);
+  else if (kind === "depth") primeWhiteboardDepthExplorerNode(nodeId);
   return true;
 };
 
@@ -52146,6 +52232,7 @@ elements.whiteboardEditor.addEventListener("contextmenu", (event) => {
       || (item.hasAttribute("data-whiteboard-text-transform") && ["image", "video", "audio"].includes(contextNode?.kind))
       || (item.hasAttribute("data-whiteboard-editable-text") && !["text", "generated"].includes(contextNode?.kind))
       || (item.hasAttribute("data-whiteboard-smart-split") && (!["text", "generated"].includes(contextNode?.kind) || !String(contextNode?.text ?? "").trim()))
+      || (item.hasAttribute("data-whiteboard-depth-entry") && !(contextNode?.operation?.type === "depth-explorer" || (contextNode?.kind === "text" && !String(contextNode?.text ?? "").trim() && !contextNode?.file)))
       || (item.hasAttribute("data-whiteboard-web-reference") && ["image", "video", "audio", "group"].includes(contextNode?.kind))
       || (item.hasAttribute("data-whiteboard-media-only") && !keepMultiSelection && !["image", "video", "audio"].includes(contextNode?.kind));
   });
@@ -52245,6 +52332,7 @@ const handleWhiteboardMenuClick = async (event) => {
     "create-image": "image",
     "create-video": "video",
     "create-audio": "audio",
+    "create-depth": "depth",
   }[action];
   if (canvasCreateKind && context.target === "canvas") {
     setWhiteboardNodeCreateIntent({
@@ -52350,6 +52438,29 @@ const handleWhiteboardMenuClick = async (event) => {
   }
   if (action === "smart-split" && context.nodeId) {
     smartSplitWhiteboardCard(context.nodeId).catch((error) => showToast(`智能拆分分析失败：${error.message || "未知错误"}`));
+    return;
+  }
+  if (action === "depth-explorer" && context.nodeId) {
+    const node = whiteboardNodeById(context.nodeId, documentState);
+    if (!node) return;
+    if (node.operation?.type !== "depth-explorer") {
+      const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
+      documentState.canvas = updateCanvasNode(documentState.canvas, context.nodeId, {
+        name: "深度摸索",
+        operation: {
+          type: "depth-explorer",
+          settings: { quality: "balanced", provider: "auto", invertDepth: false, keepAudio: false },
+        },
+        width: 820,
+        height: 126,
+      });
+      documentState.updatedAt = nowTime();
+      pushWhiteboardHistory(beforeCanvas, { label: "将空白卡片设为深度摸索节点" });
+      persist({ documentIds: [state.activeDocument] });
+      renderWhiteboard(documentState);
+      selectWhiteboardNode(context.nodeId);
+    }
+    primeWhiteboardDepthExplorerNode(context.nodeId);
     return;
   }
   if (action === "save-as" && context.nodeId) {
@@ -56736,9 +56847,13 @@ const createWhiteboardDerivedMediaNodes = ({ sourceNodeId, outputs = [], history
       ? 3.2
       : Math.max(0.1, Number(output.aspectRatio)
         || (Number(attachment.videoWidth) > 0 && Number(attachment.videoHeight) > 0 ? Number(attachment.videoWidth) / Number(attachment.videoHeight) : Number(sourceNode.aspectRatio) || 16 / 9));
+    // The duplicate starts as the depth/text operation node. Convert its kind
+    // first so updateCanvasNode accepts media-only fields such as file and
+    // mimeType instead of silently dropping them against the original kind.
+    canvas = updateCanvasNode(canvas, nodeId, { kind: output.kind });
     canvas = updateCanvasNode(canvas, nodeId, {
-      kind: output.kind,
       file: attachment.relativePath,
+      operation: null,
       name: attachment.name || (output.kind === "audio" ? "音频片段" : output.kind === "video" ? "静音视频" : "图片"),
       mimeType: attachment.mimeType,
       aspectRatio,
@@ -56988,6 +57103,326 @@ elements.whiteboardAudioTrimForm.addEventListener("submit", async (event) => {
   }
 });
 
+let whiteboardVideoTrimContext = null;
+
+const configureWhiteboardVideoTrimRange = (durationMs, { preserveSelection = false } = {}) => {
+  const duration = Math.max(100, Math.round(Number(durationMs) || 0));
+  if (!whiteboardVideoTrimContext) return;
+  whiteboardVideoTrimContext.durationMs = duration;
+  for (const input of [elements.whiteboardVideoTrimStart, elements.whiteboardVideoTrimEnd]) {
+    input.max = String(duration);
+    input.step = "10";
+  }
+  if (!preserveSelection) {
+    elements.whiteboardVideoTrimStart.value = "0";
+    elements.whiteboardVideoTrimEnd.value = String(duration);
+  }
+};
+
+const whiteboardVideoTrimPreviewBounds = () => ({
+  startMs: Math.max(0, Number(elements.whiteboardVideoTrimStart.value) || 0),
+  endMs: Math.max(100, Number(elements.whiteboardVideoTrimEnd.value) || Number(whiteboardVideoTrimContext?.durationMs) || 100),
+});
+
+const resetWhiteboardVideoTrimPreviewToStart = () => {
+  const { startMs } = whiteboardVideoTrimPreviewBounds();
+  if (Number.isFinite(elements.whiteboardVideoTrimPreview.duration)) elements.whiteboardVideoTrimPreview.currentTime = startMs / 1_000;
+};
+
+const syncWhiteboardVideoTrimControls = (changed = "") => {
+  if (!whiteboardVideoTrimContext) return;
+  const duration = Math.max(100, Number(whiteboardVideoTrimContext.durationMs) || 100);
+  let start = Math.max(0, Math.min(duration - 100, Number(elements.whiteboardVideoTrimStart.value) || 0));
+  let end = Math.max(100, Math.min(duration, Number(elements.whiteboardVideoTrimEnd.value) || duration));
+  if (end - start < 100) {
+    if (changed === "start") start = Math.max(0, end - 100);
+    else end = Math.min(duration, start + 100);
+  }
+  elements.whiteboardVideoTrimStart.value = String(Math.round(start));
+  elements.whiteboardVideoTrimEnd.value = String(Math.round(end));
+  elements.whiteboardVideoTrimTrack.style.setProperty("--trim-start", `${(start / duration) * 100}%`);
+  elements.whiteboardVideoTrimTrack.style.setProperty("--trim-end", `${(end / duration) * 100}%`);
+  elements.whiteboardVideoTrimStartOutput.textContent = formatWhiteboardAudioTrimTime(start);
+  elements.whiteboardVideoTrimEndOutput.textContent = formatWhiteboardAudioTrimTime(end);
+  elements.whiteboardVideoTrimDurationOutput.textContent = formatWhiteboardAudioTrimTime(end - start);
+  if (changed === "start" && Number.isFinite(elements.whiteboardVideoTrimPreview.duration)) elements.whiteboardVideoTrimPreview.currentTime = start / 1_000;
+  if (changed === "end" && (elements.whiteboardVideoTrimPreview.currentTime * 1_000 < start || elements.whiteboardVideoTrimPreview.currentTime * 1_000 >= end)) resetWhiteboardVideoTrimPreviewToStart();
+};
+
+const openWhiteboardVideoTrimDialog = (nodeId) => {
+  const documentState = activeWhiteboardDocument();
+  const node = whiteboardNodeById(nodeId, documentState);
+  if (!documentState || node?.kind !== "video" || !node.file) return showToast("当前卡片没有可截取的视频");
+  if (state.readOnly || whiteboardCandidateFor(nodeId)) return showToast("当前卡片暂不可编辑");
+  whiteboardVideoTrimContext = {
+    workspaceId: workspaceIdentity(),
+    workspacePath: state.settings.workspacePath,
+    documentId: state.activeDocument,
+    nodeId,
+    relativePath: node.file,
+    durationMs: Math.max(0, Number(node.durationMs) || 0),
+  };
+  elements.whiteboardVideoTrimPreview.pause();
+  elements.whiteboardVideoTrimPreview.src = whiteboardAttachmentUrl(node);
+  configureWhiteboardVideoTrimRange(whiteboardVideoTrimContext.durationMs || 1_000);
+  syncWhiteboardVideoTrimControls();
+  if (!elements.whiteboardVideoTrimDialog.open) elements.whiteboardVideoTrimDialog.showModal();
+  elements.whiteboardVideoTrimPreview.load();
+  return true;
+};
+
+const closeWhiteboardVideoTrimDialog = () => {
+  if (elements.whiteboardVideoTrimDialog.open) elements.whiteboardVideoTrimDialog.close();
+};
+
+elements.whiteboardVideoTrimPreview.addEventListener("loadedmetadata", () => {
+  if (!whiteboardVideoTrimContext || !(Number(elements.whiteboardVideoTrimPreview.duration) > 0)) return;
+  configureWhiteboardVideoTrimRange(Math.round(elements.whiteboardVideoTrimPreview.duration * 1_000));
+  syncWhiteboardVideoTrimControls();
+  resetWhiteboardVideoTrimPreviewToStart();
+});
+elements.whiteboardVideoTrimPreview.addEventListener("play", () => {
+  if (!whiteboardVideoTrimContext) return;
+  const { startMs, endMs } = whiteboardVideoTrimPreviewBounds();
+  const currentMs = elements.whiteboardVideoTrimPreview.currentTime * 1_000;
+  if (!(currentMs >= startMs && currentMs < endMs)) resetWhiteboardVideoTrimPreviewToStart();
+});
+elements.whiteboardVideoTrimPreview.addEventListener("seeking", () => {
+  if (!whiteboardVideoTrimContext) return;
+  const { startMs, endMs } = whiteboardVideoTrimPreviewBounds();
+  const currentMs = elements.whiteboardVideoTrimPreview.currentTime * 1_000;
+  if (currentMs < startMs || currentMs > endMs) elements.whiteboardVideoTrimPreview.currentTime = (currentMs < startMs ? startMs : Math.max(startMs, endMs - 1)) / 1_000;
+});
+elements.whiteboardVideoTrimPreview.addEventListener("timeupdate", () => {
+  if (!whiteboardVideoTrimContext || elements.whiteboardVideoTrimPreview.paused) return;
+  const { startMs, endMs } = whiteboardVideoTrimPreviewBounds();
+  if (elements.whiteboardVideoTrimPreview.currentTime * 1_000 < endMs) return;
+  elements.whiteboardVideoTrimPreview.pause();
+  elements.whiteboardVideoTrimPreview.currentTime = startMs / 1_000;
+});
+elements.whiteboardVideoTrimPreview.addEventListener("ended", resetWhiteboardVideoTrimPreviewToStart);
+elements.whiteboardVideoTrimStart.addEventListener("input", () => syncWhiteboardVideoTrimControls("start"));
+elements.whiteboardVideoTrimEnd.addEventListener("input", () => syncWhiteboardVideoTrimControls("end"));
+elements.closeWhiteboardVideoTrim.addEventListener("click", closeWhiteboardVideoTrimDialog);
+elements.cancelWhiteboardVideoTrim.addEventListener("click", closeWhiteboardVideoTrimDialog);
+elements.whiteboardVideoTrimDialog.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeWhiteboardVideoTrimDialog();
+});
+elements.whiteboardVideoTrimDialog.addEventListener("close", () => {
+  elements.whiteboardVideoTrimPreview.pause();
+  elements.whiteboardVideoTrimPreview.removeAttribute("src");
+  elements.whiteboardVideoTrimPreview.load();
+  whiteboardVideoTrimContext = null;
+});
+elements.whiteboardVideoTrimForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const context = whiteboardVideoTrimContext ? { ...whiteboardVideoTrimContext } : null;
+  if (!context || whiteboardMediaEditBusyNodeIds.has(context.nodeId)) return;
+  const startMs = Math.round(Number(elements.whiteboardVideoTrimStart.value) || 0);
+  const endMs = Math.round(Number(elements.whiteboardVideoTrimEnd.value) || 0);
+  if (endMs - startMs < 100) return showToast("请选择至少 0.1 秒的视频片段");
+  whiteboardMediaEditBusyNodeIds.add(context.nodeId);
+  elements.confirmWhiteboardVideoTrim.disabled = true;
+  try {
+    const payload = await requestWhiteboardMediaEdit("/api/workspace/video-trim", {
+      workspacePath: context.workspacePath,
+      documentId: context.documentId,
+      relativePath: context.relativePath,
+      startMs,
+      endMs,
+    });
+    if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("视频片段已保存，但当前白板已经切换，请回到原白板查看结果");
+    if (!whiteboardNodeById(context.nodeId)) throw new Error("视频片段已保存，但原视频卡片已经不存在");
+    const nodeIds = createWhiteboardDerivedMediaNodes({
+      sourceNodeId: context.nodeId,
+      historyLabel: "截取视频并创建下游卡片",
+      outputs: [{ kind: "video", attachment: payload.attachment, aspectRatio: payload.aspectRatio, operationLabel: "截取视频片段" }],
+    });
+    if (nodeIds.length !== 1) throw new Error("截取结果已保存，但下游卡片创建失败");
+    closeWhiteboardVideoTrimDialog();
+    showToast("已创建所选视频片段的下游卡片");
+  } catch (error) {
+    showToast(error.message || "视频截取失败");
+  } finally {
+    whiteboardMediaEditBusyNodeIds.delete(context.nodeId);
+    elements.confirmWhiteboardVideoTrim.disabled = false;
+    renderWhiteboardCardToolbar();
+  }
+});
+
+const whiteboardDepthExplorerRuntime = new Map();
+let whiteboardDepthExplorerPreflight = null;
+let whiteboardDepthExplorerProbePromise = null;
+
+const whiteboardDepthExplorerRuntimeKey = (nodeId, documentId = state.activeDocument) => `${workspaceIdentity()}::${documentId}::${nodeId}`;
+
+const whiteboardDepthExplorerRuntimeState = (nodeId, documentId = state.activeDocument) => {
+  const key = whiteboardDepthExplorerRuntimeKey(nodeId, documentId);
+  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "" };
+  whiteboardDepthExplorerRuntime.set(key, current);
+  return current;
+};
+
+const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.activeDocument) => {
+  const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
+  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
+};
+
+const whiteboardDepthExplorerInputs = (nodeId, documentState = activeWhiteboardDocument()) => {
+  const canvas = canonicalCanvas(documentState?.canvas);
+  const sourceIds = canvas.edges.filter((edge) => edge.toNode === nodeId).sort((left, right) => left.order - right.order).map((edge) => edge.fromNode);
+  const nodes = new Map(canvas.nodes.map((node) => [node.id, node]));
+  return sourceIds.map((id) => nodes.get(id)).filter((node) => ["image", "video"].includes(node?.kind) && node.file);
+};
+
+const whiteboardDepthExplorerSettings = (node) => ({
+  quality: ["fast", "balanced", "quality"].includes(node?.operation?.settings?.quality) ? node.operation.settings.quality : "balanced",
+  provider: ["auto", "directml", "cpu"].includes(node?.operation?.settings?.provider) ? node.operation.settings.provider : "auto",
+  invertDepth: Boolean(node?.operation?.settings?.invertDepth),
+  keepAudio: Boolean(node?.operation?.settings?.keepAudio),
+});
+
+const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
+  const inputs = whiteboardDepthExplorerInputs(node.id, documentState);
+  const imageCount = inputs.filter((input) => input.kind === "image").length;
+  const videoCount = inputs.length - imageCount;
+  const settings = whiteboardDepthExplorerSettings(node);
+  const runtime = whiteboardDepthExplorerRuntimeState(node.id, documentState?.id || state.activeDocument);
+  const tooMany = inputs.length > 10;
+  const unavailable = whiteboardDepthExplorerPreflight && !whiteboardDepthExplorerPreflight.available;
+  const disabled = state.readOnly || runtime.busy || runtime.checking || !inputs.length || tooMany || unavailable;
+  const sourceSummary = inputs.length
+    ? `${inputs.length} / 10${imageCount ? ` · 图片 ${imageCount}` : ""}${videoCount ? ` · 视频 ${videoCount}` : ""}`
+    : "0 / 10 · 连接图片或视频";
+  const status = runtime.busy
+    ? `正在按顺序处理 ${inputs.length} 个媒体，请勿关闭软件`
+    : runtime.error
+      ? runtime.error
+      : tooMany
+        ? "一次最多处理 10 个上游媒体，请移除多余连接"
+        : unavailable
+          ? `无法启动：${whiteboardDepthExplorerPreflight.reasons?.join("；") || "本地运行环境不可用"}`
+          : runtime.checking
+            ? "正在检查本地运行环境"
+            : whiteboardDepthExplorerPreflight?.available
+              ? `本地环境可用 · ${whiteboardDepthExplorerPreflight.cpuThreads} 线程 · 严格串行`
+              : "本功能使用本地 CPU 或 GPU，配置较低不建议使用";
+  const selected = (value, current) => value === current ? " selected" : "";
+  return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-node="${escapeHtml(node.id)}">
+    <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
+    <div class="whiteboard-depth-identity"><span>${icon("\uE945", "深度摸索")}</span><span><strong>深度摸索</strong><small>${escapeHtml(sourceSummary)}</small></span></div>
+    <label class="whiteboard-depth-select"><span>质量档</span><select data-whiteboard-depth-field="quality"${runtime.busy ? " disabled" : ""}><option value="fast"${selected("fast", settings.quality)}>快速</option><option value="balanced"${selected("balanced", settings.quality)}>均衡</option><option value="quality"${selected("quality", settings.quality)}>精细</option></select></label>
+    <label class="whiteboard-depth-select"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
+    <label class="whiteboard-depth-node-check"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
+    <label class="whiteboard-depth-node-check"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
+    <button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}>${runtime.busy ? "处理中" : "生成深度结果"}</button>
+    <small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
+  </div>`;
+};
+
+const rerenderWhiteboardDepthExplorerNode = (nodeId, documentId = state.activeDocument) => {
+  if (documentId !== state.activeDocument || !whiteboardNodeById(nodeId)) return;
+  renderWhiteboard(activeWhiteboardDocument());
+};
+
+const ensureWhiteboardDepthExplorerPreflight = async () => {
+  if (whiteboardDepthExplorerPreflight) return whiteboardDepthExplorerPreflight;
+  if (whiteboardDepthExplorerProbePromise) return whiteboardDepthExplorerProbePromise;
+  whiteboardDepthExplorerProbePromise = fetch("/api/workspace/depth-explorer/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) throw new Error(payload.message || "本地运行环境检查失败");
+    whiteboardDepthExplorerPreflight = payload;
+    return payload;
+  }).catch((error) => {
+    whiteboardDepthExplorerPreflight = { available: false, reasons: [error.message || "本地运行环境检查失败"] };
+    return whiteboardDepthExplorerPreflight;
+  }).finally(() => {
+    whiteboardDepthExplorerProbePromise = null;
+  });
+  return whiteboardDepthExplorerProbePromise;
+};
+
+const primeWhiteboardDepthExplorerNode = async (nodeId) => {
+  const documentId = state.activeDocument;
+  const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
+  if (whiteboardDepthExplorerPreflight || runtime.checking) return rerenderWhiteboardDepthExplorerNode(nodeId, documentId);
+  runtime.checking = true;
+  runtime.error = "";
+  rerenderWhiteboardDepthExplorerNode(nodeId, documentId);
+  await ensureWhiteboardDepthExplorerPreflight();
+  runtime.checking = false;
+  rerenderWhiteboardDepthExplorerNode(nodeId, documentId);
+};
+
+const updateWhiteboardDepthExplorerSetting = (nodeId, field, value) => {
+  const documentState = activeWhiteboardDocument();
+  const node = whiteboardNodeById(nodeId, documentState);
+  if (!documentState || node?.operation?.type !== "depth-explorer") return false;
+  const settings = whiteboardDepthExplorerSettings(node);
+  if (["invertDepth", "keepAudio"].includes(field)) settings[field] = Boolean(value);
+  else if (field === "quality" && ["fast", "balanced", "quality"].includes(value)) settings.quality = value;
+  else if (field === "provider" && ["auto", "directml", "cpu"].includes(value)) settings.provider = value;
+  else return false;
+  documentState.canvas = updateCanvasNode(documentState.canvas, nodeId, { operation: { type: "depth-explorer", settings } });
+  documentState.updatedAt = nowTime();
+  persist({ documentIds: [state.activeDocument] });
+  return true;
+};
+
+const runWhiteboardDepthExplorerNode = async (nodeId) => {
+  const documentState = activeWhiteboardDocument();
+  const node = whiteboardNodeById(nodeId, documentState);
+  if (!documentState || node?.operation?.type !== "depth-explorer") return showToast("当前节点不是深度摸索节点");
+  const runtime = whiteboardDepthExplorerRuntimeState(nodeId);
+  if (runtime.busy) return;
+  const inputs = whiteboardDepthExplorerInputs(nodeId, documentState);
+  if (!inputs.length) return showToast("请先连接至少一张图片或一个视频");
+  if (inputs.length > 10) return showToast("深度摸索一次最多处理 10 个媒体");
+  runtime.checking = true;
+  runtime.error = "";
+  rerenderWhiteboardDepthExplorerNode(nodeId);
+  const preflight = await ensureWhiteboardDepthExplorerPreflight();
+  runtime.checking = false;
+  if (!preflight?.available) {
+    runtime.error = `无法启动：${preflight?.reasons?.join("；") || "本地运行环境不可用"}`;
+    rerenderWhiteboardDepthExplorerNode(nodeId);
+    return showToast(runtime.error);
+  }
+  const context = {
+    workspaceId: workspaceIdentity(),
+    workspacePath: state.settings.workspacePath,
+    documentId: state.activeDocument,
+    nodeId,
+    relativePaths: inputs.map((input) => input.file),
+    settings: whiteboardDepthExplorerSettings(node),
+  };
+  runtime.busy = true;
+  whiteboardMediaEditBusyNodeIds.add(nodeId);
+  rerenderWhiteboardDepthExplorerNode(nodeId);
+  try {
+    const payload = await requestWhiteboardMediaEdit("/api/workspace/depth-explorer/run", context);
+    if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
+    if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
+    const outputs = (payload.outputs || []).map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" }));
+    runtime.busy = false;
+    const nodeIds = createWhiteboardDerivedMediaNodes({ sourceNodeId: nodeId, historyLabel: "深度摸索并创建下游卡片", outputs });
+    if (nodeIds.length !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
+    showToast(`深度摸索完成，已创建 ${nodeIds.length} 个下游卡片`);
+  } catch (error) {
+    runtime.error = error.message || "深度处理失败";
+    showToast(runtime.error);
+  } finally {
+    runtime.busy = false;
+    whiteboardMediaEditBusyNodeIds.delete(nodeId);
+    rerenderWhiteboardDepthExplorerNode(nodeId, context.documentId);
+  }
+};
+
 elements.whiteboardCardToolbar.addEventListener("pointerdown", (event) => event.stopPropagation());
 elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
   const action = event.target.closest("[data-whiteboard-card-tool]");
@@ -57004,7 +57439,9 @@ elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
     return;
   }
   if (tool === "edit-image") return void openWhiteboardImageEditor(nodeId);
+  if (tool === "focus") return void focusWhiteboardNodes([nodeId]);
   if (tool === "separate-av") return void separateWhiteboardVideoAudio(nodeId);
+  if (tool === "trim-video") return void openWhiteboardVideoTrimDialog(nodeId);
   if (tool === "trim-audio") return void openWhiteboardAudioTrimDialog(nodeId);
   if (tool === "composite-process") return void renderCompositeLongVideoProcessDialog(nodeId);
   if (tool === "save-as") return void exportWhiteboardCards([nodeId]);
@@ -57130,7 +57567,7 @@ const openVideoFrameMenu = (event, trigger) => {
   if (elements.videoFrameMenu.parentElement !== host) host.append(elements.videoFrameMenu);
   const rect = trigger.getBoundingClientRect();
   positionContextMenu(elements.videoFrameMenu, {
-    x: Math.max(8, rect.right - 168),
+    x: rect.left,
     y: rect.bottom + 6,
   });
   return true;

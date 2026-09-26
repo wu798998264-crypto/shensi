@@ -333,8 +333,11 @@ import {
   migrateAllLegacyWorkspacesToPersistent,
   migrateLegacyWorkspaceToPersistent,
   probeVideoValidationRuntime,
+  probeWorkspaceDepthExplorer,
+  runWorkspaceDepthExplorer,
   separateWorkspaceVideoAudio,
   trimWorkspaceAudio,
+  trimWorkspaceVideo,
   permanentlyDeleteDeletedWorkspace,
   readWorkspaceAttachmentContent,
   readWorkspaceAttachments,
@@ -9569,6 +9572,37 @@ const handleApiRequest = async (request, response, pathname) => {
       whiteboardDocumentId: body.documentId,
     });
     await nutstoreSyncEngine.noteLocalChange(result.attachment.relativePath).catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
+  if (pathname === "/api/workspace/video-trim" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    const result = await trimWorkspaceVideo({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      relativePath: body.relativePath,
+      startMs: body.startMs,
+      endMs: body.endMs,
+      whiteboardDocumentId: body.documentId,
+    });
+    await nutstoreSyncEngine.noteLocalChange(result.attachment.relativePath).catch(() => {});
+    return sendJson(response, 200, { ok: true, ...result });
+  }
+
+  if (pathname === "/api/workspace/depth-explorer/probe" && request.method === "POST") {
+    return sendJson(response, 200, { ok: true, ...(await probeWorkspaceDepthExplorer({ appRoot: root })) });
+  }
+
+  if (pathname === "/api/workspace/depth-explorer/run" && request.method === "POST") {
+    const body = await readJsonBody(request, 256 * 1024);
+    const result = await runWorkspaceDepthExplorer({
+      appRoot: root,
+      requestedPath: body.workspacePath,
+      relativePaths: Array.isArray(body.relativePaths) ? body.relativePaths : [],
+      settings: body.settings || {},
+      whiteboardDocumentId: body.documentId,
+    });
+    await Promise.all(result.outputs.map((output) => nutstoreSyncEngine.noteLocalChange(output.attachment.relativePath).catch(() => {})));
     return sendJson(response, 200, { ok: true, ...result });
   }
 

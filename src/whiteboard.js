@@ -152,6 +152,20 @@ const normalizeGeneration = (generation) => {
   } : null;
 };
 
+const normalizeLocalOperation = (operation) => {
+  if (!operation || typeof operation !== "object" || operation.type !== "depth-explorer") return null;
+  const settings = operation.settings && typeof operation.settings === "object" ? operation.settings : {};
+  return {
+    type: "depth-explorer",
+    settings: {
+      quality: ["fast", "balanced", "quality"].includes(settings.quality) ? settings.quality : "balanced",
+      provider: ["auto", "directml", "cpu"].includes(settings.provider) ? settings.provider : "auto",
+      invertDepth: Boolean(settings.invertDepth),
+      keepAudio: Boolean(settings.keepAudio),
+    },
+  };
+};
+
 export const isUnusableWhiteboardGenerationText = (value) => {
   const text = String(value ?? "").trim();
   return /^当前任务需要补充说明(?:\s|$)/u.test(text)
@@ -183,8 +197,9 @@ const normalizeNode = (node) => {
       ? "audio"
       : node.kind === "video" || String(node.mimeType ?? "").startsWith("video/") ? "video" : "image"
     : NODE_KINDS.has(node.kind) ? node.kind : "text";
+  const localOperation = !mediaNode && kind === "text" ? normalizeLocalOperation(node.operation) : null;
   const aspectRatio = clamp(finite(node.aspectRatio, 16 / 9), 0.1, 10);
-  const width = Math.max(180, finite(node.width, mediaNode ? 320 : 260));
+  const width = Math.max(localOperation ? 820 : 180, finite(node.width, mediaNode ? 320 : localOperation ? 820 : 260));
   return {
     id: String(node.id),
     type: mediaNode ? "file" : "text",
@@ -196,7 +211,7 @@ const normalizeNode = (node) => {
     x: finite(node.x, 40),
     y: finite(node.y, 40),
     width,
-    height: Math.max(100, finite(node.height, mediaNode ? width / aspectRatio : 160)),
+    height: Math.max(localOperation ? 126 : 100, finite(node.height, mediaNode ? width / aspectRatio : localOperation ? 126 : 160)),
     color: String(node.color ?? "default"),
     ...(kind === "web" ? {
       url: String(node.url ?? ""),
@@ -216,6 +231,7 @@ const normalizeNode = (node) => {
     } : {}),
     ...(normalizeReference(node.reference) ? { reference: normalizeReference(node.reference) } : {}),
     ...(normalizeGeneration(node.generation) ? { generation: normalizeGeneration(node.generation) } : {}),
+    ...(localOperation ? { operation: localOperation } : {}),
   };
 };
 
@@ -877,7 +893,7 @@ export const canvasSelectionBounds = (canvas, nodeIds = [], padding = 18) => {
   return { left, top, right, bottom, width: right - left, height: bottom - top };
 };
 
-export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, url = "", webSnapshot = null } = {}) => ({
+export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, operation = null, url = "", webSnapshot = null } = {}) => ({
   id: String(id || `canvas-node-${Date.now()}`),
   type: "text",
   kind: NODE_KINDS.has(kind) && !MEDIA_NODE_KINDS.has(kind) ? kind : "text",
@@ -894,6 +910,7 @@ export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40,
   } : {}),
   ...(normalizeReference(reference) ? { reference: normalizeReference(reference) } : {}),
   ...(normalizeGeneration(generation) ? { generation: normalizeGeneration(generation) } : {}),
+  ...(normalizeLocalOperation(operation) ? { operation: normalizeLocalOperation(operation) } : {}),
 });
 
 export const createCanvasImageNode = ({ id, file, name = "图片", mimeType = "image/png", aspectRatio = 16 / 9, durationMs = 0, thumbnailRelativePath = "", thumbnailMimeType = "", mediaBatchDirectory = "", mediaBatchIndexPath = "", whiteboardMediaDirectory = "", whiteboardMediaIndexPath = "", x = 40, y = 40, width = 320, color = "default", generation = null } = {}) => {
@@ -998,6 +1015,7 @@ export const pasteCanvasNode = (canvas, record, {
         color: source.color,
         reference: source.reference,
         generation: source.generation,
+        operation: source.operation,
         url: source.url,
         width: limited(source.width, maxTextWidth),
         height: limited(source.height, maxTextHeight),
@@ -1207,6 +1225,11 @@ const patchCanvasNode = (node, patch = {}) => {
     const generation = normalizeGeneration(patch.generation);
     if (generation) next.generation = generation;
     else delete next.generation;
+  }
+  if (Object.hasOwn(patch, "operation")) {
+    const operation = normalizeLocalOperation(patch.operation);
+    if (operation) next.operation = operation;
+    else delete next.operation;
   }
   return next;
 };

@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractWorkspaceVideoFrame, separateWorkspaceVideoAudio, trimWorkspaceAudio } from "../src/server/workspace.mjs";
+import { extractWorkspaceVideoFrame, separateWorkspaceVideoAudio, trimWorkspaceAudio, trimWorkspaceVideo } from "../src/server/workspace.mjs";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const runtimeRoot = join(root, "runtime");
@@ -62,6 +62,19 @@ try {
   const durationMs = Number(trimmedProbe.format.duration) * 1_000;
   assert.ok(durationMs >= 850 && durationMs <= 1_200, `unexpected trim duration: ${durationMs}`);
 
+  const videoTrimmed = await trimWorkspaceVideo({
+    appRoot: root,
+    requestedPath: workspacePath,
+    relativePath: "素材/source.mp4",
+    startMs: 300,
+    endMs: 1_400,
+    whiteboardDocumentId: "whiteboard-test",
+  });
+  const videoTrimmedProbe = probe(join(workspacePath, ...videoTrimmed.attachment.relativePath.split("/")));
+  const videoTrimmedDurationMs = Number(videoTrimmedProbe.format.duration) * 1_000;
+  assert.equal(videoTrimmedProbe.streams.filter((stream) => stream.codec_type === "video").length, 1);
+  assert.ok(videoTrimmedDurationMs >= 950 && videoTrimmedDurationMs <= 1_300, `unexpected video trim duration: ${videoTrimmedDurationMs}`);
+
   const firstFrame = await extractWorkspaceVideoFrame({
     appRoot: root,
     requestedPath: workspacePath,
@@ -84,21 +97,39 @@ try {
   assert.match(appSource, /id="whiteboardCardToolbar"/);
   assert.match(appSource, /data-whiteboard-card-tool="\$\{escapeHtml\(button\.tool\)\}"/);
   assert.match(appSource, /tool: "edit-text"/);
+  assert.match(appSource, /const buttons = \[\{ tool: "focus", label: "聚焦卡片"/);
   assert.match(appSource, /const textCard = Boolean\(node && \["text", "generated"\]/);
   assert.match(appSource, /tool: "extract-frame", label: "截取关键帧", glyph: "\\uE722",[\s\S]{0,100}compact: true/);
+  assert.match(appSource, /tool: "extract-frame"[\s\S]{0,500}tool: "save-as"[\s\S]{0,500}tool: "preview"/u);
   assert.match(appSource, /currentTimeMs: Math\.max\(0, Math\.round\(\(Number\(sourceVideo\?\.currentTime\)/);
   assert.match(appSource, /Number\(context\.currentTimeMs\)/);
   assert.match(appSource, /target\?\.closest\?\.\("\.whiteboard-card-toolbar"\)/);
   assert.match(appSource, /preview\.dataset\.attachmentFullscreen = "true"/);
   assert.match(appSource, /data-whiteboard-card-tool="separate-av"|tool: "separate-av"/);
   assert.match(appSource, /tool: "trim-audio"/);
+  assert.match(appSource, /tool: "trim-video"/);
   assert.match(appSource, /if \(node\?\.kind === "audio"\) \{\s*openWhiteboardAudioTrimDialog\(node\.id\);\s*return;\s*\}/u);
   assert.match(appSource, /id="whiteboardAudioTrimStart"/);
   assert.match(appSource, /id="whiteboardAudioTrimEnd"/);
+  assert.match(appSource, /id="whiteboardVideoTrimStart"/);
+  assert.match(appSource, /id="whiteboardVideoTrimEnd"/);
+  assert.match(appSource, /\/api\/workspace\/video-trim/u);
+  assert.match(appSource, /data-whiteboard-node-create="depth"/u);
+  assert.match(appSource, /class="whiteboard-depth-node-bar"/u);
+  assert.match(appSource, /data-whiteboard-depth-field="invertDepth"[\s\S]{0,220}<span>反向深度<\/span>/u);
+  assert.match(appSource, /data-whiteboard-depth-field="keepAudio"[\s\S]{0,220}<span>保留音频<\/span>/u);
+  assert.match(appSource, /本功能使用本地 CPU 或 GPU，配置较低不建议使用/u);
+  assert.match(appSource, /inputs\.length > 10/u);
+  assert.match(appSource, /runtime\.busy \|\| runtime\.checking \|\| !inputs\.length \|\| tooMany \|\| unavailable/u);
+  assert.match(appSource, /\/api\/workspace\/depth-explorer\/run/u);
+  assert.match(appSource, /updateCanvasNode\(canvas, nodeId, \{ kind: output\.kind \}\);\s*canvas = updateCanvasNode\(canvas, nodeId, \{\s*file: attachment\.relativePath/u);
   assert.doesNotMatch(appSource, /class="whiteboard-image-edit-button"/);
   assert.doesNotMatch(appSource, /class="whiteboard-video-frame-trigger"/);
   assert.match(styles, /\.whiteboard-card-toolbar\s*\{/);
   assert.match(styles, /\.whiteboard-audio-trim-track\s*\{/);
+  assert.match(styles, /\.whiteboard-video-trim-body video\s*\{/);
+  assert.match(styles, /\.whiteboard-depth-node-bar\s*\{/);
+  assert.match(styles, /\.whiteboard-depth-node-check\s*\{[\s\S]{0,180}display:\s*flex/u);
   console.log("whiteboard media edit: ok");
 } finally {
   const resolvedWorkspace = resolve(workspacePath);

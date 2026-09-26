@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { copyFile, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, rmdir, stat, statfs, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { cpus, freemem, homedir, totalmem } from "node:os";
 import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
@@ -4021,7 +4022,8 @@ const runWorkspaceMediaEdit = ({ appRoot, args = [], label = "媒体处理", tim
 
 const workspaceMediaEditSource = async ({ appRoot, requestedPath, relativePath, expectedKind }) => {
   const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
-  const { targetPath: sourcePath } = await secureManagedTarget(workspaceRoot, relativePath, { label: `${expectedKind === "video" ? "视频" : "音频"}附件` });
+  const expectedLabel = expectedKind === "video" ? "视频" : expectedKind === "audio" ? "音频" : "媒体";
+  const { targetPath: sourcePath } = await secureManagedTarget(workspaceRoot, relativePath, { label: `${expectedLabel}附件` });
   const sourceInfo = await lstat(sourcePath).catch((error) => {
     if (error.code === "ENOENT") throw mediaEditError("找不到需要处理的媒体附件", "MEDIA_EDIT_SOURCE_MISSING", 404);
     throw error;
@@ -4029,12 +4031,14 @@ const workspaceMediaEditSource = async ({ appRoot, requestedPath, relativePath, 
   if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink()) throw mediaEditError("媒体来源必须是工作区内的普通文件", "MEDIA_EDIT_SOURCE_INVALID");
   const declaredMimeType = attachmentMimeByExtension(sourcePath) || "application/octet-stream";
   const detected = await detectedAttachmentMime(sourcePath, declaredMimeType, basename(sourcePath));
-  if (!String(detected.mimeType).startsWith(`${expectedKind}/`)) {
-    throw mediaEditError(`所选附件不是可验证的${expectedKind === "video" ? "视频" : "音频"}文件`, "MEDIA_EDIT_SOURCE_INVALID");
+  const kind = String(detected.mimeType).split("/")[0];
+  const accepted = expectedKind ? kind === expectedKind : ["image", "video"].includes(kind);
+  if (!accepted) {
+    throw mediaEditError(`所选附件不是可验证的${expectedLabel}文件`, "MEDIA_EDIT_SOURCE_INVALID");
   }
   const metadata = await probeMediaMetadata(sourcePath, detected.mimeType, appRoot);
   if (metadata.probeErrorCode) throw mediaEditError(metadata.probeError || "无法读取媒体信息", metadata.probeErrorCode);
-  return { workspaceRoot, sourcePath, detected, metadata };
+  return { workspaceRoot, sourcePath, detected, metadata, kind };
 };
 
 export const separateWorkspaceVideoAudio = async ({ appRoot = process.cwd(), requestedPath, relativePath, whiteboardDocumentId = "" } = {}) => {
@@ -4141,6 +4145,233 @@ export const trimWorkspaceAudio = async ({ appRoot = process.cwd(), requestedPat
   } finally {
     await rm(outputPath, { force: true }).catch(() => {});
   }
+};
+
+export const trimWorkspaceVideo = async ({ appRoot = process.cwd(), requestedPath, relativePath, startMs = 0, endMs = 0, whiteboardDocumentId = "" } = {}) => {
+  const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath, expectedKind: "video" });
+  if (!source.metadata.videoCodec) throw mediaEditError("视频缺少可读取的画面流", "MEDIA_EDIT_VIDEO_STREAM_MISSING");
+  const sourceDurationMs = Math.max(0, Number(source.metadata.durationMs) || 0);
+  const normalizedStartMs = Math.max(0, Math.round(Number(startMs) || 0));
+  const requestedEndMs = Math.round(Number(endMs) || 0);
+  if (!sourceDurationMs) throw mediaEditError("无法读取视频时长，不能截取", "MEDIA_EDIT_DURATION_MISSING");
+  if (!Number.isFinite(requestedEndMs) || requestedEndMs <= 0 || requestedEndMs > sourceDurationMs + 250) {
+    throw mediaEditError("视频截取的结束时间超出有效范围", "MEDIA_EDIT_RANGE_INVALID");
+  }
+  const normalizedEndMs = Math.min(sourceDurationMs, requestedEndMs);
+  if (normalizedStartMs >= normalizedEndMs || normalizedEndMs - normalizedStartMs < 100) {
+    throw mediaEditError("请选择至少 0.1 秒的有效视频片段", "MEDIA_EDIT_RANGE_INVALID");
+  }
+  const temporaryDirectory = join(resolveWorkspaceInternalRoot(source.workspaceRoot), "temporary", "media-edit");
+  await mkdir(temporaryDirectory, { recursive: true });
+  const outputPath = join(temporaryDirectory, `${process.pid}-${randomUUID()}-trim.mp4`);
+  const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || "视频");
+  const selectionDurationMs = normalizedEndMs - normalizedStartMs;
+  try {
+    await runWorkspaceMediaEdit({
+      appRoot,
+      label: "视频截取",
+      args: [
+        "-ss", (normalizedStartMs / 1_000).toFixed(3),
+        "-i", source.sourcePath,
+        "-t", (selectionDurationMs / 1_000).toFixed(3),
+        "-map", "0:v:0", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", "-y", outputPath,
+      ],
+      timeoutMs: 30 * 60_000,
+    });
+    const attachment = await saveWorkspaceAttachmentFromPath({
+      appRoot,
+      requestedPath,
+      sourcePath: outputPath,
+      name: `${sourceName}-${(normalizedStartMs / 1_000).toFixed(1)}s-${(normalizedEndMs / 1_000).toFixed(1)}s.mp4`,
+      mimeType: "video/mp4",
+      whiteboardDocumentId,
+      whiteboardMediaKind: "video",
+    });
+    if (!(Number(attachment.durationMs) > 0) || !(Number(attachment.videoWidth) > 0) || !(Number(attachment.videoHeight) > 0)) {
+      throw mediaEditError("截取结果缺少有效视频画面", "MEDIA_EDIT_OUTPUT_INVALID");
+    }
+    return {
+      attachment,
+      sourceDurationMs,
+      startMs: normalizedStartMs,
+      endMs: normalizedEndMs,
+      selectionDurationMs,
+      aspectRatio: Number(attachment.videoWidth) / Math.max(1, Number(attachment.videoHeight)),
+    };
+  } finally {
+    await rm(outputPath, { force: true }).catch(() => {});
+  }
+};
+
+const depthExplorerExecutableCandidates = (appRoot) => [
+  String(process.env.SHENSI_DEPTH_EXPLORER_EXECUTABLE || "").trim(),
+  join(appRoot, "packaging", "bundled", "depth-explorer", "深度摸索.exe"),
+  join(dirname(process.execPath), "resources", "depth-explorer", "深度摸索.exe"),
+  resolve(appRoot, "..", "..", "深度摸索", "dist", "深度摸索", "深度摸索.exe"),
+  join(homedir(), "Documents", "深度摸索", "dist", "深度摸索", "深度摸索.exe"),
+].filter(Boolean);
+
+const resolveDepthExplorerExecutable = async (appRoot) => {
+  for (const candidate of depthExplorerExecutableCandidates(appRoot)) {
+    const info = await stat(candidate).catch(() => null);
+    if (info?.isFile()) return candidate;
+  }
+  return "";
+};
+
+export const probeWorkspaceDepthExplorer = async ({ appRoot = process.cwd() } = {}) => {
+  const executable = await resolveDepthExplorerExecutable(appRoot);
+  const memoryTotalBytes = totalmem();
+  const memoryFreeBytes = freemem();
+  const cpuThreads = Math.max(1, cpus().length);
+  const reasons = [];
+  if (!executable) reasons.push("未找到深度摸索本地运行时");
+  if (memoryTotalBytes < 6 * 1024 ** 3) reasons.push("物理内存不足 6GB");
+  if (memoryFreeBytes < 1.5 * 1024 ** 3) reasons.push("当前可用内存不足 1.5GB");
+  if (cpuThreads < 2) reasons.push("可用 CPU 线程不足 2 个");
+  return {
+    available: reasons.length === 0,
+    executable: executable ? basename(executable) : "",
+    cpuThreads,
+    memoryTotalBytes,
+    memoryFreeBytes,
+    reasons,
+  };
+};
+
+const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs }) => new Promise((resolveWorker, rejectWorker) => {
+  let child;
+  try {
+    child = spawn(executable, ["--worker", "--request", requestPath], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    rejectWorker(mediaEditError(`无法启动深度摸索：${error.message}`, "DEPTH_EXPLORER_UNAVAILABLE"));
+    return;
+  }
+  let stderr = "";
+  let settled = false;
+  const finish = async (error = null) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    const events = String(await readFile(eventPath, "utf8").catch(() => ""))
+      .split(/\r?\n/u)
+      .map((line) => {
+        try { return JSON.parse(line); } catch { return null; }
+      })
+      .filter(Boolean);
+    const failed = [...events].reverse().find((event) => event.event === "failed" || event.event === "canceled");
+    const completed = [...events].reverse().find((event) => event.event === "completed");
+    if (error) rejectWorker(error);
+    else if (failed) rejectWorker(mediaEditError(String(failed.message || "深度处理失败"), "DEPTH_EXPLORER_FAILED"));
+    else if (!completed?.output_path) rejectWorker(mediaEditError(stderr.slice(0, 500) || "深度处理未返回结果", "DEPTH_EXPLORER_OUTPUT_MISSING"));
+    else resolveWorker({ outputPath: String(completed.output_path), events });
+  };
+  child.stderr.on("data", (chunk) => {
+    if (stderr.length < 16_000) stderr += chunk.toString("utf8");
+  });
+  child.once("error", (error) => finish(mediaEditError(`深度摸索进程启动失败：${error.message}`, "DEPTH_EXPLORER_UNAVAILABLE")));
+  child.once("close", (code) => finish(code === 0 ? null : mediaEditError(`深度处理失败（退出码 ${code ?? "unknown"}）`, "DEPTH_EXPLORER_FAILED")));
+  const timer = setTimeout(() => {
+    child.kill();
+    finish(mediaEditError("深度处理超过安全时限，已自动停止", "DEPTH_EXPLORER_TIMEOUT"));
+  }, timeoutMs);
+});
+
+let depthExplorerQueue = Promise.resolve();
+
+export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), requestedPath, relativePaths = [], settings = {}, whiteboardDocumentId = "" } = {}) => {
+  const inputs = [...new Set((Array.isArray(relativePaths) ? relativePaths : []).map(String).map((value) => value.trim()).filter(Boolean))];
+  if (!inputs.length) throw mediaEditError("请先连接至少一张图片或一个视频", "DEPTH_EXPLORER_INPUT_REQUIRED");
+  if (inputs.length > 10) throw mediaEditError("深度摸索一次最多处理 10 个上游媒体", "DEPTH_EXPLORER_BATCH_LIMIT");
+  const preflight = await probeWorkspaceDepthExplorer({ appRoot });
+  if (!preflight.available) {
+    throw mediaEditError(`当前设备不适合启动深度摸索：${preflight.reasons.join("；")}`, "DEPTH_EXPLORER_PREFLIGHT_FAILED");
+  }
+  const normalizedSettings = {
+    quality: ["fast", "balanced", "quality"].includes(settings.quality) ? settings.quality : "balanced",
+    provider: ["auto", "directml", "cpu"].includes(settings.provider) ? settings.provider : "auto",
+    custom_short_side: 518,
+    temporal_weight: Math.max(0, Math.min(0.75, Number(settings.temporalWeight) || 0.32)),
+    invert_depth: Boolean(settings.invertDepth),
+    png_bit_depth: Number(settings.pngBitDepth) === 8 ? 8 : 16,
+    video_crf: 12,
+    video_preset: "medium",
+    keep_audio: Boolean(settings.keepAudio),
+  };
+  const execute = async () => {
+    const outputs = [];
+    for (let index = 0; index < inputs.length; index += 1) {
+      const relativePath = inputs[index];
+      const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath });
+      if (!['image', 'video'].includes(source.kind)) throw mediaEditError("深度摸索只支持图片和视频", "DEPTH_EXPLORER_INPUT_INVALID");
+      if (source.kind === "video" && !source.metadata.videoCodec) throw mediaEditError("视频缺少可读取的画面流", "DEPTH_EXPLORER_INPUT_INVALID");
+      const jobDirectory = join(resolveWorkspaceInternalRoot(source.workspaceRoot), "temporary", "depth-explorer", randomUUID());
+      await mkdir(jobDirectory, { recursive: true });
+      const extension = source.kind === "image" ? ".png" : ".mp4";
+      const outputPath = join(jobDirectory, `depth${extension}`);
+      const requestPath = join(jobDirectory, "request.json");
+      const eventPath = join(jobDirectory, "events.jsonl");
+      const controlPath = join(jobDirectory, "control.json");
+      const jobId = randomUUID().replaceAll("-", "");
+      await writeFile(controlPath, JSON.stringify({ paused: false, canceled: false }), "utf8");
+      await writeFile(requestPath, JSON.stringify({
+        job: {
+          id: jobId,
+          input_path: source.sourcePath,
+          output_path: outputPath,
+          kind: source.kind,
+          settings: normalizedSettings,
+          status: "queued",
+          progress: 0,
+          message: "等待处理",
+          attempt: 0,
+        },
+        control_path: controlPath,
+        event_path: eventPath,
+      }), "utf8");
+      try {
+        const result = await runDepthExplorerWorker({
+          executable: await resolveDepthExplorerExecutable(appRoot),
+          requestPath,
+          eventPath,
+          timeoutMs: source.kind === "video" ? 90 * 60_000 : 20 * 60_000,
+        });
+        const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || (source.kind === "image" ? "图片" : "视频"));
+        const attachment = await saveWorkspaceAttachmentFromPath({
+          appRoot,
+          requestedPath,
+          sourcePath: result.outputPath,
+          name: `${sourceName}-深度${extension}`,
+          mimeType: source.kind === "image" ? "image/png" : "video/mp4",
+          whiteboardDocumentId,
+          whiteboardMediaKind: source.kind,
+        });
+        outputs.push({
+          kind: source.kind,
+          attachment,
+          aspectRatio: Number(attachment.videoWidth) > 0 && Number(attachment.videoHeight) > 0
+            ? Number(attachment.videoWidth) / Number(attachment.videoHeight)
+            : Number(source.metadata.videoWidth) > 0 && Number(source.metadata.videoHeight) > 0
+              ? Number(source.metadata.videoWidth) / Number(source.metadata.videoHeight)
+              : 1,
+          sourceRelativePath: relativePath,
+          batchIndex: index,
+        });
+      } finally {
+        await rm(jobDirectory, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+    return { outputs, preflight };
+  };
+  const queued = depthExplorerQueue.then(execute, execute);
+  depthExplorerQueue = queued.catch(() => {});
+  return queued;
 };
 
 const runVideoFrameExtraction = ({ appRoot, sourcePath, outputPath, frameTimeMs }) => new Promise((resolveFrame, rejectFrame) => {

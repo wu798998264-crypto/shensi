@@ -9729,6 +9729,14 @@ textarea.whiteboard-find-textarea-source::selection {
   width: 100%;
 }
 
+.whiteboard-video-trim-body video {
+  width: 100%;
+  max-height: min(44vh, 360px);
+  border-radius: 6px;
+  background: #111;
+  object-fit: contain;
+}
+
 .whiteboard-audio-trim-track {
   position: relative;
   height: 34px;
@@ -9835,6 +9843,166 @@ textarea.whiteboard-find-textarea-source::selection {
   text-overflow: ellipsis;
 }
 
+.whiteboard-card.whiteboard-depth-node {
+  min-width: 820px;
+  min-height: 126px;
+  border-color: color-mix(in srgb, var(--text) 30%, var(--border-strong));
+  background: color-mix(in srgb, var(--surface) 97%, var(--accent) 3%);
+  box-shadow: 0 7px 20px rgb(0 0 0 / 0.1);
+}
+
+.whiteboard-depth-node-bar {
+  display: grid;
+  grid-template-columns: 34px 134px 102px 126px 106px 106px 136px;
+  grid-template-rows: 68px 22px;
+  align-items: center;
+  gap: 6px 8px;
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: grab;
+}
+
+.whiteboard-depth-focus,
+.whiteboard-depth-generate {
+  border: 0;
+  border-radius: 5px;
+  font: inherit;
+}
+
+.whiteboard-depth-focus {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.whiteboard-depth-focus:hover,
+.whiteboard-depth-focus:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text);
+  outline: none;
+}
+
+.whiteboard-depth-identity {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.whiteboard-depth-identity > span:first-child {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 5px;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent);
+}
+
+.whiteboard-depth-identity > span:last-child,
+.whiteboard-depth-select {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.whiteboard-depth-identity strong,
+.whiteboard-depth-identity small,
+.whiteboard-depth-select > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whiteboard-depth-identity strong {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.whiteboard-depth-identity small,
+.whiteboard-depth-select > span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.whiteboard-depth-select select {
+  width: 100%;
+  height: 30px;
+  padding: 0 25px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.whiteboard-depth-node-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 32px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.whiteboard-depth-node-check input {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.whiteboard-depth-generate {
+  height: 34px;
+  padding: 0 13px;
+  background: var(--text);
+  color: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.whiteboard-depth-generate:hover:not(:disabled) {
+  opacity: 0.86;
+}
+
+.whiteboard-depth-generate:disabled {
+  cursor: not-allowed;
+  opacity: 0.34;
+}
+
+.whiteboard-depth-node-status {
+  grid-column: 2 / -1;
+  align-self: start;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whiteboard-depth-node-status.error {
+  color: var(--error);
+}
+
 @media (max-width: 560px) {
   .whiteboard-audio-trim-body {
     padding-inline: 16px;
@@ -9843,6 +10011,7 @@ textarea.whiteboard-find-textarea-source::selection {
   .whiteboard-audio-trim-times {
     grid-template-columns: 1fr;
   }
+
 }
 
 .whiteboard-card.editing textarea {
