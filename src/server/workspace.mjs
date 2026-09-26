@@ -4266,7 +4266,35 @@ const runDepthExplorerInstaller = async (job) => {
   if (!response.body) throw new Error("深度摸索下载没有返回文件流");
   const declaredBytes = Number(response.headers.get("content-length") || 0);
   if (declaredBytes > 0 && declaredBytes > 360 * 1024 * 1024) throw new Error("深度摸索下载包超过安全大小限制");
-  await pipeline(Readable.fromWeb(response.body), createWriteStream(archivePath, { flags: "wx" }));
+  const reader = response.body.getReader();
+  const archiveHandle = await open(archivePath, "wx");
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      let timeoutId;
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error("深度摸索下载连续 60 秒没有收到数据，请检查网络后重试")), 60_000);
+        }),
+      ]).finally(() => clearTimeout(timeoutId));
+      if (chunk.done) break;
+      const buffer = Buffer.from(chunk.value || []);
+      if (!buffer.length) continue;
+      await archiveHandle.write(buffer);
+      receivedBytes += buffer.length;
+      if (declaredBytes > 0) {
+        job.percent = Math.max(5, Math.min(35, 5 + Math.floor((receivedBytes / declaredBytes) * 30)));
+        job.message = `正在下载深度摸索运行时（${Math.round(receivedBytes / 1024 / 1024)} / ${Math.ceil(declaredBytes / 1024 / 1024)} MB）`;
+      }
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    await archiveHandle.close().catch(() => {});
+    await rm(archivePath, { force: true }).catch(() => {});
+    throw error;
+  }
+  await archiveHandle.close();
   job.percent = 35;
   job.message = "正在校验深度摸索安装包";
   const digest = await fileSha256(archivePath);
