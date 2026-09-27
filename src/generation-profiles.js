@@ -1464,7 +1464,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
 const profileModelOptions = (profile, channel) => {
   if (channel === "image") return getProviderImageModelOptions(profile.provider, profile.adapter);
   if (channel === "video") return getProviderVideoModelOptions(profile.provider, profile.adapter);
-  if (channel === "audio") return [];
+  if (channel === "audio") return getProviderAudioModelOptions(profile.provider, profile.adapter);
   return getProviderModelOptions(profile.provider)
     .filter((item) => !item.capabilities?.some((capability) => ["image_generation", "video_generation"].includes(capability)));
 };

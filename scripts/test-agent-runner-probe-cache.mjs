@@ -16,7 +16,9 @@ const first = await detectKnownAgentRunnerInstallation({
   runProcess,
   cache: true,
 });
-assert.equal(first.ready, true);
+assert.equal(first.ready, false);
+assert.equal(first.state, "generation_check_required");
+assert.equal(first.authState, "generation_check_required");
 assert.deepEqual(first.models, ["hy3", "glm-5.2", "deepseek-v4-pro"]);
 assert.equal(calls, 2, "首次探测仍须真实执行版本和模型目录检查");
 
@@ -40,4 +42,3 @@ await detectKnownAgentRunnerInstallation({
 });
 assert.equal(calls, 4, "显式刷新必须绕过短时缓存重新核验");
 console.log("WorkBuddy runner probe cache contract passed");
-

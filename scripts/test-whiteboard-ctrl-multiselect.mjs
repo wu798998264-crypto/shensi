@@ -49,8 +49,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /id="whiteboardNodeCreateMenu"[\s\S]{0,1200}data-whiteboard-node-create="plain"[\s\S]{0,300}data-whiteboard-node-create="text"[\s\S]{0,300}data-whiteboard-node-create="image"[\s\S]{0,300}data-whiteboard-node-create="video"[\s\S]{0,300}data-whiteboard-node-create="audio" hidden[\s\S]{0,300}data-whiteboard-node-create="depth"/u,
-  "空白落点选择器必须按顺序提供普通、文本、图片、视频与深度摸索，并隐藏尚未接通的音频入口",
+  /id="whiteboardNodeCreateMenu"[\s\S]{0,1200}data-whiteboard-node-create="plain"[\s\S]{0,300}data-whiteboard-node-create="text"[\s\S]{0,300}data-whiteboard-node-create="image"[\s\S]{0,300}data-whiteboard-node-create="video"[\s\S]{0,300}data-whiteboard-node-create="audio"[\s\S]{0,300}data-whiteboard-node-create="depth"/u,
+  "空白落点选择器必须按顺序提供普通、文本、图片、视频、音频与深度摸索入口",
 );
 assert.match(
   appSource,
@@ -65,12 +65,23 @@ assert.match(
 assert.match(
   appSource,
   /querySelectorAll\("\[data-whiteboard-canvas-create\]"\)[\s\S]{0,300}button\.hidden = target !== "canvas" \|\| !whiteboardNodeCreateChannelAvailable\(kind\)/u,
-  "空白白板最外层生成入口必须按当前本机能力动态隐藏",
+  "空白白板最外层生成入口必须按当前本机能力动态隐藏（包括音频）",
 );
 assert.match(
   appSource,
-  /button\.hidden = \(kind !== "plain" && !available\) \|\| \(kind === "depth" && !validDepthSources\)/u,
+  /button\.hidden = \(kind !== "plain" && kind !== "depth" && !available\) \|\| \(kind === "depth" && \(depthDropUnavailable \|\| !validDepthSources && sourceNodes\.length > 0\)\)/u,
   "本机没有对应生成能力时必须隐藏该类型，深度摸索还必须校验媒体来源",
+);
+assert.match(
+  appSource,
+  /const audioAvailable = availableGenerationConnections\("audio"\)\.length > 0[\s\S]{0,1000}const audioGenerate = submenu\?\.querySelector\('\[data-whiteboard-action="generate-audio"\]'\)/u,
+  "卡片生成子菜单必须按真实音频驱动动态显示生成音频",
+);
+assert.match(appSource, /data-whiteboard-action="generate-audio" data-whiteboard-target="card"/u, "卡片生成子菜单必须包含生成音频入口");
+assert.match(
+  appSource,
+  /const capabilityCount = 1 \+ Number\(imageAvailable\) \+ Number\(videoAvailable\) \+ Number\(audioAvailable\)/u,
+  "生成子菜单折叠逻辑必须计入音频能力",
 );
 assert.match(
   appSource,
@@ -98,8 +109,8 @@ assert.match(
 );
 assert.match(
   appSource,
-  /if \(kind === "text"\) openWhiteboardGenerateDialog\(nodeId\);[\s\S]{0,160}else if \(kind === "image"\) openWhiteboardImageDialog\(nodeId\);[\s\S]{0,160}else if \(kind === "video"\) openWhiteboardVideoDialog\(nodeId\);/u,
-  "三类生成卡片创建后必须立即打开对应生成操作栏",
+  /if \(kind === "text"\) openWhiteboardGenerateDialog\(nodeId\);[\s\S]{0,160}else if \(kind === "image"\) openWhiteboardImageDialog\(nodeId\);[\s\S]{0,160}else if \(kind === "video"\) openWhiteboardVideoDialog\(nodeId\);[\s\S]{0,160}else if \(kind === "audio"\) openWhiteboardAudioDialog\(nodeId\);/u,
+  "四类生成卡片创建后必须立即打开对应生成操作栏",
 );
 assert.match(appSource, /if \(!event\.target\.closest\("#whiteboardNodeCreateMenu"\)\) closeWhiteboardNodeCreateMenu\(\)/u, "点击选择器外部必须取消待创建意图");
 assert.match(styleSource, /\.whiteboard-node-create-menu\s*\{[\s\S]{0,260}width:\s*184px/u, "落点选择器必须使用紧凑稳定的菜单布局");

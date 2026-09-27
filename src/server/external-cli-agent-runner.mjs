@@ -8,6 +8,7 @@ import { buildExecutionSourceReceiptFromContextBlocks } from "./execution-source
 import { normalizeAgentPermissionMode } from "../agent-permission-policy.js";
 import { hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
 import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
+import { runWorkBuddyDesktopBridge } from "./workbuddy-desktop-bridge.mjs";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -436,21 +437,69 @@ export const runExternalCliAgent = async ({
   if (Buffer.byteLength(finalPrompt, "utf8") > MAX_INPUT_BYTES) {
     throw errorForRunner(runner, `${runnerLabel(runner)} 输入超过 8MB，已停止本次调用`, "EXTERNAL_CLI_INPUT_TOO_LARGE");
   }
-  const executionSourceReceipt = buildExecutionSourceReceiptFromContextBlocks({
-    finalInput: finalPrompt,
-    blocks: contextBlocks,
-    stage: `${runner}_agent_final_input`,
-  });
-  const tempRoot = await mkdtemp(join(tmpdir(), "shensi-external-agent-"));
-  const promptPath = join(tempRoot, "prompt.md");
-  const mcpConfigFile = join(tempRoot, "mcp.json");
-  const isolatedWorkspace = join(tempRoot, "workspace");
-  try {
-    await mkdir(isolatedWorkspace, { recursive: true });
-    await Promise.all([
-      writeFile(promptPath, finalPrompt, "utf8"),
-      writeFile(mcpConfigFile, JSON.stringify(mcpConfig(nativeHost), null, 2), "utf8"),
-    ]);
+    const executionSourceReceipt = buildExecutionSourceReceiptFromContextBlocks({
+      finalInput: finalPrompt,
+      blocks: contextBlocks,
+      stage: `${runner}_agent_final_input`,
+    });
+    const tempRoot = await mkdtemp(join(tmpdir(), "shensi-external-agent-"));
+    const promptPath = join(tempRoot, "prompt.md");
+    const mcpConfigFile = join(tempRoot, "mcp.json");
+    const isolatedWorkspace = join(tempRoot, "workspace");
+    try {
+      await mkdir(isolatedWorkspace, { recursive: true });
+      await Promise.all([
+        writeFile(promptPath, finalPrompt, "utf8"),
+        writeFile(mcpConfigFile, JSON.stringify(mcpConfig(nativeHost), null, 2), "utf8"),
+      ]);
+    // WorkBuddy desktop keeps the authenticated session in its Credential
+    // Bootstrap/ACP sidecar.  Calling the bundled `codebuddy -p` executable
+    // directly bypasses that bootstrap and incorrectly reports “login invalid”
+    // even while the desktop app is signed in.  Use ACP whenever a live
+    // desktop sidecar is present; only fall back to the legacy CLI when no
+    // sidecar can be discovered, preserving headless installations.
+    const desktopCliLaunch = resolvedPrefixArgs.some((value) => /[\\/]WorkBuddy[\\/]resources[\\/]app\.asar(?:\.unpacked)?[\\/]cli[\\/]bin[\\/]codebuddy/iu.test(String(value || "")));
+    if (runner === "workbuddy" && desktopCliLaunch) {
+      try {
+        const workspace = accessMode === "shensi_only" ? isolatedWorkspace : clean(cwd) || isolatedWorkspace;
+        const bridged = await runWorkBuddyDesktopBridge({
+          prompt: finalPrompt,
+          model: clean(model),
+          cwd: workspace,
+          nativeHost,
+          environment,
+          signal,
+          timeoutMs,
+          onEvent,
+        });
+        const safeText = sanitizeExternalOutput(bridged.text, { final: true });
+        if (!safeText.trim()) throw errorForRunner(runner, "WorkBuddy 已返回，但正文为空", "EXTERNAL_CLI_RESPONSE_EMPTY");
+        return {
+          ...bridged,
+          text: safeText.trim(),
+          executionSourceReceipt,
+          permissionMode: accessMode,
+        };
+      } catch (error) {
+        if (error?.code !== "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE") {
+          throw errorForRunner(runner, redactAgentError(error?.message || error, [apiKey]), error?.code || "WORKBUDDY_DESKTOP_BRIDGE_FAILED", {
+            stage: "desktop_bridge",
+            detail: error?.message || error,
+            retryable: error?.code === "WORKBUDDY_MODEL_UNAVAILABLE",
+            suggestedAction: error?.code === "WORKBUDDY_MODEL_UNAVAILABLE" ? "请从 WorkBuddy 当前真实模型目录中选择可用模型。" : "请保持 WorkBuddy 客户端运行并确认已登录后重试。",
+          });
+        }
+        // A bundled desktop launch must never fall through to the standalone
+        // CLI: that executable does not receive CredentialBootstrap and would
+        // turn a temporarily unavailable bridge into a false “登录无效”。
+        throw errorForRunner(runner, redactAgentError(error?.message || error, [apiKey]), "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE", {
+          stage: "desktop_bridge",
+          detail: error?.message || error,
+          retryable: true,
+          suggestedAction: "请保持 WorkBuddy 客户端运行，等待桌面 ACP 桥接就绪后重试。",
+        });
+      }
+    }
     const workspace = accessMode === "shensi_only" ? isolatedWorkspace : clean(cwd) || isolatedWorkspace;
     let args = [...resolvedPrefixArgs, ...expandCliArgs(template, {
       prompt: finalPrompt,

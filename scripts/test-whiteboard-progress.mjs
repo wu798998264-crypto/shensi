@@ -183,8 +183,10 @@ assert.match(app, /for \(const option of executionModeSelect\.options\)[\s\S]{0,
 assert.doesNotMatch(app, /executionModeSelect\.value = modeValueForCapabilities/u, "能力探针不得再自动改写用户选择的使用模式");
 assert.match(app, /const selectedExecutionMode = control\("textExecutionMode"\)\.value[\s\S]{0,2200}control\("textExecutionMode"\)\.value = selectedExecutionMode/u, "切换 Agent 运行器后必须恢复用户明确选择的模式");
 assert.match(app, /const hasVisibleTextContent = Boolean\(String\(visibleText \?\? ""\)\.trim\(\)\)/u);
-assert.match(app, /pendingGenerationType = !hasGeneratedContent && !hasVisibleTextContent/u, "有文字内容的卡片不得继续显示居中生成类型图标");
-assert.match(app, /card\.dataset\.cardHasText === "true"[\s\S]{0,180}whiteboard-card-generation-type/u, "增量同步生成类型图标时也必须尊重现有文字内容");
+assert.match(app, /pendingGenerationType = !hasCardContent && !candidate/u, "有实际内容的卡片不得继续显示居中生成类型图标");
+assert.match(app, /card\.dataset\.cardHasText === "true"[\s\S]{0,220}card\.dataset\.cardHasContent === "true"[\s\S]{0,180}whiteboard-card-generation-type/u, "增量同步生成类型图标时也必须尊重现有卡片内容");
+assert.match(app, /const warnWhiteboardAudioReferenceDuration[\s\S]{0,1800}audioDurationMs <= 30_000/u, "Seedance 2.5/超长视频连接时必须检查音频参考总时长");
+assert.match(app, /if \(capacity\.ok\) \{[\s\S]{0,180}warnWhiteboardAudioReferenceDuration\(nextCanvas/u, "音频参考超长提示不得阻止连线提交");
 assert.match(app, /\$\{generatedNodeTitle\}\s+\$\{kindMarkup\}\s+\$\{generationTypeIndicator\}/u, "生成状态必须位于卡片根层，不能随媒体内容分支丢失");
 assert.match(styles, /\.whiteboard-card\.generating \.whiteboard-generation-status:not\(\.interrupted\)[\s\S]{0,320}color: var\(--text-secondary\)/u);
 assert.match(styles, /\.whiteboard-generation-status \{[\s\S]{0,80}z-index: 8/u, "生成状态必须稳定显示在图片、视频和卡片交互层之上");

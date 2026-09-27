@@ -26,18 +26,32 @@ try {
 
   const probe = await probeWorkspaceDepthExplorer({ appRoot: root });
   assert.equal(probe.available, true, probe.reasons?.join("；"));
+  const progress = [];
   const result = await runWorkspaceDepthExplorer({
     appRoot: root,
     requestedPath: workspacePath,
     relativePaths: ["素材/depth-source.png"],
     settings: { quality: "fast", provider: "auto", pngBitDepth: 8 },
     whiteboardDocumentId: "whiteboard-depth-test",
+    onProgress: (state) => progress.push({
+      completed: Number(state?.completed) || 0,
+      total: Number(state?.total) || 0,
+      currentPercent: Number(state?.currentPercent) || 0,
+      percent: Number(state?.percent) || 0,
+    }),
   });
   assert.equal(result.outputs.length, 1);
   assert.equal(result.outputs[0].kind, "image");
   const outputPath = join(workspacePath, ...result.outputs[0].attachment.relativePath.split("/"));
   const output = await stat(outputPath);
   assert.ok(output.isFile() && output.size > 100, "depth output is missing or empty");
+  assert.ok(progress.length >= 2, "depth progress did not emit start and completion states");
+  assert.equal(progress[0].total, 1);
+  assert.equal(progress.at(-1).completed, 1);
+  assert.equal(progress.at(-1).percent, 100);
+  for (let index = 1; index < progress.length; index += 1) {
+    assert.ok(progress[index].percent >= progress[index - 1].percent, "overall depth progress moved backwards");
+  }
   console.log(`whiteboard depth explorer real: ok (${result.outputs[0].attachment.relativePath})`);
 } finally {
   await rm(workspacePath, { recursive: true, force: true });

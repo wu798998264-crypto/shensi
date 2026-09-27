@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.8-workbuddy-hy3";
+} from "./generation-profiles.js?v=8.0.9-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -458,7 +458,7 @@ import {
   whiteboardTextGenerationRequest,
   WHITEBOARD_DEPTH_NODE_HEIGHT,
   WHITEBOARD_DEPTH_NODE_WIDTH,
-} from "./whiteboard.js?v=8.0.8-workbuddy-hy3";
+} from "./whiteboard.js?v=8.0.9-workbuddy-hy3";
 import { STRUCTURE_WORKSPACE_VERSION, importedDocumentMatchesStructuredSlot, structuredGroupForDocument } from "./structure-schema.js?v=0.42.10-safe-slot-migration";
 import { planWhiteboardSkillRoute } from "./whiteboard-skill-route.js";
 import { inspectWhiteboardTaskClarity } from "./whiteboard-task-clarity.js?v=0.2.0-skill-aware";
@@ -1775,6 +1775,7 @@ let ui = {
   agentRunners: initialAgentRunnerCapabilities,
   agentRunnerStatusPromise: null,
   workBuddyLoginPending: false,
+  workBuddyLoginAwaitingConfirmation: false,
   pendingAgentRunnerSelection: "",
   activeAgentRunnerInstallJobId: "",
   openCodeCatalogs: new Map(),
@@ -6579,6 +6580,8 @@ const renderModelOptionsInternal = (providerId = state.settings.provider, { allo
     const loginRequired = capability?.state === "login_required" || capability?.authState === "login_required";
     const readyDefault = capability?.modelState === "verified_runner_default" && capability?.authState === "authenticated";
     const invalidCurrent = current && !models.includes(current);
+    const displayModel = (model) => capability?.modelLabels?.[model] || modelPickerDisplayName(model);
+    const modelSourceLabel = "WorkBuddy 当前会话";
     select.hidden = false;
     customInput.hidden = true;
     customInput.value = "";
@@ -6596,9 +6599,9 @@ const renderModelOptionsInternal = (providerId = state.settings.provider, { allo
     } else if (loginRequired) {
       select.innerHTML = `<option value="">请先登录 ${escapeHtml(runnerLabel)}，登录后自动读取模型</option>`;
     } else if (models.length) {
-      select.innerHTML = `<option value="">跟随 ${escapeHtml(runnerLabel)} CLI 默认模型</option>${invalidCurrent ? `<optgroup label="当前配置（CLI 未返回）"><option value="${escapeHtml(current)}" disabled>${escapeHtml(modelPickerDisplayName(current))} · 不可用</option></optgroup>` : ""}<optgroup label="${escapeHtml(runnerLabel)} CLI 当前账号">${models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(modelPickerDisplayName(model))}</option>`).join("")}</optgroup>`;
+      select.innerHTML = `<option value="">跟随 ${escapeHtml(modelSourceLabel)}默认模型</option>${invalidCurrent ? `<optgroup label="当前配置（会话未返回）"><option value="${escapeHtml(current)}" disabled>${escapeHtml(displayModel(current))} · 不可用</option></optgroup>` : ""}<optgroup label="${escapeHtml(modelSourceLabel)}">${models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(displayModel(model))}</option>`).join("")}</optgroup>`;
     } else if (readyDefault) {
-      select.innerHTML = `<option value="">跟随 ${escapeHtml(runnerLabel)} CLI 默认模型</option>`;
+      select.innerHTML = `<option value="">跟随 ${escapeHtml(modelSourceLabel)}默认模型</option>`;
     } else {
       select.innerHTML = `<option value="">${escapeHtml(runnerLabel)} 模型读取失败，请重新检查</option>`;
     }
@@ -6816,10 +6819,19 @@ const renderAudioModelOptionsInternal = (providerId = state.settings.audioProvid
     select.value = customInput.value;
     return;
   }
-  const models = getProviderAudioModelOptions(provider, form.elements.audioAdapter.value).map((item) => ({ slug: item.slug, label: item.label }));
-  if (!models.length) models.push({ slug: provider === "即梦" ? "seed-tts-1.0" : provider === "LibTV" ? "seed-audio-1.0" : "sumo", label: provider === "即梦" ? "Seed Audio 1.0" : provider === "LibTV" ? "Seed Audio 1.0" : "自定义音频模型" });
-  select.innerHTML = `${allowBlank ? '<option value="">请选择音频模型</option>' : ""}${models.map((item) => `<option value="${escapeHtml(item.slug)}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}`;
-  select.value = models.some((item) => item.slug === current) ? current : models[0].slug;
+  const models = getProviderAudioModelOptions(provider, form.elements.audioAdapter.value).map((item) => ({
+    slug: item.slug,
+    label: item.label,
+    available: item.available !== false,
+    availabilityNote: item.availabilityNote || "",
+  }));
+  if (!models.length) {
+    select.innerHTML = `${allowBlank ? '<option value="">请选择音频模型</option>' : ""}<option value="" disabled>当前连接没有可用的音频模型</option>`;
+    select.value = "";
+    return;
+  }
+  select.innerHTML = `${allowBlank ? '<option value="">请选择音频模型</option>' : ""}${models.map((item) => `<option value="${escapeHtml(item.slug)}" ${item.available ? "" : "disabled"} title="${escapeHtml(item.availabilityNote || "")}">${escapeHtml(modelPickerDisplayName(item))}${item.available ? "" : " · 当前渠道未开放"}</option>`).join("")}`;
+  select.value = models.some((item) => item.slug === current && item.available) ? current : models.find((item) => item.available)?.slug || "";
 };
 
 const renderImageModelOptions = (...args) => {
@@ -7342,6 +7354,7 @@ const markWorkBuddyAuthRequired = (message = "") => {
       message: "WorkBuddy 登录状态无效，请先登录后重试",
     },
   };
+  ui.workBuddyLoginAwaitingConfirmation = false;
   try { localStorage.removeItem(WORKBUDDY_CAPABILITY_CACHE_KEY); } catch {}
   renderWorkBuddySettingsControls?.();
   renderQuickWorkBuddyControls?.();
@@ -7419,6 +7432,9 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
         models: Array.isArray(workBuddy.models) && workBuddy.models.length
           ? workBuddy.models
           : [...(previousWorkBuddy.models || [])],
+        modelLabels: workBuddy.modelLabels && typeof workBuddy.modelLabels === "object" && Object.keys(workBuddy.modelLabels).length
+          ? workBuddy.modelLabels
+          : { ...(previousWorkBuddy.modelLabels || {}) },
         modelState: Array.isArray(workBuddy.models) && workBuddy.models.length ? "catalog_available" : previousWorkBuddy.modelState,
         message: workBuddy.message || "已恢复上次确认的 WorkBuddy 登录会话，模型目录正在复核",
       };
@@ -7435,6 +7451,7 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
       incoming.workbuddy = {
         ...workBuddy,
         models: [...previousWorkBuddy.models],
+        modelLabels: { ...(previousWorkBuddy.modelLabels || {}) },
         modelState: "catalog_available",
         modelCatalogChecked: true,
         modelCatalogStale: true,
@@ -7487,6 +7504,7 @@ const renderAgentRunnerInstallJob = (job = null) => {
   const completed = status === "completed";
   const state = String(job?.state || status);
   const loginRequired = state === "login_required" || job?.capability?.state === "login_required";
+  const loginAwaitingConfirmation = runnerId === "workbuddy" && ui.workBuddyLoginAwaitingConfirmation === true;
   const installed = job?.capability?.installed === true || completed;
   const ready = job?.capability?.ready === true || state === "ready";
   const stageLabels = Object.freeze({ idle: "检查本机", detecting: "检查本机", preparing: "准备安装源", download: "下载官方安装源", prerequisite: "检查安装前置", executable_resolution: "查找可执行文件", version_probe: "版本复检", login_probe: "登录状态检查", model_probe: "模型状态检查", installing: "安装", validating: "版本复检", completed: "已完成", failed: "失败", cancelled: "已终止", partial_install: "部分安装" });
@@ -7511,9 +7529,10 @@ const renderAgentRunnerInstallJob = (job = null) => {
   elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running || installed;
   elements.startAgentRunnerInstall.textContent = runnerId === "custom" ? "无需下载" : running ? "正在装配…" : installed ? "已安装" : status === "failed" ? "重新下载并装配" : "下载并装配";
   if (elements.loginAgentRunner) {
-    elements.loginAgentRunner.hidden = !installed || runnerId !== "workbuddy" || !loginRequired;
+    elements.loginAgentRunner.hidden = !installed || runnerId !== "workbuddy" || (!loginRequired && !loginAwaitingConfirmation);
     elements.loginAgentRunner.disabled = running || dialog.dataset.loginPolling === runnerId;
-    elements.loginAgentRunner.textContent = `登录 ${label}`;
+    elements.loginAgentRunner.textContent = loginAwaitingConfirmation ? "重新检查登录" : `登录 ${label}`;
+    elements.loginAgentRunner.title = loginAwaitingConfirmation ? "完成 WorkBuddy 登录后进行一次真实 CLI 验证" : `打开 ${label} 登录窗口`;
   }
   if (elements.terminateAgentRunnerInstall) elements.terminateAgentRunnerInstall.hidden = !running;
   if (elements.showAgentRunnerInstallDetails) elements.showAgentRunnerInstallDetails.hidden = !job?.error?.detail;
@@ -7560,6 +7579,7 @@ const pollAgentRunnerInstallJob = async (jobId) => {
 };
 
 const pollAgentRunnerLoginState = async (runnerId, { attempts = 40, allowWithoutDialog = false, selectOnSuccess = true } = {}) => {
+  if (runnerId === "workbuddy" && ui.workBuddyLoginAwaitingConfirmation) return null;
   // WorkBuddy's normal status probe is deliberately non-invasive and cannot
   // prove authentication. After an explicit login click, perform at most
   // three bounded real checks; startup and ordinary settings refreshes never
@@ -7619,6 +7639,66 @@ const pollAgentRunnerLoginState = async (runnerId, { attempts = 40, allowWithout
   return null;
 };
 
+// Opening the WorkBuddy desktop shell is not the same thing as completing
+// its account login.  Do not start a timed polling loop immediately after the
+// window opens: the user may still be on the provider's sign-in page.  The
+// button remains available as an explicit, bounded confirmation action.
+const verifyWorkBuddyLoginNow = async ({ selectOnSuccess = false } = {}) => {
+  const verifyResponse = await fetch("/api/agent-runners/login/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ runnerId: "workbuddy" }),
+  }).catch(() => null);
+  const verification = verifyResponse ? await verifyResponse.json().catch(() => ({})) : {};
+  if (!verifyResponse?.ok || verification.ok === false) {
+    throw new Error(verification.message || "WorkBuddy 登录状态检查失败");
+  }
+  const current = agentRunnerCapability("workbuddy") || {};
+  if (verification.authenticated === true || verification.authenticated === false) {
+    const next = {
+      ...current,
+      authenticated: verification.authenticated,
+      authState: verification.authState || (verification.authenticated ? "authenticated" : "login_required"),
+      state: verification.state || (verification.authenticated ? "ready" : "login_required"),
+      ready: verification.ready === true || verification.authenticated === true,
+      message: verification.message || current.message || "",
+    };
+    ui.agentRunners = { ...(ui.agentRunners || {}), workbuddy: next };
+    if (verification.authenticated === false) {
+      try { localStorage.removeItem(WORKBUDDY_CAPABILITY_CACHE_KEY); } catch {}
+    } else {
+      persistWorkBuddyCapability(next);
+      // Refresh the real CLI catalogue after authentication, while retaining
+      // the just-confirmed auth result if the non-invasive probe is unknown.
+      const statuses = await hydrateAgentRunnerStatuses({ force: true });
+      const refreshed = statuses?.workbuddy || next;
+      ui.agentRunners = {
+        ...(ui.agentRunners || {}),
+        workbuddy: {
+          ...refreshed,
+          ...next,
+          models: Array.isArray(refreshed.models) && refreshed.models.length ? refreshed.models : next.models || [],
+          modelLabels: refreshed.modelLabels && typeof refreshed.modelLabels === "object" && Object.keys(refreshed.modelLabels).length
+            ? refreshed.modelLabels
+            : next.modelLabels || {},
+        },
+      };
+      persistWorkBuddyCapability(ui.agentRunners.workbuddy);
+    }
+  }
+  ui.workBuddyLoginAwaitingConfirmation = verification.authenticated !== true;
+  renderWorkBuddySettingsControls?.();
+  renderQuickWorkBuddyControls?.();
+  renderWhiteboardWorkBuddyControls?.();
+  if (verification.authenticated === true) {
+    if (selectOnSuccess) selectInstalledAgentRunner("workbuddy");
+    showToast("WorkBuddy 登录成功，模型目录已刷新");
+    return ui.agentRunners.workbuddy;
+  }
+  showToast(verification.message || "尚未检测到有效登录；完成 WorkBuddy 登录后再次点击“重新检查登录”");
+  return null;
+};
+
 const startWorkBuddyLoginFromSettings = async () => {
   const capability = agentRunnerCapability("workbuddy");
   if (capability?.installed !== true) {
@@ -7626,6 +7706,11 @@ const startWorkBuddyLoginFromSettings = async () => {
     return;
   }
   if (ui.workBuddyLoginPending) return;
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    try { await verifyWorkBuddyLoginNow(); }
+    catch (error) { showToast(error.message || "WorkBuddy 登录状态检查失败"); }
+    return;
+  }
   ui.workBuddyLoginPending = true;
   renderWorkBuddySettingsControls();
   try {
@@ -7636,8 +7721,11 @@ const startWorkBuddyLoginFromSettings = async () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
-    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
-    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true });
+    ui.workBuddyLoginAwaitingConfirmation = true;
+    showToast(`${payload.message || "已打开 WorkBuddy 登录窗口"}；完成后点击“重新检查登录”`);
+    // Compatibility call retained for existing UI contracts; the guard above
+    // makes this a no-op until the user explicitly clicks re-check.
+    void pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true });
   } catch (error) {
     showToast(error.message || "WorkBuddy 登录窗口启动失败");
   } finally {
@@ -7655,6 +7743,11 @@ const startWorkBuddyLoginFromQuickPanel = async () => {
     return;
   }
   if (ui.workBuddyLoginPending) return;
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    try { await verifyWorkBuddyLoginNow({ selectOnSuccess: false }); }
+    catch (error) { showToast(error.message || "WorkBuddy 登录状态检查失败"); }
+    return;
+  }
   ui.workBuddyLoginPending = true;
   renderQuickWorkBuddyControls();
   try {
@@ -7665,8 +7758,8 @@ const startWorkBuddyLoginFromQuickPanel = async () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
-    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
-    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true, selectOnSuccess: false });
+    ui.workBuddyLoginAwaitingConfirmation = true;
+    showToast(`${payload.message || "已打开 WorkBuddy 登录窗口"}；完成后点击“重新检查登录”`);
   } catch (error) {
     showToast(error.message || "WorkBuddy 登录窗口启动失败");
   } finally {
@@ -7686,6 +7779,11 @@ const startWorkBuddyLoginFromWhiteboard = async () => {
     return;
   }
   if (ui.workBuddyLoginPending) return;
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    try { await verifyWorkBuddyLoginNow({ selectOnSuccess: false }); }
+    catch (error) { showToast(error.message || "WorkBuddy 登录状态检查失败"); }
+    return;
+  }
   ui.workBuddyLoginPending = true;
   renderWhiteboardWorkBuddyControls();
   try {
@@ -7696,8 +7794,8 @@ const startWorkBuddyLoginFromWhiteboard = async () => {
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
-    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
-    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true, selectOnSuccess: false });
+    ui.workBuddyLoginAwaitingConfirmation = true;
+    showToast(`${payload.message || "已打开 WorkBuddy 登录窗口"}；完成后点击“重新检查登录”`);
   } catch (error) {
     showToast(error.message || "WorkBuddy 登录窗口启动失败");
   } finally {
@@ -8405,7 +8503,7 @@ root.innerHTML = `
     <button type="button" data-whiteboard-action="create-text" data-whiteboard-target="canvas" data-whiteboard-canvas-create="text">${icon("\uE8D2")}<span>生成文本</span></button>
     <button type="button" data-whiteboard-action="create-image" data-whiteboard-target="canvas" data-whiteboard-canvas-create="image">${icon("\uE91B")}<span>生成图片</span></button>
     <button type="button" data-whiteboard-action="create-video" data-whiteboard-target="canvas" data-whiteboard-canvas-create="video">${icon("\uE714")}<span>生成视频</span></button>
-    <button type="button" data-whiteboard-action="create-audio" data-whiteboard-target="canvas" data-whiteboard-canvas-create="audio" hidden>${icon("\uE8D6")}<span>生成音频</span></button>
+    <button type="button" data-whiteboard-action="create-audio" data-whiteboard-target="canvas" data-whiteboard-canvas-create="audio">${icon("\uE8D6")}<span>生成音频</span></button>
     <button type="button" data-whiteboard-action="create-depth" data-whiteboard-target="canvas" data-whiteboard-canvas-create="depth">${icon("\uE945")}<span>深度摸索</span></button>
     <button type="button" data-whiteboard-action="paste" data-whiteboard-target="canvas">${icon("\uE77F")}<span>粘贴</span></button>
     <button type="button" data-whiteboard-action="add-web" data-whiteboard-target="canvas">${icon("\uE774")}<span>添加网页</span></button>
@@ -8432,6 +8530,7 @@ root.innerHTML = `
       <button type="button" data-whiteboard-action="generate-text" data-whiteboard-target="card">${icon("\uE8D2")}<span>生成文本</span></button>
       <button type="button" data-whiteboard-action="generate-image" data-whiteboard-target="card">${icon("\uE91B")}<span>生成图片</span></button>
       <button type="button" data-whiteboard-action="generate-video" data-whiteboard-target="card">${icon("\uE714")}<span>生成视频</span></button>
+      <button type="button" data-whiteboard-action="generate-audio" data-whiteboard-target="card">${icon("\uE8D6")}<span>生成音频</span></button>
     </div>
     <div class="whiteboard-submenu" id="whiteboardReferenceMenu" data-whiteboard-target="card" data-whiteboard-collapsible hidden>
       <button type="button" data-whiteboard-action="reference-document" data-whiteboard-target="card">${icon("\uE8A5")}<span>引用文档</span></button>
@@ -8464,7 +8563,7 @@ root.innerHTML = `
     <button type="button" role="menuitem" data-whiteboard-node-create="text">${icon("\uE8D2", "生成文本")}<span>生成文本</span></button>
     <button type="button" role="menuitem" data-whiteboard-node-create="image">${icon("\uE91B", "生成图片")}<span>生成图片</span></button>
     <button type="button" role="menuitem" data-whiteboard-node-create="video">${icon("\uE714", "生成视频")}<span>生成视频</span></button>
-    <button type="button" role="menuitem" data-whiteboard-node-create="audio" hidden>${icon("\uE8D6", "生成音频")}<span>生成音频</span></button>
+    <button type="button" role="menuitem" data-whiteboard-node-create="audio">${icon("\uE8D6", "生成音频")}<span>生成音频</span></button>
     <button type="button" role="menuitem" data-whiteboard-node-create="depth">${icon("\uE945", "深度摸索")}<span>深度摸索</span></button>
   </div>
   <div class="context-menu" id="mediaAssetMenu" hidden>
@@ -18839,7 +18938,7 @@ const renderWhiteboard = (documentState) => {
       || visibleNode.operation?.type === "depth-explorer"
       || (visibleNode.kind === "web" && (visibleNode.url || visibleNode.webSnapshot)),
     );
-    const pendingGenerationType = !hasGeneratedContent && !hasVisibleTextContent && !candidate && !whiteboardAutoOpenIsDisabled(node.id)
+    const pendingGenerationType = !hasCardContent && !candidate && !whiteboardAutoOpenIsDisabled(node.id)
       ? generationDraftByNode.get(node.id)?.channel || ""
       : "";
     const pendingGenerationTypeLabels = { text: "文字生成", image: "图片生成", video: "视频生成", audio: "音频生成" };
@@ -25026,6 +25125,17 @@ const generationConnectionIsAvailable = (channel, profile) => {
   }
   if (channel === "audio") {
     const probe = mediaCapabilityProbeFor("audio", profile);
+    // LibTV has a registered, real audio driver.  Its optional catalogue
+    // probe may still be pending (or an older probe may have recorded
+    // softwareIntegrated=false), but hiding the entire whiteboard entry in
+    // that window makes the supported audio capability impossible to use.
+    // Keep the entry available and let the durable media worker report any
+    // concrete CLI/credential failure at submission time.
+    const libtvAudio = profile.cliPath === LIBTV_CLI_ALIAS
+      && String(profile.provider || "").toLowerCase() === "libtv"
+      && profile.reserved !== true
+      && Boolean(String(profile.model || "").trim());
+    if (libtvAudio) return true;
     const presetModel = getProviderAudioModelOptions(profile.provider, profile.adapter).some((model) => model.slug === profile.model);
     const probedModel = probe?.visibilityChecked === true && modelAllowedByMediaProbe(probe, profile.model) !== false;
     const customModel = getProviderPreset(profile.provider).custom === true && Boolean(String(profile.model || "").trim());
@@ -26102,12 +26212,30 @@ const agentModelsForProfile = (profile = null) => {
     return finalize(agentModelsForEngine(engine, { codexModels: candidates, effectiveModel: profile.agentModelId || profile.model }));
   }
   if (engine === "workbuddy") {
-    return finalize((agentRunnerCapability(engine)?.models || []).map((slug) => ({
+    const capability = agentRunnerCapability(engine) || {};
+    return finalize((capability.models || []).map((slug) => ({
       slug: String(slug || ""),
-      label: modelPickerDisplayName(slug),
+      label: String(capability.modelLabels?.[String(slug || "")] || modelPickerDisplayName(slug)),
     })).filter((item) => item.slug));
   }
   return finalize(agentModelsForEngine(engine, { codexModels: ui.localCodex?.models || [], effectiveModel: profile.agentModelId || profile.model }));
+};
+
+const usableWorkBuddyModelId = (profile = null) => {
+  if (!profile || agentEngineForTextProfile(profile) !== "workbuddy") return "";
+  const requested = String(profile.agentModelId || profile.model || "").trim();
+  const capability = agentRunnerCapability("workbuddy");
+  const models = Array.isArray(capability?.models) ? capability.models.map((model) => String(model || "").trim()).filter(Boolean) : [];
+  // A stale saved ID (for example the retired `hy3` entry) must never be sent
+  // to the real CLI.  Leave the user's saved profile untouched; at runtime an
+  // empty value deliberately follows the CLI's own current default model.
+  if (requested && capability?.modelState === "catalog_available" && models.length && !models.includes(requested)) return "";
+  return requested;
+};
+
+const workBuddyModelDisplayName = (model = "", capability = agentRunnerCapability("workbuddy")) => {
+  const id = String(model || "").trim();
+  return String(capability?.modelLabels?.[id] || modelPickerDisplayName(id) || id);
 };
 
 const agentCatalogRequests = new Map();
@@ -26296,17 +26424,26 @@ const renderWorkBuddySettingsControls = () => {
   }
   if (pending) {
     statusNode.textContent = "等待 WorkBuddy 登录完成…";
-    if (hintNode) hintNode.textContent = "请在 WorkBuddy 窗口完成登录，神思会自动重新检查。";
+    if (hintNode) hintNode.textContent = "请在 WorkBuddy 窗口完成登录，然后点击“重新检查登录”；不会自动轮询。";
     loginButton.hidden = false;
     loginButton.disabled = true;
     loginButton.textContent = "等待登录…";
     loginButton.title = "正在等待 WorkBuddy 登录状态确认";
     return;
   }
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    statusNode.textContent = "已打开 WorkBuddy，等待你完成登录";
+    if (hintNode) hintNode.textContent = "请在 WorkBuddy 界面完成登录，然后点击“重新检查登录”；神思不会代替你输入账号信息。";
+    loginButton.hidden = false;
+    loginButton.disabled = false;
+    loginButton.textContent = "重新检查登录";
+    loginButton.title = "完成 WorkBuddy 登录后进行一次真实 CLI 验证";
+    return;
+  }
   if (ready) {
     statusNode.textContent = "已登录，可用";
     if (hintNode) hintNode.textContent = capability.models?.length
-      ? `已读取 ${capability.models.length} 个可用模型；模型由 WorkBuddy CLI 管理。`
+      ? `已读取 ${capability.models.length} 个可用模型；模型来自 WorkBuddy 当前登录会话。`
       : "已通过登录与模型状态检查。";
     loginButton.hidden = true;
     loginButton.disabled = false;
@@ -26322,7 +26459,7 @@ const renderWorkBuddySettingsControls = () => {
     return;
   }
   statusNode.textContent = capability.message || "已安装，尚未完成登录检查";
-  if (hintNode) hintNode.textContent = "点击登录会打开 WorkBuddy 窗口；完成后会自动刷新模型目录。";
+  if (hintNode) hintNode.textContent = "点击登录会打开 WorkBuddy 窗口；完成后点击“重新检查登录”刷新模型目录。";
   loginButton.hidden = false;
   loginButton.disabled = false;
   loginButton.textContent = "登录 WorkBuddy";
@@ -26337,10 +26474,12 @@ const generationSettingsForAgentEngine = (settings = state.settings, overrides =
   const { agentConnectionId: _agentConnectionId, ...requestOverrides } = overrides;
   if (!profile) return { ...settings, ...requestOverrides, agentEngine: engine };
   const requestedModel = String(requestOverrides.agentModel || "").trim();
-  const profileWithModel = requestedModel ? {
+  const requestedProfile = requestedModel ? { ...profile, model: requestedModel, agentModelId: requestedModel } : profile;
+  const configuredModel = engine === "workbuddy" ? usableWorkBuddyModelId(requestedProfile) : requestedModel || String(profile.agentModelId || profile.model || "").trim();
+  const profileWithModel = configuredModel !== String(profile.agentModelId || profile.model || "").trim() || requestedModel ? {
     ...profile,
-    model: requestedModel,
-    agentModelId: requestedModel,
+    model: configuredModel,
+    agentModelId: configuredModel,
   } : profile;
   const activated = activateGenerationProfile(settings, "text", profile.id);
   return {
@@ -26390,6 +26529,14 @@ const renderQuickWorkBuddyControls = () => {
     login.hidden = false;
     login.disabled = true;
     login.textContent = "等待登录…";
+    return;
+  }
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    status.textContent = "已打开 WorkBuddy，等待你完成登录";
+    login.hidden = false;
+    login.disabled = false;
+    login.textContent = "重新检查登录";
+    login.title = "完成 WorkBuddy 登录后进行一次真实 CLI 验证";
     return;
   }
   if (!installed) {
@@ -26450,6 +26597,14 @@ const renderWhiteboardWorkBuddyControls = () => {
     login.textContent = "等待登录…";
     return;
   }
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    status.textContent = "已打开 WorkBuddy，等待你完成登录";
+    login.hidden = false;
+    login.disabled = false;
+    login.textContent = "重新检查登录";
+    login.title = "完成 WorkBuddy 登录后进行一次真实 CLI 验证";
+    return;
+  }
   if (!installed) {
     status.textContent = "尚未装配 WorkBuddy";
     login.hidden = false;
@@ -26498,7 +26653,10 @@ const renderQuickModelSelector = () => {
   const models = ui.temporaryCodexSelected ? (ui.localCodex?.models || []) : modelOptionsForProvider(active.provider, active.adapter);
   const activeModelDisplay = modelPickerDisplayName(models.find((item) => item.slug === active.model) || active.model) || "未选择模型";
   const permission = agentPermissionModeInfo(state.settings?.agentPermissionMode);
-  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${modelPickerDisplayName(selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "默认模型")}`;
+  const selectedAgentModelId = selectedAgentProfileForLabel && agentEngineForTextProfile(selectedAgentProfileForLabel) === "workbuddy"
+    ? usableWorkBuddyModelId(selectedAgentProfileForLabel)
+    : selectedAgentProfileForLabel?.agentModelId || selectedAgentProfileForLabel?.model || "";
+  label.textContent = `${generationProfileLabel(selectedAgentProfileForLabel || { agentEngine }, "text")} · ${agentEngineForTextProfile(selectedAgentProfileForLabel || {}) === "workbuddy" ? workBuddyModelDisplayName(selectedAgentModelId || "默认模型") : modelPickerDisplayName(selectedAgentModelId || "默认模型")}`;
   button.title = "点击切换文字配置、运行器和模型";
   if (elements.quickChatModelFields) elements.quickChatModelFields.hidden = isAgent;
   if (elements.quickAgentFields) elements.quickAgentFields.hidden = !isAgent;
@@ -52014,13 +52172,15 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
 const syncWhiteboardGenerationMenuCapabilities = (target) => {
   const imageAvailable = availableGenerationConnections("image").length > 0;
   const videoAvailable = availableGenerationConnections("video").length > 0;
-  const capabilityCount = 1 + Number(imageAvailable) + Number(videoAvailable);
+  const audioAvailable = availableGenerationConnections("audio").length > 0;
+  const capabilityCount = 1 + Number(imageAvailable) + Number(videoAvailable) + Number(audioAvailable);
   const cardTarget = target === "card";
   const toggle = elements.whiteboardMenu.querySelector('[data-whiteboard-action="toggle-generate"]');
   const directText = elements.whiteboardMenu.querySelector("[data-whiteboard-direct-generation]");
   const submenu = elements.whiteboardSubmenuPanel?.querySelector("#whiteboardGenerateMenu");
   const imageGenerate = submenu?.querySelector('[data-whiteboard-action="generate-image"]');
   const videoGenerate = submenu?.querySelector('[data-whiteboard-action="generate-video"]');
+  const audioGenerate = submenu?.querySelector('[data-whiteboard-action="generate-audio"]');
   if (toggle) {
     toggle.hidden = !cardTarget || capabilityCount < 2;
     toggle.setAttribute("aria-expanded", "false");
@@ -52038,6 +52198,11 @@ const syncWhiteboardGenerationMenuCapabilities = (target) => {
     videoGenerate.classList.remove("needs-configuration");
     videoGenerate.removeAttribute("title");
   }
+  if (audioGenerate) {
+    audioGenerate.hidden = !audioAvailable;
+    audioGenerate.disabled = false;
+    audioGenerate.removeAttribute("title");
+  }
   elements.whiteboardMenu.querySelectorAll("[data-whiteboard-canvas-create]").forEach((button) => {
     const kind = button.dataset.whiteboardCanvasCreate;
     button.hidden = target !== "canvas" || !whiteboardNodeCreateChannelAvailable(kind);
@@ -52046,6 +52211,7 @@ const syncWhiteboardGenerationMenuCapabilities = (target) => {
     "text",
     ...(imageAvailable ? ["image"] : []),
     ...(videoAvailable ? ["video"] : []),
+    ...(audioAvailable ? ["audio"] : []),
   ].join(" ");
 };
 
@@ -52422,7 +52588,10 @@ document.addEventListener("pointerup", (event) => {
         const capacity = checkWhiteboardReferenceCapacity(nextCanvas, connections.map((connection) => connection.toNode), {
           bulk: drag.mode === "multi-edge" || connections.length > 1,
         });
-        if (capacity.ok) documentState.canvas = nextCanvas;
+        if (capacity.ok) {
+          documentState.canvas = nextCanvas;
+          warnWhiteboardAudioReferenceDuration(nextCanvas, connections.map((connection) => connection.toNode));
+        }
         else edgeChanged = false;
       }
     } else {
@@ -52572,6 +52741,14 @@ document.addEventListener("pointerup", (event) => {
     renderWhiteboard(documentState);
     if (createdNodeId) selectWhiteboardNode(createdNodeId);
   }
+  // A newly connected depth node must enter the same explicit loading state
+  // as a newly created one.  Previously the connection path left the button
+  // looking unavailable until an unrelated context-menu action primed it.
+  if (documentState && edgeChanged) {
+    for (const depthNode of canonicalCanvas(documentState.canvas).nodes.filter((candidate) => candidate.operation?.type === "depth-explorer")) {
+      if (whiteboardDepthExplorerInputs(depthNode.id, documentState).length) void primeWhiteboardDepthExplorerNode(depthNode.id);
+    }
+  }
   if (pendingNodeCreateIntent) openWhiteboardNodeCreateMenu(pendingNodeCreateIntent);
   // A normal click only selects. The shared AI operation bar is opened solely
   // by an explicit triple click, so closing it cannot be undone accidentally.
@@ -52691,6 +52868,7 @@ const createWhiteboardSelectionGenerationTarget = (nodeIds = [], channel = "text
   selectWhiteboardNode(targetNodeId);
   if (channel === "image") openWhiteboardImageDialog(targetNodeId, "auto", { centered });
   else if (channel === "video") openWhiteboardVideoDialog(targetNodeId, { centered });
+  else if (channel === "audio") openWhiteboardAudioDialog(targetNodeId, { centered });
   else openWhiteboardGenerateDialog(targetNodeId, { centered });
   return targetNodeId;
 };
@@ -52726,7 +52904,7 @@ elements.whiteboardEditor.addEventListener("contextmenu", (event) => {
     clientY: event.clientY,
   };
   elements.whiteboardMenu.dataset.multiSelection = String(keepMultiSelection);
-  const batchActions = new Set(["toggle-generate", "generate-text", "generate-image", "generate-video", "copy", "cut", "duplicate", "save-as", "focus", "arrange", "toggle-color", "delete"]);
+  const batchActions = new Set(["toggle-generate", "generate-text", "generate-image", "generate-video", "generate-audio", "copy", "cut", "duplicate", "save-as", "focus", "arrange", "toggle-color", "delete"]);
   [...elements.whiteboardMenu.querySelectorAll("[data-whiteboard-target]"), ...(elements.whiteboardSubmenuPanel?.querySelectorAll("[data-whiteboard-target]") || [])].forEach((item) => {
     const action = item.dataset.whiteboardAction || "";
     item.hidden = (keepMultiSelection && !batchActions.has(action))
@@ -53041,6 +53219,18 @@ const handleWhiteboardMenuClick = async (event) => {
     }
     if (context.multiSelection) createWhiteboardSelectionGenerationTarget(contextNodeIds, "video", { centered: true });
     else openWhiteboardVideoDialog(context.nodeId);
+    return;
+  }
+  if (action === "generate-audio") {
+    if (!availableGenerationConnections("audio").length) {
+      ui.settingsSection = "model";
+      ui.modelSettingsChannel = "audio";
+      document.querySelector("#settingsButton").click();
+      showToast("请先补全音频模型的 API Key 或 CLI 路径，并通过连接测试");
+      return;
+    }
+    if (context.multiSelection) createWhiteboardSelectionGenerationTarget(contextNodeIds, "audio", { centered: true });
+    else openWhiteboardAudioDialog(context.nodeId, { centered: true });
     return;
   }
   if (action === "transform-project" || action === "transform-notebook") {
@@ -53560,6 +53750,47 @@ const checkWhiteboardReferenceCapacity = (canvas, targetNodeIds, {
   return { ok: true };
 };
 
+// Seedance 2.5 and the long-video mode accept audio references, but the
+// provider's combined audio-reference duration is capped at 30 seconds. This
+// is intentionally a non-blocking connection hint: the edge is already a
+// valid whiteboard relation and must remain in place so the user can adjust
+// the source later. Submission-time validation keeps the existing generation
+// contract unchanged.
+const warnWhiteboardAudioReferenceDuration = (canvas, targetNodeIds) => {
+  const normalized = normalizeCanvas(canvas);
+  for (const nodeId of [...new Set((targetNodeIds ?? []).map(String).filter(Boolean))]) {
+    const target = normalized.nodes.find((node) => node.id === nodeId);
+    if (!target) continue;
+    const profile = whiteboardGenerationCapacityProfile(nodeId, { channel: "video" });
+    const values = (() => {
+      const openConfig = whiteboardGenerationConfigs().find((config) => (
+        config.dialog.open
+        && config.form.dataset.nodeId === nodeId
+        && config.dialog.dataset.anchorDocumentId === state.activeDocument
+        && config.dialog.dataset.anchorWorkspaceId === workspaceIdentity()
+      ));
+      return openConfig
+        ? whiteboardGenerationFormValues(openConfig.form)
+        : whiteboardGenerationDraftValues("video", nodeId) || {};
+    })();
+    const model = String(values.model || profile.settings?.model || target.generation?.model || "").trim();
+    const generationMode = String(values.generationMode || target.generation?.generationMode || "").trim();
+    if (generationMode !== "long_video" && seedanceModelFamily(model) !== "seedance2.5") continue;
+    const upstream = whiteboardGenerationSources(normalized, nodeId).upstream;
+    const audioDurationMs = upstream
+      .filter((node) => node.kind === "audio")
+      .reduce((total, node) => total + Math.max(
+        0,
+        Number(node.durationMs)
+          || Number(node.attachment?.durationMs)
+          || Number(node.generation?.durationSeconds) * 1000,
+      ), 0);
+    if (audioDurationMs <= 30_000) continue;
+    const seconds = Math.ceil(audioDurationMs / 1000);
+    showToast(`已连接，但当前${generationMode === "long_video" ? "超长视频" : "Seedance 2.5"}的音频参考总时长约 ${seconds} 秒，超过 30 秒上限；生成前请裁剪或减少音频参考。`);
+  }
+};
+
 const whiteboardGenerationDialogDraftScope = (dialog) => {
   const config = whiteboardGenerationConfigFor(dialog);
   const nodeId = config?.form.dataset.nodeId;
@@ -53680,7 +53911,7 @@ const whiteboardGenerationSessionTitle = (channel) => ({
 const syncWhiteboardCardGenerationTypeIndicator = (nodeId, channel) => {
   const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(nodeId)}"]`);
   const visibleText = card?.querySelector(`[data-canvas-text="${CSS.escape(nodeId)}"]`)?.value ?? "";
-  if (!card || card.dataset.generatedContent === "true" || card.dataset.cardHasText === "true" || String(visibleText).trim() || card.hasAttribute("data-generation-job-id")) {
+  if (!card || card.dataset.generatedContent === "true" || card.dataset.cardHasText === "true" || card.dataset.cardHasContent === "true" || String(visibleText).trim() || card.hasAttribute("data-generation-job-id")) {
     card?.querySelector(":scope > .whiteboard-card-generation-type")?.remove();
     return;
   }
@@ -57333,7 +57564,7 @@ const addWhiteboardImageCard = ({ attachment, aspectRatio = 16 / 9, generation =
   return nodeId;
 };
 
-const createWhiteboardDerivedMediaNodes = ({ sourceNodeId, outputs = [], historyLabel = "创建媒体下游卡片" } = {}) => {
+const createWhiteboardDerivedMediaNodes = ({ sourceNodeId, outputs = [], historyLabel = "创建媒体下游卡片", disableGenerationAutoOpen = false } = {}) => {
   const documentState = activeWhiteboardDocument();
   const sourceNode = whiteboardNodeById(sourceNodeId, documentState);
   const normalizedOutputs = outputs.filter((output) => output?.attachment?.relativePath && ["image", "video", "audio"].includes(output.kind));
@@ -57397,6 +57628,12 @@ const createWhiteboardDerivedMediaNodes = ({ sourceNodeId, outputs = [], history
   persist({ documentIds: [state.activeDocument] });
   renderWhiteboard(documentState);
   selectWhiteboardNodes(nodeIds);
+  // Depth Explorer outputs are finished media, not new generation targets.
+  // Keep their normal media toolbar, but do not let a delayed card click or
+  // an inherited prompt draft reopen an image/video generation bar.
+  if (disableGenerationAutoOpen) {
+    for (const nodeId of nodeIds) setWhiteboardAutoOpenDisabled(nodeId, true);
+  }
   return nodeIds;
 };
 
@@ -57811,14 +58048,18 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
         : unavailable
           ? `无法启动：${whiteboardDepthExplorerPreflight.reasons?.join("；") || "本地运行环境不可用"}`
           : runtime.checking
-            ? "正在检查本地运行环境"
+            ? "正在加载本地能力，请稍候"
             : whiteboardDepthExplorerPreflight?.available
               ? `本地环境可用 · ${whiteboardDepthExplorerPreflight.cpuThreads} 线程 · 严格串行`
               : "本功能使用本地 CPU 或 GPU，配置较低不建议使用";
   const selected = (value, current) => value === current ? " selected" : "";
-  const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) || 0));
-  const progressMarkup = runtime.busy || runtime.completed > 0
-    ? `<div class="whiteboard-depth-progress" aria-label="深度摸索进度"><div class="whiteboard-depth-progress-track"><span style="width:${progressValue}%"></span></div><small>${runtime.completed || 0}/${runtime.total || inputs.length} · 当前任务 ${Math.round(Number(runtime.currentPercent) || 0)}%</small></div>`
+  const progressTotal = Math.max(0, Number(runtime.total) || inputs.length);
+  const progressCompleted = Math.max(0, Math.min(progressTotal || Number.MAX_SAFE_INTEGER, Number(runtime.completed) || 0));
+  const progressCurrent = Math.max(0, Math.min(100, Number(runtime.currentPercent) || 0));
+  const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) || (progressTotal ? (progressCompleted / progressTotal) * 100 : 0)));
+  const progressVisible = Boolean(runtime.busy || runtime.checking || runtime.total > 0 || runtime.completed > 0);
+  const progressMarkup = progressVisible
+    ? `<div class="whiteboard-depth-progress" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : ""}</small></div>`
     : "";
   return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-node="${escapeHtml(node.id)}">
     <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
@@ -57827,7 +58068,7 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}>${runtime.busy ? "处理中" : "生成深度结果"}</button>`}
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${runtime.checking ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${runtime.checking ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : runtime.checking ? "正在加载…" : "生成深度结果"}</button>`}
      ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
   </div>`;
 };
@@ -58020,18 +58261,29 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
       const nodeIds = createWhiteboardDerivedMediaNodes({
         sourceNodeId: nodeId,
         historyLabel: "深度摸索并创建下游卡片",
+        disableGenerationAutoOpen: true,
         outputs: fresh.map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" })),
       });
       runtime.createdOutputs += nodeIds.length;
     };
     for (;;) {
-      await new Promise((resolveWait) => window.setTimeout(resolveWait, 700));
+      // Keep the node visibly alive while the local worker is running.  A
+      // 250ms cadence is fast enough for a smooth progress bar without
+      // turning status polling into a busy loop.
+      await new Promise((resolveWait) => window.setTimeout(resolveWait, 250));
       const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store" });
       const status = await statusResponse.json().catch(() => ({}));
-      runtime.completed = Number(status.completed) || 0;
-      runtime.total = Number(status.total) || inputs.length;
-      runtime.currentPercent = Number(status.currentPercent) || 0;
-      runtime.percent = Number(status.percent) || 0;
+      const completed = Number(status.completed);
+      const total = Number(status.total);
+      const currentPercent = Number(status.currentPercent);
+      const percent = Number(status.percent);
+      // Keep the last known value when a worker status response is partial.
+      // Progress must never jump backwards while an output is being saved.
+      runtime.completed = Number.isFinite(completed) ? Math.max(runtime.completed || 0, completed) : runtime.completed || 0;
+      runtime.total = Number.isFinite(total) && total > 0 ? total : runtime.total || inputs.length;
+      runtime.currentPercent = Number.isFinite(currentPercent) ? Math.max(0, Math.min(100, currentPercent)) : runtime.currentPercent || 0;
+      const derivedPercent = runtime.total > 0 ? (runtime.completed / runtime.total) * 100 : 0;
+      runtime.percent = Number.isFinite(percent) ? Math.max(runtime.percent || 0, Math.min(100, percent)) : Math.max(runtime.percent || 0, derivedPercent);
       runtime.message = String(status.message || "正在处理");
       createAvailableOutputs(status.outputs);
       rerenderWhiteboardDepthExplorerNode(nodeId);
@@ -58042,6 +58294,11 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
     const outputs = payload.outputs || [];
     createAvailableOutputs(outputs);
+    runtime.completed = Math.max(runtime.completed || 0, outputs.length);
+    runtime.total = Math.max(runtime.total || 0, outputs.length, inputs.length);
+    runtime.currentPercent = 100;
+    runtime.percent = 100;
+    runtime.message = "深度摸索已完成";
     runtime.busy = false;
     if (runtime.createdOutputs !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
     showToast(`深度摸索完成，已创建 ${runtime.createdOutputs} 个下游卡片`);
@@ -76603,6 +76860,23 @@ elements.refreshAgentRunnerInstall?.addEventListener("click", async () => {
 elements.loginAgentRunner?.addEventListener("click", async () => {
   const runnerId = String(elements.agentRunnerInstallDialog?.dataset.runnerId || "");
   if (runnerId !== "workbuddy") return;
+  if (ui.workBuddyLoginAwaitingConfirmation) {
+    elements.loginAgentRunner.disabled = true;
+    try {
+      const capability = await verifyWorkBuddyLoginNow({ selectOnSuccess: true });
+      if (capability?.authenticated === true) {
+        elements.agentRunnerInstallDialog?.close();
+        ui.pendingAgentRunnerSelection = "";
+      } else {
+        renderAgentRunnerInstallJob({ runnerId, status: "completed", state: "login_required", stage: "login_probe", progress: 100, message: capability?.message || "尚未检测到登录完成", capability: agentRunnerCapability(runnerId) || { installed: true, state: "login_required", ready: false } });
+      }
+    } catch (error) {
+      showToast(error.message || "WorkBuddy 登录状态检查失败");
+    } finally {
+      elements.loginAgentRunner.disabled = false;
+    }
+    return;
+  }
   elements.agentRunnerInstallDialog.dataset.loginPolling = runnerId;
   elements.loginAgentRunner.disabled = true;
   try {
@@ -76614,6 +76888,7 @@ elements.loginAgentRunner?.addEventListener("click", async () => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.message || "运行器登录窗口启动失败");
     const capability = agentRunnerCapability(runnerId) || { installed: true };
+    ui.workBuddyLoginAwaitingConfirmation = true;
     renderAgentRunnerInstallJob({
       runnerId,
       status: "completed",
@@ -76623,7 +76898,6 @@ elements.loginAgentRunner?.addEventListener("click", async () => {
       message: payload.message || `已打开 ${AGENT_RUNNER_LABELS[runnerId]} 登录窗口`,
       capability: { ...capability, state: "authenticating", authState: "authenticating", ready: false },
     });
-    await pollAgentRunnerLoginState(runnerId);
   } catch (error) {
     const capability = agentRunnerCapability(runnerId) || { installed: true };
     renderAgentRunnerInstallJob({ runnerId, status: "completed", state: "login_required", stage: "login_probe", message: error.message || "运行器登录窗口启动失败", capability: { ...capability, state: "login_required", authState: "login_required", ready: false }, error: { summary: error.message || "运行器登录窗口启动失败", detail: error.message || "" } });

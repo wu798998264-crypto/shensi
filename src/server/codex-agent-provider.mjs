@@ -84,7 +84,13 @@ const assertKnownExternalRunnerReady = (capability = {}, { runnerId = "", label 
       stage: capability.error?.stage || "login_probe",
     });
   }
-  if (structuredCapability && capability.ready !== true) {
+  // WorkBuddy's desktop account is injected by its own prewarm/bootstrap
+  // path, so the inexpensive local probe intentionally remains
+  // `generation_check_required` with `ready:false`.  Do not block selecting
+  // that runner or starting the first real generation on the local probe;
+  // the bounded CLI call below is the authority and classifies a real auth
+  // failure as WORKBUDDY_AUTH_REQUIRED.
+  if (structuredCapability && capability.ready !== true && !deferredGenerationAuth) {
     throw Object.assign(new Error(capability.message || `${label} 模型能力尚未就绪`), {
       code: "AGENT_RUNNER_MODEL_CAPABILITY_UNAVAILABLE",
       stage: capability.error?.stage || "model_catalog",

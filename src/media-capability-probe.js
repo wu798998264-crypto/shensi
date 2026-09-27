@@ -241,10 +241,20 @@ export const mediaGenerationConnectionAvailable = (channel, profile = {}, probe,
   modeAvailable = true,
 } = {}) => {
   if (!modeAvailable) return false;
-  // Audio is an optional capability. Do not briefly expose its whiteboard
-  // entry merely because a bundled profile exists; wait until the driver and
-  // selected model have both been confirmed by the current-session probe.
-  if (!probe) return channel === "audio" ? false : mediaConnectionAllowedWhileProbePending(channel, profile, probe);
+  // LibTV ships a real audio driver and its audio profile is already a
+  // configured, selectable connection.  Keep the entry visible while the
+  // optional capability probe is still pending; the media worker remains the
+  // final authority and returns a concrete driver error before submission if
+  // the local CLI is unavailable.  Dreamina audio stays hidden unless its
+  // own driver is actually registered (the official Dreamina CLI currently
+  // has no audio-generation command).
+  if (!probe) {
+    const isLibTvAudio = channel === "audio"
+      && profile.cliPath === "libtv"
+      && String(profile.provider || "").toLowerCase() === "libtv"
+      && profile.reserved !== true;
+    return isLibTvAudio || mediaConnectionAllowedWhileProbePending(channel, profile, probe);
+  }
   const connected = mediaProbeConnected(probe);
   if (!connected) return false;
   const modelAllowed = mediaModelAllowedByCapabilityProbe(channel, profile, probe);

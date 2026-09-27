@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveRunnerLaunch } from "./agent-runner-launch.mjs";
 import { rememberAgentRunnerLaunch } from "./agent-runner-registry.mjs";
+import { inspectWorkBuddyDesktopBridge, runWorkBuddyDesktopBridge } from "./workbuddy-desktop-bridge.mjs";
 
 const JOB_TTL_MS = 30 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 12 * 60 * 1000;
@@ -166,6 +167,90 @@ export const parseWorkBuddyModelCatalog = (output = "") => {
   return [...new Set(models)];
 };
 
+// WorkBuddy's product catalogue contains the model aliases shown in its
+// desktop picker (for example fast-model/balanced-model/deep-model).  The
+// CLI --help output is a separate, often older compatibility list.  Read the
+// local product manifest for the exact launcher we selected; when it exists it
+// is authoritative, and --help is only a fallback.  Merging an older static
+// list would expose models that the current desktop account no longer offers.
+export const parseWorkBuddyProductCatalog = (output = "") => {
+  let payload;
+  try { payload = JSON.parse(String(output || "")); } catch { return { models: [], labels: {} }; }
+  const cliAgent = Array.isArray(payload?.agents)
+    ? payload.agents.find((agent) => String(agent?.name || "").trim().toLocaleLowerCase() === "cli")
+    : null;
+  const models = [...new Set((Array.isArray(cliAgent?.models) ? cliAgent.models : [])
+    .map((model) => clean(typeof model === "string" ? model : model?.id || model?.model || model?.slug))
+    .filter((model) => /^[a-z0-9][a-z0-9._:+/-]*$/iu.test(model)))];
+  const definitions = new Map((Array.isArray(payload?.models) ? payload.models : [])
+    .map((model) => [clean(model?.id || model?.model || model?.slug), clean(model?.name || model?.displayName || model?.label)])
+    .filter(([id, label]) => id && label));
+  const labels = Object.fromEntries(models
+    .map((model) => [model, definitions.get(model) || ""])
+    .filter(([, label]) => label));
+  return { models, labels };
+};
+
+const workBuddyConfigRoot = ({ environment = process.env, homeDirectory = homedir() } = {}) =>
+  clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR) || join(homeDirectory, ".workbuddy");
+
+// The desktop product manager periodically merges a remote catalogue into
+// ACC_PRODUCT_CONFIG_V3.  That resolved catalogue is spilled to disk before
+// the desktop prewarm process is launched, while the bundled CLI's static
+// product.json can remain several releases behind.  Reading the spill is
+// still local and read-only; it does not import credentials or replace the
+// CLI launch selected for account isolation.
+const readWorkBuddyResolvedProductCatalog = async ({ environment = process.env, homeDirectory = homedir() } = {}) => {
+  const explicitRoot = clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR);
+  // Test and embedded callers often pass a synthetic environment.  Never
+  // accidentally read the developer's real WorkBuddy cache in that mode.
+  if (!explicitRoot && environment !== process.env) return { models: [], labels: {}, manifest: "", source: "" };
+  const root = explicitRoot || workBuddyConfigRoot({ environment, homeDirectory });
+  const cacheRoot = join(root, "cache");
+  const spillRoot = join(cacheRoot, "conversation-product-spill");
+  const spillEntries = await readdir(spillRoot, { withFileTypes: true }).catch(() => []);
+  const candidates = [
+    join(cacheRoot, "acc-product-config-v3.json"),
+    ...spillEntries
+      .filter((entry) => entry.isFile() && /^acc-product-config-v3-[a-f0-9]+\.json$/iu.test(entry.name))
+      .map((entry) => join(spillRoot, entry.name)),
+  ];
+  const parsed = [];
+  for (const candidate of candidates) {
+    const source = await readFile(candidate, "utf8").catch(() => "");
+    if (!source) continue;
+    const catalog = parseWorkBuddyProductCatalog(source);
+    if (!catalog.models.length) continue;
+    parsed.push({ ...catalog, manifest: candidate, source: "workbuddy_resolved_product" });
+  }
+  // Prefer the resolved catalogue that declares the largest current CLI
+  // model set.  The direct spill file may only contain the bundled fallback
+  // list, while the conversation spill contains the desktop's remote merge.
+  parsed.sort((left, right) => right.models.length - left.models.length);
+  return parsed[0] || { models: [], labels: {}, manifest: "", source: "" };
+};
+
+const workBuddyProductManifestPath = (launch = {}) => {
+  const script = (Array.isArray(launch.prefixArgs) ? launch.prefixArgs : [])
+    .map((value) => clean(value))
+    .find((value) => /(?:^|[\\/])codebuddy(?:\.cmd|\.exe)?$/iu.test(value) || /(?:^|[\\/])codebuddy$/iu.test(value));
+  return script ? join(dirname(dirname(script)), "product.json") : "";
+};
+
+const readWorkBuddyProductCatalog = async (launch = {}, { environment = process.env, homeDirectory = homedir() } = {}) => {
+  const manifest = workBuddyProductManifestPath(launch);
+  const explicitRoot = clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR);
+  const resolved = launch.installSource === "workbuddy_desktop" || explicitRoot
+    ? await readWorkBuddyResolvedProductCatalog({ environment, homeDirectory })
+    : { models: [], labels: {}, manifest: "", source: "" };
+  if (!manifest) return resolved;
+  const source = await readFile(manifest, "utf8").catch(() => "");
+  if (!source) return resolved.models.length ? resolved : { models: [], labels: {}, manifest, source: "" };
+  const catalog = parseWorkBuddyProductCatalog(source);
+  if (resolved.models.length > catalog.models.length) return resolved;
+  return { ...catalog, manifest, source: "runner_product" };
+};
+
 const runnerLoginStateFromOutput = (output = "") => {
   const source = clean(output).toLocaleLowerCase();
   if (!source) return null;
@@ -221,10 +306,26 @@ const detectKnownAgentRunnerInstallationUncached = async ({
     let modelState = "blocked_by_auth";
     let modelPolicy = "";
     let catalogSource = "";
+    let modelLabels = {};
     let state = "failed";
     let message = "";
     let capabilityError = null;
     if (normalizedRunnerId === "workbuddy") {
+      const productCatalog = await readWorkBuddyProductCatalog(launch, { environment, homeDirectory: homedir() });
+      modelLabels = productCatalog.labels;
+      const desktopLaunch = launch.installSource === "workbuddy_desktop"
+        || launch.prefixArgs?.some((value) => /[\\/]WorkBuddy[\\/]resources[\\/]app\.asar(?:\.unpacked)?[\\/]cli[\\/]bin[\\/]codebuddy/iu.test(String(value || "")));
+      const desktopBridge = desktopLaunch
+        ? await inspectWorkBuddyDesktopBridge({ cwd, environment }).catch(() => null)
+        : null;
+      if (desktopBridge?.authenticated === true) {
+        models = Array.isArray(desktopBridge.models) ? desktopBridge.models : [];
+        modelLabels = desktopBridge.modelLabels && typeof desktopBridge.modelLabels === "object" ? desktopBridge.modelLabels : modelLabels;
+        catalogSource = desktopBridge.catalogSource || "workbuddy_acp_session";
+        authenticated = true;
+        authState = "authenticated";
+        modelCatalogChecked = models.length > 0;
+      }
       try {
         // WorkBuddy publishes the exact model IDs supported by the installed
         // CLI in --help. Reading that catalogue is local, immediate and does
@@ -241,8 +342,11 @@ const detectKnownAgentRunnerInstallationUncached = async ({
           operation: "probe",
           acceptOutputOnTimeout: true,
         });
-        models = parseWorkBuddyModelCatalog(`${help.stdout || ""}\n${help.stderr || ""}`);
-        if (models.length) catalogSource = "runner_cli";
+        const helpModels = parseWorkBuddyModelCatalog(`${help.stdout || ""}\n${help.stderr || ""}`);
+        if (authenticated !== true) models = productCatalog.models.length ? productCatalog.models : helpModels;
+        if (models.length) catalogSource = productCatalog.models.length
+          ? (catalogSource || productCatalog.source)
+          : "runner_cli";
       } catch (error) {
         const detail = runnerProbeDetail(error);
         capabilityError = runnerCapabilityError({
@@ -254,15 +358,24 @@ const detectKnownAgentRunnerInstallationUncached = async ({
           suggestedAction: "重新检查 WorkBuddy 安装，或留空跟随 CLI 默认模型",
         });
       }
-      authenticated = null;
-      authState = "generation_check_required";
+      if (authenticated !== true) {
+        authenticated = null;
+        authState = "generation_check_required";
+      }
     }
     modelCatalogChecked = models.length > 0;
-    if (normalizedRunnerId === "workbuddy" && modelCatalogChecked) {
-      modelState = "catalog_available";
-      modelPolicy = "explicit";
-      state = "ready";
-      message = `已读取 ${models.length} 个 WorkBuddy CLI 支持模型；登录与额度将在真实生成时核验`;
+    if (normalizedRunnerId === "workbuddy" && authenticated === null) {
+      // A local product catalogue proves only that the picker can be
+      // populated.  It must never be reported as an authenticated runner:
+      // the bundled CLI and the desktop app can have different bootstrap
+      // contexts, and the first real generation is the authority for login.
+      modelState = modelCatalogChecked ? "catalog_available" : "catalog_unavailable";
+      modelPolicy = modelCatalogChecked ? "explicit" : "runner_default";
+      state = "generation_check_required";
+      authState = "generation_check_required";
+      message = modelCatalogChecked
+        ? `已读取 ${models.length} 个 WorkBuddy CLI 支持模型，但尚未完成真实登录/生成验证`
+        : "已检测到 WorkBuddy CLI，但尚未读取模型目录；登录与模型能力将在真实生成时核验";
     } else if (authenticated === true) {
       if (modelCatalogChecked) {
         modelState = "catalog_available";
@@ -278,6 +391,9 @@ const detectKnownAgentRunnerInstallationUncached = async ({
       }
     } else if (authenticated === false) {
       modelState = "blocked_by_auth";
+      state = "login_required";
+      authState = "login_required";
+      message = "WorkBuddy 未检测到有效登录会话";
     } else {
       modelState = "blocked_by_auth";
     }
@@ -298,6 +414,7 @@ const detectKnownAgentRunnerInstallationUncached = async ({
       modelState,
       modelPolicy,
       catalogSource,
+      modelLabels,
       message,
       error: capabilityError,
     };
@@ -433,7 +550,8 @@ export const startKnownAgentRunnerLogin = async ({
   return {
     ok: true,
     runnerId: id,
-    message: "已打开 WorkBuddy；请在新窗口完成首次登录，完成后返回神思重新检查",
+    message: "已打开 WorkBuddy；请在 WorkBuddy 界面完成登录（若未出现登录页，可在会话中输入 /login），完成后回到神思点击“重新检查登录”",
+    requiresUserConfirmation: true,
   };
 };
 
@@ -450,6 +568,34 @@ export const verifyKnownAgentRunnerLogin = async ({
 } = {}) => {
   const id = clean(runnerId);
   if (id !== "workbuddy") return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: "当前运行器不支持登录验证" };
+  try {
+    const bridge = await inspectWorkBuddyDesktopBridge({ cwd, environment });
+    if (bridge?.authenticated === true) {
+      const probe = await runWorkBuddyDesktopBridge({
+        prompt: "Connection test. Reply with exactly SHENSI_LOGIN_PROBE_OK.",
+        model: "auto",
+        cwd,
+        environment,
+        timeoutMs: 120_000,
+      });
+      if (/SHENSI_LOGIN_PROBE_OK/iu.test(String(probe.text || ""))) {
+        return {
+          authenticated: true,
+          authState: "authenticated",
+          state: "ready",
+          ready: true,
+          models: bridge.models || [],
+          modelLabels: bridge.modelLabels || {},
+          catalogSource: bridge.catalogSource || "workbuddy_acp_session",
+          message: "WorkBuddy 桌面登录会话有效，神思 ACP 真实连接成功",
+        };
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE") {
+      return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: clean(error?.message || error).slice(0, 500) };
+    }
+  }
   const launch = await resolveLaunch({ runnerId: id, environment, machineRoot });
   const args = [...(Array.isArray(launch.prefixArgs) ? launch.prefixArgs : []), "-p", "--input-format", "text", "--output-format", "text", "--model", "auto", "--no-session-persistence"];
   let result;

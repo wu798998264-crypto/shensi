@@ -4417,6 +4417,11 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
     rejectWorker(mediaEditError(`无法启动深度摸索：${error.message}`, "DEPTH_EXPLORER_UNAVAILABLE"));
     return;
   }
+  // Publish a deterministic first event before waiting for the worker's
+  // event file.  Some bundled workers only flush their first event after
+  // they have loaded the model, which otherwise makes the UI appear idle
+  // until the first output is already ready.
+  onProgress?.({ currentPercent: 0, message: "正在启动本地处理器" });
   let stderr = "";
   let settled = false;
   const progressTimer = setInterval(async () => {

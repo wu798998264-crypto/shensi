@@ -4,7 +4,7 @@ import { PassThrough, Writable } from "node:stream";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decodeAgentRunnerOutput, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, installAgentRunnerFromOfficialSource, parseWorkBuddyModelCatalog, runAgentRunnerInstallerProcess, startKnownAgentRunnerLogin } from "../src/server/agent-runner-installer.mjs";
+import { decodeAgentRunnerOutput, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, installAgentRunnerFromOfficialSource, parseWorkBuddyModelCatalog, parseWorkBuddyProductCatalog, runAgentRunnerInstallerProcess, startKnownAgentRunnerLogin } from "../src/server/agent-runner-installer.mjs";
 import { agentRunnerRegistryPath, forgetAgentRunnerLaunch, rememberAgentRunnerLaunch, readAgentRunnerRegistry } from "../src/server/agent-runner-registry.mjs";
 import { runExternalCliAgent } from "../src/server/external-cli-agent-runner.mjs";
 import { resolveRunnerLaunch, workBuddyInstallRootsFromRegistryOutput } from "../src/server/agent-runner-launch.mjs";
@@ -79,6 +79,31 @@ await rm(workBuddyResolverRoot, { recursive: true, force: true });
 const workBuddyHelp = "--model <model>  Currently supported: (hy3, glm-5.2, deepseek-v4-pro, deepseek-v4-flash)";
 assert.deepEqual(parseWorkBuddyModelCatalog(workBuddyHelp), ["hy3", "glm-5.2", "deepseek-v4-pro", "deepseek-v4-flash"]);
 assert.deepEqual(parseWorkBuddyModelCatalog(JSON.stringify({ content: "- hy3\n- glm-5.2\n- deepseek-v4-pro" })), ["hy3", "glm-5.2", "deepseek-v4-pro"]);
+assert.deepEqual(parseWorkBuddyProductCatalog(JSON.stringify({
+  agents: [{ name: "cli", models: ["fast-model", "balanced-model", "glm-5.3"] }],
+  models: [{ id: "fast-model", name: "Fast" }, { id: "glm-5.3", name: "GLM-5.3" }],
+})), {
+  models: ["fast-model", "balanced-model", "glm-5.3"],
+  labels: { "fast-model": "Fast", "glm-5.3": "GLM-5.3" },
+});
+const resolvedCatalogRoot = await mkdtemp(join(tmpdir(), "shensi-workbuddy-catalog-"));
+await mkdir(join(resolvedCatalogRoot, "cache", "conversation-product-spill"), { recursive: true });
+await writeFile(join(resolvedCatalogRoot, "cache", "conversation-product-spill", "acc-product-config-v3-deadbeef.json"), JSON.stringify({
+  agents: [{ name: "cli", models: ["fast-model", "hy3"] }],
+  models: [{ id: "fast-model", name: "快速" }, { id: "hy3", name: "Hy3" }],
+}));
+const resolvedCatalogCapability = await detectKnownAgentRunnerInstallation({
+  runnerId: "workbuddy",
+  environment: { WORKBUDDY_CONFIG_DIR: resolvedCatalogRoot, PATH: "" },
+  resolveLaunch: async () => ({ executable: "C:\\Node\\node.exe", prefixArgs: ["C:\\WorkBuddy\\codebuddy"], installSource: "workbuddy_desktop" }),
+  runProcess: async ({ args }) => args.includes("--help")
+    ? { exitCode: 0, stdout: "--model <model> Currently supported: (legacy-model, fast-model)", stderr: "" }
+    : { exitCode: 0, stdout: "2.151.0", stderr: "" },
+});
+assert.deepEqual(resolvedCatalogCapability.models, ["fast-model", "hy3"], "桌面端当前目录存在时不得混入旧版 CLI 静态模型");
+assert.equal(resolvedCatalogCapability.catalogSource, "workbuddy_resolved_product");
+assert.equal(resolvedCatalogCapability.ready, false);
+await rm(resolvedCatalogRoot, { recursive: true, force: true });
 let workBuddyProbeCalls = 0;
 const workBuddyCapability = await detectKnownAgentRunnerInstallation({
   runnerId: "workbuddy",
@@ -94,7 +119,7 @@ assert.equal(workBuddyProbeCalls, 2, "WorkBuddy 应分别探测版本和真实�
 assert.equal(workBuddyCapability.authState, "generation_check_required");
 assert.equal(workBuddyCapability.modelCatalogChecked, true);
 assert.deepEqual(workBuddyCapability.models, ["hy3", "glm-5.2", "deepseek-v4-pro", "deepseek-v4-flash"]);
-assert.match(workBuddyCapability.message, /登录与额度将在真实生成时核验/u);
+assert.match(workBuddyCapability.message, /尚未完成真实登录\/生成验证/u);
 
 const loggedOutWorkBuddy = await detectKnownAgentRunnerInstallation({
   runnerId: "workbuddy",
@@ -103,7 +128,8 @@ const loggedOutWorkBuddy = await detectKnownAgentRunnerInstallation({
     ? { exitCode: 0, stdout: "--model <model> Currently supported: (hy3)", stderr: "" }
     : { exitCode: 0, stdout: "2.151.0", stderr: "" },
 });
-assert.equal(loggedOutWorkBuddy.state, "ready");
+assert.equal(loggedOutWorkBuddy.state, "generation_check_required");
+assert.equal(loggedOutWorkBuddy.ready, false, "读取模型目录不得冒充真实登录可用");
 assert.equal(loggedOutWorkBuddy.authenticated, null, "本地模型目录不得冒充在线登录验收");
 assert.equal(loggedOutWorkBuddy.authState, "generation_check_required");
 
@@ -114,8 +140,9 @@ const defaultWorkBuddy = await detectKnownAgentRunnerInstallation({
     ? { exitCode: 0, stdout: "--model <model>", stderr: "" }
     : { exitCode: 0, stdout: "2.151.0", stderr: "" },
 });
-assert.equal(defaultWorkBuddy.state, "failed");
-assert.equal(defaultWorkBuddy.modelState, "blocked_by_auth");
+assert.equal(defaultWorkBuddy.state, "generation_check_required");
+assert.equal(defaultWorkBuddy.ready, false);
+assert.equal(defaultWorkBuddy.modelState, "catalog_unavailable");
 
 let probeInput = "";
 let probeStdio = null;

@@ -77,7 +77,7 @@ for (const profileId of ["audio-libtv-jimeng", "audio-libtv-hailuo"]) {
   assert.equal(profile?.reserved, false, `${profileId} 重载后不能退回预留配置`);
 }
 const audioProfile = portableRoundTrip.audioConnections.find((item) => item.id === "audio-libtv-jimeng");
-assert.equal(mediaGenerationConnectionAvailable("audio", audioProfile, null), false, "音频探针确认前不得显示生成入口");
+assert.equal(mediaGenerationConnectionAvailable("audio", audioProfile, null), true, "已配置的 LibTV 音频连接在探针等待期间也必须保留生成入口");
 assert.equal(mediaGenerationConnectionAvailable("audio", audioProfile, {
   connected: true,
   available: true,

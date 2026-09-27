@@ -2152,11 +2152,20 @@ const recoverLegacyAggregateReferencePreflightFailure = async (job) => {
   return patch ? updateJob(job.id, patch) : job;
 };
 
-export const listMediaGenerationJobsForWorker = async () => {
+export const listMediaGenerationJobsForWorker = async ({ skipDreamina = false } = {}) => {
   await mkdir(jobsRoot(), { recursive: true });
   const entries = await readdir(jobsRoot(), { withFileTypes: true });
   const jobs = [];
   for (let job of await readGenerationJobs(entries)) {
+    // Startup/watchdog recovery must not touch historical Dreamina records.
+    // In particular, do not run the legacy migration helpers below: some of
+    // them rewrite old auth/transport states and would make the first window
+    // launch probe the provider before the user starts a task. Dreamina
+    // recovery is explicitly deferred until a user-triggered worker releases
+    // the credential slot.
+    if (skipDreamina
+      && normalizedIdentity(job?.request?.settings?.adapter) === "cli"
+      && ["即梦", "dreamina"].includes(normalizedIdentity(job?.request?.settings?.provider))) continue;
     if (await pruneExpiredGenerationJob(job)) continue;
     job = await recoverLegacyDreaminaGenerationAuthFailure(job);
     job = await recoverLegacyAggregateReferencePreflightFailure(job);

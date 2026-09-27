@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import { launchMediaGenerationWorker, mediaWorkerCredentialSnapshot } from "../src/server/media-worker-manager.mjs";
 import { parseStructuredCliError } from "../src/server/adapters.mjs";
 
@@ -34,5 +35,11 @@ const auth = parseStructuredCliError("[DREAMINA_AUTH_REQUIRED] authsdk: not logg
 assert.equal(auth?.code, "DREAMINA_AUTH_REQUIRED");
 assert.equal(auth?.providerErrorCode, "DREAMINA_AUTH_REQUIRED");
 assert.equal(auth?.submissionOutcomeKnown, true, "即梦登录失效发生在厂商提交前，必须允许进入核验流程");
+
+const workerSource = await readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8");
+assert.match(workerSource, /startupRecoveryScan = !targetJobId && \["startup", "watchdog", "credential-rebind"\]/u, "启动及凭据恢复扫描必须隔离即梦历史任务");
+assert.match(workerSource, /listMediaGenerationJobsForWorker\(\{ skipDreamina: startupRecoveryScan \}\)/u, "启动扫描不得读取或迁移即梦历史任务");
+assert.match(workerSource, /--scan-mode", "dreamina-deferred/u, "即梦历史任务只能在用户任务完成后进入后台恢复扫描");
+assert.match(workerSource, /scanMode !== "dreamina-deferred"[\s\S]{0,300}Boolean\(job\.providerTaskId\)/u, "延后恢复不得自动提交没有厂商任务 ID 的旧即梦任务");
 
 console.log("Media worker startup and Dreamina auth propagation tests passed");

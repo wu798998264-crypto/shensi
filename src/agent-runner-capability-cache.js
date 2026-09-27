@@ -4,6 +4,11 @@ const normalizedModels = (models = []) => [...new Set((Array.isArray(models) ? m
   .map((model) => clean(model, 288))
   .filter((model) => /^[a-z0-9][a-z0-9._:+/-]*$/iu.test(model)))].slice(0, 200);
 
+const normalizedModelLabels = (labels = {}) => Object.fromEntries(Object.entries(labels && typeof labels === "object" ? labels : {})
+  .slice(0, 200)
+  .map(([id, label]) => [clean(id, 288), clean(label, 200)])
+  .filter(([id, label]) => id && label));
+
 /**
  * Store only a verified, non-sensitive WorkBuddy catalogue.  Credentials,
  * executable paths and prompt data never enter this cache.  The entry is
@@ -29,6 +34,7 @@ export const workBuddyCapabilityCacheEntry = (capability = {}) => {
     catalogSource: clean(capability?.catalogSource, 120) || "runner_account",
     modelCatalogChecked: true,
     models,
+    modelLabels: normalizedModelLabels(capability?.modelLabels),
     modelCatalogStale: false,
     cachedAt: clean(capability?.cachedAt, 80) || new Date().toISOString(),
     message: clean(capability?.message, 500) || `已读取 ${models.length} 个 WorkBuddy 当前可用模型`,
@@ -48,4 +54,3 @@ export const restoreWorkBuddyCapabilityCache = (value = {}) => {
     message: "已恢复上次确认的 WorkBuddy 模型目录，正在后台复核",
   };
 };
-

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { generateImageWithAdapter } from "./adapters.mjs";
@@ -75,8 +76,10 @@ const option = (name, fallback = "") => {
 };
 const targetJobId = option("--job");
 const appRoot = resolve(option("--app-root", process.cwd()));
+const workerScriptPath = resolve(process.argv[1] || import.meta.filename || "media-generation-worker.mjs");
 const scanMode = targetJobId ? "targeted" : option("--scan-mode", "startup");
-const recoveryScan = !targetJobId && ["startup", "watchdog"].includes(scanMode);
+const startupRecoveryScan = !targetJobId && ["startup", "watchdog", "credential-rebind"].includes(scanMode);
+const recoveryScan = !targetJobId && ["startup", "watchdog", "dreamina-deferred"].includes(scanMode);
 const POLL_INTERVAL_MS = Math.max(100, Number(process.env.SHENSI_MEDIA_POLL_INTERVAL_MS) || 2_000);
 const LOCK_STALE_MS = Math.max(3_000, Number(process.env.SHENSI_MEDIA_LOCK_STALE_MS) || 8_000);
 const MAX_TRANSIENT_FAILURES = Math.max(3, Number(process.env.SHENSI_MEDIA_MAX_TRANSIENT_FAILURES) || 12);
@@ -2040,13 +2043,47 @@ const main = async () => {
   const releaseMutation = updateBarrier.beginMutation();
   try {
     if (targetJobId) {
-      await processJob(await readGenerationJobForWorker({ jobId: targetJobId }));
+      const targetJob = await readGenerationJobForWorker({ jobId: targetJobId });
+      await processJob(targetJob);
+      // Historical Dreamina jobs are intentionally excluded from startup and
+      // watchdog scans. Once a user-triggered Dreamina job has released its
+      // credential slot, run one deferred reconciliation pass in the
+      // background. This keeps recovery off the first-launch path without
+      // changing the explicit submit/poll/download pipeline.
+      if (normalizedIdentity(targetJob?.request?.settings?.adapter) === "cli"
+        && ["即梦", "dreamina"].includes(normalizedIdentity(targetJob?.request?.settings?.provider))) {
+        const args = [workerScriptPath, "--app-root", appRoot, "--scan-mode", "dreamina-deferred"];
+        const env = {
+          ...process.env,
+          SHENSI_DATA_ROOT: appDataRoot(),
+          ...(Object.keys(ephemeralCredentials).length
+            ? { SHENSI_MEDIA_WORKER_CREDENTIALS: Buffer.from(JSON.stringify(ephemeralCredentials), "utf8").toString("base64url") }
+            : {}),
+        };
+        const deferred = spawn(process.execPath, args, {
+          cwd: appRoot,
+          env,
+          shell: false,
+          windowsHide: true,
+          detached: true,
+          stdio: "ignore",
+        });
+        deferred.unref();
+      }
       return;
     }
-    const jobs = await listMediaGenerationJobsForWorker();
-    const dreaminaJobs = jobs.filter((job) => String(job.request?.settings?.provider || "") === "即梦"
-      && String(job.request?.settings?.adapter || "") === "cli");
-    const otherJobs = jobs.filter((job) => !dreaminaJobs.includes(job));
+    const jobs = await listMediaGenerationJobsForWorker({ skipDreamina: startupRecoveryScan });
+    const isDreaminaJob = (job) => String(job.request?.settings?.provider || "") === "即梦"
+      && String(job.request?.settings?.adapter || "") === "cli";
+    const dreaminaJobs = jobs.filter((job) => isDreaminaJob(job)
+      // Deferred recovery is reconciliation-only. Never resubmit an old
+      // Dreamina record that has no provider task id, and never retry a
+      // historical login-failure record automatically.
+      && (scanMode !== "dreamina-deferred"
+        || (Boolean(job.providerTaskId)
+          && job.status !== "waiting_credentials"
+          && !/AUTH|LOGIN|未检测到有效登录态|登录失效/i.test(`${job.providerErrorCode || ""} ${job.error || ""}`))));
+    const otherJobs = jobs.filter((job) => !isDreaminaJob(job));
     // The official Dreamina CLI has a single Windows credential slot. Process
     // those jobs in stable order while leaving unrelated providers concurrent.
     const priority = (job) => {

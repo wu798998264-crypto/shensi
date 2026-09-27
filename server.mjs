@@ -1532,6 +1532,9 @@ const publicAgentRunnerStatuses = async ({ force = false } = {}) => {
       models: Array.isArray(capability?.models)
         ? capability.models.map((model) => String(typeof model === "string" ? model : model?.slug || model?.id || model?.model || model?.name || "").trim()).filter(Boolean).slice(0, 200)
         : [],
+      modelLabels: capability?.modelLabels && typeof capability.modelLabels === "object"
+        ? Object.fromEntries(Object.entries(capability.modelLabels).slice(0, 200).map(([id, label]) => [String(id).slice(0, 288), String(label).slice(0, 200)]).filter(([id, label]) => id && label))
+        : {},
       cliPath: String(capability?.cliPath || "").slice(0, 2_048),
       prefixArgs: Array.isArray(capability?.prefixArgs) ? capability.prefixArgs.slice(0, 16) : [],
       authMethod: String(capability?.authMethod || "").slice(0, 80),
