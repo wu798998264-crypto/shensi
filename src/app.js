@@ -18579,12 +18579,12 @@ const dismissWhiteboardGenerationElapsed = (card) => {
 // visible area are not useful during an interaction and are materialized again
 // as soon as the viewport approaches them.
 const WHITEBOARD_VIRTUALIZATION_NODE_THRESHOLD = 80;
-const WHITEBOARD_MEDIA_VIRTUALIZATION_THRESHOLD = 8;
 const WHITEBOARD_VIRTUALIZATION_OVERSCAN_PX = 260;
 const WHITEBOARD_PROGRESSIVE_RENDER_THRESHOLD = 48;
 const WHITEBOARD_PROGRESSIVE_RENDER_BATCH = 10;
 const WHITEBOARD_PROGRESSIVE_FRAME_BUDGET_MS = 7;
-const WHITEBOARD_DEFERRED_IMAGE_BATCH = 2;
+const WHITEBOARD_DEFERRED_IMAGE_BATCH = 4;
+const WHITEBOARD_MEDIA_HYDRATION_MARGIN_PX = 360;
 const whiteboardCardRecords = new Map();
 let whiteboardEdgeMarkupCache = null;
 
@@ -18597,24 +18597,50 @@ const cancelWhiteboardMediaHydration = () => {
 const scheduleWhiteboardMediaHydration = () => {
   if (ui.whiteboardMediaHydrationTask) return;
   const renderIdentity = elements.whiteboardSurface.dataset.renderIdentity || "";
-  if (!elements.whiteboardSurface.querySelector("img[data-whiteboard-deferred-src]")) return;
+  if (!elements.whiteboardSurface.querySelector("img[data-whiteboard-deferred-src], img.whiteboard-card-image[loading=\"lazy\"], img.whiteboard-card-overview-image[loading=\"lazy\"]")) return;
   const token = ui.whiteboardMediaHydrationToken;
   const run = () => {
     ui.whiteboardMediaHydrationTask = null;
     if (token !== ui.whiteboardMediaHydrationToken
       || elements.whiteboardSurface.dataset.renderIdentity !== renderIdentity
       || !activeWhiteboardDocument()) return;
-    const queue = [...elements.whiteboardSurface.querySelectorAll("img[data-whiteboard-deferred-src]")];
+    const editorRect = elements.whiteboardEditor.getBoundingClientRect();
+    const margin = WHITEBOARD_MEDIA_HYDRATION_MARGIN_PX;
+    const viewportLeft = editorRect.left - margin;
+    const viewportTop = editorRect.top - margin;
+    const viewportRight = editorRect.right + margin;
+    const viewportBottom = editorRect.bottom + margin;
+    const queue = [...elements.whiteboardSurface.querySelectorAll("img[data-whiteboard-deferred-src], img.whiteboard-card-image[loading=\"lazy\"], img.whiteboard-card-overview-image[loading=\"lazy\"]")]
+      .map((image, index) => {
+        const rect = image.getBoundingClientRect();
+        const visible = rect.right >= viewportLeft && rect.left <= viewportRight
+          && rect.bottom >= viewportTop && rect.top <= viewportBottom;
+        const centerX = (rect.left + rect.right) / 2;
+        const centerY = (rect.top + rect.bottom) / 2;
+        const distance = Math.abs(centerX - editorRect.left - editorRect.width / 2)
+          + Math.abs(centerY - editorRect.top - editorRect.height / 2);
+        return { image, visible, distance, index };
+      })
+      .sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance || a.index - b.index);
     let hydrated = 0;
     while (queue.length && hydrated < WHITEBOARD_DEFERRED_IMAGE_BATCH) {
-      const image = queue.shift();
+      const { image } = queue.shift();
       const source = String(image?.dataset?.whiteboardDeferredSrc || "");
-      if (!image?.isConnected || !source) continue;
-      image.src = source;
-      delete image.dataset.whiteboardDeferredSrc;
+      if (!image?.isConnected) continue;
+      if (source) {
+        image.src = source;
+        delete image.dataset.whiteboardDeferredSrc;
+      } else if (image.matches("img.whiteboard-card-image[loading=\"lazy\"], img.whiteboard-card-overview-image[loading=\"lazy\"]")) {
+        // Native lazy loading uses the untransformed layout coordinates of the
+        // canvas and can therefore classify a visible, panned/zoomed card as
+        // off-screen forever. Promote only the current viewport (plus margin)
+        // to eager loading; off-screen cards remain lazy and virtualized.
+        image.setAttribute("loading", "eager");
+      } else continue;
       hydrated += 1;
     }
-    if (queue.length) {
+    if (queue.some(({ image }) => image?.isConnected && (image.dataset?.whiteboardDeferredSrc
+      || image.matches("img.whiteboard-card-image[loading=\"lazy\"], img.whiteboard-card-overview-image[loading=\"lazy\"]")))) {
       ui.whiteboardMediaHydrationTask = scheduleUiBackgroundTask(run, {
         delay: 16,
         timeout: 160,
@@ -18640,6 +18666,7 @@ const cancelWhiteboardProgressiveRender = ({ clearPresentation = false } = {}) =
   }
 };
 
+const WHITEBOARD_MEDIA_VIRTUALIZATION_THRESHOLD = 8;
 const whiteboardVirtualRenderWindow = (documentState) => {
   const nodes = documentState?.canvas?.nodes ?? [];
   const mediaNodeCount = nodes.reduce((count, node) => count + (["video", "audio"].includes(node?.kind) ? 1 : 0), 0);
@@ -49540,6 +49567,10 @@ const applyWhiteboardTransform = (documentState = activeWhiteboardDocument()) =>
   if (!documentState) return;
   const { x, y, zoom } = whiteboardViewport(documentState);
   elements.whiteboardSurface.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${zoom})`;
+  // Native lazy-loading uses the untransformed layout coordinates. Re-evaluate
+  // media after a committed pan/zoom so cards entering the transformed
+  // viewport are promoted to eager loading without disabling virtualization.
+  scheduleWhiteboardMediaHydration();
   elements.whiteboardZoomOut.disabled = zoom <= CANVAS_MIN_ZOOM;
   elements.whiteboardZoomIn.disabled = zoom >= CANVAS_MAX_ZOOM;
   elements.whiteboardZoomOut.title = `缩小白板（当前 ${Math.round(zoom * 100)}%）`;
@@ -51885,6 +51916,7 @@ const applyWhiteboardDragPreview = (drag) => {
     if (path && drag.sourcePoint) path.setAttribute("d", whiteboardEdgePath(drag.sourcePoint, pending));
   } else if (drag.mode === "pan") {
     elements.whiteboardSurface.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0) scale(${drag.zoom})`;
+    scheduleWhiteboardMediaHydration();
     if (!elements.whiteboardMultiSelection.hidden) {
       const deltaX = pending.x - drag.viewportX;
       const deltaY = pending.y - drag.viewportY;
