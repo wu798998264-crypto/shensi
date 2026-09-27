@@ -18928,7 +18928,10 @@ const renderWhiteboard = (documentState) => {
     const depthExplorerRuntimeSignature = node.operation?.type === "depth-explorer"
       ? whiteboardDepthExplorerRuntimeSignature(node.id, state.activeDocument)
       : "";
-    const renderContext = [editing, lowDetail, activeVideo, generating, cardOrigin, dismissed, completionTime, state.readOnly, generationDraftByNode.get(node.id), whiteboardAutoOpenIsDisabled(node.id), depthExplorerRuntimeSignature];
+    const depthExplorerInputSignature = node.operation?.type === "depth-explorer"
+      ? whiteboardDepthExplorerInputSignature(node.id, documentState)
+      : "";
+    const renderContext = [editing, lowDetail, activeVideo, generating, cardOrigin, dismissed, completionTime, state.readOnly, generationDraftByNode.get(node.id), whiteboardAutoOpenIsDisabled(node.id), depthExplorerRuntimeSignature, depthExplorerInputSignature];
     if (previous?.sourceNode === node && previous.candidate === candidate
       && previous.context.every((value, index) => value === renderContext[index])) {
       return { ...previous.record, selected, relationActive, focused };
@@ -52778,7 +52781,7 @@ document.addEventListener("pointerup", (event) => {
   // looking unavailable until an unrelated context-menu action primed it.
   if (documentState && edgeChanged) {
     for (const depthNode of canonicalCanvas(documentState.canvas).nodes.filter((candidate) => candidate.operation?.type === "depth-explorer")) {
-      if (whiteboardDepthExplorerInputs(depthNode.id, documentState).length) void primeWhiteboardDepthExplorerNode(depthNode.id);
+      if (whiteboardDepthExplorerConnectedInputs(depthNode.id, documentState).length) void primeWhiteboardDepthExplorerNode(depthNode.id);
     }
   }
   if (pendingNodeCreateIntent) openWhiteboardNodeCreateMenu(pendingNodeCreateIntent);
@@ -58045,12 +58048,49 @@ const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.acti
   return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
 };
 
+const whiteboardDepthExplorerNodeMediaKind = (node) => {
+  if (!node) return "";
+  if (["image", "video"].includes(node.kind)) return node.kind;
+  const candidate = whiteboardCandidateFor(node.id);
+  if (["image", "video"].includes(candidate?.kind)) return candidate.kind;
+  if (["image", "video"].includes(node.generation?.channel)) return node.generation.channel;
+  const mimeType = String(node.mimeType || candidate?.attachment?.mimeType || "").toLowerCase();
+  return mimeType.startsWith("video/") ? "video" : mimeType.startsWith("image/") ? "image" : "";
+};
+
+const whiteboardDepthExplorerConnectedInputs = (nodeId, documentState = activeWhiteboardDocument()) => {
+  const canvas = canonicalCanvas(documentState?.canvas);
+  const sourceIds = canvas.edges
+    .filter((edge) => edge.toNode === nodeId)
+    .sort((left, right) => (Number(left.order) || 0) - (Number(right.order) || 0))
+    .map((edge) => edge.fromNode);
+  const nodes = new Map(canvas.nodes.map((node) => [node.id, node]));
+  return sourceIds.map((id) => nodes.get(id)).filter((node) => ["image", "video"].includes(whiteboardDepthExplorerNodeMediaKind(node)));
+};
+
+const whiteboardDepthExplorerMediaSource = (node) => {
+  const kind = whiteboardDepthExplorerNodeMediaKind(node);
+  if (!node || !["image", "video"].includes(kind)) return null;
+  const candidate = whiteboardCandidateFor(node.id);
+  const file = String(node.file || candidate?.attachment?.relativePath || "").trim();
+  return file ? { ...node, kind, file } : null;
+};
+
 const whiteboardDepthExplorerInputs = (nodeId, documentState = activeWhiteboardDocument()) => {
   const canvas = canonicalCanvas(documentState?.canvas);
   const sourceIds = canvas.edges.filter((edge) => edge.toNode === nodeId).sort((left, right) => left.order - right.order).map((edge) => edge.fromNode);
   const nodes = new Map(canvas.nodes.map((node) => [node.id, node]));
-  return sourceIds.map((id) => nodes.get(id)).filter((node) => ["image", "video"].includes(node?.kind) && node.file);
+  return sourceIds.map((id) => whiteboardDepthExplorerMediaSource(nodes.get(id))).filter(Boolean);
 };
+
+const whiteboardDepthExplorerInputSignature = (nodeId, documentState = activeWhiteboardDocument()) => JSON.stringify(
+  whiteboardDepthExplorerConnectedInputs(nodeId, documentState).map((node) => [
+    node.id,
+    whiteboardDepthExplorerNodeMediaKind(node),
+    String(node.file || whiteboardCandidateFor(node.id)?.attachment?.relativePath || ""),
+    String(node.mimeType || whiteboardCandidateFor(node.id)?.attachment?.mimeType || ""),
+  ]),
+);
 
 const whiteboardDepthExplorerSettings = (node) => ({
   quality: ["fast", "balanced", "quality"].includes(node?.operation?.settings?.quality) ? node.operation.settings.quality : "balanced",
@@ -58060,6 +58100,7 @@ const whiteboardDepthExplorerSettings = (node) => ({
 });
 
 const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
+  const connectedInputs = whiteboardDepthExplorerConnectedInputs(node.id, documentState);
   const inputs = whiteboardDepthExplorerInputs(node.id, documentState);
   const imageCount = inputs.filter((input) => input.kind === "image").length;
   const videoCount = inputs.length - imageCount;
@@ -58067,7 +58108,9 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
   const runtime = whiteboardDepthExplorerRuntimeState(node.id, documentState?.id || state.activeDocument);
   const tooMany = inputs.length > 10;
   const unavailable = whiteboardDepthExplorerPreflight && !whiteboardDepthExplorerPreflight.available;
-  const disabled = state.readOnly || runtime.busy || runtime.checking || !inputs.length || tooMany || unavailable;
+  const upstreamLoading = connectedInputs.length > inputs.length;
+  const loading = Boolean(runtime.checking || upstreamLoading || (connectedInputs.length && !whiteboardDepthExplorerPreflight));
+  const disabled = state.readOnly || runtime.busy || runtime.checking || !inputs.length || tooMany || unavailable || loading;
   const sourceSummary = inputs.length
     ? `${inputs.length} / 10${imageCount ? ` · 图片 ${imageCount}` : ""}${videoCount ? ` · 视频 ${videoCount}` : ""}`
     : "0 / 10 · 连接图片或视频";
@@ -58079,28 +58122,28 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
         ? "一次最多处理 10 个上游媒体，请移除多余连接"
         : unavailable
           ? `无法启动：${whiteboardDepthExplorerPreflight.reasons?.join("；") || "本地运行环境不可用"}`
-          : runtime.checking
-            ? "正在加载本地能力，请稍候"
+          : loading
+            ? upstreamLoading ? "正在加载上游媒体，请稍候" : "正在加载本地能力，请稍候"
             : whiteboardDepthExplorerPreflight?.available
               ? `本地环境可用 · ${whiteboardDepthExplorerPreflight.cpuThreads} 线程 · 严格串行`
               : "本功能使用本地 CPU 或 GPU，配置较低不建议使用";
   const selected = (value, current) => value === current ? " selected" : "";
-  const progressTotal = Math.max(0, Number(runtime.total) || inputs.length);
+  const progressTotal = Math.max(0, Number(runtime.total) || inputs.length || connectedInputs.length);
   const progressCompleted = Math.max(0, Math.min(progressTotal || Number.MAX_SAFE_INTEGER, Number(runtime.completed) || 0));
   const progressCurrent = Math.max(0, Math.min(100, Number(runtime.currentPercent) || 0));
   const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) || (progressTotal ? (progressCompleted / progressTotal) * 100 : 0)));
-  const progressVisible = Boolean(runtime.busy || runtime.checking || runtime.total > 0 || runtime.completed > 0);
+  const progressVisible = Boolean(loading || runtime.busy || runtime.total > 0 || runtime.completed > 0);
   const progressMarkup = progressVisible
-    ? `<div class="whiteboard-depth-progress" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : ""}</small></div>`
+    ? `<div class="whiteboard-depth-progress${loading ? " is-loading" : ""}" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length || connectedInputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : loading ? " · 程序正在加载" : ""}</small></div>`
     : "";
-  return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-node="${escapeHtml(node.id)}">
+  return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-loading="${loading ? "true" : "false"}" data-whiteboard-depth-node="${escapeHtml(node.id)}">
     <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
     <div class="whiteboard-depth-identity"><span>${icon("\uE945", "深度摸索")}</span><span><strong>深度摸索</strong><small>${escapeHtml(sourceSummary)}</small></span></div>
     <label class="whiteboard-depth-select whiteboard-depth-quality"><span>质量档</span><select data-whiteboard-depth-field="quality"${runtime.busy ? " disabled" : ""}><option value="fast"${selected("fast", settings.quality)}>快速</option><option value="balanced"${selected("balanced", settings.quality)}>均衡</option><option value="quality"${selected("quality", settings.quality)}>精细</option></select></label>
     <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${runtime.checking ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${runtime.checking ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : runtime.checking ? "正在加载…" : "生成深度结果"}</button>`}
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${loading ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
      ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
   </div>`;
 };

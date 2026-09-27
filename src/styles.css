@@ -10065,6 +10065,49 @@ textarea.whiteboard-find-textarea-source::selection {
   transition: width 180ms ease;
 }
 
+.whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track {
+  background: linear-gradient(90deg, #e5e7eb 0%, #f8fafc 45%, #e5e7eb 100%);
+  background-size: 220% 100%;
+  animation: whiteboard-depth-loading 1.15s linear infinite;
+}
+
+.whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track span {
+  min-width: 18%;
+  background: linear-gradient(90deg, #94a3b8 0%, #dbeafe 50%, #94a3b8 100%);
+  background-size: 220% 100%;
+  animation: whiteboard-depth-loading 1.15s linear infinite;
+}
+
+.whiteboard-depth-generate.loading::after {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  margin-left: 6px;
+  border: 2px solid rgb(255 255 255 / 0.38);
+  border-top-color: currentcolor;
+  border-radius: 50%;
+  animation: whiteboard-depth-spinner 0.75s linear infinite;
+  content: "";
+  vertical-align: -1px;
+}
+
+@keyframes whiteboard-depth-loading {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes whiteboard-depth-spinner {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track,
+  .whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track span,
+  .whiteboard-depth-generate.loading::after {
+    animation: none;
+  }
+}
+
 .whiteboard-depth-progress small {
   display: block;
   overflow: hidden;
