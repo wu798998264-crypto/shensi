@@ -6263,6 +6263,11 @@ const handleApiRequest = async (request, response, pathname) => {
     if (!body.agentSettings || typeof body.agentSettings !== "object" || !Object.keys(body.agentSettings).length) {
       body.agentSettings = body.settings;
     }
+    // Whiteboard cards submit an explicit Agent profile. Re-resolve that
+    // profile at the server boundary so a stale global Chat/Codex selection
+    // cannot replace a selected WorkBuddy (or another external runner).
+    const trustedAgentModelContext = await trustedConversationModelSettings(body.agentSettings, { executionSurface: "agent" });
+    body.agentSettings = trustedAgentModelContext.settings || body.agentSettings;
     const trustedChatCliName = String(trustedChatSettings.cliPath || "").split(/[\\/]/u).at(-1) || "";
     if (trustedChatSettings.adapter === "cli" && trustedChatSettings.provider === "OpenAI"
       && (trustedChatSettings.agentEngine === "codex" || /^codex(?:\.(?:exe|cmd|ps1))?$/iu.test(trustedChatCliName))) {

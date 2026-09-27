@@ -65,11 +65,24 @@ try {
   });
   assert.equal(running.providerStatus, "running", "LibTV 数字运行状态必须识别为运行中");
 
+  const completedDriver = new LibTvMediaDriver();
+  completedDriver.invoke = async () => ({ data: {
+    taskInfo: { loading: false, status: 1, progressPercent: 100 },
+    url: ["https://example.invalid/generated.png"],
+  } });
+  const completed = await completedDriver.getStatus({
+    job: { providerTaskId: "node-1" },
+    workRoot: root,
+  });
+  assert.equal(completed.providerStatus, "completed", "LibTV 返回 loading=false 且带结果 URL 时必须识别为完成");
+
   const workerSource = await readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /LIBTV_STALL_TIMEOUT_MS/u, "LibTV 必须有有界的状态停滞超时");
   assert.match(workerSource, /LIBTV_TASK_STALLED/u, "LibTV 状态长期不变化必须留下可处理的明确错误");
+  assert.match(workerSource, /LIBTV_DOWNLOAD_TIMEOUT/u, "LibTV 下载超时必须进入有界的手动重试状态");
   const driverSource = await readFile(new URL("../src/server/media-provider-drivers.mjs", import.meta.url), "utf8");
   assert.match(driverSource, /LIBTV_RUN_TIMEOUT_MS/u, "LibTV 初始运行命令必须有独立的短超时");
+  assert.match(driverSource, /LIBTV_DOWNLOAD_TIMEOUT_MS/u, "LibTV 下载命令必须有独立的有界超时");
   console.log("LibTV provider task persistence tests passed");
 } finally {
   const resolved = resolve(root);

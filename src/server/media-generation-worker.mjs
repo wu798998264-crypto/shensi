@@ -79,7 +79,7 @@ const MAX_TRANSIENT_FAILURES = Math.max(3, Number(process.env.SHENSI_MEDIA_MAX_T
 const MAX_CAPACITY_AUTOMATIC_RETRIES = Math.max(1, Number(process.env.SHENSI_MEDIA_CAPACITY_RETRIES) || 3);
 const LIBTV_STALL_TIMEOUT_MS = Math.max(
   60_000,
-  Number(process.env.SHENSI_LIBTV_STALL_TIMEOUT_MS) || 10 * 60_000,
+  Number(process.env.SHENSI_LIBTV_STALL_TIMEOUT_MS) || 5 * 60_000,
 );
 const MAX_MEDIA_DOWNLOAD_INTEGRITY_RETRIES = Math.max(
   1,
@@ -808,6 +808,29 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
       );
     }
   } catch (error) {
+    // LibTV's result download runs after the provider has already reported a
+    // terminal task. Its CLI can occasionally wait forever on a missing
+    // export, which used to leave the card at 90% until the process was
+    // manually stopped. Do not spend the generic transient retry budget on
+    // this provider-specific terminal condition; preserve the provider task
+    // and expose a bounded manual retry instead.
+    if (driver.id === "libtv-cli" && String(error?.code || error?.providerErrorCode || "") === "DRIVER_TIMEOUT") {
+      return updateRunnableMediaGenerationJob({ jobId: current.id, patch: {
+        status: "retry_required",
+        providerStatus: "completed",
+        providerErrorCode: "LIBTV_DOWNLOAD_TIMEOUT",
+        progressPercent: 100,
+        transientFailures: Number(current.transientFailures || 0),
+        downloadRetryCount: Number(current.downloadRetryCount || 0) + 1,
+        failedAt: "",
+        nextPollAt: "",
+        retryAllowed: true,
+        automaticRecoveryStoppedAt: new Date().toISOString(),
+        billingRisk: current.billingRisk || "provider_task_completed",
+        error: `LibTV 已完成生成，但结果下载超过 ${Math.ceil((Number(error?.timeoutMs) || 180_000) / 60_000)} 分钟未返回；已停止无限等待。原任务 ${current.providerTaskId || "未知"} 已保留，可手动重试下载，不会重复提交。`,
+        heartbeatAt: new Date().toISOString(),
+      } });
+    }
     if (!current.providerTaskId || !transientProviderFailure(error)) throw error;
     const failures = Number(current.transientFailures || 0) + 1;
     const dreaminaResultRecovery = dreaminaCliMediaJob(current)

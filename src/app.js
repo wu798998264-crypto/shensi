@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.4-depth-node";
+} from "./generation-profiles.js?v=8.0.6-lib-workbuddy-depth";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -17680,6 +17680,19 @@ const synchronizeBackgroundGenerationIntoActiveWorkspace = async ({
   });
   if (!workspaceTargetIsActive(workspaceKind, workspacePath)) return false;
   const latestWorkspaceState = latest.state ?? receipt.workspaceState;
+  // A background generation may have committed an inactive whiteboard while
+  // the user is viewing another document in this same workspace.  Refresh
+  // every non-active document from the just-loaded canonical state before
+  // applying the result; otherwise the renderer keeps a stale canvas and the
+  // next chat/autosave submits it together with the current conversation,
+  // producing a false "同一文档正在被另一处修改" conflict.
+  if (latestWorkspaceState?.documents && state.documents) {
+    const activeDocumentId = String(state.activeDocument || "");
+    for (const [latestDocumentId, latestDocument] of Object.entries(latestWorkspaceState.documents)) {
+      if (latestDocumentId === activeDocumentId && latestDocumentId !== documentId) continue;
+      state.documents[latestDocumentId] = clone(latestDocument);
+    }
+  }
   const currentDocument = state.documents?.[documentId];
   const currentNode = normalizeCanvas(currentDocument?.canvas).nodes.find((node) => node.id === nodeId);
   const promoteCurrent = shouldPromoteMediaGenerationResult({
@@ -17839,6 +17852,13 @@ const synchronizeBackgroundConversationIntoActiveWorkspace = async (job, receipt
   if (!workspaceTargetIsActive(workspaceKind, workspacePath)) return false;
   const latest = await fetchWorkspacePayload(workspacePath);
   const latestWorkspaceState = latest.state ?? receipt.workspaceState;
+  if (latestWorkspaceState?.documents && state.documents) {
+    const activeDocumentId = String(state.activeDocument || "");
+    for (const [latestDocumentId, latestDocument] of Object.entries(latestWorkspaceState.documents)) {
+      if (latestDocumentId === activeDocumentId) continue;
+      state.documents[latestDocumentId] = clone(latestDocument);
+    }
+  }
   const landing = applyConversationMediaResultToWorkspace(state, job, { timeLabel: nowTime() });
   if (latestWorkspaceState?.savedAt) state.savedAt = latestWorkspaceState.savedAt;
   ui.activeWorkspaceStamp = latest.stateStamp || receipt.stateStamp || ui.activeWorkspaceStamp;
@@ -62493,7 +62513,13 @@ const renderCodexInteraction = (interaction = {}) => {
 const renderCodexAgentPanel = () => {
   const status = ui.codexAgent.status || {};
   const isAgent = true;
-  const agentEngine = AGENT_ENGINE_IDS.includes(status.agentEngine) ? status.agentEngine : "codex";
+  // The panel status endpoint reflects the last machine-wide runtime. The
+  // selected text profile is authoritative for the current card/chat, so do
+  // not show a stale Codex/free-model warning while WorkBuddy is selected.
+  const selectedProfileEngine = agentEngineForTextProfile(activeAgentTextProfile(state.settings) || {});
+  const agentEngine = AGENT_ENGINE_IDS.includes(selectedProfileEngine)
+    ? selectedProfileEngine
+    : AGENT_ENGINE_IDS.includes(status.agentEngine) ? status.agentEngine : "codex";
   const agentLabel = `${agentEngineDisplayLabel(agentEngine)} Agent`;
   syncCodexAgentExecutionFromStatus(status);
   elements.chatProviderSelect.value = "codex_agent";

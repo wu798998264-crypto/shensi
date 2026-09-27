@@ -4224,6 +4224,15 @@ const DEPTH_EXPLORER_RELEASE = Object.freeze({
 const depthExplorerRuntimeRoot = () => join(machineLocalDataRoot(), "runtimes", "depth-explorer", DEPTH_EXPLORER_RELEASE.version);
 const depthExplorerInstallJobs = new Map();
 const depthExplorerJob = (jobId) => depthExplorerInstallJobs.get(jobId) || null;
+const depthExplorerInstallJobFile = () => join(machineLocalDataRoot(), "runtimes", "depth-explorer", "install-job.json");
+const persistDepthExplorerInstallJob = async (job) => {
+  if (!job?.id) return;
+  const target = depthExplorerInstallJobFile();
+  const temporary = `${target}.tmp-${job.id}`;
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(temporary, JSON.stringify(job, null, 2), "utf8");
+  await rename(temporary, target);
+};
 const psQuote = (value) => `'${String(value).replaceAll("'", "''")}'`;
 
 const spawnProcess = (executable, args, options = {}) => new Promise((resolveProcess, rejectProcess) => {
@@ -4323,6 +4332,7 @@ const runDepthExplorerInstaller = async (job) => {
   job.percent = 100;
   job.message = "深度摸索已装配并可用";
   job.result = { ...probe, version: DEPTH_EXPLORER_RELEASE.version };
+  await persistDepthExplorerInstallJob(job).catch(() => {});
   await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
 };
 
@@ -4334,16 +4344,33 @@ export const startWorkspaceDepthExplorerInstall = async () => {
   const id = randomUUID();
   const job = { id, stage: "queued", percent: 0, message: "等待开始装配", createdAt: Date.now() };
   depthExplorerInstallJobs.set(id, job);
+  await persistDepthExplorerInstallJob(job).catch(() => {});
   runDepthExplorerInstaller(job).catch((error) => {
     job.stage = "failed";
     job.percent = 0;
     job.message = String(error?.message || error).slice(0, 500);
+    void persistDepthExplorerInstallJob(job);
   });
   return { ok: true, jobId: id, ...job };
 };
 
 export const workspaceDepthExplorerInstallStatus = async (jobId = "") => {
-  const job = depthExplorerJob(String(jobId));
+  let job = depthExplorerJob(String(jobId));
+  if (!job && jobId) {
+    const persisted = await readFile(depthExplorerInstallJobFile(), "utf8")
+      .then((value) => JSON.parse(value))
+      .catch(() => null);
+    if (persisted?.id === String(jobId)) {
+      job = persisted;
+      // A non-terminal job cannot continue after a server restart. Report a
+      // recoverable failure instead of leaving the UI polling forever.
+      if (!["complete", "failed"].includes(job.stage)) {
+        job = { ...job, stage: "failed", percent: 0, message: "神思服务已重启，深度摸索装配中断，请重新点击一键装配" };
+        await persistDepthExplorerInstallJob(job);
+      }
+      depthExplorerInstallJobs.set(job.id, job);
+    }
+  }
   if (!job) return { ok: false, stage: "missing", message: "找不到深度摸索装配任务" };
   return { ok: true, ...job };
 };

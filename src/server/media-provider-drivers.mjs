@@ -1028,6 +1028,14 @@ const LIBTV_RUN_TIMEOUT_MS = Math.max(
   30_000,
   Number(process.env.SHENSI_LIBTV_RUN_TIMEOUT_MS) || 90_000,
 );
+// A completed LibTV node must not leave the card at 90% forever while the
+// CLI waits for a download that never returns. Keep this separate from the
+// initial --run hand-off timeout so a slow provider can still be polled, but
+// a broken result download reaches a user-visible retry state.
+const LIBTV_DOWNLOAD_TIMEOUT_MS = Math.max(
+  30_000,
+  Number(process.env.SHENSI_LIBTV_DOWNLOAD_TIMEOUT_MS) || 180_000,
+);
 
 const libtvStatus = (value) => {
   const numeric = Number(value);
@@ -1078,10 +1086,16 @@ export const parseLibTvTaskPayload = (payload = {}) => {
   const data = payload.data || payload;
   const info = data.taskInfo || data.task_info || {};
   const taskId = String(payload.taskId || payload.task_id || info.taskId || info.task_id || "").trim();
+  const urls = Array.isArray(data.url) ? data.url : [data.url || data.resultUrl || data.result_url].filter(Boolean);
   const providerFailure = libTvProviderFailure(payload);
   const statusValue = providerFailure ? "failed" : info.status ?? info.taskStatus ?? data.status ?? payload.status ?? "queued";
-  const status = libtvStatus(statusValue);
-  const urls = Array.isArray(data.url) ? data.url : [data.url || data.resultUrl || data.result_url].filter(Boolean);
+  let status = libtvStatus(statusValue);
+  // Some LibTV CLI builds return the completed URL with `loading:false` but
+  // omit or lag the numeric terminal status. A verified result URL is stronger
+  // evidence than the stale progress flag, so classify that payload as
+  // completed and let the normal download/validation path decide whether the
+  // file is actually usable.
+  if (!providerFailure && info.loading === false && urls.length && status !== "failed") status = "completed";
   const error = String(info.failedReason || info.error || data.failedReason || libTvPayloadErrorMessage(payload) || "");
   const rawCode = libTvPayloadErrorCode(payload);
   const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${rawCode} ${error}`);
@@ -1661,7 +1675,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     const outputDir = join(workRoot, "libtv-download");
     await rm(outputDir, { recursive: true, force: true });
     await mkdir(outputDir, { recursive: true });
-    await this.invoke(["download", "-n", node.nodeKey, "-p", node.projectUuid, "-o", outputDir], { cwd: workRoot, timeoutMs: 10 * 60_000, raw: true, settings: job.request.settings || {} });
+    await this.invoke(["download", "-n", node.nodeKey, "-p", node.projectUuid, "-o", outputDir], { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {} });
     const files = (await readdir(outputDir, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => join(outputDir, entry.name));
     if (!files.length) throw asError("LibTV 任务已完成但没有下载到结果文件", "MISSING_RESULT_FILE");
     const sourcePath = files[0];

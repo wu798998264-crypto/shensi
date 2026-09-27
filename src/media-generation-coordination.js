@@ -10,7 +10,12 @@ export const mediaGenerationPollDelayMs = ({
 } = {}) => {
   const failures = Math.max(0, Number(transientFailures) || 0);
   const polls = Math.max(1, Number(activePolls) || 1);
-  const loadAwareDelay = 700 * Math.max(1, Math.ceil(polls / 8));
+  // Keep visible task feedback responsive even when a board contains many
+  // historical jobs. The old linear backoff reached 60s with enough cards,
+  // leaving a provider terminal state looking like an active spinner. A
+  // small bounded delay still avoids a tight loop while guaranteeing that a
+  // retry_required/complete state is observed promptly.
+  const loadAwareDelay = Math.min(2_500, 400 * Math.max(1, Math.ceil(polls / 4)));
   const failureDelay = failures
     ? Math.min(60_000, 700 * (2 ** Math.min(7, failures - 1)))
     : 0;
