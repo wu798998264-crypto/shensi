@@ -171,7 +171,7 @@ const dreaminaAuthRetryAllowed = (args = []) => [
 const preserveDreaminaQueryErrorCode = (error) => {
   const code = String(error?.code || "").toUpperCase();
   return [
-    "DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_GENERATION_SESSION_REJECTED", "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+    "DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_GENERATION_SESSION_REJECTED", "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
   ].includes(code) ? code : "DREAMINA_QUERY_TRANSIENT";
 };
 
@@ -238,7 +238,7 @@ const runCliOnce = async (args) => {
           error.submissionOutcomeKnown = true;
         }
         if (!markedCode && isDreaminaAuthRequiredResponse(detail)) {
-          error.code = generationCommand ? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED";
+          error.code = generationCommand ? "DREAMINA_GENERATION_AUTH_REQUIRED" : "DREAMINA_AUTH_REQUIRED";
           error.submissionOutcomeKnown = !generationCommand;
         }
         if (["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_AUTH_REQUIRED", "DREAMINA_CLI_MEMBERSHIP_REQUIRED"].includes(markedCode)) error.submissionOutcomeKnown = true;
@@ -260,9 +260,9 @@ const semanticAuthFailure = (command = "") => {
   const operationLabel = String(command || "").trim();
   const generationCommand = dreaminaVideoGenerationCommand(operationLabel);
   const error = new Error();
-  error.code = generationCommand ? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED";
+  error.code = generationCommand ? "DREAMINA_GENERATION_AUTH_REQUIRED" : "DREAMINA_AUTH_REQUIRED";
   error.message = generationCommand
-    ? `即梦视频生成命令 ${operationLabel || "unknown"} 的会话在提交阶段被厂商拒绝，且没有返回任务 ID。账号核验状态保持有效；神思将保留幂等记录并在有限时限内只读核对本次提交结果。`
+    ? `即梦视频生成命令 ${operationLabel || "unknown"} 明确返回当前配置未登录，且没有返回厂商任务 ID。神思保留幂等记录，不会自动重复提交；请核验当前配置后再重新生成。`
     : `${operationLabel ? `即梦命令 ${operationLabel}：` : ""}${dreaminaAuthRefreshSessionRejectedMessage()}`;
   error.submissionOutcomeKnown = !generationCommand;
   return error;

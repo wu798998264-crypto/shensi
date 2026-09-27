@@ -1,6 +1,6 @@
 {
   "name": "shensi-creative-engine",
-  "version": "8.0.6",
+  "version": "8.0.8",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
@@ -52,7 +52,7 @@
     "test:conversation-attachments": "node scripts/test-v106-full-optimization.mjs",
     "test:agent-operation": "node scripts/test-agent-operation-protocol.mjs && node scripts/test-agent-operation-ui-contract.mjs && node scripts/test-agent-operation-real-smoke.mjs",
     "test:agent-browser": "node scripts/test-agent-browser-service.mjs && node scripts/test-conversation-agent-http.mjs",
-    "test:workbuddy-runner": "node scripts/test-agent-runner-probe-cache.mjs && node scripts/test-agent-runner-assembly-v2.mjs && node scripts/test-external-cli-agent-ui-contract.mjs && node scripts/test-conversation-output-guard.mjs",
+    "test:workbuddy-runner": "node scripts/test-agent-runner-probe-cache.mjs && node scripts/test-agent-runner-assembly-v2.mjs && node scripts/test-external-cli-agent-ui-contract.mjs && node scripts/test-workbuddy-settings-login-ui.mjs && node scripts/test-conversation-output-guard.mjs",
     "test:agent-output-boundary": "node scripts/test-conversation-output-guard.mjs && node scripts/test-external-cli-agent-runner.mjs",
     "test:conversation-agent-media-profile-choice": "node scripts/test-conversation-agent-media-profile-choice.mjs",
     "test:cloud-production-gate": "node scripts/test-cloud-skill-platform-production-gate.mjs",

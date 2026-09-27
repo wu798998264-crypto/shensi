@@ -5,7 +5,15 @@ import { dirname, join } from "node:path";
 import { appDataRoot } from "./app-data.mjs";
 import { dreaminaMembershipFromPayload } from "../dreamina-membership.js";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
+const DREAMINA_RUNTIME_STATES = new Set([
+  "unknown",
+  "verified",
+  "auth_required",
+  "generating",
+  "lock_occupied",
+  "attention",
+]);
 export const dreaminaProfileIdentityStorePath = () => join(appDataRoot(), "config", "dreamina-profile-identities-v1.json");
 const dreaminaProfileIdentityStoreBackupPath = () => `${dreaminaProfileIdentityStorePath()}.backup`;
 let identityStoreMutationTail = Promise.resolve();
@@ -110,6 +118,27 @@ export const normalizedRecord = (value = {}) => {
   browser: String(value.browser || "").trim().slice(0, 40),
   boundAt: String(value.boundAt || "").trim().slice(0, 80),
   verifiedAt: String(value.verifiedAt || "").trim().slice(0, 80),
+  // Runtime evidence is kept with the profile identity instead of in a
+  // renderer-only cache. The profile id remains the primary isolation key;
+  // browser/account evidence is stored alongside it so a token rotation or
+  // app restart cannot revive an unrelated account state.
+  browserSessionId: String(value.browserSessionId || value.browser || "").trim().slice(0, 80),
+  accountFingerprint: String(value.accountFingerprint || value.expectedUserId || "").trim().slice(0, 160),
+  runtimeState: DREAMINA_RUNTIME_STATES.has(String(value.runtimeState || ""))
+    ? String(value.runtimeState)
+    : value.expectedUserId ? "verified" : "unknown",
+  stateUpdatedAt: String(value.stateUpdatedAt || "").trim().slice(0, 80),
+  stateReason: String(value.stateReason || "").trim().slice(0, 160),
+  lastSuccessfulGenerationAt: String(value.lastSuccessfulGenerationAt || "").trim().slice(0, 80),
+  lastSuccessfulGenerationJobId: String(value.lastSuccessfulGenerationJobId || "").trim().slice(0, 160),
+  lastSuccessfulProviderTaskId: String(value.lastSuccessfulProviderTaskId || "").trim().slice(0, 160),
+  lastSuccessfulGenerationChannel: String(value.lastSuccessfulGenerationChannel || "").trim().slice(0, 20),
+  lastAuthFailureAt: String(value.lastAuthFailureAt || "").trim().slice(0, 80),
+  lastAuthFailureCode: String(value.lastAuthFailureCode || "").trim().slice(0, 100),
+  lastAuthFailureJobId: String(value.lastAuthFailureJobId || "").trim().slice(0, 160),
+  currentProviderTaskId: String(value.currentProviderTaskId || "").trim().slice(0, 160),
+  currentLockJobId: String(value.currentLockJobId || "").trim().slice(0, 160),
+  currentLockState: String(value.currentLockState || "").trim().slice(0, 40),
   lastCredit: Number.isFinite(Number(value.lastCredit)) ? Number(value.lastCredit) : null,
   trackedCreditTotal: Number.isFinite(Number(value.trackedCreditTotal)) ? Math.max(0, Number(value.trackedCreditTotal)) : null,
   consumedCredit: Number.isFinite(Number(value.consumedCredit)) ? Math.max(0, Number(value.consumedCredit)) : 0,
@@ -236,6 +265,69 @@ const writeDreaminaProfileIdentity = async (record = {}) => writeDreaminaProfile
 export const saveDreaminaProfileIdentity = async (record = {}) => mutateIdentityStore(
   () => writeDreaminaProfileIdentity(record),
 );
+
+const runtimeRecordPatch = (record, patch = {}) => ({
+  ...record,
+  ...patch,
+  stateUpdatedAt: new Date().toISOString(),
+});
+
+// A verified generation is the strongest local evidence. It clears stale
+// auth markers for this exact profile while retaining the historical success
+// receipt for diagnostics and restart recovery.
+export const recordDreaminaProfileGenerationSuccess = async ({
+  profileId,
+  browserSessionId = "",
+  accountFingerprint = "",
+  jobId = "",
+  providerTaskId = "",
+  channel = "",
+} = {}) => mutateIdentityStore(async () => {
+  const id = mutationProfileId(profileId);
+  const store = await readDreaminaProfileIdentityStore();
+  const current = store.profiles[id] || normalizedRecord({ profileId: id });
+  return writeDreaminaProfileIdentity(runtimeRecordPatch(current, {
+    profileId: id,
+    browserSessionId: browserSessionId || current.browserSessionId || current.browser,
+    accountFingerprint: accountFingerprint || current.accountFingerprint || current.expectedUserId,
+    runtimeState: "verified",
+    stateReason: "generation_success",
+    lastSuccessfulGenerationAt: new Date().toISOString(),
+    lastSuccessfulGenerationJobId: jobId,
+    lastSuccessfulProviderTaskId: providerTaskId,
+    lastSuccessfulGenerationChannel: channel,
+    lastAuthFailureAt: "",
+    lastAuthFailureCode: "",
+    lastAuthFailureJobId: "",
+    currentProviderTaskId: "",
+    currentLockJobId: "",
+    currentLockState: "",
+  }));
+});
+
+export const recordDreaminaProfileAuthFailure = async ({
+  profileId,
+  browserSessionId = "",
+  accountFingerprint = "",
+  jobId = "",
+  providerTaskId = "",
+  code = "DREAMINA_AUTH_REQUIRED",
+} = {}) => mutateIdentityStore(async () => {
+  const id = mutationProfileId(profileId);
+  const store = await readDreaminaProfileIdentityStore();
+  const current = store.profiles[id] || normalizedRecord({ profileId: id });
+  return writeDreaminaProfileIdentity(runtimeRecordPatch(current, {
+    profileId: id,
+    browserSessionId: browserSessionId || current.browserSessionId || current.browser,
+    accountFingerprint: accountFingerprint || current.accountFingerprint || current.expectedUserId,
+    runtimeState: "auth_required",
+    stateReason: "explicit_auth_failure",
+    lastAuthFailureAt: new Date().toISOString(),
+    lastAuthFailureCode: code,
+    lastAuthFailureJobId: jobId,
+    currentProviderTaskId: providerTaskId,
+  }));
+});
 
 export const claimDreaminaProfileIdentity = async (record = {}) => mutateIdentityStore(async () => {
   const id = mutationProfileId(record.profileId);

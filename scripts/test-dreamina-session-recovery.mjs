@@ -62,11 +62,11 @@ for (const [name, source, invoke] of [
     `${name}桥接必须验证原命令，退出码 0 的未登录响应不得冒充成功`);
   assert.match(source, /isDreaminaAuthRefreshSessionRejected\(error\?\.message\)/,
     `${name}桥接必须识别 authsdk protocol server 10044 会话拒绝`);
-  assert.match(source, /const semanticAuthFailure = \(command = ""\) => \{[\s\S]{0,700}error\.code = generationCommand \? "DREAMINA_GENERATION_SESSION_REJECTED" : "DREAMINA_AUTH_REQUIRED"/,
+  assert.match(source, /const semanticAuthFailure = \(command = ""\) => \{[\s\S]{0,700}error\.code = generationCommand \? "DREAMINA_GENERATION_AUTH_REQUIRED" : "DREAMINA_AUTH_REQUIRED"/,
     `${name}桥接必须区分生成阶段会话波动和真实配置失效`);
   assert.match(source, /continue;[\s\S]{0,100}if \(authRejected\) throw semanticAuthFailure\(args\[0\]\)/,
     `${name}桥接有界重试后仍被拒绝必须要求核验当前配置`);
-  assert.match(source, /"DREAMINA_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY"/,
+  assert.match(source, /"DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY"/,
     `${name}桥接自动恢复失败后必须保留真实认证错误码`);
   assert.match(source, /error\.code = preserveDreaminaQueryErrorCode\(error\)/,
     `${name}桥接不得把真实认证失效覆盖为普通查询故障`);
@@ -152,8 +152,10 @@ assert.match(worker, /executionProfileSignature[\s\S]{0,5000}DREAMINA_ACCOUNT_MI
   "后台恢复必须校验原任务绑定的即梦账号身份，禁止串号");
 assert.match(worker, /failureCategory:[\s\S]{0,200}failureReason:[\s\S]{0,200}failureResolution:/,
   "后台失败记录必须保存错误类别、原因和解决方法");
-assert.match(app, /refreshedAccount[\s\S]{0,500}dreaminaAccountRequiresVerification\(refreshedAccount\)[\s\S]{0,500}openDreaminaReverifyDialog/u,
-  "切换到明确失效或未绑定的即梦账号后必须自动打开绑定该配置和频道的核验框");
+assert.match(app, /Account status refresh is observational/u,
+  "设置或启动时的即梦状态读取必须保持观察性");
+assert.doesNotMatch(app, /refreshedAccount[\s\S]{0,500}dreaminaAccountRequiresVerification\(refreshedAccount\)[\s\S]{0,500}openDreaminaReverifyDialog/u,
+  "设置或启动时的即梦状态读取不得主动打开核验框");
 assert.match(adapters, /retryAdvice: dreaminaFailure\.resolution/,
   "即梦结构化错误必须覆盖通用 CLI 的错误处理建议");
 

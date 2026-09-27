@@ -226,4 +226,28 @@ const ordinary429Result = await runExternalCliAgent({
 });
 assert.equal(ordinary429Result.text, "方案共有 429 个样本，正文生成正常。", "普通正文中的 429 不得误判为厂商错误");
 
+const authInvalidChild = new EventEmitter();
+authInvalidChild.stdout = new PassThrough();
+authInvalidChild.stderr = new PassThrough();
+authInvalidChild.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+authInvalidChild.kill = () => { authInvalidChild.emit("close", 1); };
+await assert.rejects(runExternalCliAgent({
+  engine: "workbuddy",
+  prompt: "测试 WorkBuddy 登录状态无效终态",
+  cwd: process.cwd(),
+  cliPath: "fake-workbuddy",
+  cliArgs: "run --prompt-file {promptFile}",
+  nativeHost: { url: "http://127.0.0.1:43123/mcp", headers: {}, toolNames: [] },
+  agentPermissionMode: "shensi_only",
+  spawnProcess: () => {
+    process.nextTick(() => {
+      authInvalidChild.stdout.write(`${JSON.stringify({ type: "error", message: "WorkBuddy 登录状态无效，请先登录后重试" })}\n`);
+      authInvalidChild.stdout.end();
+      authInvalidChild.stderr.end();
+      authInvalidChild.emit("close", 1);
+    });
+    return authInvalidChild;
+  },
+}), (error) => error?.code === "WORKBUDDY_AUTH_REQUIRED" && /登录状态无效/u.test(error?.message || ""), "登录状态无效必须归类为 WorkBuddy 鉴权失败");
+
 console.log(JSON.stringify({ ok: true, parser: "jsonl", fakeRunner: result.executionRuntime }, null, 2));

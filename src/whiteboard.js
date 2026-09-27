@@ -13,6 +13,8 @@ const canonicalCanvasCache = new WeakMap();
 export const CANVAS_GRID_SIZE = 20;
 export const CANVAS_MIN_ZOOM = 0.125;
 export const CANVAS_MAX_ZOOM = 3;
+export const WHITEBOARD_DEPTH_NODE_WIDTH = 480;
+export const WHITEBOARD_DEPTH_NODE_HEIGHT = 210;
 
 const boundedWebText = (value = "", limit = 120_000) => String(value).normalize("NFC").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, limit);
 
@@ -199,7 +201,12 @@ const normalizeNode = (node) => {
     : NODE_KINDS.has(node.kind) ? node.kind : "text";
   const localOperation = !mediaNode && kind === "text" ? normalizeLocalOperation(node.operation) : null;
   const aspectRatio = clamp(finite(node.aspectRatio, 16 / 9), 0.1, 10);
-  const width = Math.max(localOperation ? 820 : 180, finite(node.width, mediaNode ? 320 : localOperation ? 820 : 260));
+  // Depth Explorer is a fixed operation node rather than a resizable content
+  // card. Keep its persisted geometry identical to the rendered card so edge
+  // endpoints and the visible input/output handles share the same centre.
+  const width = localOperation
+    ? WHITEBOARD_DEPTH_NODE_WIDTH
+    : Math.max(180, finite(node.width, mediaNode ? 320 : 260));
   return {
     id: String(node.id),
     type: mediaNode ? "file" : "text",
@@ -211,7 +218,9 @@ const normalizeNode = (node) => {
     x: finite(node.x, 40),
     y: finite(node.y, 40),
     width,
-    height: Math.max(localOperation ? 126 : 100, finite(node.height, mediaNode ? width / aspectRatio : localOperation ? 126 : 160)),
+    height: localOperation
+      ? WHITEBOARD_DEPTH_NODE_HEIGHT
+      : Math.max(100, finite(node.height, mediaNode ? width / aspectRatio : 160)),
     color: String(node.color ?? "default"),
     ...(kind === "web" ? {
       url: String(node.url ?? ""),

@@ -209,7 +209,9 @@ try {
     "OAuth 完成流程必须只读验证 checklogin 写入的同一凭据快照");
   assert.doesNotMatch(oauth, /invokeProfile\(profileId, \["login", "--headless"\]/u,
     "身份探针不得把 login --headless 误作会话恢复并覆盖刚完成的 OAuth 凭据");
-  assert.match(oauth, /liveAccountIdMissing[\s\S]{0,3500}statusReadUnavailable/u,
+  assert.match(oauth, /const liveAccountIdMissing = live\?\.code === "DREAMINA_ACCOUNT_ID_MISSING"/u,
+    "user_id 临时缺失必须被单独识别");
+  assert.match(oauth, /statusReadUnavailable: Boolean\(live && !live\.ok && !live\.transient && !effectiveLiveRequiresReverification && !liveAccountIdMissing\)/u,
     "user_id 临时缺失必须与真正的账号状态服务故障区分");
   assert.match(oauth, /explicitLoggedOut[\s\S]{0,600}DREAMINA_AUTH_REQUIRED/u,
     "官方 CLI 明确返回未登录时必须转为结构化需核验错误");

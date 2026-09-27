@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.6-lib-workbuddy-depth";
+} from "./generation-profiles.js?v=8.0.8-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -456,7 +456,9 @@ import {
   whiteboardGenerationSources,
   whiteboardReferenceCapacityViolation,
   whiteboardTextGenerationRequest,
-} from "./whiteboard.js?v=5.1.8-whiteboard-drop-create";
+  WHITEBOARD_DEPTH_NODE_HEIGHT,
+  WHITEBOARD_DEPTH_NODE_WIDTH,
+} from "./whiteboard.js?v=8.0.8-workbuddy-hy3";
 import { STRUCTURE_WORKSPACE_VERSION, importedDocumentMatchesStructuredSlot, structuredGroupForDocument } from "./structure-schema.js?v=0.42.10-safe-slot-migration";
 import { planWhiteboardSkillRoute } from "./whiteboard-skill-route.js";
 import { inspectWhiteboardTaskClarity } from "./whiteboard-task-clarity.js?v=0.2.0-skill-aware";
@@ -1772,6 +1774,7 @@ let ui = {
   // authoritative and replaces this stale view when it returns.
   agentRunners: initialAgentRunnerCapabilities,
   agentRunnerStatusPromise: null,
+  workBuddyLoginPending: false,
   pendingAgentRunnerSelection: "",
   activeAgentRunnerInstallJobId: "",
   openCodeCatalogs: new Map(),
@@ -6522,6 +6525,7 @@ const syncModelCapabilityControls = () => {
         : "视频输入：当前模型不支持";
   }
   renderCodexConnectionControls();
+  renderWorkBuddySettingsControls();
 };
 
 const settingsModelFocusSnapshot = () => {
@@ -7323,6 +7327,26 @@ const EXTERNAL_AGENT_RUNNER_IDS = Object.freeze(["workbuddy", "custom"]);
 
 const agentRunnerCapability = (runnerId = "") => ui.agentRunners?.[runnerId] || null;
 
+const markWorkBuddyAuthRequired = (message = "") => {
+  const source = String(message || "");
+  if (!/(?:authentication required|login required|not logged in|请先登录|未登录|登录状态(?:已)?(?:失效|无效)|(?:workbuddy|codebuddy)[^\n]{0,120}(?:login|登录|auth|认证))/iu.test(source)) return;
+  const current = agentRunnerCapability("workbuddy") || {};
+  ui.agentRunners = {
+    ...(ui.agentRunners || {}),
+    workbuddy: {
+      ...current,
+      authenticated: false,
+      authState: "login_required",
+      state: "login_required",
+      ready: false,
+      message: "WorkBuddy 登录状态无效，请先登录后重试",
+    },
+  };
+  try { localStorage.removeItem(WORKBUDDY_CAPABILITY_CACHE_KEY); } catch {}
+  renderWorkBuddySettingsControls?.();
+  renderQuickWorkBuddyControls?.();
+};
+
 const syncAgentRunnerOptions = () => {
   const select = document.querySelector("#textAgentEngineSelect");
   if (!select) return;
@@ -7378,6 +7402,27 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     // intentionally hides the stale list until the user logs in again.
     const workBuddy = incoming.workbuddy;
     const previousWorkBuddy = previous.workbuddy;
+    // The safe startup probe only reads --version/--help and therefore returns
+    // an unknown authentication state. Keep a previously verified session
+    // authoritative across restart; only an explicit auth failure or a fresh
+    // login verification is allowed to change it.
+    if (workBuddy
+      && workBuddy.authenticated == null
+      && previousWorkBuddy?.authenticated === true
+      && previousWorkBuddy?.authState === "authenticated") {
+      incoming.workbuddy = {
+        ...workBuddy,
+        authenticated: true,
+        authState: "authenticated",
+        state: "ready",
+        ready: true,
+        models: Array.isArray(workBuddy.models) && workBuddy.models.length
+          ? workBuddy.models
+          : [...(previousWorkBuddy.models || [])],
+        modelState: Array.isArray(workBuddy.models) && workBuddy.models.length ? "catalog_available" : previousWorkBuddy.modelState,
+        message: workBuddy.message || "已恢复上次确认的 WorkBuddy 登录会话，模型目录正在复核",
+      };
+    }
     if (workBuddy?.authenticated === true && Array.isArray(workBuddy.models) && workBuddy.models.length > 0) {
       persistWorkBuddyCapability(workBuddy);
     } else if (workBuddy?.state === "login_required" || workBuddy?.authState === "login_required" || workBuddy?.installed === false) {
@@ -7514,13 +7559,41 @@ const pollAgentRunnerInstallJob = async (jobId) => {
   return null;
 };
 
-const pollAgentRunnerLoginState = async (runnerId, { attempts = 40 } = {}) => {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (!elements.agentRunnerInstallDialog?.open || elements.agentRunnerInstallDialog.dataset.runnerId !== runnerId) return null;
-    if (attempt > 0) await new Promise((resolvePoll) => setTimeout(resolvePoll, 3_000));
-    const statuses = await hydrateAgentRunnerStatuses({ force: true });
-    const capability = statuses?.[runnerId] || null;
-    renderAgentRunnerInstallJob({
+const pollAgentRunnerLoginState = async (runnerId, { attempts = 40, allowWithoutDialog = false, selectOnSuccess = true } = {}) => {
+  // WorkBuddy's normal status probe is deliberately non-invasive and cannot
+  // prove authentication. After an explicit login click, perform at most
+  // three bounded real checks; startup and ordinary settings refreshes never
+  // call this endpoint.
+  const maxAttempts = runnerId === "workbuddy" ? Math.min(3, attempts) : attempts;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!allowWithoutDialog && (!elements.agentRunnerInstallDialog?.open || elements.agentRunnerInstallDialog.dataset.runnerId !== runnerId)) return null;
+    if (attempt === 0 && runnerId === "workbuddy") await new Promise((resolvePoll) => setTimeout(resolvePoll, 5_000));
+    else if (attempt > 0) await new Promise((resolvePoll) => setTimeout(resolvePoll, 3_000));
+    let statuses = await hydrateAgentRunnerStatuses({ force: true });
+    let capability = statuses?.[runnerId] || null;
+    if (runnerId === "workbuddy") {
+      const verifyResponse = await fetch("/api/agent-runners/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runnerId }),
+      }).catch(() => null);
+      const verification = verifyResponse ? await verifyResponse.json().catch(() => ({})) : {};
+      if (verification.authenticated === true || verification.authenticated === false) {
+        capability = {
+          ...(capability || {}),
+          authenticated: verification.authenticated,
+          authState: verification.authState || (verification.authenticated ? "authenticated" : "login_required"),
+          state: verification.state || (verification.authenticated ? "ready" : "login_required"),
+          ready: verification.ready === true || verification.authenticated === true,
+          message: verification.message || capability?.message || "",
+        };
+        ui.agentRunners = { ...(ui.agentRunners || {}), workbuddy: capability };
+        if (verification.authenticated === true) persistWorkBuddyCapability(capability);
+        statuses = ui.agentRunners;
+      }
+    }
+    if (allowWithoutDialog) renderWorkBuddySettingsControls();
+    else renderAgentRunnerInstallJob({
       runnerId,
       status: "completed",
       state: capability?.state || "failed",
@@ -7531,17 +7604,107 @@ const pollAgentRunnerLoginState = async (runnerId, { attempts = 40 } = {}) => {
       error: capability?.error || null,
       suggestedAction: capability?.error?.suggestedAction || "",
       officialUrl: capability?.officialUrl || "",
-    });
-    if (capability?.ready === true) {
-      selectInstalledAgentRunner(runnerId);
-      elements.agentRunnerInstallDialog.close();
-      ui.pendingAgentRunnerSelection = "";
+      });
+    if (capability?.ready === true && capability?.authenticated === true) {
+      if (selectOnSuccess) selectInstalledAgentRunner(runnerId);
+      if (!allowWithoutDialog) {
+        elements.agentRunnerInstallDialog.close();
+        ui.pendingAgentRunnerSelection = "";
+      }
       showToast(`${AGENT_RUNNER_LABELS[runnerId] || "Agent 运行器"} 登录成功，模型状态已刷新`);
       return capability;
     }
   }
   showToast("尚未检测到登录完成；完成 CLI 登录后点击“重新检查”即可继续");
   return null;
+};
+
+const startWorkBuddyLoginFromSettings = async () => {
+  const capability = agentRunnerCapability("workbuddy");
+  if (capability?.installed !== true) {
+    await openAgentRunnerInstallDialog("workbuddy");
+    return;
+  }
+  if (ui.workBuddyLoginPending) return;
+  ui.workBuddyLoginPending = true;
+  renderWorkBuddySettingsControls();
+  try {
+    const response = await fetch("/api/agent-runners/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "workbuddy" }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
+    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
+    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true });
+  } catch (error) {
+    showToast(error.message || "WorkBuddy 登录窗口启动失败");
+  } finally {
+    ui.workBuddyLoginPending = false;
+    renderWorkBuddySettingsControls();
+  }
+};
+
+const startWorkBuddyLoginFromQuickPanel = async () => {
+  const profile = activeAgentTextProfile(state.settings);
+  if (!profile || agentEngineForTextProfile(profile) !== "workbuddy") return;
+  const capability = agentRunnerCapability("workbuddy");
+  if (capability?.installed !== true) {
+    await openAgentRunnerInstallDialog("workbuddy");
+    return;
+  }
+  if (ui.workBuddyLoginPending) return;
+  ui.workBuddyLoginPending = true;
+  renderQuickWorkBuddyControls();
+  try {
+    const response = await fetch("/api/agent-runners/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "workbuddy" }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
+    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
+    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true, selectOnSuccess: false });
+  } catch (error) {
+    showToast(error.message || "WorkBuddy 登录窗口启动失败");
+  } finally {
+    ui.workBuddyLoginPending = false;
+    await hydrateAgentRunnerStatuses({ force: true }).catch(() => {});
+    renderQuickWorkBuddyControls();
+  }
+};
+
+const startWorkBuddyLoginFromWhiteboard = async () => {
+  const profileId = String(elements.whiteboardTextAgentConnection?.value || elements.whiteboardTextAgentEngine?.value || "");
+  const profile = exactAgentTextProfile(profileId);
+  if (!profile || agentEngineForTextProfile(profile) !== "workbuddy") return;
+  const capability = agentRunnerCapability("workbuddy");
+  if (capability?.installed !== true) {
+    await openAgentRunnerInstallDialog("workbuddy");
+    return;
+  }
+  if (ui.workBuddyLoginPending) return;
+  ui.workBuddyLoginPending = true;
+  renderWhiteboardWorkBuddyControls();
+  try {
+    const response = await fetch("/api/agent-runners/login/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "workbuddy" }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "WorkBuddy 登录窗口启动失败");
+    showToast(payload.message || "已打开 WorkBuddy 登录窗口");
+    await pollAgentRunnerLoginState("workbuddy", { allowWithoutDialog: true, selectOnSuccess: false });
+  } catch (error) {
+    showToast(error.message || "WorkBuddy 登录窗口启动失败");
+  } finally {
+    ui.workBuddyLoginPending = false;
+    await hydrateAgentRunnerStatuses({ force: true }).catch(() => {});
+    renderWhiteboardGenerateControls(whiteboardGenerationFormValues(elements.whiteboardGenerateForm));
+  }
 };
 
 const openAgentRunnerInstallDialog = async (runnerId) => {
@@ -8061,6 +8224,10 @@ root.innerHTML = `
             </div>
             <label id="quickAgentReasoningField">推理强度<select id="quickAgentReasoning"></select></label>
             <label id="quickAgentSpeedField">响应速度<select id="quickAgentSpeed"></select></label>
+            <section class="quick-workbuddy-connection" id="quickWorkBuddyConnection" hidden aria-live="polite">
+              <span id="quickWorkBuddyStatus" role="status">WorkBuddy 尚未检查</span>
+              <button class="secondary-button" id="quickWorkBuddyLogin" type="button">登录 WorkBuddy</button>
+            </section>
             <div class="quick-agent-project">
               <span class="codex-agent-cwd" id="codexAgentCwd">仅限神思 · 默认从当前文档目录开始</span>
               <button class="secondary-button codex-project-button" id="selectCodexProject" type="button" title="更换 Agent 的默认操作目录">更换目录</button>
@@ -8610,6 +8777,7 @@ root.innerHTML = `
                 <p class="wide model-channel-note deepseek-opencode-config-hint" id="deepSeekOpenCodeConfigHint" hidden></p>
                 <p class="wide model-channel-note" id="genericOpenCodeConfigHint" hidden></p>
                 <section class="wide codex-settings-connection" id="codexSettingsConnection" hidden aria-live="polite"><div><strong>Codex CLI 状态</strong><p id="codexSettingsCliStatus">尚未检测</p><strong>Codex 账号状态</strong><p id="codexSettingsAccountStatus">Codex 未连接</p></div><div class="settings-inline-actions"><button class="secondary-button" id="codexSettingsLogin" type="button">登录 Codex</button><button class="secondary-button" id="codexSettingsDisconnect" type="button" hidden>断开 Codex</button></div></section>
+                <section class="wide codex-settings-connection workbuddy-settings-connection" id="workBuddySettingsConnection" hidden aria-live="polite"><div><strong>WorkBuddy 状态</strong><p id="workBuddySettingsStatus">尚未检测</p><p id="workBuddySettingsHint" class="workbuddy-settings-hint">登录状态由本机 WorkBuddy 管理，神思不会保存账户凭据。</p></div><div class="settings-inline-actions"><button class="secondary-button" id="workBuddySettingsLogin" type="button">登录 WorkBuddy</button></div></section>
                 <div class="wide settings-inline-actions"><span class="agent-runner-setup-actions"><button class="secondary-button" id="connectLocalCodex" type="button" hidden>连接当前 Codex CLI</button><button class="secondary-button" id="addOpenCodeConnection" type="button" hidden>新增 OpenCode Agent</button></span><button class="secondary-button connect-codex-button" id="connectLocalDeepSeek" type="button" hidden>配置 OpenCode</button><button class="secondary-button" id="testAdapter" type="button">真实连接测试</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="text">${icon("\uE710")}<span>新增文字配置</span></button>
               </div>
@@ -9287,8 +9455,8 @@ root.innerHTML = `
                 <label class="whiteboard-generate-model-control" id="whiteboardTextSpeedField"><span>响应速度</span><select id="whiteboardTextSpeed" name="speedMode"></select></label>
               </div>
               <div class="whiteboard-text-runtime-fields" id="whiteboardTextAgentFields">
-                <label class="whiteboard-generate-model-control"><span>文字配置</span><select id="whiteboardTextAgentEngine" name="agentProfileId" aria-label="白板生成文字配置"></select></label>
                 <input type="hidden" id="whiteboardTextAgentConnection" name="agentConnectionId" />
+                <label class="whiteboard-generate-model-control"><span>文字配置</span><select id="whiteboardTextAgentEngine" name="agentProfileId" aria-label="白板生成文字配置"></select></label>
                 <input type="hidden" id="whiteboardTextAgentEngineValue" name="agentEngine" />
                 <label class="whiteboard-generate-model-control"><span>文字模型</span><select id="whiteboardTextAgentModel" class="text-model-state-select" name="agentModel"></select></label>
                 <div class="quick-text-model-verification" id="whiteboardAgentVerification" data-state="unknown" hidden>
@@ -9297,6 +9465,10 @@ root.innerHTML = `
                 </div>
                 <label class="whiteboard-generate-model-control" id="whiteboardTextAgentReasoningField"><span>推理强度</span><select id="whiteboardTextAgentReasoning" name="agentReasoningEffort"></select></label>
                 <label class="whiteboard-generate-model-control" id="whiteboardTextAgentSpeedField"><span>响应速度</span><select id="whiteboardTextAgentSpeed" name="agentSpeedMode"></select></label>
+                <div class="quick-text-model-verification whiteboard-workbuddy-connection" id="whiteboardWorkBuddyConnection" aria-live="polite" hidden>
+                  <span id="whiteboardWorkBuddyStatus" role="status">尚未检查 WorkBuddy 登录状态</span>
+                  <button class="secondary-button" id="whiteboardWorkBuddyLogin" type="button">登录 WorkBuddy</button>
+                </div>
               </div>
             </section>
           </div>
@@ -9710,6 +9882,9 @@ const elements = {
   quickAgentVerification: document.querySelector("#quickAgentVerification"),
   quickAgentVerificationStatus: document.querySelector("#quickAgentVerificationStatus"),
   quickAgentFields: document.querySelector("#quickAgentFields"),
+  quickWorkBuddyConnection: document.querySelector("#quickWorkBuddyConnection"),
+  quickWorkBuddyStatus: document.querySelector("#quickWorkBuddyStatus"),
+  quickWorkBuddyLogin: document.querySelector("#quickWorkBuddyLogin"),
   quickAgentEngine: document.querySelector("#quickAgentEngine"),
   quickAgentModel: document.querySelector("#quickAgentModel"),
   quickAgentReasoningField: document.querySelector("#quickAgentReasoningField"),
@@ -9803,6 +9978,9 @@ const elements = {
   whiteboardTextAgentFields: document.querySelector("#whiteboardTextAgentFields"),
   whiteboardTextAgentEngine: document.querySelector("#whiteboardTextAgentEngine"),
   whiteboardTextAgentConnection: document.querySelector("#whiteboardTextAgentConnection"),
+  whiteboardWorkBuddyConnection: document.querySelector("#whiteboardWorkBuddyConnection"),
+  whiteboardWorkBuddyStatus: document.querySelector("#whiteboardWorkBuddyStatus"),
+  whiteboardWorkBuddyLogin: document.querySelector("#whiteboardWorkBuddyLogin"),
   whiteboardTextAgentEngineValue: document.querySelector("#whiteboardTextAgentEngineValue"),
   whiteboardTextAgentModel: document.querySelector("#whiteboardTextAgentModel"),
   checkWhiteboardAgent: document.querySelector("#checkWhiteboardAgent"),
@@ -16083,6 +16261,45 @@ const dreaminaReverifyPromptQueue = new Map();
 const dreaminaSubmissionBlockPromptedJobs = new Set();
 let dreaminaReverifyQueuePaused = false;
 
+const dreaminaPromptSignature = (job = {}, kind = "") => [
+  String(job.id || "").trim(),
+  String(kind || "").trim().toLowerCase(),
+  String(job.status || "").trim().toLowerCase(),
+  String(job.providerTaskId || "").trim(),
+  String(job.providerErrorCode || job.errorCode || "").trim().toUpperCase(),
+].join("|");
+
+const claimDreaminaPrompt = async (job, kind) => {
+  const signature = dreaminaPromptSignature(job, kind);
+  if (!signature || dreaminaPromptClaimInFlight.has(signature)) return false;
+  dreaminaPromptClaimInFlight.add(signature);
+  try {
+    const settings = mediaGenerationSettingsForJob(job) || job?.request?.settings || {};
+    const response = await fetch("/api/dreamina-profiles/prompt-ledger/claim", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        signature,
+        profileId: settings.dreaminaCliProfile || "",
+        kind,
+        status: job.status,
+        providerTaskId: job.providerTaskId || "",
+        errorCode: job.providerErrorCode || job.errorCode || "",
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    return response.ok && payload.ok === true && payload.claimed === true;
+  } catch {
+    // The local in-memory gate remains the safe fallback when the renderer
+    // briefly loses its server connection. It is replaced by the durable
+    // ledger as soon as the request succeeds on the next state transition.
+    return true;
+  } finally {
+    dreaminaPromptClaimInFlight.delete(signature);
+  }
+};
+const dreaminaPromptClaimInFlight = new Set();
+
 const rememberDreaminaJobForReverification = (job, settings) => {
   const profileId = String(settings?.dreaminaCliProfile || "").trim();
   if (!profileId) return false;
@@ -16160,7 +16377,10 @@ const promptDreaminaReverificationForJob = (job) => {
       const failureAt = Date.parse(job.failedAt || job.updatedAt || job.createdAt || "");
       const verifiedAt = Date.parse(account?.verifiedAt || "");
       if (dreaminaAccountHasDurableIdentity(account) && Number.isFinite(failureAt) && verifiedAt > failureAt) return;
-      queueDreaminaReverification({ settings, account, errorMessage: mediaGenerationErrorText(job), jobId: job.id });
+      void claimDreaminaPrompt(job, "reverify").then((claimed) => {
+        if (claimed) queueDreaminaReverification({ settings, account, errorMessage: mediaGenerationErrorText(job), jobId: job.id });
+        else dreaminaReverifyPromptedJobs.delete(job.id);
+      });
     })
     .catch(() => { dreaminaReverifyPromptedJobs.delete(job.id); });
 };
@@ -16187,13 +16407,19 @@ const promptDreaminaSubmissionBlockForJob = (job, { allowLockDialog = true } = {
     const conflict = job.lockConflict && typeof job.lockConflict === "object" ? job.lockConflict : {};
     const fallbackSettings = mediaGenerationSettingsForJob(job) || job.request?.settings || {};
     dreaminaSubmissionBlockPromptedJobs.add(job.id);
-    openDreaminaProfileLockDialog({
-      ...conflict,
-      activeProfileId: conflict.activeProfileId || String(fallbackSettings.dreaminaCliProfile || ""),
-      blockingJobId: conflict.blockingJobId || "",
-      reason: conflict.reason || "physical_credential_slot_busy",
+    void claimDreaminaPrompt(job, "lock").then((claimed) => {
+      if (!claimed) {
+        dreaminaSubmissionBlockPromptedJobs.delete(job.id);
+        return;
+      }
+      openDreaminaProfileLockDialog({
+        ...conflict,
+        activeProfileId: conflict.activeProfileId || String(fallbackSettings.dreaminaCliProfile || ""),
+        blockingJobId: conflict.blockingJobId || "",
+        reason: conflict.reason || "physical_credential_slot_busy",
+      });
+      showToast(mediaGenerationErrorText(job) || "即梦通道正被其他配置占用，本次任务未提交厂商。");
     });
-    showToast(mediaGenerationErrorText(job) || "即梦通道正被其他配置占用，本次任务未提交厂商。");
     return true;
   }
   if (String(job.status || "") !== "retry_required"
@@ -16204,7 +16430,13 @@ const promptDreaminaSubmissionBlockForJob = (job, { allowLockDialog = true } = {
   const profileId = String(settings?.dreaminaCliProfile || "").trim();
   if (!profileId || elements.dreaminaReverifyDialog?.open) return false;
   dreaminaSubmissionBlockPromptedJobs.add(job.id);
-  showToast("即梦提交结果暂时无法确认，任务已保留在待处理中；凭证锁已经释放，不影响新的生成。可在原卡片继续找回或手动停止。");
+  void claimDreaminaPrompt(job, "submission").then((claimed) => {
+    if (!claimed) {
+      dreaminaSubmissionBlockPromptedJobs.delete(job.id);
+      return;
+    }
+    showToast("即梦提交结果暂时无法确认，任务已保留在待处理中；凭证锁已经释放，不影响新的生成。可在原卡片继续找回或手动停止。");
+  });
   return true;
 };
 
@@ -25773,6 +26005,7 @@ const renderWhiteboardGenerateControls = ({
   const runtimeSummary = `${agentSummaryLabel} · ${activeModelLabel}`;
   elements.whiteboardTextRuntimeLabel.textContent = runtimeSummary;
   elements.whiteboardTextRuntimeButton.title = `${runtimeSummary} · ${reasoningLabels[activeReasoning] || "自动推理"} · ${activeSpeed === "fast" ? "快速" : activeSpeed === "flex" ? "灵活" : "标准速度"}`;
+  renderWhiteboardWorkBuddyControls();
   renderWhiteboardTextModelVerification(selectedTextProfile, models.find((item) => item.slug === selectedModel) || selectedModelOption);
   renderWhiteboardAgentVerification();
 };
@@ -26027,6 +26260,75 @@ const renderCodexConnectionControls = () => {
   }
 };
 
+const renderWorkBuddySettingsControls = () => {
+  const section = document.querySelector("#workBuddySettingsConnection");
+  const statusNode = document.querySelector("#workBuddySettingsStatus");
+  const hintNode = document.querySelector("#workBuddySettingsHint");
+  const loginButton = document.querySelector("#workBuddySettingsLogin");
+  const engine = document.querySelector("#textAgentEngineSelect")?.value || "";
+  const selected = engine === "workbuddy";
+  if (section) section.hidden = !selected;
+  if (!selected || !statusNode || !loginButton) return;
+
+  const capability = agentRunnerCapability("workbuddy");
+  const pending = ui.workBuddyLoginPending === true;
+  const checking = ui.agentRunnerStatusPromise != null;
+  const installed = capability?.installed === true;
+  const authenticated = capability?.authenticated === true || capability?.authState === "authenticated";
+  const loginRequired = capability?.state === "login_required" || capability?.authState === "login_required";
+  const ready = capability?.ready === true && authenticated;
+
+  if (!capability || checking) {
+    statusNode.textContent = "正在检查 WorkBuddy 登录状态…";
+    if (hintNode) hintNode.textContent = "首次检查只读取本机状态，不会自动打开登录窗口。";
+    loginButton.hidden = true;
+    loginButton.disabled = true;
+    return;
+  }
+  if (!installed) {
+    statusNode.textContent = "尚未装配 WorkBuddy";
+    if (hintNode) hintNode.textContent = capability.message || "请先装配 WorkBuddy，再进行登录检查。";
+    loginButton.hidden = false;
+    loginButton.disabled = pending;
+    loginButton.textContent = "装配 WorkBuddy";
+    loginButton.title = "打开 WorkBuddy 装配与登录窗口";
+    return;
+  }
+  if (pending) {
+    statusNode.textContent = "等待 WorkBuddy 登录完成…";
+    if (hintNode) hintNode.textContent = "请在 WorkBuddy 窗口完成登录，神思会自动重新检查。";
+    loginButton.hidden = false;
+    loginButton.disabled = true;
+    loginButton.textContent = "等待登录…";
+    loginButton.title = "正在等待 WorkBuddy 登录状态确认";
+    return;
+  }
+  if (ready) {
+    statusNode.textContent = "已登录，可用";
+    if (hintNode) hintNode.textContent = capability.models?.length
+      ? `已读取 ${capability.models.length} 个可用模型；模型由 WorkBuddy CLI 管理。`
+      : "已通过登录与模型状态检查。";
+    loginButton.hidden = true;
+    loginButton.disabled = false;
+    return;
+  }
+  if (loginRequired || capability.authenticated === false) {
+    statusNode.textContent = "登录状态无效，需要重新登录";
+    if (hintNode) hintNode.textContent = capability.message || "请点击登录，在 WorkBuddy 窗口完成登录后返回神思。";
+    loginButton.hidden = false;
+    loginButton.disabled = false;
+    loginButton.textContent = "登录 WorkBuddy";
+    loginButton.title = "打开 WorkBuddy 登录窗口并重新检查状态";
+    return;
+  }
+  statusNode.textContent = capability.message || "已安装，尚未完成登录检查";
+  if (hintNode) hintNode.textContent = "点击登录会打开 WorkBuddy 窗口；完成后会自动刷新模型目录。";
+  loginButton.hidden = false;
+  loginButton.disabled = false;
+  loginButton.textContent = "登录 WorkBuddy";
+  loginButton.title = "打开 WorkBuddy 登录窗口并重新检查状态";
+};
+
 const generationSettingsForAgentEngine = (settings = state.settings, overrides = {}) => {
   const selectedId = String(overrides.agentConnectionId ?? settings?.activeTextAgentConnectionId ?? "");
   const profiles = textGenerationProfilesForMode("agent", settings);
@@ -26056,6 +26358,121 @@ const renderQuickAgentPermissionMode = () => {
   if (summary) summary.textContent = mode === "shensi_only"
     ? "普通任务默认仅限神思；需要宿主能力时会显示具体操作授权。"
     : `${agentPermissionModeInfo(mode).label}仅对当前运行时生效；受保护操作仍按具体授权处理。`;
+};
+
+// WorkBuddy login belongs to the selected Agent profile, so expose the same
+// login entry point in the conversation model picker as in Settings.  The
+// status is deliberately derived from the selected profile and the shared
+// runner capability cache; it never changes another text profile implicitly.
+const renderQuickWorkBuddyControls = () => {
+  const section = elements.quickWorkBuddyConnection;
+  const status = elements.quickWorkBuddyStatus;
+  const login = elements.quickWorkBuddyLogin;
+  if (!section || !status || !login) return;
+  const profile = activeAgentTextProfile(state.settings);
+  const selected = profile && agentEngineForTextProfile(profile) === "workbuddy";
+  section.hidden = !selected;
+  if (!selected) return;
+  const capability = agentRunnerCapability("workbuddy");
+  const pending = ui.workBuddyLoginPending === true;
+  const installed = capability?.installed === true;
+  const authenticated = capability?.authenticated === true || capability?.authState === "authenticated";
+  const ready = capability?.ready === true && authenticated;
+  const loginRequired = capability?.state === "login_required" || capability?.authState === "login_required" || capability?.authenticated === false;
+  if (!capability) {
+    status.textContent = "正在检查 WorkBuddy 登录状态…";
+    login.hidden = true;
+    login.disabled = true;
+    return;
+  }
+  if (pending) {
+    status.textContent = "等待 WorkBuddy 登录完成…";
+    login.hidden = false;
+    login.disabled = true;
+    login.textContent = "等待登录…";
+    return;
+  }
+  if (!installed) {
+    status.textContent = "尚未装配 WorkBuddy";
+    login.hidden = false;
+    login.disabled = false;
+    login.textContent = "装配 WorkBuddy";
+    return;
+  }
+  if (ready) {
+    status.textContent = capability.models?.length
+      ? `WorkBuddy 已登录，可用模型 ${capability.models.length} 个`
+      : "WorkBuddy 已登录，可用";
+    login.hidden = true;
+    login.disabled = false;
+    return;
+  }
+  status.textContent = loginRequired
+    ? "WorkBuddy 登录状态无效，需要重新登录"
+    : (capability.message || "WorkBuddy 尚未完成登录检查");
+  login.hidden = false;
+  login.disabled = false;
+  login.textContent = "登录 WorkBuddy";
+};
+
+// The whiteboard text picker is a separate surface from the conversation
+// picker, but it must use the same WorkBuddy runner capability and login
+// session.  Keep the entry point local to the selected card profile so a
+// successful login cannot silently switch another text configuration.
+const renderWhiteboardWorkBuddyControls = () => {
+  const section = elements.whiteboardWorkBuddyConnection;
+  const status = elements.whiteboardWorkBuddyStatus;
+  const login = elements.whiteboardWorkBuddyLogin;
+  if (!section || !status || !login) return;
+  const profileId = String(elements.whiteboardTextAgentConnection?.value || elements.whiteboardTextAgentEngine?.value || "");
+  const profile = exactAgentTextProfile(profileId);
+  const selected = profile && agentEngineForTextProfile(profile) === "workbuddy";
+  section.hidden = !selected;
+  if (!selected) return;
+  const capability = agentRunnerCapability("workbuddy");
+  const pending = ui.workBuddyLoginPending === true;
+  const installed = capability?.installed === true;
+  const authenticated = capability?.authenticated === true || capability?.authState === "authenticated";
+  const ready = capability?.ready === true && authenticated;
+  const loginRequired = capability?.state === "login_required"
+    || capability?.authState === "login_required"
+    || capability?.authenticated === false;
+  if (!capability) {
+    status.textContent = "正在检查 WorkBuddy 登录状态…";
+    login.hidden = true;
+    login.disabled = true;
+    return;
+  }
+  if (pending) {
+    status.textContent = "等待 WorkBuddy 登录完成…";
+    login.hidden = false;
+    login.disabled = true;
+    login.textContent = "等待登录…";
+    return;
+  }
+  if (!installed) {
+    status.textContent = "尚未装配 WorkBuddy";
+    login.hidden = false;
+    login.disabled = false;
+    login.textContent = "装配 WorkBuddy";
+    login.title = "打开 WorkBuddy 装配与登录窗口";
+    return;
+  }
+  if (ready) {
+    status.textContent = capability.models?.length
+      ? `WorkBuddy 已登录，可用模型 ${capability.models.length} 个`
+      : "WorkBuddy 已登录，可用";
+    login.hidden = true;
+    login.disabled = false;
+    return;
+  }
+  status.textContent = loginRequired
+    ? "WorkBuddy 登录状态无效，需要重新登录"
+    : (capability.message || "WorkBuddy 尚未完成登录检查");
+  login.hidden = false;
+  login.disabled = false;
+  login.textContent = "登录 WorkBuddy";
+  login.title = "打开 WorkBuddy 登录窗口并重新检查状态";
 };
 
 const renderQuickModelSelector = () => {
@@ -26168,6 +26585,7 @@ const renderQuickModelSelector = () => {
   renderQuickAgentPermissionMode();
   renderCodexConnectionControls();
   renderQuickAgentVerification();
+  renderQuickWorkBuddyControls();
   renderWhiteboardGenerateControls();
   renderQuickTextModelVerification(active, models.find((item) => item.slug === active.model) || option);
 };
@@ -37991,6 +38409,7 @@ const monitorNativeConversation = (runtime, pending) => {
         pendingWarnings: pending.execution.deliveryWarnings,
         resultWarnings: result.deliveryWarnings,
       });
+      markWorkBuddyAuthRequired(`${terminal.error || ""}\n${terminal.content || ""}`);
       clearAgentDisplayRawText(pending);
       pending.content = terminal.content;
       Object.assign(pending.execution, { status: terminal.status, error: terminal.error,
@@ -38023,6 +38442,7 @@ const monitorNativeConversation = (runtime, pending) => {
         partialText: sanitizeAgentDisplayText(agentDisplayRawText(pending) || pending.streamText, { final: true }),
         pendingWarnings: pending.execution.deliveryWarnings,
       });
+      markWorkBuddyAuthRequired(`${terminal.error || ""}\n${terminal.content || ""}`);
       clearAgentDisplayRawText(pending);
       pending.pending = false; pending.content = terminal.content;
       Object.assign(pending.execution, { status: terminal.status, error: terminal.error, result: terminal.result,
@@ -38374,9 +38794,25 @@ const executeConversationAgentMessage = async (content, options) => {
     const hasUnsavedDocumentWork = ui.workspaceDocumentChangesUnknown
       || ui.workspaceDirtyDocumentIds.size > 0
       || whiteboardGenerationDraftNeedsRecoveryCheckpoint();
+    const routeWriteMode = String(
+      nativeTaskRoute?.intentEnvelope?.writeMode
+        || nativeTaskRoute?.writeMode
+        || "",
+    ).trim();
+    const routeDeliveryMode = String(nativeTaskRoute?.deliveryMode || nativeTaskRoute?.mode || "").trim();
+    const routeTaskKind = String(nativeTaskRoute?.taskKind || nativeTaskRoute?.taskType || "").trim();
+    // A confirmed conversation-only turn has no document mutation to protect.
+    // Requiring a recovery checkpoint here used to surface “文档尚未安全保存”
+    // for ordinary questions, even though no write target had been selected.
+    // Formal creation, edits and media delivery keep the strict checkpoint.
+    const conversationOnlyTask = ["conversation_only", "media"].includes(routeWriteMode)
+      || routeDeliveryMode === "conversation"
+      || routeDeliveryMode === "media"
+      || ["general_qa", "discussion"].includes(routeTaskKind);
     if (workspaceState === state
       && workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)
-      && hasUnsavedDocumentWork) {
+      && hasUnsavedDocumentWork
+      && !conversationOnlyTask) {
       const saved = await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
       if (!saved) throw ui.workspaceSaveError ?? new Error("当前文档尚未安全保存，已停止启动 Agent");
     }
@@ -51529,8 +51965,8 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     }
   }
   const nodeId = uid("canvas-node");
-  const width = kind === "depth" ? 820 : 260;
-  const height = kind === "depth" ? 126 : 160;
+  const width = kind === "depth" ? WHITEBOARD_DEPTH_NODE_WIDTH : 260;
+  const height = kind === "depth" ? WHITEBOARD_DEPTH_NODE_HEIGHT : 160;
   let nextCanvas = addCanvasTextNode(documentState.canvas, {
     id: nodeId,
     text: "",
@@ -51894,13 +52330,21 @@ document.addEventListener("pointermove", (event) => {
       && Math.abs(verticalWidth - drag.nodeWidth) > Math.abs(horizontalWidth - drag.nodeWidth)
       ? verticalWidth
       : horizontalWidth;
-    const width = Math.max(180, rawWidth);
+    const width = drag.canvasSettings?.snapToGrid === false
+      ? Math.max(180, rawWidth)
+      : snapCanvasValue(Math.max(180, rawWidth), drag.canvasSettings);
     const height = ["image", "video", "audio"].includes(drag.nodeKind)
       ? Math.max(100, width / aspectRatio)
-      : Math.max(100, drag.nodeHeight + (north ? -worldDeltaY : worldDeltaY));
+      : drag.canvasSettings?.snapToGrid === false
+        ? Math.max(100, drag.nodeHeight + (north ? -worldDeltaY : worldDeltaY))
+        : snapCanvasValue(Math.max(100, drag.nodeHeight + (north ? -worldDeltaY : worldDeltaY)), drag.canvasSettings);
     drag.pending = {
-      x: west ? drag.nodeX + drag.nodeWidth - width : drag.nodeX,
-      y: north ? drag.nodeY + drag.nodeHeight - height : drag.nodeY,
+      x: west
+        ? drag.nodeX + drag.nodeWidth - width
+        : drag.nodeX,
+      y: north
+        ? drag.nodeY + drag.nodeHeight - height
+        : drag.nodeY,
       width,
       height,
     };
@@ -51922,11 +52366,14 @@ document.addEventListener("pointermove", (event) => {
       });
   }
   if (drag.mode === "card") event.preventDefault();
-  // Keep the visual preview at the exact pointer position. Grid snapping is
-  // applied once on pointerup; snapping every move makes a card visibly chase
-  // the pointer on dense boards.
-  const x = drag.nodeX + deltaX / drag.zoom;
-  const y = drag.nodeY + deltaY / drag.zoom;
+  // Keep the fast, requestAnimationFrame-based preview path, but restore the
+  // actual automatic grid snap while it is enabled. Users who prefer a
+  // completely pixel-following drag can turn off the toolbar toggle; with it
+  // disabled snapCanvasValue returns the raw coordinate.
+  const rawX = drag.nodeX + deltaX / drag.zoom;
+  const rawY = drag.nodeY + deltaY / drag.zoom;
+  const x = snapCanvasValue(rawX, drag.canvasSettings);
+  const y = snapCanvasValue(rawY, drag.canvasSettings);
   drag.pending = { x, y };
   scheduleWhiteboardDragPreview(drag);
 });
@@ -57319,14 +57766,14 @@ const whiteboardDepthExplorerRuntimeKey = (nodeId, documentId = state.activeDocu
 
 const whiteboardDepthExplorerRuntimeState = (nodeId, documentId = state.activeDocument) => {
   const key = whiteboardDepthExplorerRuntimeKey(nodeId, documentId);
-  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "", completed: 0, total: 0, currentPercent: 0, percent: 0, message: "" };
+  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "", completed: 0, total: 0, currentPercent: 0, percent: 0, message: "", createdOutputs: 0 };
   whiteboardDepthExplorerRuntime.set(key, current);
   return current;
 };
 
 const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.activeDocument) => {
   const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
-  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
+  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
 };
 
 const whiteboardDepthExplorerInputs = (nodeId, documentState = activeWhiteboardDocument()) => {
@@ -57376,10 +57823,10 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
   return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-node="${escapeHtml(node.id)}">
     <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
     <div class="whiteboard-depth-identity"><span>${icon("\uE945", "深度摸索")}</span><span><strong>深度摸索</strong><small>${escapeHtml(sourceSummary)}</small></span></div>
-    <label class="whiteboard-depth-select"><span>质量档</span><select data-whiteboard-depth-field="quality"${runtime.busy ? " disabled" : ""}><option value="fast"${selected("fast", settings.quality)}>快速</option><option value="balanced"${selected("balanced", settings.quality)}>均衡</option><option value="quality"${selected("quality", settings.quality)}>精细</option></select></label>
-    <label class="whiteboard-depth-select"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
-     <label class="whiteboard-depth-node-check stack"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
-     <label class="whiteboard-depth-node-check stack"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
+    <label class="whiteboard-depth-select whiteboard-depth-quality"><span>质量档</span><select data-whiteboard-depth-field="quality"${runtime.busy ? " disabled" : ""}><option value="fast"${selected("fast", settings.quality)}>快速</option><option value="balanced"${selected("balanced", settings.quality)}>均衡</option><option value="quality"${selected("quality", settings.quality)}>精细</option></select></label>
+    <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
+     <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
+     <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
      ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}>${runtime.busy ? "处理中" : "生成深度结果"}</button>`}
      ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
   </div>`;
@@ -57551,6 +57998,7 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
   runtime.total = inputs.length;
   runtime.currentPercent = 0;
   runtime.percent = 0;
+  runtime.createdOutputs = 0;
   runtime.message = "正在准备深度摸索";
   whiteboardMediaEditBusyNodeIds.add(nodeId);
   rerenderWhiteboardDepthExplorerNode(nodeId);
@@ -57559,6 +58007,23 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     const startPayload = await startResponse.json().catch(() => ({}));
     if (!startResponse.ok || startPayload.ok === false || !startPayload.jobId) throw new Error(startPayload.message || "深度摸索任务启动失败");
     let payload = null;
+    const createdOutputKeys = new Set();
+    const createAvailableOutputs = (availableOutputs = []) => {
+      if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) return;
+      const fresh = (Array.isArray(availableOutputs) ? availableOutputs : []).filter((output) => {
+        const key = String(output?.sourceRelativePath || output?.attachment?.relativePath || output?.batchIndex || "");
+        if (!key || createdOutputKeys.has(key)) return false;
+        createdOutputKeys.add(key);
+        return true;
+      });
+      if (!fresh.length || !whiteboardNodeById(nodeId)) return;
+      const nodeIds = createWhiteboardDerivedMediaNodes({
+        sourceNodeId: nodeId,
+        historyLabel: "深度摸索并创建下游卡片",
+        outputs: fresh.map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" })),
+      });
+      runtime.createdOutputs += nodeIds.length;
+    };
     for (;;) {
       await new Promise((resolveWait) => window.setTimeout(resolveWait, 700));
       const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store" });
@@ -57568,17 +58033,18 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
       runtime.currentPercent = Number(status.currentPercent) || 0;
       runtime.percent = Number(status.percent) || 0;
       runtime.message = String(status.message || "正在处理");
+      createAvailableOutputs(status.outputs);
       rerenderWhiteboardDepthExplorerNode(nodeId);
       if (status.status === "complete") { payload = status; break; }
       if (status.status === "failed" || status.status === "missing") throw new Error(status.error || status.message || "深度摸索失败");
     }
     if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
     if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
-    const outputs = (payload.outputs || []).map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" }));
+    const outputs = payload.outputs || [];
+    createAvailableOutputs(outputs);
     runtime.busy = false;
-    const nodeIds = createWhiteboardDerivedMediaNodes({ sourceNodeId: nodeId, historyLabel: "深度摸索并创建下游卡片", outputs });
-    if (nodeIds.length !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
-    showToast(`深度摸索完成，已创建 ${nodeIds.length} 个下游卡片`);
+    if (runtime.createdOutputs !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
+    showToast(`深度摸索完成，已创建 ${runtime.createdOutputs} 个下游卡片`);
   } catch (error) {
     runtime.error = error.message || "深度处理失败";
     showToast(runtime.error);
@@ -65533,6 +65999,15 @@ elements.quickAgentEngine?.addEventListener("change", async (event) => {
     showToast(error.message || "Agent 引擎切换失败");
     await refreshCodexAgentStatus();
   }
+});
+
+elements.quickWorkBuddyLogin?.addEventListener("click", () => {
+  void startWorkBuddyLoginFromQuickPanel();
+});
+elements.whiteboardWorkBuddyLogin?.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  void startWorkBuddyLoginFromWhiteboard();
 });
 
 elements.settingsForm.elements.textExecutionMode?.addEventListener("change", () => {
@@ -73669,11 +74144,13 @@ const dreaminaAccountHasDurableIdentity = (account = null) => Boolean(
   && String(account.expectedUserId || account.verifiedUserId || "").trim()
   && String(account.verifiedAt || "").trim()
   && account.credentialExists !== false
+  && String(account.runtimeState || "") !== "auth_required"
   && !["unbound", "mismatch", "duplicate", "invalid"].includes(String(account.state || "")),
 );
 
 const dreaminaAccountRequiresVerification = (account = null) => (
   !account
+  || String(account.runtimeState || "") === "auth_required"
   || (!dreaminaAccountHasDurableIdentity(account)
     && ["unbound", "unverified", "mismatch", "duplicate", "invalid"].includes(String(account.state || "")))
 );
@@ -74809,6 +75286,14 @@ const applyDreaminaOAuthCompletionStatus = (payload = {}, channel = "") => {
     credentialChanged: false,
     duplicateProfileId: "",
     duplicateRemarkName: "",
+    runtimeState: "verified",
+    stateReason: "oauth_verified",
+    lastAuthFailureAt: "",
+    lastAuthFailureCode: "",
+    lastAuthFailureJobId: "",
+    currentProviderTaskId: "",
+    currentLockJobId: "",
+    currentLockState: "",
     credit: Number.isFinite(Number(payload.credit)) ? Number(payload.credit) : existing.credit ?? null,
     creditUpdatedAt: new Date().toISOString(),
     vipLevel: String(payload.vipLevel || existing.vipLevel || ""),
@@ -75116,20 +75601,10 @@ const syncProviderSpecificCliButtons = async () => {
   } catch (error) {
     if (dreaminaChannel && !accountRefresh) renderDreaminaAccountStatus(null, dreaminaChannel, error.message || "状态接口不可用");
   }
-  const refreshedAccount = await accountRefresh;
-  if (dreaminaChannel && panel && !panel.hidden && refreshedAccount
-    && String(refreshedAccount.profileId || "") === currentDreaminaProfileId(dreaminaChannel)
-    && dreaminaAccountRequiresVerification(refreshedAccount)) {
-    const selectedSettings = generationSettingsForChannel(generationWorkingSettings(), dreaminaChannel);
-    openDreaminaReverifyDialog({
-      settings: {
-        ...selectedSettings,
-        imageChannel: dreaminaChannel === "image",
-        videoChannel: dreaminaChannel === "video",
-      },
-      account: refreshedAccount,
-    });
-  }
+  // Account status refresh is observational. Opening Settings, switching a
+  // profile, or starting the app must never open an OAuth dialog; generation
+  // preflight is the only user action allowed to request verification.
+  await accountRefresh;
 };
 
 const chooseDreaminaAuthorizationBrowser = (profile = null) => {
@@ -75427,7 +75902,11 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
       statusReadError = error;
     }
   }
-  if (account?.state === "verified" || dreaminaAccountHasDurableIdentity(account)) {
+  // A renderer may still hold the pre-failure `state=verified` snapshot while
+  // the server has already persisted explicit auth_required evidence. Never
+  // let that stale view bypass the credential gate.
+  if (String(account?.runtimeState || "") !== "auth_required"
+    && (account?.state === "verified" || dreaminaAccountHasDurableIdentity(account))) {
     if (elements.dreaminaReverifyDialog?.open
       && elements.dreaminaReverifyDialog.dataset.profileId === profileId
       && elements.dreaminaReverifyDialog.dataset.channel === channel) {
@@ -76152,6 +76631,10 @@ elements.loginAgentRunner?.addEventListener("click", async () => {
     delete elements.agentRunnerInstallDialog.dataset.loginPolling;
     elements.loginAgentRunner.disabled = false;
   }
+});
+
+document.querySelector("#workBuddySettingsLogin")?.addEventListener("click", () => {
+  void startWorkBuddyLoginFromSettings();
 });
 
 elements.showAgentRunnerInstallDetails?.addEventListener("click", () => {

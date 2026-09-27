@@ -116,6 +116,12 @@ try {
   assert.match(appSource, /\/api\/workspace\/video-trim/u);
   assert.match(appSource, /data-whiteboard-node-create="depth"/u);
   assert.match(appSource, /class="whiteboard-depth-node-bar"/u);
+  assert.match(appSource, /WHITEBOARD_DEPTH_NODE_WIDTH/u);
+  assert.match(appSource, /WHITEBOARD_DEPTH_NODE_HEIGHT/u);
+  assert.match(appSource, /whiteboard-depth-quality/u);
+  assert.match(appSource, /whiteboard-depth-provider/u);
+  assert.match(appSource, /whiteboard-depth-invert/u);
+  assert.match(appSource, /whiteboard-depth-audio/u);
   assert.match(appSource, /data-whiteboard-depth-field="invertDepth"[\s\S]{0,220}<span>反向深度<\/span>/u);
   assert.match(appSource, /data-whiteboard-depth-field="keepAudio"[\s\S]{0,220}<span>保留音频<\/span>/u);
   assert.match(appSource, /本功能使用本地 CPU 或 GPU，配置较低不建议使用/u);
@@ -129,6 +135,9 @@ try {
   assert.match(styles, /\.whiteboard-audio-trim-track\s*\{/);
   assert.match(styles, /\.whiteboard-video-trim-body video\s*\{/);
   assert.match(styles, /\.whiteboard-depth-node-bar\s*\{/);
+  assert.match(styles, /\.whiteboard-card\.whiteboard-depth-node\s*\{[\s\S]{0,160}min-width:\s*480px;[\s\S]{0,100}min-height:\s*210px;/u);
+  assert.match(styles, /\.whiteboard-depth-generate\s*\{[\s\S]{0,160}grid-column:\s*4;[\s\S]{0,100}grid-row:\s*3;/u);
+  assert.match(styles, /\.whiteboard-depth-progress\s*\{[\s\S]{0,120}grid-row:\s*4;/u);
   assert.match(styles, /\.whiteboard-depth-node-check\s*\{[\s\S]{0,180}display:\s*flex/u);
   console.log("whiteboard media edit: ok");
 } finally {

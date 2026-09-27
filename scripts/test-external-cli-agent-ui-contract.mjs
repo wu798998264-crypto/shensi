@@ -21,7 +21,7 @@ assert.match(
   "WorkBuddy 模型选择器不得借用其他文字运行器的当前模型",
 );
 assert.match(app, /if \(ui\.agentRunnerStatusPromise\) return ui\.agentRunnerStatusPromise;/u, "并发的运行器刷新必须复用同一次真实 CLI 探测");
-assert.match(app, /const incoming = payload\.runners && typeof payload\.runners === "object" \? payload\.runners : \{\};[\s\S]{0,1600}ui\.agentRunners = incoming/u, "运行器状态必须写入统一能力缓存");
+assert.match(app, /const incoming = payload\.runners && typeof payload\.runners === "object" \? payload\.runners : \{\};[\s\S]{0,5000}ui\.agentRunners = incoming/u, "运行器状态必须写入统一能力缓存");
 assert.match(app, /WORKBUDDY_CAPABILITY_CACHE_KEY/u, "WorkBuddy 模型目录必须有本机非敏感缓存");
 assert.match(app, /restoreWorkBuddyCapabilityCache/u, "设置页首次渲染必须恢复最近一次已确认的 WorkBuddy 目录");
 assert.match(app, /hydrateAgentRunnerStatuses\(\{ force: true \}\)/u, "启动阶段必须后台预热运行器目录，不能等用户打开设置后才开始检查");

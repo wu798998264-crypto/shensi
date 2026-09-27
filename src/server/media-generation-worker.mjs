@@ -41,7 +41,11 @@ import {
   mediaCapabilityEvidenceExpiry,
 } from "./media-profile-signature.mjs";
 import { resolveTrustedGenerationSettings } from "./generation-runtime-store.mjs";
-import { recordDreaminaProfileCreditEstimate } from "./dreamina-profile-identity-store.mjs";
+import {
+  recordDreaminaProfileCreditEstimate,
+  recordDreaminaProfileGenerationSuccess,
+  recordDreaminaProfileAuthFailure,
+} from "./dreamina-profile-identity-store.mjs";
 import {
   dreaminaCancellationReconciliationExpired,
   dreaminaCredentialIdentity,
@@ -1098,6 +1102,23 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
     }
   }
   if (["complete", "cancelled"].includes(completed.status)) await rm(workRoot, { recursive: true, force: true });
+  if (completed.status === "complete" && dreaminaCliMediaJob(completed)) {
+    const profileId = String(completed.request?.settings?.dreaminaCliProfile || "").trim();
+    if (profileId) {
+      const executionReceipt = completed.providerExecutionReceipt || {};
+      await recordDreaminaProfileGenerationSuccess({
+        profileId,
+        // verificationSource is evidence provenance (for example
+        // live_user_credit), not the browser session that owns this profile.
+        // Keep the browser binding written by OAuth intact.
+        browserSessionId: "",
+        accountFingerprint: executionReceipt.expectedUserId || executionReceipt.actualUserId || "",
+        jobId: completed.id,
+        providerTaskId: completed.providerTaskId,
+        channel: completed.channel,
+      }).catch(() => null);
+    }
+  }
   return completed;
 };
 
@@ -1675,6 +1696,21 @@ const processJob = async (candidate) => {
       return false;
     }
     const explicitDreaminaAccountVerification = explicitDreaminaAccountVerificationFailure(current, error);
+    if (explicitDreaminaAccountVerification) {
+      const profileId = String(current.request?.settings?.dreaminaCliProfile || "").trim();
+      if (profileId) {
+        await recordDreaminaProfileAuthFailure({
+          profileId,
+          // Do not replace the profile's browser binding with an evidence
+          // label such as live_user_credit when recording auth failure.
+          browserSessionId: "",
+          accountFingerprint: current.providerExecutionReceipt?.expectedUserId || "",
+          jobId: current.id,
+          providerTaskId: current.providerTaskId,
+          code: String(error.providerErrorCode || error.code || "DREAMINA_AUTH_REQUIRED"),
+        }).catch(() => null);
+      }
+    }
     const providerControlPlaneTransient = transientProviderFailure(error)
       && Boolean(current.providerTaskId)
       && !explicitDreaminaAccountVerification;

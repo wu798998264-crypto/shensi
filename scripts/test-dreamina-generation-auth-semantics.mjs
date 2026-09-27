@@ -33,6 +33,14 @@ const generationRejected = dreaminaFailureDiagnosis({
 assert.equal(generationRejected.requiresAccountVerification, false, "生成阶段会话异常不得再次要求 OAuth 核验");
 assert.equal(generationRejected.category, "submission_outcome_unknown");
 assert.match(generationRejected.resolution, /幂等记录|不会重复提交|手动终止/u);
+const generationAuthRequired = dreaminaFailureDiagnosis({
+  code: "DREAMINA_GENERATION_AUTH_REQUIRED",
+  message: "即梦生成端点明确返回当前配置未登录，且本次没有返回厂商任务编号",
+  submissionState: "submitting",
+});
+assert.equal(generationAuthRequired.requiresAccountVerification, true,
+  "无任务号且明确未登录的生成结果必须进入当前配置核验");
+assert.match(generationAuthRequired.resolution, /核验.*重新提交/u);
 assert.equal(dreaminaFailureRequiresAccountVerification({
   code: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
   message: "authsdk: not logged in",
@@ -57,20 +65,25 @@ const safePreSubmitRetry = classifyMediaSubmissionFailure({
 assert.equal(safePreSubmitRetry.submissionUnknown, false, "付费命令前失败不得误判为厂商可能已受理");
 assert.equal(safePreSubmitRetry.safeAutomaticRetry, true, "付费命令前的临时查询失败应保留同一幂等键自动重试");
 
-const [runner, videoCli, driver, worker, app] = await Promise.all([
+const [runner, videoCli, driver, worker, app, oauth, identityStore] = await Promise.all([
   readFile(new URL("../scripts/windows/dreamina-profile-runner.ps1", import.meta.url), "utf8"),
   readFile(new URL("../src/cli/dreamina-video-cli.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/server/media-provider-drivers.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/server/dreamina-profile-oauth.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/server/dreamina-profile-identity-store.mjs", import.meta.url), "utf8"),
 ]);
 assert.match(runner, /DREAMINA_GENERATION_SESSION_REJECTED/u);
 assert.match(runner, /Test-DreaminaTaskIdentityOutput/u);
 assert.match(videoCli, /DREAMINA_GENERATION_SESSION_REJECTED/u);
+assert.match(videoCli, /DREAMINA_GENERATION_AUTH_REQUIRED/u);
 assert.match(videoCli, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
 assert.match(videoCli, /dreaminaTaskIdInText/u);
 assert.match(videoCli, /non-control commands containing `video`/u);
 assert.match(driver, /providerTaskIdFromOutput/u);
+assert.match(driver, /rawMarkedCode === "DREAMINA_GENERATION_SESSION_REJECTED"[\s\S]{0,180}DREAMINA_GENERATION_AUTH_REQUIRED/u,
+  "旧版无任务号鉴权标记必须在驱动边界归一为明确核验，而不是未知提交");
 assert.match(driver, /DREAMINA_PROVIDER_TASK_AUTH_FAILURE/u);
 assert.match(driver, /DREAMINA_PRE_SUBMIT_NO_TASK/u);
 assert.match(driver, /preSubmitNoTask\) error\.submissionOutcomeKnown = true/u);
@@ -81,6 +94,26 @@ assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,2200}�
   "未知提交的只读找回遇到其他配置占锁时必须延后，不能被改写为失败");
 assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,1800}submissionState: "uncertain"[\s\S]{0,500}billingRisk: "submission_outcome_unknown"/u,
   "临时配置锁冲突必须保留原提交不确定性和计费保护");
+assert.match(worker, /recordDreaminaProfileGenerationSuccess/u,
+  "真实生成成功必须写入该即梦配置的最高可信可用证据");
+assert.match(oauth, /runtimeAuthRequired = expected\.runtimeState === "auth_required"/u,
+  "状态读取必须消费同一配置的明确 auth_required 证据");
+assert.match(oauth, /runtimeState: "verified"[\s\S]{0,420}lastAuthFailureAt: ""/u,
+  "OAuth 成功必须清除同一配置旧的 auth_required 标记");
+assert.match(app, /String\(account\.runtimeState \|\| ""\) === "auth_required"/u,
+  "生成前置检查必须阻止复用明确失效的即梦配置");
+assert.match(app, /String\(account\?\.runtimeState \|\| ""\) !== "auth_required"[\s\S]{0,180}account\?\.state === "verified"/u,
+  "生成前置检查不得让旧的 state=verified 快照绕过明确 auth_required 状态");
+assert.match(app, /String\(account\.runtimeState \|\| ""\) !== "auth_required"/u,
+  "持久身份判断不得把明确失效配置当作可用");
+assert.match(identityStore, /runtimeState: "verified"[\s\S]{0,500}lastAuthFailureCode: ""/u,
+  "真实生成成功必须清理持久化的旧鉴权失败标记");
+assert.match(identityStore, /runtimeState: "auth_required"[\s\S]{0,300}stateReason: "explicit_auth_failure"/u,
+  "只有明确鉴权失败才允许写入 auth_required");
+assert.doesNotMatch(worker, /recordDreaminaProfileGenerationSuccess\(\{[\s\S]{0,260}browserSessionId: executionReceipt\.verificationSource/u,
+  "生成证据来源不得覆盖 OAuth 绑定的浏览器会话隔离键");
+assert.doesNotMatch(worker, /recordDreaminaProfileAuthFailure\(\{[\s\S]{0,280}providerExecutionReceipt\?\.verificationSource/u,
+  "鉴权失败证据来源不得覆盖 OAuth 绑定的浏览器会话隔离键");
 assert.match(app, /promptDreaminaSubmissionBlockForJob/u);
 assert.match(app, /DREAMINA_PROFILE_SWITCH_BLOCKED/u);
 assert.match(app, /!\["complete", "cancelled"\]\.includes\(jobStatus\)/u,
@@ -180,14 +213,14 @@ try {
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-no-task-auth-key",
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "no-task-auth" });
   assert.notEqual(noTaskAuth.code, 0, "无任务号的生成阶段 auth 必须显式失败");
-  assert.match(noTaskAuth.stderr, /DREAMINA_GENERATION_SESSION_REJECTED/u);
-  assert.doesNotMatch(noTaskAuth.stderr, /\[DREAMINA_AUTH_REQUIRED\]/u, "已核验账号的生成阶段会话异常不得弹账号核验语义");
+  assert.match(noTaskAuth.stderr, /DREAMINA_GENERATION_AUTH_REQUIRED/u,
+    "无任务号且明确未登录时必须进入当前配置核验语义");
 
   const placeholderAuth = await runChild(process.execPath, [
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-placeholder-auth-key",
   ], { ...baseRuntimeEnv, SHENSI_TEST_DREAMINA_GENERATION_MODE: "placeholder-auth" });
   assert.notEqual(placeholderAuth.code, 0);
-  assert.match(placeholderAuth.stderr, /DREAMINA_GENERATION_SESSION_REJECTED/u, "none 等占位任务号不得绕过生成阶段未知提交保护");
+  assert.match(placeholderAuth.stderr, /DREAMINA_GENERATION_AUTH_REQUIRED/u, "none 等占位任务号不得绕过生成阶段鉴权保护");
 
   const controlAuth = await runChild(process.execPath, [
     videoCliPath, "submit", "--prompt-file", promptPath, "--model", "seedance2.0", "--duration", "4", "--resolution", "720p", "--mode", "smart_params", "--idempotency-key", "fixture-control-auth-key",

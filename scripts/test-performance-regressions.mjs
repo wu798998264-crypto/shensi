@@ -81,10 +81,11 @@ assert.equal(dialogs,4,'真正失效和账号不匹配仍要求处理');
 const queued=[];
 let savedAccount={...verified,verifiedAt:'2026-09-24T10:00:00Z'};
 const recovered=vm.createContext({String,Date,
-  dreaminaReverifyPromptedJobs:new Set(),dreaminaFailureNeedsVerification:()=>true,
+  dreaminaReverifyPromptedJobs:new Set(),dreaminaPromptClaimInFlight:new Set(),claimDreaminaPrompt:async()=>true,dreaminaFailureNeedsVerification:()=>true,
   mediaGenerationSettingsForJob:()=>({provider:'即梦',adapter:'cli',dreaminaCliProfile:'fixture'}),
   rememberDreaminaJobForReverification:()=>{},refreshDreaminaAccountStatus:async()=>savedAccount,
   queueDreaminaReverification:payload=>queued.push(payload),mediaGenerationErrorText:()=>'',
+  fetch:async()=>({ok:true,json:async()=>({ok:true,claimed:true})}),
 });
 vm.runInContext(block('const dreaminaAccountHasDurableIdentity =','const dreaminaStatusChannel ='),recovered);
 vm.runInContext(block('const promptDreaminaReverificationForJob =','const promptDreaminaSubmissionBlockForJob ='),recovered);

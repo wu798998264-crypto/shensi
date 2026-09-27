@@ -27,7 +27,10 @@ import {
   isDreaminaCliSettings,
   requireDreaminaCliProfileId,
 } from "../dreamina-manual-profile-policy.js";
-import { dreaminaExpectedIdentitySync } from "./dreamina-profile-identity-store.mjs";
+import {
+  dreaminaExpectedIdentitySync,
+  recordDreaminaProfileGenerationSuccess,
+} from "./dreamina-profile-identity-store.mjs";
 import { readDreaminaBrokerLease } from "./dreamina-broker-lease.mjs";
 import { builtInAggregateImageRecoveryJob, legacyAggregateReferencePreflightFailurePatch } from "./media-submission-recovery.mjs";
 
@@ -1418,7 +1421,7 @@ export const failClientGenerationJob = ({ jobId, message = "", retryRequired = t
   };
 });
 
-export const markGenerationJobApplied = ({ jobId, resultAssetId = "", cardReadback = null } = {}) => transitionJob(safeJobId(jobId), (job) => {
+const markGenerationJobAppliedTransition = ({ jobId, resultAssetId = "", cardReadback = null } = {}) => transitionJob(safeJobId(jobId), (job) => {
   if (job.status !== "complete") throw jobTransitionError("只有已完成且已落盘的任务可以标记为已应用", "GENERATION_JOB_NOT_COMPLETE");
   if (["image", "video"].includes(job.channel) && (!job.result?.attachment?.relativePath || !job.result?.attachment?.sha256)) {
     throw jobTransitionError("媒体任务缺少已落盘附件校验信息，不能标记为已应用", "MEDIA_ATTACHMENT_RECEIPT_REQUIRED");
@@ -1444,6 +1447,24 @@ export const markGenerationJobApplied = ({ jobId, resultAssetId = "", cardReadba
     } : {}),
   };
 });
+
+export const markGenerationJobApplied = async ({ jobId, resultAssetId = "", cardReadback = null } = {}) => {
+  const completed = await markGenerationJobAppliedTransition({ jobId, resultAssetId, cardReadback });
+  if (completed?.status === "complete" && isDreaminaCliSettings(completed.request?.settings || {})) {
+    const profileId = String(completed.request?.settings?.dreaminaCliProfile || "").trim();
+    if (profileId) {
+      await recordDreaminaProfileGenerationSuccess({
+        profileId,
+        accountFingerprint: completed.providerExecutionReceipt?.expectedUserId || completed.providerExecutionReceipt?.actualUserId || "",
+        browserSessionId: completed.providerExecutionReceipt?.verificationSource || "",
+        jobId: completed.id,
+        providerTaskId: completed.providerTaskId,
+        channel: completed.channel,
+      }).catch(() => null);
+    }
+  }
+  return completed;
+};
 
 export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false, requestId = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
   if (job.mode !== "server" || !["image", "video"].includes(job.channel)) {

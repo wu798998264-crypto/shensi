@@ -93,7 +93,7 @@ import { planLongFormFoundation, planVolumeChapterOutlines, runLongFormStructure
 import { planWorkspaceOperations } from "./src/server/workspace-operation-planner.mjs";
 import { planSmartLanding } from "./src/server/smart-landing-planner.mjs";
 import { createUpdateManager } from "./src/server/update-manager.mjs";
-import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, startKnownAgentRunnerLogin } from "./src/server/agent-runner-installer.mjs";
+import { AGENT_RUNNER_INSTALL_SPECS, createAgentRunnerInstallManager, detectKnownAgentRunnerInstallation, startKnownAgentRunnerLogin, verifyKnownAgentRunnerLogin } from "./src/server/agent-runner-installer.mjs";
 import { appDataRoot, initializeConfiguredDataRoot, machineLocalDataRoot } from "./src/server/app-data.mjs";
 import {
   completeDreaminaProfileOAuth,
@@ -169,6 +169,8 @@ import { launchMediaGenerationWorker, terminateMediaGenerationWorker } from "./s
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
+import { recordDreaminaProfileGenerationSuccess } from "./src/server/dreamina-profile-identity-store.mjs";
+import { claimDreaminaPromptSignature } from "./src/server/dreamina-prompt-ledger.mjs";
 import { generationRuntimeCredentialsSnapshot, listGenerationRuntimeBindings, rememberGenerationRuntimeCredentials, resolveTrustedGenerationSettings, saveGenerationRuntimeBindings } from "./src/server/generation-runtime-store.mjs";
 import { listGenerationProfileSettings, saveGenerationProfileSettings } from "./src/server/generation-profile-store.mjs";
 import {
@@ -1513,7 +1515,12 @@ const publicAgentRunnerStatuses = async ({ force = false } = {}) => {
       available: capability?.available === true,
       installState: String(capability?.installState || (capability?.available === true ? "installed" : "missing")),
       state,
-      ready: capability?.ready === true || state === "ready",
+      // WorkBuddy's safe startup probe only reads its model catalogue and
+      // leaves authentication unknown. Do not expose that as “ready” until a
+      // real login verification or successful generation proves the session.
+      ready: spec.id === "workbuddy"
+        ? capability?.authenticated === true
+        : capability?.ready === true || state === "ready",
       version: String(capability?.version || "").slice(0, 160),
       authenticated: capability?.authenticated === true ? true : capability?.authenticated === false ? false : null,
       authState: String(capability?.authState || (capability?.authenticated === true ? "authenticated" : capability?.authenticated === false ? "login_required" : "unknown")),
@@ -2872,6 +2879,25 @@ const handleApiRequest = async (request, response, pathname) => {
     }
   }
 
+  if (pathname === "/api/agent-runners/login/verify" && request.method === "POST") {
+    try {
+      const body = await readJsonBody(request, 16 * 1024);
+      const result = await verifyKnownAgentRunnerLogin({
+        runnerId: String(body.runnerId || ""),
+        cwd: root,
+        environment: process.env,
+        machineRoot: machineLocalDataRoot(),
+      });
+      return sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(response, 503, {
+        ok: false,
+        code: String(error?.code || "AGENT_RUNNER_LOGIN_VERIFY_FAILED"),
+        message: String(error?.summary || error?.message || error).slice(0, 1_000),
+      });
+    }
+  }
+
   if (pathname === "/api/opencode/models" && request.method === "GET") {
     try {
       const catalog = await detectOpenCodeModelCatalog({
@@ -3290,6 +3316,21 @@ const handleApiRequest = async (request, response, pathname) => {
       ok: true,
       profiles: await listDreaminaProfileAccountStatuses({ verifyLive, profileId }),
     });
+  }
+
+  if (pathname === "/api/dreamina-profiles/prompt-ledger/claim" && request.method === "POST") {
+    const body = await readJsonBody(request, 32 * 1024);
+    const signature = String(body.signature || "").trim();
+    if (!signature) return sendJson(response, 422, { ok: false, message: "待处理提示签名缺失" });
+    const claimed = await claimDreaminaPromptSignature({
+      signature,
+      profileId: body.profileId,
+      kind: body.kind,
+      status: body.status,
+      providerTaskId: body.providerTaskId,
+      errorCode: body.errorCode,
+    });
+    return sendJson(response, 200, { ok: true, claimed });
   }
 
   if (pathname === "/api/dreamina-profiles/lock-occupants" && request.method === "GET") {

@@ -4,6 +4,7 @@ const legacyAuthRequiredMessage = (value) => /(?:authsdk\s*:\s*not logged in|未
 
 const ACCOUNT_VERIFICATION_CODES = new Set([
   "DREAMINA_AUTH_REQUIRED",
+  "DREAMINA_GENERATION_AUTH_REQUIRED",
   "DREAMINA_PROFILE_UNVERIFIED",
   "DREAMINA_ACCOUNT_ID_MISSING",
   "DREAMINA_ACCOUNT_MISMATCH",
@@ -64,6 +65,8 @@ export const dreaminaFailureDiagnosis = ({
           ? "当前配置读到的真实即梦账号与已绑定账号不一致，系统已阻止继续操作以避免扣错账号。"
           : errorCode === "DREAMINA_ACCOUNT_DUPLICATE"
             ? "当前账号已经绑定到另一项即梦配置，无法作为独立配置重复使用。"
+          : errorCode === "DREAMINA_GENERATION_AUTH_REQUIRED"
+            ? "即梦生成端点明确返回当前配置未登录，且本次没有返回厂商任务编号。系统已保留幂等记录，不会盲目重复提交。"
             : errorCode === "DREAMINA_PROFILE_UNVERIFIED" || errorCode === "DREAMINA_ACCOUNT_ID_MISSING"
               ? "当前即梦配置没有取得可验证的独立账号身份，系统无法确认费用会扣到哪个账号。"
               : "神思已尝试使用当前配置保存的登录状态恢复会话，但即梦仍明确返回未登录。",

@@ -159,9 +159,11 @@ const spawnJson = ({ executable, args, cwd, env = process.env, timeoutMs = 60_00
       const message = rawMessage.replace(/\[DREAMINA_PRE_SUBMIT_NO_TASK\]\s*/gu, "").trim();
       const providerTaskId = extractDreaminaTaskId ? providerTaskIdFromOutput(message) : "";
       const rawMarkedCode = message.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
-      const markedCode = extractDreaminaTaskId && providerTaskId && rawMarkedCode === "DREAMINA_AUTH_REQUIRED"
+      const markedCode = providerTaskId && ["DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_SESSION_REJECTED"].includes(rawMarkedCode)
         ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
-        : rawMarkedCode;
+        : rawMarkedCode === "DREAMINA_GENERATION_SESSION_REJECTED"
+          ? "DREAMINA_GENERATION_AUTH_REQUIRED"
+          : rawMarkedCode;
       const refreshCode = !markedCode
         ? isDreaminaAuthRequiredResponse(message)
           ? extractDreaminaTaskId && providerTaskId ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE" : "DREAMINA_AUTH_REQUIRED"

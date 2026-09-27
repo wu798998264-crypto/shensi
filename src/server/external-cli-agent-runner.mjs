@@ -331,7 +331,7 @@ const workBuddyTerminalFailure = (...values) => {
       retryable: true,
     };
   }
-  const authRequired = /(?:^|\n)\s*(?:(?:error\s*[:：]\s*)?(?:401|403)\b[^\n]*)?(?:当前)?(?:未登录|登录状态(?:已)?失效|请先登录|需要登录)|(?:^|\n)\s*(?:not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)\b/iu.test(raw);
+  const authRequired = /(?:^|\n)\s*(?:(?:error\s*[:：]\s*)?(?:401|403)\b[^\n]*)?(?:[^\n:：]{0,80}\s*)?(?:未登录|登录状态(?:已)?(?:失效|无效)|登录无效|请先登录|需要登录)|(?:^|\n)\s*(?:[^\n:：]{0,80}\s*)?(?:not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)\b/iu.test(raw);
   if (authRequired) {
     return {
       code: "WORKBUDDY_AUTH_REQUIRED",

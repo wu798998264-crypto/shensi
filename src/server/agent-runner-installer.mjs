@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { resolveRunnerLaunch } from "./agent-runner-launch.mjs";
 import { rememberAgentRunnerLaunch } from "./agent-runner-registry.mjs";
 
@@ -372,11 +372,24 @@ export const startKnownAgentRunnerLogin = async ({
     });
   }
   const launch = await resolveLaunch({ runnerId: id, environment, machineRoot });
-  const args = [...(Array.isArray(launch.prefixArgs) ? launch.prefixArgs : [])];
+  // Some desktop builds ship only the headless CLI bundle. Starting that
+  // script with no arguments exits before the user can sign in. Resolve the
+  // desktop executable from the exact same bundled root instead.
+  let loginExecutable = launch.executable;
+  let args = [...(Array.isArray(launch.prefixArgs) ? launch.prefixArgs : [])];
+  const bundledCli = args.find((value) => /[\\/]cli[\\/]bin[\\/]codebuddy(?:\.cmd|\.exe)?$/iu.test(String(value || "")));
+  if (bundledCli) {
+    const desktopRoot = dirname(dirname(dirname(dirname(dirname(String(bundledCli))))));
+    const desktopExecutable = join(desktopRoot, "WorkBuddy.exe");
+    if (await accessible(desktopExecutable)) {
+      loginExecutable = desktopExecutable;
+      args = [];
+    }
+  }
   await new Promise((resolveStart, rejectStart) => {
     let child;
     try {
-      child = spawnProcess(launch.executable, args, {
+      child = spawnProcess(loginExecutable, args, {
         cwd,
         env: environment,
         shell: false,
@@ -422,6 +435,48 @@ export const startKnownAgentRunnerLogin = async ({
     runnerId: id,
     message: "已打开 WorkBuddy；请在新窗口完成首次登录，完成后返回神思重新检查",
   };
+};
+
+// Unlike the safe startup probe (which only reads --help), this bounded check
+// is called only after the user explicitly starts the login flow. It proves
+// the account session with one real CLI request and never loops indefinitely.
+export const verifyKnownAgentRunnerLogin = async ({
+  runnerId,
+  cwd = process.cwd(),
+  environment = process.env,
+  machineRoot = "",
+  resolveLaunch = resolveKnownAgentRunnerLaunch,
+  runProcess = runAgentRunnerInstallerProcess,
+} = {}) => {
+  const id = clean(runnerId);
+  if (id !== "workbuddy") return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: "当前运行器不支持登录验证" };
+  const launch = await resolveLaunch({ runnerId: id, environment, machineRoot });
+  const args = [...(Array.isArray(launch.prefixArgs) ? launch.prefixArgs : []), "-p", "--input-format", "text", "--output-format", "text", "--model", "auto", "--no-session-persistence"];
+  let result;
+  try {
+    result = await runProcess({
+      executable: launch.executable,
+      args,
+      stdinText: "Reply with exactly SHENSI_LOGIN_PROBE_OK.",
+      cwd,
+      environment,
+      timeoutMs: 45_000,
+      outputSource: "node",
+      maxOutputBytes: 16_000,
+      operation: "probe",
+    });
+  } catch (error) {
+    result = error?.result || null;
+    if (!result) throw error;
+  }
+  const output = `${result?.stdout || ""}\n${result?.stderr || ""}`.trim();
+  if (/(?:authentication required|login required|not logged in|please (?:sign|log) in|请先登录|未登录|登录状态(?:已)?(?:失效|无效))/iu.test(output)) {
+    return { authenticated: false, authState: "login_required", state: "login_required", ready: false, message: "WorkBuddy 仍未检测到有效登录会话" };
+  }
+  if (/(?:quota|额度|余额|usage limit|rate limit|请求过多)/iu.test(output) || /SHENSI_LOGIN_PROBE_OK/iu.test(output)) {
+    return { authenticated: true, authState: "authenticated", state: "ready", ready: true, message: "WorkBuddy 登录会话有效" };
+  }
+  return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: "WorkBuddy 登录验证未得到明确结果，请完成登录后重新检查" };
 };
 
 export const locateWindowsInstallTools = async ({

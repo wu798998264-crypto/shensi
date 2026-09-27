@@ -4531,7 +4531,7 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
           whiteboardDocumentId,
           whiteboardMediaKind: source.kind,
         });
-        outputs.push({
+        const output = {
           kind: source.kind,
           attachment,
           aspectRatio: Number(attachment.videoWidth) > 0 && Number(attachment.videoHeight) > 0
@@ -4541,8 +4541,17 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
               : 1,
           sourceRelativePath: relativePath,
           batchIndex: index,
+        };
+        outputs.push(output);
+        onProgress?.({
+          completed: index + 1,
+          total: inputs.length,
+          currentIndex: index + 1,
+          currentPercent: 100,
+          percent: Math.round(((index + 1) / inputs.length) * 100),
+          output,
+          message: `已完成 ${index + 1}/${inputs.length} 个任务`,
         });
-        onProgress?.({ completed: index + 1, total: inputs.length, currentIndex: index + 1, currentPercent: 100, percent: Math.round(((index + 1) / inputs.length) * 100), message: `已完成 ${index + 1}/${inputs.length} 个任务` });
       } finally {
         await rm(jobDirectory, { recursive: true, force: true }).catch(() => {});
       }
@@ -4559,7 +4568,22 @@ export const startWorkspaceDepthExplorerRun = async (params = {}) => {
   const total = Array.isArray(params.relativePaths) ? params.relativePaths.length : 0;
   const state = { id, status: "queued", completed: 0, total, currentIndex: 0, currentPercent: 0, percent: 0, message: "等待开始", outputs: [], error: "" };
   depthExplorerRuns.set(id, state);
-  void runWorkspaceDepthExplorer({ ...params, onProgress: (progress) => Object.assign(state, { status: "running", ...progress }) })
+  void runWorkspaceDepthExplorer({
+    ...params,
+    onProgress: (progress) => {
+      const next = { ...(progress || {}) };
+      const output = next.output;
+      delete next.output;
+      Object.assign(state, { status: "running", ...next });
+      if (output && typeof output === "object") {
+        const prior = Array.isArray(state.outputs) ? state.outputs : [];
+        const key = String(output.sourceRelativePath || output.attachment?.relativePath || output.batchIndex || "");
+        if (!prior.some((item) => String(item.sourceRelativePath || item.attachment?.relativePath || item.batchIndex || "") === key)) {
+          state.outputs = [...prior, output];
+        }
+      }
+    },
+  })
     .then((result) => Object.assign(state, { status: "complete", percent: 100, completed: total, currentPercent: 100, message: "深度摸索已完成", outputs: result.outputs }))
     .catch((error) => Object.assign(state, { status: "failed", error: String(error?.message || error).slice(0, 1_000), message: String(error?.message || error).slice(0, 1_000) }));
   return { ok: true, jobId: id, ...state };

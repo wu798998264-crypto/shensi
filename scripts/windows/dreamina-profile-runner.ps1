@@ -263,7 +263,7 @@ try {
     $semanticOutput = ((@($commandOutput) | ForEach-Object { [string]$_ }) -join "`n") + "`n" + $stderrText
     if (Test-DreaminaSemanticAuthFailure -Output $semanticOutput -Command $firstArg) {
       if (Test-DreaminaGenerationCommand -Command $firstArg) {
-        [Console]::Error.WriteLine('[DREAMINA_GENERATION_SESSION_REJECTED] authsdk: not logged in; the media generation command did not return a provider task ID, so submission outcome is unknown and the verified account snapshot remains valid.')
+        [Console]::Error.WriteLine('[DREAMINA_GENERATION_SESSION_REJECTED] authsdk: not logged in; the media generation command did not return a provider task ID. The bridge will classify this explicit no-task authentication failure without resubmitting.')
         if ($exitCode -eq 0) { $exitCode = 79 }
       } else {
         [Console]::Error.WriteLine('[DREAMINA_AUTH_REQUIRED] authsdk: not logged in; Dreamina returned an authentication failure payload and the previous verified profile snapshot was preserved.')

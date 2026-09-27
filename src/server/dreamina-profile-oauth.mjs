@@ -664,6 +664,7 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
     const liveAuthReadDeferred = liveRequiresReverification && durableIdentityEvidence;
     const effectiveLiveRequiresReverification = liveRequiresReverification && !liveAuthReadDeferred;
     const liveAccountIdMissing = live?.code === "DREAMINA_ACCOUNT_ID_MISSING";
+    const runtimeAuthRequired = expected.runtimeState === "auth_required";
     const state = !credentialExists ? "unbound"
       : live && !live.ok && effectiveLiveRequiresReverification ? "invalid"
         : !expected.expectedUserId ? (oauthPending ? "pending" : "unverified")
@@ -676,7 +677,13 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
               // Durable identity wins over a stale/pending OAuth marker. A
               // successful prior verification remains usable while a new
               // explicit rebind transaction is waiting or being cleaned up.
-              : expected.expectedUserId ? "verified"
+              // A generation command may have produced explicit auth evidence
+              // even while user_credit remains readable. Keep that exact
+              // profile invalid until OAuth or a verified generation clears
+              // the marker; otherwise the UI would silently reuse a stale
+              // `state=verified` snapshot and repeat the same failed submit.
+              : runtimeAuthRequired ? "invalid"
+                : expected.expectedUserId ? "verified"
                 : oauthPending ? "pending" : "verified";
     statuses.push({
       profileId: profile.id,
@@ -707,6 +714,20 @@ export const listDreaminaProfileAccountStatuses = async ({ verifyLive = false, p
         ? live.cliGenerationRestrictionCode || ""
         : expected.membershipTier === "standard" ? "DREAMINA_CLI_MEMBERSHIP_REQUIRED" : "",
       verifiedAt: live?.ok ? new Date().toISOString() : expected.verifiedAt || "",
+      browserSessionId: expected.browserSessionId || expected.browser || "",
+      accountFingerprint: expected.accountFingerprint || expected.expectedUserId || "",
+      runtimeState: expected.runtimeState || (expected.expectedUserId ? "verified" : "unknown"),
+      stateUpdatedAt: expected.stateUpdatedAt || "",
+      stateReason: expected.stateReason || "",
+      lastSuccessfulGenerationAt: expected.lastSuccessfulGenerationAt || "",
+      lastSuccessfulGenerationJobId: expected.lastSuccessfulGenerationJobId || "",
+      lastSuccessfulProviderTaskId: expected.lastSuccessfulProviderTaskId || "",
+      lastSuccessfulGenerationChannel: expected.lastSuccessfulGenerationChannel || "",
+      lastAuthFailureAt: expected.lastAuthFailureAt || "",
+      lastAuthFailureCode: expected.lastAuthFailureCode || "",
+      currentProviderTaskId: expected.currentProviderTaskId || "",
+      currentLockJobId: expected.currentLockJobId || "",
+      currentLockState: expected.currentLockState || "",
       liveVerified: live?.ok === true,
       creditSource: live?.ok ? "live" : "saved",
       creditRefreshDeferred: live?.transient === true || liveAuthReadDeferred,
@@ -1047,6 +1068,18 @@ export const completeDreaminaProfileOAuth = async ({ requestedProfileId, pollSec
       browser: browserForProfile(id, pending.browser).id,
       boundAt: new Date().toISOString(),
       verifiedAt: new Date().toISOString(),
+      // OAuth success is an explicit account-authentication proof. Clear any
+      // stale generation failure marker from this same isolated profile so a
+      // successful rebind cannot be downgraded back to auth_required on the
+      // next status read or generation preflight.
+      runtimeState: "verified",
+      stateReason: "oauth_verified",
+      lastAuthFailureAt: "",
+      lastAuthFailureCode: "",
+      lastAuthFailureJobId: "",
+      currentProviderTaskId: "",
+      currentLockJobId: "",
+      currentLockState: "",
       lastCredit: live.credit,
       trackedCreditTotal: live.credit,
       consumedCredit: 0,
