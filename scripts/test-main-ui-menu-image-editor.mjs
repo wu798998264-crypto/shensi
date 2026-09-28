@@ -307,6 +307,10 @@ try {
   await waitFor("document.querySelector('#editor')?.dataset.document === '' && document.querySelector('#editor .document-tab-empty-state, #editor .workspace-empty-state')", "新作品创作起始空态");
   const indexModuleOrder = await evaluate(`[...document.querySelectorAll('#moduleSwitcher [data-module]')].map((button) => ({ id: button.dataset.module, label: button.textContent.trim() }))`);
   assert.equal(indexModuleOrder[0]?.id, "reports", "索引必须显示在正文上方");
+  // The title and initial save can settle before the asynchronously rendered
+  // chat composer. Do not click a focus action while its destination is still
+  // disabled; a composer that never becomes usable must fail this check.
+  await waitFor("document.querySelector('#chatInput')?.disabled === false", "新作品对话输入区就绪", 30_000);
   await evaluate(`document.querySelector('#creativeStartWelcomeDialog')?.showModal(); document.querySelector('#startCreativeJourney')?.click(); true`);
   await waitFor("document.activeElement?.id === 'chatInput'", "开始创作聚焦右侧对话");
   const creativeGuidanceEntryEvidence = await evaluate(`(() => ({
