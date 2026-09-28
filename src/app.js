@@ -114,7 +114,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.0.0-workbuddy-hy3";
+} from "./generation-profiles.js?v=9.0.1-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
