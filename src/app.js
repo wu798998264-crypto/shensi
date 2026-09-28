@@ -5,7 +5,10 @@ import { conversationAgentRequest, watchConversationAgent, snapshotAgentConfigur
 import { generationResultMayDefaultLand, terminalGenerationAttempt, waitForGenerationAttemptTerminal } from "./generation-attempt-client.js?v=1.0.0-live-task-recovery-2";
 import { candidateLandingProofsForVersion, candidateVersionIsAdopted as candidateVersionStoredAdoption, candidateVersionMatchesCurrentLanding as candidateVersionMatchesStoredLanding, recordCandidateAdoption as recordCandidateAdoptionState } from "./candidate-adoption.js?v=1.0.0";
 import { dreaminaConfigSyncProposal, applyDreaminaConfigSync } from "./dreamina-config-sync-policy.js?v=1.0.0-manual-profile";
-import { dreaminaProfileSwitchMessage } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
+import { dreaminaProfileSwitchMessage, isDreaminaCliSettings } from "./dreamina-manual-profile-policy.js?v=3.0.10-dreamina-lock-dialog";
+import { seedanceReferenceDurationSeconds, seedanceReferenceValidation } from "./seedance-reference-limits.js";
+import { createLocalH3StatusStore } from "./local-h3-runtime-state.js";
+import { mediaRecoveryPromptSignature } from "./media-generation-coordination.js?v=7.5.9-startup-recovery-baseline";
 import { candidateBatchCoversRequestedTargets, mergeAgentExecutionTaskRoute } from "./agent-task-route-merge.js?v=5.4.11-semantic-contract-lock";
 import { mediaResultLifecycleStage } from "./media-result-lifecycle.js?v=3.0.10";
 import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationResultReady, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.7-result-ready";
@@ -4623,13 +4626,14 @@ const rememberCurrentWorkspaceState = () => {
   });
 };
 
-const fetchWorkspaceRequest = async (input, init = {}, timeoutMs = 20_000) => {
+const fetchWorkspaceRequest = async (input, init = {}, timeoutMs = 20_000, readResponse = null) => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new DOMException("工作区读取超时", "TimeoutError")), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    return readResponse ? await readResponse(response) : response;
   } catch (error) {
-    if (controller.signal.aborted) throw new Error("工作区读取超时，请检查磁盘状态后重试");
+    if (controller.signal.aborted) throw Object.assign(new Error("工作区请求超时，请检查磁盘状态后重试；原任务不会重新生成"), { code: "WORKSPACE_REQUEST_TIMEOUT" });
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -4637,14 +4641,15 @@ const fetchWorkspaceRequest = async (input, init = {}, timeoutMs = 20_000) => {
 };
 
 const fetchWorkspacePayload = async (workspacePath, endpoint = "/api/workspace/load", { fresh = false } = {}) => {
-  const response = await fetchWorkspaceRequest(endpoint, {
+  return fetchWorkspaceRequest(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ workspacePath, ...(fresh ? { fresh: true } : {}) }),
-  }, endpoint === "/api/workspace/load" ? 30_000 : 15_000);
-  const payload = await response.json();
-  if (!response.ok || !payload.ok) throw new Error(payload.message || "工作区加载失败");
-  return payload;
+  }, endpoint === "/api/workspace/load" ? 30_000 : 15_000, async (response) => {
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "工作区加载失败");
+    return payload;
+  });
 };
 
 const loadWorkspaceSwitchTarget = async ({ workspaceKind, workspacePath }) => {
@@ -5432,13 +5437,12 @@ const flushRecoveryCheckpoint = async ({ throwOnError = false, keepalive = false
   const operation = (async () => {
     try {
       const request = await workspaceSaveRequest(recoveryCheckpointPayload(), { compressionThresholdBytes: 256 * 1024 });
-      const response = await fetch("/api/recovery/checkpoint", {
+      const { response, payload } = await fetchWorkspaceRequest("/api/recovery/checkpoint", {
         method: "POST",
         headers: request.headers,
         body: request.body,
         keepalive: keepalive && request.encodedBytes <= 60 * 1024,
-      });
-      const payload = await response.json();
+      }, 30_000, async (response) => ({ response, payload: await response.json() }));
       if (!response.ok || !payload.ok) throw new Error(payload.message || "恢复检查点写入失败");
       ui.recoveryCheckpointRevision = Math.max(ui.recoveryCheckpointRevision, revision);
       ui.recoveryCheckpointDraftRevision = Math.max(ui.recoveryCheckpointDraftRevision, draftRevision);
@@ -5500,6 +5504,7 @@ const ensureCurrentRecoveryCheckpoint = async () => {
     } catch (error) {
       lastError = error;
     }
+    if (lastError?.code === "WORKSPACE_REQUEST_TIMEOUT") break;
     if (attempts < 4) await new Promise((resolve) => setTimeout(resolve, attempts * 60));
   }
   if (ui.recoveryCheckpointRevision >= ui.workspaceRevision && !whiteboardGenerationDraftNeedsRecoveryCheckpoint()) return true;
@@ -6084,31 +6089,17 @@ const mediaCapabilityProbeKey = (channel, profileId) => `${channel}:${profileId 
 // 本地 H3 的“已装配”是运行时事实，不依赖媒体能力探测缓存。设置页和
 // 白板栏共用一个短时缓存，避免每次重绘都请求 ComfyUI，同时确保安装完成后
 // 立即隐藏“一键装配”按钮；ready=false 只表示运行时尚未启动，不表示未装配。
-let localH3RuntimeProbeState = { key: "", checkedAt: 0, pending: null, result: null };
-const localH3RuntimeProbeFor = async (profile = {}) => {
-  const key = String(profile?.baseUrl || "http://127.0.0.1:8188").trim();
-  const now = Date.now();
-  if (localH3RuntimeProbeState.key === key
-    && localH3RuntimeProbeState.result
-    && now - localH3RuntimeProbeState.checkedAt < 20_000) return localH3RuntimeProbeState.result;
-  if (localH3RuntimeProbeState.key === key && localH3RuntimeProbeState.pending) return localH3RuntimeProbeState.pending;
-  const pending = fetch("/api/local-h3/probe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ baseUrl: key }),
-  }).then(async (response) => {
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.ok === false) throw new Error(payload.message || "本地 H3 状态读取失败");
-    localH3RuntimeProbeState = { key, checkedAt: Date.now(), pending: null, result: payload };
-    return payload;
-  }).catch(() => {
-    const fallback = { installed: false, ready: false, available: false, installable: true, reasons: ["本地 H3 状态暂时不可读取"] };
-    localH3RuntimeProbeState = { key, checkedAt: Date.now(), pending: null, result: fallback };
-    return fallback;
+const localH3Status = createLocalH3StatusStore({ request: async (action, profile) => {
+  const response = await fetch(`/api/local-h3/${action}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ baseUrl: profile.baseUrl || "http://127.0.0.1:8188" }),
+    signal: AbortSignal.timeout(action === "start" ? 25_000 : 20_000),
   });
-  localH3RuntimeProbeState = { ...localH3RuntimeProbeState, key, pending };
-  return pending;
-};
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) throw new Error(payload.message || "本地 H3 状态请求失败");
+  return payload;
+} });
+const localH3RuntimeProbeFor = (profile = {}, options = {}) => localH3Status.probe(profile, options);
 const usesRegisteredMediaDriver = (channel, settings = {}) => channel === "video"
   || (channel === "image" && settings.adapter === "api" && /即梦|dreamina|火山|方舟|volc|ark|可灵|kling|百炼|阿里|dashscope|wanx/i.test(settings.provider))
   || (channel === "image" && settings.adapter === "cli" && settings.cliPath === LIBTV_CLI_ALIAS && String(settings.provider || "").toLowerCase() === "libtv")
@@ -6811,8 +6802,8 @@ const renderVideoModelOptionsInternal = (providerId = state.settings.videoProvid
   const profile = activeGenerationProfile(ui.generationDraftSettings ?? state.settings, "video");
   const probe = mediaCapabilityProbeFor("video", profile);
   const models = getProviderVideoModelOptions(providerId, form.elements.videoAdapter.value).map((item) => {
-    const probeAllowed = modelAllowedByMediaProbe(probe, item.slug, { channel: "video", profile });
-    const localH3AwaitingRuntime = providerId === "本地 H3" && probe?.available !== true;
+    const probeAllowed = providerId === "本地 H3" ? true : modelAllowedByMediaProbe(probe, item.slug, { channel: "video", profile });
+    const localH3AwaitingRuntime = providerId === "本地 H3" && localH3Status.peek(profile).result?.ready !== true;
     const available = item.available !== false && !localH3AwaitingRuntime && (probeAllowed === null ? true : probeAllowed);
     const availabilityNote = item.available === false
       ? item.availabilityNote || "当前渠道不可用"
@@ -6824,6 +6815,10 @@ const renderVideoModelOptionsInternal = (providerId = state.settings.videoProvid
     return { ...item, available, availabilityNote };
   });
   select.innerHTML = `${allowBlank ? '<option value="">请选择视频模型</option>' : ""}${models.map((item) => `<option value="${escapeHtml(item.slug)}" ${item.available === false ? "disabled" : ""} title="${escapeHtml(item.availabilityNote || "")}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}`;
+  if (providerId === "本地 H3") {
+    select.value = models.some((item) => item.slug === current) ? current : models[0]?.slug || "";
+    return;
+  }
   if (allowBlank && !current) {
     select.value = "";
     return;
@@ -8942,7 +8937,7 @@ root.innerHTML = `
                 <label class="wide">${modelFieldHelpButton("video", "cliPath", "视频 CLI 程序路径")}<input name="videoCliPath" type="text" placeholder="视频生成 CLI 的程序名或绝对路径" /></label>
                 <label class="wide">${modelFieldHelpButton("video", "cliArgs", "视频 CLI 参数模板")}<input name="videoCliArgs" type="text" placeholder="支持 {promptFile} {referenceImagesFile} {model} {aspectRatio} {duration} {resolution} {mode} {outputFile}" /></label>
                 <p class="wide model-channel-note">视频任务会在后台持续运行。即梦 CLI、OpenAI、火山方舟、可灵和阿里云百炼均按各自原生协议提交、查询、取消与下载；未通过能力检测的型号不能提交。</p>
-                <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="installLocalH3" type="button" hidden>${icon("\uE9D9")}<span>一键装配本地 H3</span></button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
+                <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="installLocalH3" type="button" hidden>${icon("\uE9D9")}<span>一键装配本地 H3</span></button><button class="secondary-button" id="startLocalH3" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="stopLocalH3" type="button" hidden>停止本地 H3</button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="video">${icon("\uE710")}<span>新增视频配置</span></button>
               </div>
             </div>
@@ -9687,7 +9682,7 @@ root.innerHTML = `
           </section>
         </div>
       </div>
-      <div class="whiteboard-local-h3-notice" id="whiteboardLocalH3Notice" hidden><span>本地 H3 使用本机 GPU/CPU 运行，首次启动可能需要数分钟。</span><button class="secondary-button" id="whiteboardLocalH3Install" type="button">一键装配本地 H3</button></div>
+      <div class="whiteboard-local-h3-notice" id="whiteboardLocalH3Notice" hidden><span>本地 H3 使用本机 GPU/CPU 运行，首次启动可能需要数分钟。</span><button class="secondary-button" id="whiteboardLocalH3Install" type="button">一键装配本地 H3</button><button class="secondary-button" id="whiteboardLocalH3Start" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="whiteboardLocalH3Stop" type="button" hidden>停止本地 H3</button></div>
       <footer class="whiteboard-generation-footer"><output class="whiteboard-generation-credit" id="whiteboardVideoCreditEstimate" hidden aria-live="polite"></output><span class="whiteboard-generation-footer-actions"><button class="secondary-button whiteboard-generation-cancel" type="button" data-close-whiteboard-dialog>${icon("\uE711", "关闭")}<span class="whiteboard-generation-button-label">关闭</span></button><button class="primary-button whiteboard-generation-submit" type="submit" aria-label="生成视频"><span class="whiteboard-generation-button-label">生成视频</span><span class="whiteboard-generation-submit-glyph" aria-hidden="true">${icon("\uE74A")}</span></button></span></footer>
     </form>
   </dialog>
@@ -14460,6 +14455,8 @@ const whiteboardGenerationJobTarget = ({ workspaceKind = state.workspaceKind, wo
   workspaceKind,
   workspacePath,
   documentId,
+  documentTitle: state.documents?.[documentId]?.title || "",
+  documentKind: state.documents?.[documentId]?.documentKind || "whiteboard",
   nodeId,
   // Persist the user-facing card label with the task. Recovery dialogs can be
   // shown after a workspace switch/restart, when the live DOM is unavailable;
@@ -14472,6 +14469,7 @@ const whiteboardGenerationJobTarget = ({ workspaceKind = state.workspaceKind, wo
   })(),
 });
 
+const currentSessionMediaJobIds = new Set();
 const postGenerationJobAction = async (path, body = {}, { transportRetries = 0 } = {}) => {
   let lastError = null;
   for (let attempt = 0; attempt <= Math.max(0, Number(transportRetries) || 0); attempt += 1) {
@@ -14498,6 +14496,10 @@ const postGenerationJobAction = async (path, body = {}, { transportRetries = 0 }
         error.responseReceived = true;
         throw error;
       }
+      if (job.mode === "server" && (/\/jobs\/media$/.test(path) || /\/(?:resume|retry|reconcile)$/.test(path))) {
+        currentSessionMediaJobIds.add(job.id);
+        promptLiveMediaJobRecovery(job);
+      }
       return job;
     } catch (error) {
       lastError = error;
@@ -14512,6 +14514,12 @@ const postGenerationJobAction = async (path, body = {}, { transportRetries = 0 }
 
 const whiteboardMediaSubmissionFlights = new Map();
 const createWhiteboardMediaGenerationJob = ({ channel, target, request, forceNewGeneration = false, regenerationOfJobId = "" }) => {
+  const sameWorkspace = normalizedWorkspacePath(target?.workspacePath) === normalizedWorkspacePath(state.settings.workspacePath);
+  target = {
+    ...target,
+    documentTitle: target?.documentTitle || (sameWorkspace ? state.documents?.[target?.documentId]?.title : "") || "",
+    documentKind: target?.documentKind || (sameWorkspace ? state.documents?.[target?.documentId]?.documentKind : "") || (target?.nodeId ? "whiteboard" : "document"),
+  };
   const submissionId = String(request?.submissionId || uid("media-submission"));
   const targetsWhiteboardNode = target?.targetType === "whiteboard-node"
     || (!target?.targetType && Boolean(target?.nodeId));
@@ -14596,7 +14604,11 @@ const createWhiteboardMediaGenerationJob = ({ channel, target, request, forceNew
         });
       },
     },
-  ).finally(() => whiteboardMediaSubmissionFlights.delete(flightKey));
+  ).then((job) => {
+    currentSessionMediaJobIds.add(job.id);
+    promptLiveMediaJobRecovery(job);
+    return job;
+  }).finally(() => whiteboardMediaSubmissionFlights.delete(flightKey));
   whiteboardMediaSubmissionFlights.set(flightKey, operation);
   return operation;
 };
@@ -14649,7 +14661,7 @@ const setWhiteboardGenerationSubmitBusy = (form, busy) => {
   if (!form) return;
   const button = form.querySelector('button[type="submit"]');
   if (button) {
-    button.disabled = busy;
+    button.disabled = busy || form.dataset.runtimeUnavailable === "true";
     button.setAttribute("aria-busy", String(busy));
   }
   form.setAttribute("aria-busy", String(busy));
@@ -15402,6 +15414,7 @@ const fetchWhiteboardGenerationJob = async (jobId) => {
     error.code = "GENERATION_JOB_ID_MISMATCH";
     throw error;
   }
+  promptLiveMediaJobRecovery(payload.job);
   return payload.job;
 };
 
@@ -16816,7 +16829,7 @@ const mediaRecoveryJobNeedsAccountVerification = (job = {}) => (
 const mediaRecoveryJobTargetLabel = (job) => {
   const target = job?.target ?? {};
   const documentTitle = state.documents?.[target.documentId]?.title;
-  const documentLabel = documentTitle || target.documentId || "未命名文档";
+  const documentLabel = target.documentTitle || documentTitle || target.documentId || "未命名文档";
   const liveNode = target.nodeId && state.documents?.[target.documentId]?.documentKind === "whiteboard"
     ? normalizeCanvas(state.documents[target.documentId].canvas).nodes.find((node) => node.id === target.nodeId)
     : null;
@@ -16863,7 +16876,7 @@ const renderMediaRecoveryJobs = (jobs = []) => {
     const actionsMarkup = actions || reapply || verify
       ? `<div class="media-generation-actions recovery-dialog-actions">${actions}${reapply}${verify}</div>`
       : '<small class="media-recovery-no-action">请先重新读取任务状态。</small>';
-    return `<article class="media-recovery-item" data-media-recovery-job="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : job.channel === "image" ? "图片任务" : "媒体任务")}</strong><small>${escapeHtml(status || "未知状态")}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(mediaGenerationPhaseText(job))}</p>${actionsMarkup}</article>`;
+    return `<article class="media-recovery-item" data-media-recovery-job="${escapeHtml(job.id)}"><header><strong>${escapeHtml(job.channel === "video" ? "视频任务" : job.channel === "image" ? "图片任务" : "媒体任务")}</strong><small>${escapeHtml(status || "未知状态")}</small></header><p>${escapeHtml(mediaRecoveryJobTargetLabel(job))}</p><p>${escapeHtml(job.runtimeAttentionReason || mediaGenerationPhaseText(job))}</p>${actionsMarkup}</article>`;
   }).join("");
 };
 
@@ -16909,6 +16922,21 @@ const openMediaRecoveryDialog = async () => {
 let mediaRecoveryFullScanKey = "";
 const mediaRecoveryPromptedJobSignatures = new Map();
 const mediaRecoveryBaselinedScanKeys = new Set();
+
+const promptLiveMediaJobRecovery = (job) => {
+  // Only jobs explicitly submitted/resumed in this renderer session can
+  // auto-open a dialog. Restoring history never enrolls a job here.
+  if (!job?.id || !currentSessionMediaJobIds.has(job.id)) return;
+  if (!mediaRecoveryJobBlocksOperation(job)) {
+    mediaRecoveryPromptedJobSignatures.delete(job.id);
+    return;
+  }
+  if (!mediaRecoveryJobIsActionable(job) || document.visibilityState === "hidden") return;
+  const signature = mediaRecoveryPromptSignature(job);
+  if (mediaRecoveryPromptedJobSignatures.get(job.id) === signature) return;
+  mediaRecoveryPromptedJobSignatures.set(job.id, signature);
+  void openMediaRecoveryDialog();
+};
 
 const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = false, manual = false, allowAttentionPrompt = false } = {}) => {
   if (manual) showMediaRecoveryBanner("正在重新读取本机媒体任务与厂商续接状态…", { checking: true });
@@ -18714,13 +18742,15 @@ const scheduleWhiteboardMediaHydration = () => {
           + Math.abs(centerY - editorRect.top - editorRect.height / 2);
         return { image, visible, distance, index };
       })
-      .sort((a, b) => Number(b.visible) - Number(a.visible) || a.distance - b.distance || a.index - b.index);
+      .filter(({ visible }) => visible)
+      .sort((a, b) => a.distance - b.distance || a.index - b.index);
     let hydrated = 0;
     while (queue.length && hydrated < WHITEBOARD_DEFERRED_IMAGE_BATCH) {
       const { image } = queue.shift();
       const source = String(image?.dataset?.whiteboardDeferredSrc || "");
       if (!image?.isConnected) continue;
       if (source) {
+        image.setAttribute("loading", "eager");
         image.src = source;
         delete image.dataset.whiteboardDeferredSrc;
       } else if (image.matches("img.whiteboard-card-image[loading=\"lazy\"], img.whiteboard-card-overview-image[loading=\"lazy\"]")) {
@@ -19205,7 +19235,7 @@ const renderWhiteboard = (documentState) => {
       relationActive,
       focused: ui.whiteboardFocusedNodeId === node.id,
       mediaIdentity: visibleMediaIdentity,
-      signature: whiteboardCardRenderSignature({ stableNode: whiteboardStableNodeRenderSignature(node), candidate, editing, generating, lowDetail, activeVideo, generationElapsedDismissed, pendingGenerationType, visibleText: lowDetail ? "" : visibleText, visibleKind: visibleNode.kind, visibleFile: visibleNode.file || "", cardOrigin }),
+      signature: whiteboardCardRenderSignature({ stableNode: whiteboardStableNodeRenderSignature(node), candidate, editing, generating, lowDetail, activeVideo, generationElapsedDismissed, pendingGenerationType, visibleText: lowDetail ? "" : visibleText, visibleKind: visibleNode.kind, visibleFile: visibleNode.file || "", cardOrigin, depthExplorerRuntimeSignature, depthExplorerInputSignature }),
       markup,
     };
     whiteboardCardRecords.set(node.id, { sourceNode: node, candidate, context: renderContext, record });
@@ -25204,6 +25234,7 @@ const renderUpdateButton = () => {
 
 const generationConnectionIsConfigured = (channel, profile) => {
   if (!profile) return false;
+  if (channel === "video" && profile.provider === "本地 H3") return Boolean(profile.baseUrl && profile.model);
   if (channel === "audio" && profile.reserved !== false
     && !(profile.adapter === "cli" && profile.cliPath === LIBTV_CLI_ALIAS && String(profile.provider || "").toLowerCase() === "libtv")) return false;
   // A verified Agent profile may use a custom/public endpoint. Its portable
@@ -25219,6 +25250,7 @@ const generationConnectionIsConfigured = (channel, profile) => {
 
 const generationConnectionIsAvailable = (channel, profile) => {
   if (!generationConnectionIsConfigured(channel, profile)) return false;
+  if (channel === "video" && profile.provider === "本地 H3") return localH3Status.peek(profile).result?.ready === true;
   if (channel === "text") {
     const probe = textModelCapabilityProbe(profile);
     const model = modelOptionsForProvider(profile.provider, profile.adapter).find((item) => item.slug === profile.model);
@@ -51881,6 +51913,12 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     } else if (action === "install") {
       event.preventDefault();
       openWhiteboardDepthExplorerInstallDialog();
+    } else if (action === "retry") {
+      event.preventDefault();
+      await refreshWhiteboardDepthExplorerPreflight();
+    } else if (action === "reconnect-progress") {
+      event.preventDefault();
+      await whiteboardDepthExplorerRuntimeState(nodeId).reconnect?.();
     } else if (action === "generate") {
       event.preventDefault();
       await runWhiteboardDepthExplorerNode(nodeId);
@@ -52726,7 +52764,6 @@ document.addEventListener("pointerup", (event) => {
         });
         if (capacity.ok) {
           documentState.canvas = nextCanvas;
-          warnWhiteboardAudioReferenceDuration(nextCanvas, connections.map((connection) => connection.toNode));
         }
         else edgeChanged = false;
       }
@@ -53876,6 +53913,9 @@ const checkWhiteboardReferenceCapacity = (canvas, targetNodeIds, {
 } = {}) => {
   for (const nodeId of [...new Set((targetNodeIds ?? []).map(String).filter(Boolean))]) {
     const profile = whiteboardGenerationCapacityProfile(nodeId, { channel, settings });
+    // Provider reference quotas belong to Generate, not canvas editing.
+    if (operation === "connect" && isDreaminaCliSettings(profile.settings || {})
+      && ["seedance2.0", "seedance2.5"].includes(seedanceModelFamily(profile.settings.model))) continue;
     const violation = whiteboardReferenceCapacityViolation(canvas, nodeId, {
       ...profile.limits,
       includeTargetMedia: includeTargetMedia ?? profile.channel === "text",
@@ -53886,47 +53926,6 @@ const checkWhiteboardReferenceCapacity = (canvas, targetNodeIds, {
     return { ok: false, message, violation, profile };
   }
   return { ok: true };
-};
-
-// Seedance 2.5 and the long-video mode accept audio references, but the
-// provider's combined audio-reference duration is capped at 30 seconds. This
-// is intentionally a non-blocking connection hint: the edge is already a
-// valid whiteboard relation and must remain in place so the user can adjust
-// the source later. Submission-time validation keeps the existing generation
-// contract unchanged.
-const warnWhiteboardAudioReferenceDuration = (canvas, targetNodeIds) => {
-  const normalized = normalizeCanvas(canvas);
-  for (const nodeId of [...new Set((targetNodeIds ?? []).map(String).filter(Boolean))]) {
-    const target = normalized.nodes.find((node) => node.id === nodeId);
-    if (!target) continue;
-    const profile = whiteboardGenerationCapacityProfile(nodeId, { channel: "video" });
-    const values = (() => {
-      const openConfig = whiteboardGenerationConfigs().find((config) => (
-        config.dialog.open
-        && config.form.dataset.nodeId === nodeId
-        && config.dialog.dataset.anchorDocumentId === state.activeDocument
-        && config.dialog.dataset.anchorWorkspaceId === workspaceIdentity()
-      ));
-      return openConfig
-        ? whiteboardGenerationFormValues(openConfig.form)
-        : whiteboardGenerationDraftValues("video", nodeId) || {};
-    })();
-    const model = String(values.model || profile.settings?.model || target.generation?.model || "").trim();
-    const generationMode = String(values.generationMode || target.generation?.generationMode || "").trim();
-    if (generationMode !== "long_video" && seedanceModelFamily(model) !== "seedance2.5") continue;
-    const upstream = whiteboardGenerationSources(normalized, nodeId).upstream;
-    const audioDurationMs = upstream
-      .filter((node) => node.kind === "audio")
-      .reduce((total, node) => total + Math.max(
-        0,
-        Number(node.durationMs)
-          || Number(node.attachment?.durationMs)
-          || Number(node.generation?.durationSeconds) * 1000,
-      ), 0);
-    if (audioDurationMs <= 30_000) continue;
-    const seconds = Math.ceil(audioDurationMs / 1000);
-    showToast(`已连接，但当前${generationMode === "long_video" ? "超长视频" : "Seedance 2.5"}的音频参考总时长约 ${seconds} 秒，超过 30 秒上限；生成前请裁剪或减少音频参考。`);
-  }
 };
 
 const whiteboardGenerationDialogDraftScope = (dialog) => {
@@ -56845,7 +56844,7 @@ const videoModelsForConnection = (profile, preferredModel = "") => {
     && probe.models.length > 0;
   const models = getProviderVideoModelOptions(profile.provider, profile.adapter)
     .filter((model) => model.available !== false
-      && (!probeHasAuthoritativeCatalogue || modelAllowedByMediaProbe(probe, model.slug) !== false));
+      && (profile.provider === "本地 H3" || !probeHasAuthoritativeCatalogue || modelAllowedByMediaProbe(probe, model.slug) !== false));
   if (profile.adapter === "cli" && profile.cliPath === LIBTV_CLI_ALIAS && String(profile.provider || "").toLowerCase() === "libtv") {
     for (const slug of probeModelIds(probe?.models)) {
       if (models.some((model) => model.slug === slug)) continue;
@@ -56863,24 +56862,42 @@ const videoModelsForConnection = (profile, preferredModel = "") => {
 const syncLocalH3WhiteboardNotice = () => {
   const notice = document.querySelector("#whiteboardLocalH3Notice");
   const button = document.querySelector("#whiteboardLocalH3Install");
+  const startButton = document.querySelector("#whiteboardLocalH3Start");
+  const stopButton = document.querySelector("#whiteboardLocalH3Stop");
   const form = elements.whiteboardVideoForm;
-  if (!notice || !button || !form) return;
+  if (!notice || !button || !startButton || !stopButton || !form) return;
   const profile = currentVideoGenerationSettings(form.elements.connectionId?.value, form.elements.model?.value);
   const local = String(profile?.provider || "") === "本地 H3";
-  const cachedRuntime = localH3RuntimeProbeState.result;
-  const ready = local && (cachedRuntime?.ready === true || mediaCapabilityProbeFor("video", profile)?.available === true);
+  const runtimeState = localH3Status.peek(profile || {});
+  const cachedRuntime = runtimeState.result;
+  const ready = local && cachedRuntime?.ready === true && !runtimeState.action;
   const installed = local && cachedRuntime?.installed === true;
-  notice.hidden = !local || ready;
-  // 装配完成但 ComfyUI 未启动时也不能再显示“一键装配”；只保留状态提示。
-  button.hidden = !local || installed || ready;
-  if (local && !ready) {
-    const message = installed
-      ? (cachedRuntime?.reasons?.find((reason) => /未就绪|不存在|缺少|失败/u.test(String(reason))) || "本地 H3 已装配，正在等待运行时就绪")
-      : "本地 H3 尚未装配，可点击一键装配";
+  const started = local && cachedRuntime?.started === true;
+  notice.hidden = !local;
+  // Before the first probe the runtime may be completely absent; keep the
+  // one-click installer visible.  Only an actually complete runtime hides it.
+  button.hidden = !local || cachedRuntime?.unknown === true || installed;
+  startButton.hidden = !local || !installed || started;
+  stopButton.hidden = !local || (!started && !cachedRuntime?.uncertain);
+  startButton.disabled = Boolean(runtimeState.action);
+  stopButton.disabled = Boolean(runtimeState.action);
+  form.dataset.runtimeUnavailable = String(local && !ready);
+  setWhiteboardGenerationSubmitBusy(form, form.dataset.generationSubmitBusy === "true");
+  if (local) {
+    const message = runtimeState.action
+      ? (runtimeState.action === "start" ? "正在启动本地 H3…" : "正在停止本地 H3 并释放后台进程…")
+      : runtimeState.error || (!cachedRuntime ? "正在读取本地 H3 运行状态…" : cachedRuntime.unknown ? "本地 H3 状态暂时不可读取，请重新检查"
+      : !installed
+      ? (cachedRuntime?.reasons?.find((reason) => /适配器|不完整/u.test(String(reason))) || "本地 H3 尚未装配，可点击一键装配")
+      : ready
+        ? "本地 H3 已启动，可以生成"
+        : started
+          ? (cachedRuntime?.reasons?.find((reason) => /未就绪|不存在|缺少|失败/u.test(String(reason))) || "本地 H3 已启动，正在等待运行时就绪")
+          : "本地 H3 已装配但未启动；点击启动后才会占用本机资源并可生成");
     const textNode = notice.querySelector("span");
-    if (textNode) textNode.textContent = `${message}。首次启动可能需要数分钟。`;
-    const probeExpired = !cachedRuntime || Date.now() - Number(localH3RuntimeProbeState.checkedAt || 0) >= 20_000;
-    if (probeExpired) void localH3RuntimeProbeFor(profile).then(() => syncLocalH3WhiteboardNotice());
+    if (textNode) textNode.textContent = `${message}。不需要 API Key。`;
+    const probeExpired = !cachedRuntime || Date.now() - Number(runtimeState.checkedAt || 0) >= 20_000;
+    if (probeExpired && !runtimeState.pending) void localH3RuntimeProbeFor(profile).then(() => syncLocalH3WhiteboardNotice());
   }
 };
 
@@ -57235,6 +57252,7 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
       initializationToken,
     );
     renderWhiteboardGenerationCredit("video");
+    syncLocalH3WhiteboardNotice();
     const activeProfile = whiteboardPickerProfile(
       "video",
       elements.whiteboardVideoForm.elements.connectionId.value,
@@ -58187,7 +58205,7 @@ const whiteboardDepthExplorerRuntimeState = (nodeId, documentId = state.activeDo
 
 const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.activeDocument) => {
   const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
-  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads]);
+  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, runtime.progressInterrupted, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads, whiteboardDepthExplorerPreflight?.installable, whiteboardDepthExplorerPreflight?.reasons]);
 };
 
 const whiteboardDepthExplorerNodeMediaKind = (node) => {
@@ -58285,8 +58303,8 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${loading || runtime.busy ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading || runtime.busy ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
-     ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="${whiteboardDepthExplorerPreflight.installable ? "install" : "retry"}">${whiteboardDepthExplorerPreflight.installable ? "一键装配" : "重新检查"}</button>` : `<button class="whiteboard-depth-generate${loading || runtime.busy ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading || runtime.busy ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
+     ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}${runtime.progressInterrupted ? '<button type="button" data-whiteboard-depth-action="reconnect-progress">重新连接进度</button>' : ""}</small>
   </div>`;
 };
 
@@ -58302,13 +58320,14 @@ const ensureWhiteboardDepthExplorerPreflight = async () => {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{}",
+    signal: AbortSignal.timeout(10_000),
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.ok === false) throw new Error(payload.message || "本地运行环境检查失败");
+    if (!response.ok || payload.ok === false || typeof payload.available !== "boolean") throw new Error(payload.message || "本地运行环境检查失败");
     whiteboardDepthExplorerPreflight = payload;
     return payload;
   }).catch((error) => {
-    whiteboardDepthExplorerPreflight = { available: false, reasons: [error.message || "本地运行环境检查失败"] };
+    whiteboardDepthExplorerPreflight = { available: false, installable: false, reasons: [error.name === "TimeoutError" ? "本地能力读取超时，请点击重新检查" : error.message || "本地运行环境检查失败"] };
     return whiteboardDepthExplorerPreflight;
   }).finally(() => {
     whiteboardDepthExplorerProbePromise = null;
@@ -58331,7 +58350,8 @@ const renderDepthExplorerInstallProgress = ({ percent = 0, message = "等待开�
 
 const refreshWhiteboardDepthExplorerPreflight = async () => {
   whiteboardDepthExplorerPreflight = null;
-  whiteboardDepthExplorerProbePromise = null;
+  const currentDocument = activeWhiteboardDocument();
+  if (currentDocument) renderWhiteboard(currentDocument);
   await ensureWhiteboardDepthExplorerPreflight();
   const documentState = activeWhiteboardDocument();
   if (documentState) renderWhiteboard(documentState);
@@ -58452,6 +58472,7 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     settings: whiteboardDepthExplorerSettings(node),
   };
   runtime.busy = true;
+  runtime.progressInterrupted = false;
   runtime.completed = 0;
   runtime.total = inputs.length;
   runtime.currentPercent = 0;
@@ -58493,48 +58514,72 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
       });
       runtime.createdOutputs += nodeIds.length;
     };
-    for (;;) {
-      // Keep the node visibly alive while the local worker is running.  A
-      // 250ms cadence is fast enough for a smooth progress bar without
-      // turning status polling into a busy loop.
-      await new Promise((resolveWait) => window.setTimeout(resolveWait, 250));
-      const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store" });
-      const status = await statusResponse.json().catch(() => ({}));
-      const completed = Number(status.completed);
-      const total = Number(status.total);
-      const currentPercent = Number(status.currentPercent);
-      const percent = Number(status.percent);
-      // Keep the last known value when a worker status response is partial.
-      // Progress must never jump backwards while an output is being saved.
-      runtime.completed = Number.isFinite(completed) ? Math.max(runtime.completed || 0, completed) : runtime.completed || 0;
-      runtime.total = Number.isFinite(total) && total > 0 ? total : runtime.total || inputs.length;
-      runtime.currentPercent = Number.isFinite(currentPercent) ? Math.max(0, Math.min(100, currentPercent)) : runtime.currentPercent || 0;
-      const derivedPercent = runtime.total > 0 ? (runtime.completed / runtime.total) * 100 : 0;
-      runtime.percent = Number.isFinite(percent) ? Math.max(runtime.percent || 0, Math.min(100, percent)) : Math.max(runtime.percent || 0, derivedPercent);
-      runtime.message = String(status.message || "正在处理");
-      createAvailableOutputs(status.outputs);
-      rerenderWhiteboardDepthExplorerNode(nodeId);
-      if (status.status === "complete") { payload = status; break; }
-      if (status.status === "failed" || status.status === "missing") throw new Error(status.error || status.message || "深度摸索失败");
-    }
-    if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
-    if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
-    const outputs = payload.outputs || [];
-    createAvailableOutputs(outputs);
-    runtime.completed = Math.max(runtime.completed || 0, outputs.length);
-    runtime.total = Math.max(runtime.total || 0, outputs.length, inputs.length);
-    runtime.currentPercent = 100;
-    runtime.percent = 100;
-    runtime.message = "深度摸索已完成";
-    runtime.busy = false;
-    if (runtime.createdOutputs !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
-    showToast(`深度摸索完成，已创建 ${runtime.createdOutputs} 个下游卡片`);
+    let taskPending = true;
+    const monitorProgress = async () => {
+      for (;;) {
+        // The endpoint allows 180 requests/minute. 250ms polling exceeded that
+        // after 45s; share the budget across concurrently visible depth jobs.
+        const activeDepthRuns = [...whiteboardDepthExplorerRuntime.values()].filter((entry) => entry.busy).length;
+        await new Promise((resolveWait) => window.setTimeout(resolveWait, Math.max(750, activeDepthRuns * 600)));
+        const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+        const status = await statusResponse.json().catch(() => ({}));
+        if (statusResponse.ok && ((status.ok === true && ["complete", "failed"].includes(status.status)) || status.status === "missing")) taskPending = false;
+        if (!statusResponse.ok || status.ok !== true || !["queued", "running", "complete", "failed"].includes(status.status)) throw new Error(status.error || status.message || "深度进度读取失败，请稍后查看任务；不会自动重复生成");
+        const completed = Number(status.completed);
+        const total = Number(status.total);
+        const currentPercent = Number(status.currentPercent);
+        const percent = Number(status.percent);
+        // Keep the last known value when a worker status response is partial.
+        // Progress must never jump backwards while an output is being saved.
+        runtime.completed = Number.isFinite(completed) ? Math.max(runtime.completed || 0, completed) : runtime.completed || 0;
+        runtime.total = Number.isFinite(total) && total > 0 ? total : runtime.total || inputs.length;
+        runtime.currentPercent = Number.isFinite(currentPercent) ? Math.max(0, Math.min(100, currentPercent)) : runtime.currentPercent || 0;
+        const derivedPercent = runtime.total > 0 ? (runtime.completed / runtime.total) * 100 : 0;
+        runtime.percent = Number.isFinite(percent) ? Math.max(runtime.percent || 0, Math.min(100, percent)) : Math.max(runtime.percent || 0, derivedPercent);
+        runtime.message = String(status.message || "正在处理");
+        createAvailableOutputs(status.outputs);
+        rerenderWhiteboardDepthExplorerNode(nodeId);
+        if (status.status === "complete") { payload = status; break; }
+        if (status.status === "failed") throw new Error(status.error || status.message || "深度摸索失败");
+      }
+      if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
+      if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
+      const outputs = payload.outputs || [];
+      createAvailableOutputs(outputs);
+      runtime.completed = Math.max(runtime.completed || 0, outputs.length);
+      runtime.total = Math.max(runtime.total || 0, outputs.length, inputs.length);
+      runtime.currentPercent = 100;
+      runtime.percent = 100;
+      runtime.message = "深度摸索已完成";
+      runtime.busy = false;
+      if (runtime.createdOutputs !== outputs.length || !outputs.length) throw new Error("深度结果已保存，但下游卡片创建失败");
+      showToast(`深度摸索完成，已创建 ${runtime.createdOutputs} 个下游卡片`);
+    };
+    runtime.reconnect = async () => {
+      if (runtime.reconnecting) return;
+      runtime.reconnecting = true;
+      runtime.progressInterrupted = false;
+      runtime.error = "";
+      try { await monitorProgress(); }
+      catch (error) {
+        runtime.error = error.message || "深度进度读取中断";
+        runtime.progressInterrupted = taskPending;
+        runtime.message = taskPending ? `${runtime.error}；处理任务已保留，可重新连接进度，不会重复生成` : runtime.error;
+        showToast(runtime.message);
+      } finally {
+        runtime.reconnecting = false;
+        runtime.busy = taskPending;
+        if (!taskPending) whiteboardMediaEditBusyNodeIds.delete(nodeId);
+        rerenderWhiteboardDepthExplorerNode(nodeId, context.documentId);
+      }
+    };
+    await runtime.reconnect();
   } catch (error) {
     runtime.error = error.message || "深度处理失败";
     showToast(runtime.error);
   } finally {
-    runtime.busy = false;
-    whiteboardMediaEditBusyNodeIds.delete(nodeId);
+    runtime.busy = Boolean(runtime.progressInterrupted);
+    if (!runtime.busy) whiteboardMediaEditBusyNodeIds.delete(nodeId);
     rerenderWhiteboardDepthExplorerNode(nodeId, context.documentId);
   }
 };
@@ -58836,9 +58881,11 @@ const videoFileMetadata = (file) => new Promise((resolveMetadata) => {
 const whiteboardVideoAttachmentMetadata = (attachment, {
   workspacePath = state.settings.workspacePath,
   documentId = state.activeDocument,
+  timeoutMs = 8000,
 } = {}) => new Promise((resolveMetadata) => {
+  const mediaTag = String(attachment?.mimeType || "").startsWith("audio/") ? "audio" : "video";
   const existingPreview = attachment?.id
-    ? elements.whiteboardVideoReferences?.querySelector?.(`[data-generation-reference="${CSS.escape(String(attachment.id))}"] video`)
+    ? elements.whiteboardVideoReferences?.querySelector?.(`[data-generation-reference="${CSS.escape(String(attachment.id))}"] ${mediaTag}`)
     : null;
   if (Number.isFinite(existingPreview?.duration) && existingPreview.duration > 0) {
     resolveMetadata({ durationSeconds: existingPreview.duration });
@@ -58849,7 +58896,7 @@ const whiteboardVideoAttachmentMetadata = (attachment, {
     resolveMetadata({ durationSeconds: 0 });
     return;
   }
-  const video = document.createElement("video");
+  const video = document.createElement(mediaTag);
   let settled = false;
   let timer = 0;
   const finish = (durationSeconds = 0) => {
@@ -58860,20 +58907,20 @@ const whiteboardVideoAttachmentMetadata = (attachment, {
     video.load();
     resolveMetadata({ durationSeconds });
   };
-  timer = setTimeout(() => finish(), 8000);
+  timer = setTimeout(() => finish(), timeoutMs);
   video.preload = "metadata";
   video.onloadedmetadata = () => finish(Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0);
   video.onerror = () => finish();
   video.src = workspaceAttachmentUrl(relativePath, documentId, { workspacePath });
 });
 
-const hydrateWhiteboardSmartEditReferences = async (attachments = []) => {
-  const ordered = smartEditOrderedReferences(attachments);
+const hydrateWhiteboardMediaReferenceDurations = async (attachments = [], { includeAudio = false, timeoutMs = 8000 } = {}) => {
   const workspacePath = state.settings.workspacePath;
   const documentId = state.activeDocument;
-  const hydrated = await Promise.all(ordered.map(async (attachment) => {
-    if (!String(attachment?.mimeType || "").startsWith("video/") || Number(attachment.durationSeconds) > 0) return attachment;
-    const metadata = await whiteboardVideoAttachmentMetadata(attachment, { workspacePath, documentId });
+  const hydrated = await Promise.all(attachments.map(async (attachment) => {
+    const type = String(attachment?.mimeType || "").split("/")[0];
+    if (!(type === "video" || (includeAudio && type === "audio")) || seedanceReferenceDurationSeconds(attachment)) return attachment;
+    const metadata = await whiteboardVideoAttachmentMetadata(attachment, { workspacePath, documentId, timeoutMs });
     return metadata.durationSeconds > 0 ? { ...attachment, durationSeconds: metadata.durationSeconds } : attachment;
   }));
   if (normalizedWorkspacePath(state.settings.workspacePath) !== normalizedWorkspacePath(workspacePath)
@@ -58905,6 +58952,8 @@ const hydrateWhiteboardSmartEditReferences = async (attachments = []) => {
   }
   return hydrated;
 };
+
+const hydrateWhiteboardSmartEditReferences = (attachments = []) => hydrateWhiteboardMediaReferenceDurations(smartEditOrderedReferences(attachments));
 
 const whiteboardDroppedFileKind = (file) => {
   const mimeType = attachmentMimeType(file);
@@ -59493,6 +59542,10 @@ const whiteboardMediaReferencePlan = ({ channel, settings, modelAttachments, gen
     validationError = `当前视频模型不能直接读取所选的${unsupportedTypes.map((type) => ({ image: "图片", video: "视频", audio: "音频", unknown: "未知媒体" }[type])).join("、")}参考；请更换支持该输入的模型或取消这些引用`;
   } else if (generationMode === "smart_edit") {
     const validation = smartEditReferenceValidation(references, { requireKnownVideoDuration: true });
+    if (!validation.ok) validationError = validation.message;
+  }
+  if (!validationError && isDreaminaCliSettings(settings)) {
+    const validation = seedanceReferenceValidation({ model: settings.model, references });
     if (!validation.ok) validationError = validation.message;
   }
   if (!validationError && policy.exactImageCount != null && counts.image !== policy.exactImageCount) {
@@ -60524,6 +60577,8 @@ elements.whiteboardVideoForm.elements.model.addEventListener("change", () => {
 document.querySelector("#whiteboardLocalH3Install")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
   const notice = document.querySelector("#whiteboardLocalH3Notice");
+  const profile = currentVideoGenerationSettings(elements.whiteboardVideoForm.elements.connectionId.value) || {};
+  localH3Status.peek(profile).error = "";
   button.disabled = true;
   button.textContent = "正在装配…";
   try {
@@ -60536,12 +60591,47 @@ document.querySelector("#whiteboardLocalH3Install")?.addEventListener("click", a
       if (notice) notice.querySelector("span").textContent = status.message || "正在装配本地 H3…";
     }
     if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
-    if (notice) notice.querySelector("span").textContent = `${status.message || "本地 H3 已装配"}；请启动 ComfyUI 后进行非计费连接检查`;
+    await localH3RuntimeProbeFor(profile, { force: true });
+    if (notice) notice.querySelector("span").textContent = `${status.message || "本地 H3 已装配"}；点击启动后才会运行`;
   } catch (error) {
+    localH3Status.peek(profile).error = `本地 H3 装配失败：${error.message}`;
     if (notice) notice.querySelector("span").textContent = `本地 H3 装配失败：${error.message}`;
   } finally {
     button.disabled = false;
     button.textContent = "一键装配本地 H3";
+    syncLocalH3WhiteboardNotice();
+  }
+});
+document.querySelector("#whiteboardLocalH3Start")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const notice = document.querySelector("#whiteboardLocalH3Notice");
+  const form = elements.whiteboardVideoForm;
+  const profile = currentVideoGenerationSettings(form.elements.connectionId?.value, form.elements.model?.value) || {};
+  button.disabled = true;
+  if (notice) notice.querySelector("span").textContent = "正在启动本地 H3，首次启动可能需要数分钟…";
+  try {
+    const payload = await localH3ControlRequest("start", profile);
+    syncWhiteboardVideoModelOptions(form.elements.model.value, form.elements.generationMode.value);
+  } catch (error) {
+    if (notice) notice.querySelector("span").textContent = `本地 H3 启动失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    syncLocalH3WhiteboardNotice();
+  }
+});
+document.querySelector("#whiteboardLocalH3Stop")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const notice = document.querySelector("#whiteboardLocalH3Notice");
+  const form = elements.whiteboardVideoForm;
+  const profile = currentVideoGenerationSettings(form.elements.connectionId?.value, form.elements.model?.value) || {};
+  button.disabled = true;
+  try {
+    const payload = await localH3ControlRequest("stop", profile);
+    syncWhiteboardVideoModelOptions(form.elements.model.value, form.elements.generationMode.value);
+  } catch (error) {
+    if (notice) notice.querySelector("span").textContent = `本地 H3 停止失败：${error.message}`;
+  } finally {
+    button.disabled = false;
     syncLocalH3WhiteboardNotice();
   }
 });
@@ -60909,6 +60999,12 @@ document.addEventListener("click", (event) => {
 elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   syncWhiteboardRichPromptValue(elements.whiteboardVideoForm);
+  const selectedVideoProfile = currentVideoGenerationSettings(elements.whiteboardVideoForm.elements.connectionId.value, elements.whiteboardVideoForm.elements.model.value);
+  if (selectedVideoProfile?.provider === "本地 H3" && localH3Status.peek(selectedVideoProfile).result?.ready !== true) {
+    showToast("本地 H3 尚未就绪，请先在下方启动并等待显示已启动");
+    syncLocalH3WhiteboardNotice();
+    return;
+  }
   writeWhiteboardGenerationReferenceOrder(elements.whiteboardVideoForm, whiteboardGenerationReferenceOrder(elements.whiteboardVideoForm));
   const formData = new FormData(elements.whiteboardVideoForm);
   const nodeId = elements.whiteboardVideoForm.dataset.nodeId;
@@ -60952,6 +61048,26 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
       provider: videoSettings?.provider || "",
       adapter: videoSettings?.adapter || "",
     });
+    if (isDreaminaCliSettings(videoSettings || {})
+      && ["seedance2.0", "seedance2.5"].includes(seedanceModelFamily(videoSettings.model))) {
+      // Count from the selected upstream cards before account checks, web
+      // hydration or prompt compilation. Known metadata returns immediately.
+      const earlyContext = whiteboardGenerationContext(nodeId, String(formData.get("explicitReferences") || "").split(",").filter(Boolean), rawPrompt, {
+        includeTarget: formData.get("includeTargetReference") === "true",
+        referenceOrder: String(formData.get("referenceOrder") || "").split(",").filter(Boolean),
+      });
+      let validation = seedanceReferenceValidation({ model: videoSettings.model, references: earlyContext.modelAttachments, requireKnownDuration: false });
+      if (validation.ok && seedanceModelFamily(videoSettings.model) === "seedance2.5") {
+        const references = await hydrateWhiteboardMediaReferenceDurations(earlyContext.modelAttachments, { includeAudio: true, timeoutMs: 2500 });
+        validation = seedanceReferenceValidation({ model: videoSettings.model, references });
+      }
+      if (!validation.ok) {
+        cancelSubmissionFeedback();
+        showToast(`${validation.message}；未提交计费任务`);
+        finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "video", form: elements.whiteboardVideoForm });
+        return;
+      }
+    }
     if (!(await ensureDreaminaGenerationAccountAvailable(videoSettings, { channel: "video" }))) {
       cancelSubmissionFeedback();
       finishWhiteboardMediaSubmissionAttempt({ key: submissionLockKey, token: submissionLockToken, channel: "video", form: elements.whiteboardVideoForm });
@@ -76073,10 +76189,14 @@ const syncProviderSpecificCliButtons = async () => {
   const imageButton = document.querySelector("#installDreaminaCli");
   const videoButton = document.querySelector("#installDreaminaCliVideo");
   const localH3Button = document.querySelector("#installLocalH3");
+  const localH3StartButton = document.querySelector("#startLocalH3");
+  const localH3StopButton = document.querySelector("#stopLocalH3");
   const openAiImageCliButton = document.querySelector("#useOpenAiImageCli");
   if (imageButton) imageButton.hidden = !isImageDreaminaCli;
   if (videoButton) videoButton.hidden = !isVideoDreaminaCli;
   if (localH3Button) localH3Button.hidden = form.videoProvider.value !== "本地 H3";
+  if (localH3StartButton) localH3StartButton.hidden = true;
+  if (localH3StopButton) localH3StopButton.hidden = true;
   if (form.videoProvider.value === "本地 H3") {
     const h3Profile = activeGenerationProfile(generationWorkingSettings(), "video") || {
       provider: "本地 H3",
@@ -76085,12 +76205,19 @@ const syncProviderSpecificCliButtons = async () => {
       baseUrl: form.videoBaseUrl.value,
     };
     void localH3RuntimeProbeFor(h3Profile).then((probe) => {
-      if (!localH3Button || form.videoProvider.value !== "本地 H3") return;
-      localH3Button.hidden = probe.installed === true;
+      if (!localH3Button || !probe || form.videoProvider.value !== "本地 H3") return;
+      const runtimeState = localH3Status.peek(h3Profile);
+      localH3Button.hidden = probe.installed === true || probe.unknown === true;
+      if (localH3StartButton) localH3StartButton.hidden = probe.installed !== true || probe.started === true;
+      if (localH3StopButton) localH3StopButton.hidden = probe.started !== true && probe.uncertain !== true;
+      if (localH3StartButton) localH3StartButton.disabled = Boolean(runtimeState.action);
+      if (localH3StopButton) localH3StopButton.disabled = Boolean(runtimeState.action);
       if (probe.installed === true && probe.ready !== true) {
         const result = document.querySelector("#videoAdapterResult");
         if (result && !/失败|错误/u.test(result.textContent || "")) {
-          result.textContent = "本地 H3 已装配，等待 ComfyUI 运行时就绪；不需要 API Key";
+          result.textContent = probe.started
+            ? "本地 H3 已启动，正在等待 ComfyUI 运行时就绪；不需要 API Key"
+            : "本地 H3 已装配但未启动；点击启动后才会占用本机资源并可生成；不需要 API Key";
         }
       }
       if (probe.ready === true) renderVideoModelOptions("本地 H3");
@@ -76283,6 +76410,10 @@ const openDreaminaReverifyDialog = ({ settings = null, account = null, checking 
 };
 
 const openDreaminaProfileLockDialog = (decision = {}) => {
+  const target = decision.blockingTarget;
+  if (target?.documentId && normalizedWorkspacePath(target.workspacePath) === normalizedWorkspacePath(state.settings.workspacePath)) {
+    decision = { ...decision, blockingTarget: { ...target, documentTitle: state.documents?.[target.documentId]?.title || target.documentTitle } };
+  }
   const message = dreaminaProfileSwitchMessage(decision);
   // A normal cross-account collision is expected while another Dreamina job
   // is running. It is not an actionable recovery state, so keep the legacy
@@ -76291,6 +76422,7 @@ const openDreaminaProfileLockDialog = (decision = {}) => {
   elements.dreaminaProfileLockMessage.textContent = message;
   if (elements.dreaminaProfileLockDialog?.open) elements.dreaminaProfileLockDialog.close();
   showToast(message);
+  if (decision.blockingTaskNeedsAttention) void openMediaRecoveryDialog();
 };
 
 const renderDreaminaLockOccupants = (jobs = []) => {
@@ -76623,10 +76755,78 @@ document.querySelector("#installLocalH3")?.addEventListener("click", async (even
       result.textContent = status.message || "正在装配本地 H3…";
     }
     if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
-    result.textContent = `${status.message || "本地 H3 已装配"}；请点击“非计费连接检查”确认 ComfyUI 已启动`;
+    await localH3RuntimeProbeFor(localH3SettingsFor(), { force: true });
+    result.textContent = `${status.message || "本地 H3 已装配"}；点击启动后才会运行`;
     renderVideoModelOptions("本地 H3");
   } catch (error) {
     result.textContent = `本地 H3 装配失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    syncProviderSpecificCliButtons();
+  }
+});
+
+const localH3SettingsFor = () => {
+  const form = elements.settingsForm?.elements;
+  return {
+    provider: "本地 H3",
+    adapter: form?.videoAdapter?.value || "api",
+    baseUrl: form?.videoBaseUrl?.value || "http://127.0.0.1:8188",
+  };
+};
+
+const localH3ControlRequest = async (action, settings = localH3SettingsFor()) => {
+  const request = localH3Status.control(action, settings);
+  syncLocalH3WhiteboardNotice();
+  const payload = await request;
+  if (action === "start" && payload.started && !payload.ready) void monitorLocalH3Startup(settings);
+  return payload;
+};
+
+let localH3MonitorRevision = 0;
+const monitorLocalH3Startup = async (settings) => {
+  const revision = ++localH3MonitorRevision;
+  const deadline = Date.now() + 120_000;
+  while (revision === localH3MonitorRevision && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const status = await localH3RuntimeProbeFor(settings, { force: true });
+    syncLocalH3WhiteboardNotice();
+    if (elements.settingsForm?.elements.videoProvider?.value === "本地 H3") syncProviderSpecificCliButtons();
+    if (!status?.started || status.ready) return;
+  }
+  if (revision === localH3MonitorRevision) {
+    localH3Status.peek(settings).error = "启动等待已达两分钟，自动检查已停止；可停止本地 H3，或使用非计费连接检查查看状态";
+    syncLocalH3WhiteboardNotice();
+  }
+};
+
+document.querySelector("#startLocalH3")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#videoAdapterResult");
+  button.disabled = true;
+  if (result) result.textContent = "正在启动本地 H3，首次启动可能需要数分钟…";
+  try {
+    const payload = await localH3ControlRequest("start");
+    if (result) result.textContent = payload.ready ? "本地 H3 已启动，可以生成；不需要 API Key" : "本地 H3 正在加载推理环境，可随时点击停止";
+    renderVideoModelOptions("本地 H3");
+  } catch (error) {
+    if (result) result.textContent = `本地 H3 启动失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    syncProviderSpecificCliButtons();
+  }
+});
+
+document.querySelector("#stopLocalH3")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#videoAdapterResult");
+  button.disabled = true;
+  try {
+    const payload = await localH3ControlRequest("stop");
+    if (result) result.textContent = payload.message || "本地 H3 已停止，已释放后台运行进程";
+    renderVideoModelOptions("本地 H3");
+  } catch (error) {
+    if (result) result.textContent = `本地 H3 停止失败：${error.message}`;
   } finally {
     button.disabled = false;
     syncProviderSpecificCliButtons();
@@ -77820,6 +78020,18 @@ document.querySelector("#testVideoAdapter").addEventListener("click", async () =
   const button = document.querySelector("#testVideoAdapter");
   captureGenerationFormProfile("video");
   const settings = { ...generationSettingsForChannel(generationWorkingSettings(), "video"), videoChannel: true };
+  if (settings.provider === "本地 H3") {
+    button.disabled = true;
+    result.textContent = "正在检查本地 H3（不会自动启动，也不需要 API Key）…";
+    try {
+      const status = await localH3RuntimeProbeFor(settings, { force: true });
+      result.textContent = status?.ready ? "本地 H3 已启动，固定工作流节点检查通过；真实生成仍需单独验收" : status?.reasons?.join("；") || "本地 H3 尚未启动";
+      if (status?.ready) localH3Status.peek(settings).error = "";
+      renderVideoModelOptions("本地 H3");
+      syncLocalH3WhiteboardNotice();
+    } finally { button.disabled = false; syncProviderSpecificCliButtons(); }
+    return;
+  }
   if (settings.adapter === "api" && !settings.apiKey) {
     result.textContent = "请先填写当前视频连接的 API Key";
     return;

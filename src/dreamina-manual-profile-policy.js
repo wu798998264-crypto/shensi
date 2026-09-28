@@ -84,6 +84,18 @@ export const dreaminaJobRequiresCredentialProfile = (job = {}, { nowMs = Date.no
 // communication still requires keeping the current credential profile.
 export const dreaminaJobAwaitsCardResult = dreaminaJobRequiresCredentialProfile;
 
+export const dreaminaBlockingTaskDetails = (job = {}) => ({
+  blockingTarget: {
+    workspacePath: String(job.target?.workspacePath || ""),
+    documentId: String(job.target?.documentId || ""),
+    documentTitle: String(job.target?.documentTitle || ""),
+    documentKind: String(job.target?.documentKind || (job.target?.nodeId ? "whiteboard" : "document")),
+    nodeName: String(job.target?.nodeName || ""),
+  },
+  blockingTaskStatus: String(job.status || ""),
+  blockingTaskNeedsAttention: job.runtimeNeedsAttention === true,
+});
+
 export const dreaminaProfileSwitchDecision = ({ jobs = [], requestedProfileId = "", requestedCredentialIdentity = "", nowMs = Date.now() } = {}) => {
   const requested = validDreaminaCliProfileId(requestedProfileId)
     ? normalizeDreaminaCliProfileId(requestedProfileId)
@@ -117,6 +129,7 @@ export const dreaminaProfileSwitchDecision = ({ jobs = [], requestedProfileId = 
     queuedBehindCurrent: false,
     activeProfileId,
     blockingJobId: String(active.id || ""),
+    ...dreaminaBlockingTaskDetails(active),
   };
 };
 
@@ -128,6 +141,9 @@ export const dreaminaProfileSwitchMessage = (decision = {}) => {
     return `即梦配置“${current}”的一次${channel}提交没有返回可确认的厂商任务编号，账号核验状态仍然有效。任务记录已经保留，凭证锁已经释放，不影响新的生成；可在原卡片继续找回或手动停止。不要重复核验账号。`;
   }
   const current = String(decision.activeProfileId || "当前配置");
-  return `即梦 CLI 当前只有一个共享凭证锁。配置“${current}”仍处于提交、生成、下载或结果回写链路；同一配置可继续提交，其他即梦配置暂时无法生成。任务完成、明确失败或手动终止后会立即释放切换限制。非即梦配置不受影响。`;
+  const target = decision.blockingTarget || {};
+  const title = target.documentTitle || target.documentId;
+  const location = [target.workspacePath, title ? `${target.documentKind === "whiteboard" ? "白板" : "文档"}《${title}》` : "", target.nodeName ? `卡片《${target.nodeName}》` : ""].filter(Boolean).join(" → ");
+  return `即梦 CLI 只有一个共享凭证锁，正在被配置“${current}”的任务使用。${location ? `占用位置：${location}。` : decision.blockingJobId ? `占用任务：${decision.blockingJobId}。` : ""}该任务仍在提交、生成、下载或结果回写；同一配置可继续提交，其他即梦配置暂时无法生成。任务完成、明确失败或手动终止后释放；非即梦配置不受影响。`;
 };
 import { normalizeDreaminaCliProfileId, validDreaminaCliProfileId } from "./media-cli-presets.js";

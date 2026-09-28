@@ -132,8 +132,8 @@ assert.doesNotMatch(app, /String\(error\?\.code \|\| ""\)\.toUpperCase\(\) === "
   "白板异常分支不得再仅凭裸错误文字打开核验弹窗");
 assert.match(worker, /dreaminaFailureRequiresAccountVerification/,
   "后台任务必须使用同一结构化协议决定 waiting_credentials");
-assert.match(worker, /const explicitDreaminaAccountVerificationFailure = \(job, error\) => dreaminaCliMediaJob\(job\)[\s\S]{0,320}dreaminaFailureRequiresAccountVerification/u,
-  "明确未登录或原任务会话失效必须进入账号核验分支");
+assert.match(worker, /const explicitDreaminaAccountVerificationFailure = \(job, error\) => \{[\s\S]{0,380}dreaminaFailureRequiresAccountVerification/u,
+  "明确未登录必须使用结构化错误分类，原任务会话失效不得冒充账号掉线");
 assert.match(worker, /if \(explicitDreaminaAccountVerificationFailure\(job, error\)\) throw error/u,
   "恢复原厂商任务时遇到明确掉线必须跳过普通传输重试");
 assert.match(worker, /code: explicitDreaminaAccountVerification \? "" : providerCode/u,

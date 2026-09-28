@@ -167,7 +167,7 @@ import {
 } from "./src/server/generation-job-store.mjs";
 import { launchMediaGenerationWorker, terminateMediaGenerationWorker } from "./src/server/media-worker-manager.mjs";
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
-import { localH3InstallStatus, probeLocalH3Runtime, startLocalH3Install } from "./src/server/local-h3-runtime.mjs";
+import { localH3InstallStatus, probeLocalH3Runtime, startLocalH3Install, startLocalH3Runtime, stopLocalH3Runtime } from "./src/server/local-h3-runtime.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
 import { recordDreaminaProfileGenerationSuccess } from "./src/server/dreamina-profile-identity-store.mjs";
@@ -4292,6 +4292,12 @@ const handleApiRequest = async (request, response, pathname) => {
       if (action === "resume") {
         const previous = await getGenerationJob({ jobId });
         if (["queued", "submitting", "running", "polling", "downloading"].includes(previous.status)) {
+          if (previous.runtimeNeedsAttention && previous.providerTaskId) {
+            assertMediaGenerationProfileIdentity({ job: previous, settings: body.settings ?? {} });
+            const trustedSettings = await trustedMediaRecoverySettings({ job: previous, suppliedSettings: body.settings ?? {} });
+            launchMediaGenerationWorker({ appRoot: root, jobId: previous.id, settings: { apiKey: trustedSettings.apiKey || "" } });
+            return sendJson(response, 202, { ok: true, job: previous, resumedObservation: true });
+          }
           return sendJson(response, 200, { ok: true, job: previous, alreadyRunning: true });
         }
         if (body.allowNewSubmission === true && !previous.providerTaskId && !previous.idempotencyKey) {
@@ -9694,6 +9700,16 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/local-h3/probe" && request.method === "POST") {
     const body = await readJsonBody(request, 64 * 1024);
     return sendJson(response, 200, { ok: true, ...(await probeLocalH3Runtime({ settings: body || {} })) });
+  }
+
+  if (pathname === "/api/local-h3/start" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await startLocalH3Runtime({ settings: body || {} })) });
+  }
+
+  if (pathname === "/api/local-h3/stop" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await stopLocalH3Runtime({ settings: body || {} })) });
   }
 
   if (pathname === "/api/local-h3/install" && request.method === "POST") {

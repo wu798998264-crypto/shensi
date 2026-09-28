@@ -3,6 +3,8 @@ import { mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "nod
 import { basename, dirname, join, resolve } from "node:path";
 import { appDataRoot } from "./app-data.mjs";
 import { sanitizeMediaProviderPrompt } from "../media-prompt.js";
+import { seedanceReferenceValidation } from "../seedance-reference-limits.js";
+import { dreaminaWorkerObservationStalled } from "./media-worker-continuation.mjs";
 import { normalizeNovelCoverAssetMetadata } from "../novel-cover-design.js";
 import {
   LONG_VIDEO_MAX_DURATION_SECONDS,
@@ -21,6 +23,7 @@ import {
 } from "./media-profile-signature.mjs";
 import {
   dreaminaCredentialIdentity,
+  dreaminaBlockingTaskDetails,
   dreaminaJobRequiresCredentialProfile,
   dreaminaProfileSwitchDecision,
   dreaminaProfileSwitchMessage,
@@ -375,10 +378,13 @@ export const publicGenerationJob = (job) => {
   safe.elapsedMs = generationJobElapsedMs(safe);
   safe.userStopped = Boolean(safe.userStoppedAt || safe.resultSuppressed);
   safe.cancelPending = !terminal && safe.desiredAction === "cancel";
+  safe.runtimeNeedsAttention = !terminal && !safe.cancelPending && dreaminaWorkerObservationStalled(safe, { isProcessAlive: processIsAlive });
+  safe.runtimeAttentionReason = safe.runtimeNeedsAttention
+    ? "本机续查进程已退出且超过计划查询时间，厂商任务结果尚未确认。可点击找回结果继续核对原任务，不会重新提交或重复扣费。" : "";
   safe.availableActions = serverMedia ? {
     stop: !terminal && !replacementPending && !safe.userStopped && safe.desiredAction !== "cancel",
     cancel: !terminal && !replacementPending && !safe.userStopped && safe.desiredAction !== "cancel",
-    resumeOriginal: !terminal && !replacementPending && safe.desiredAction !== "cancel" && Boolean(safe.providerTaskId) && !(safe.status === "failed" && safe.providerStatus === "failed") && (MEDIA_RESUMABLE_STATUSES.has(safe.status) || safe.status === "cancel_requested"),
+    resumeOriginal: !terminal && !replacementPending && safe.desiredAction !== "cancel" && Boolean(safe.providerTaskId) && !(safe.status === "failed" && safe.providerStatus === "failed") && (MEDIA_RESUMABLE_STATUSES.has(safe.status) || safe.status === "cancel_requested" || safe.runtimeNeedsAttention),
     continueCancel: false,
     safeResubmit: safeNoTaskResubmit,
     confirmedResubmit: !safe.userStopped && !safeNoTaskResubmit && !automaticRecoveryInProgress && !terminal && !replacementPending && safe.desiredAction !== "cancel" && (!safe.providerTaskId || (safe.status === "failed" && safe.providerStatus === "failed")) && Boolean(safe.idempotencyKey) && MEDIA_RESUMABLE_STATUSES.has(safe.status),
@@ -416,6 +422,8 @@ const normalizedTarget = (target = {}) => ({
   workspaceKind: target.workspaceKind === "notebook" ? "notebook" : "project",
   workspacePath: String(target.workspacePath || "").trim() ? resolve(String(target.workspacePath).trim()) : "",
   documentId: String(target.documentId || ""),
+  documentTitle: String(target.documentTitle || "").trim().slice(0, 240),
+  documentKind: target.documentKind === "whiteboard" || target.nodeId ? "whiteboard" : "document",
   nodeId: String(target.nodeId || ""),
   nodeName: String(target.nodeName || "").trim().slice(0, 240),
   targetType: ["document-artifact", "conversation-message", "capability-smoke", "composite-long-video-segment"].includes(target.targetType) ? target.targetType : "whiteboard-node",
@@ -695,6 +703,8 @@ export const assertSeedance25VideoRequest = (request = {}) => {
     throw jobTransitionError("Seedance 2.5 当前仅支持智能多参、首尾帧、智能编辑或超长视频模式", "VIDEO_MODEL_OPTIONS_INVALID", 422);
   }
   const references = Array.isArray(request.referenceMedia) ? request.referenceMedia : [];
+  const limits = seedanceReferenceValidation({ model: settings.model, references });
+  if (!limits.ok) throw jobTransitionError(limits.message, limits.code, 422);
   const counts = references.reduce((result, item) => {
     const mimeType = normalizedIdentity(item?.mimeType);
     if (mimeType.startsWith("image/")) result.image += 1;
@@ -726,6 +736,10 @@ export const assertSeedance25VideoRequest = (request = {}) => {
 
 export const assertSeedanceVideoModeRequest = (request = {}) => {
   const settings = request?.settings || {};
+  if (isDreaminaCliSettings(settings) && seedanceModelFamily(settings.model) === "seedance2.0") {
+    const limits = seedanceReferenceValidation({ model: settings.model, references: request.referenceMedia || [] });
+    if (!limits.ok) throw jobTransitionError(limits.message, limits.code, 422);
+  }
   const provider = normalizedIdentity(settings.provider);
   const adapter = normalizedIdentity(settings.adapter);
   const family = seedanceModelFamily(settings.model);
@@ -833,9 +847,14 @@ const normalizedMediaSubmissionId = (value) => {
   return submissionId;
 };
 
-const mediaSubmissionFingerprint = ({ channel, target, request, profileSignature }) => createHash("sha256")
-  .update(JSON.stringify({ channel, target, request: publicRequest(channel, request), profileSignature }), "utf8")
-  .digest("hex");
+const mediaSubmissionFingerprint = ({ channel, target, request, profileSignature }) => {
+  // These new display-only fields must not change old submission identities
+  // or make a document rename turn a transport retry into another job.
+  const { documentTitle: _documentTitle, documentKind: _documentKind, ...identityTarget } = target || {};
+  return createHash("sha256")
+    .update(JSON.stringify({ channel, target: identityTarget, request: publicRequest(channel, request), profileSignature }), "utf8")
+    .digest("hex");
+};
 
 const isGenerationJobEntry = (entry) => entry?.isFile?.() === true
   && /^generation-[a-z0-9-]{20,}\.json$/i.test(entry.name);
@@ -1205,6 +1224,7 @@ export const createMediaGenerationJob = async ({ channel, target, request, repla
             409,
           );
           error.details = {
+            ...dreaminaBlockingTaskDetails(brokerLease.jobId ? await getGenerationJob({ jobId: brokerLease.jobId }).catch(() => null) || {} : {}),
             activeProfileId: brokerLease.profileId,
             blockingJobId: brokerLease.jobId || "",
             blockingChannel: brokerLease.channel || "",

@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
+import { seedanceReferenceValidation } from "../seedance-reference-limits.js";
 import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 import {
   dreaminaCommandForVideoRequest,
@@ -697,6 +698,10 @@ const generationCommand = async () => {
   const duration = option("--duration", "5");
   const ratio = option("--aspect-ratio", "16:9");
   const resolution = option("--resolution", "720p");
+  const referenceValidation = seedanceReferenceValidation({ model, references });
+  if (!referenceValidation.ok) throw Object.assign(new Error(referenceValidation.message), {
+    code: referenceValidation.code, submissionOutcomeKnown: true,
+  });
   const commandName = dreaminaCommandForVideoRequest({ mode, imageCount: images.length, videoCount: videos.length, audioCount: audios.length });
   let capabilities = null;
   if (isSeedance25Model(model) && mode !== "long_video") {

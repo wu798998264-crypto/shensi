@@ -10168,7 +10168,7 @@ textarea.whiteboard-find-textarea-source::selection {
 .whiteboard-depth-progress small {
   display: block;
   overflow: hidden;
-  color: #6b7280;
+  color: var(--text-secondary);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
   line-height: 14px;
@@ -10177,7 +10177,7 @@ textarea.whiteboard-find-textarea-source::selection {
 }
 
 .whiteboard-depth-progress small strong {
-  color: #374151;
+  color: var(--text);
   font-weight: 650;
 }
 

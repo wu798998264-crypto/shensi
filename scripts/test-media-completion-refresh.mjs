@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import vm from "node:vm";
+
+const worker = await readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8");
+const start = worker.indexOf("const providerResultRefreshPatch = ");
+const end = worker.indexOf("\n};", start);
+const context = vm.createContext({ providerPatch: (result) => ({ ...result }), result: { providerStatus: "queued", resultUrl: "new-url" } });
+vm.runInContext(worker.slice(start, end + 3), context);
+const completed = vm.runInContext('providerResultRefreshPatch({ providerStatus: "completed" }, result)', context);
+assert.equal(completed.providerStatus, "completed");
+assert.equal(completed.resultUrl, "new-url");
+assert.equal(context.result.providerStatus, "queued", "do not mutate a provider response");
+assert.equal(vm.runInContext('providerResultRefreshPatch({ providerStatus: "running" }, result)', context).providerStatus, "queued");
+const downloadStart = worker.indexOf("const downloadProviderResult = ");
+const download = worker.slice(downloadStart, worker.indexOf("const processProviderJob = ", downloadStart));
+assert.match(download, /let generated;\s+try \{\s+if \(resultExpired\)/u, "URL refresh failures use the bounded download retry path");
+assert.match(worker, /providerControlPlaneTransient = [\s\S]{0,240}!== "completed"/u, "completed jobs cannot return to the polling-queued fallback");
+assert.match(worker, /providerControlPlaneTransient && failureCount > MAX_TRANSIENT_FAILURES[\s\S]{0,320}nextPollAt: ""/u, "unexpected query errors stop at the existing retry ceiling");
+console.log("Completed provider evidence survives URL refresh; download/query failures stay bounded and never resubmit");

@@ -22,6 +22,7 @@ import { extractDocumentText } from "./document-extraction.mjs";
 import { appDataRoot, machineLocalDataRoot, persistentNotesRoot, persistentWorksRoot } from "./app-data.mjs";
 import { portableGenerationSettings } from "../generation-profiles.js";
 import { MAX_MODEL_MEDIA_REFERENCES } from "../model-presets.js";
+import { depthExplorerEventProgress } from "../depth-explorer-progress.js";
 import { mergeImportedDocuments } from "../imported-workspace.js";
 import { classifyStructuredDocument } from "../structure-placement.js";
 import { episodeHeadingParts, episodeMarkdownFileName } from "../episode-document.js";
@@ -4424,10 +4425,22 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
   onProgress?.({ currentPercent: 0, message: "正在启动本地处理器" });
   let stderr = "";
   let settled = false;
+  let readingProgress = false;
   const progressTimer = setInterval(async () => {
-    const event = String(await readFile(eventPath, "utf8").catch(() => ""))
-      .split(/\r?\n/u).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean).pop();
-    if (event) onProgress?.({ currentPercent: Math.max(0, Math.min(100, Number(event.progress) || 0)), message: String(event.message || "正在处理") });
+    if (settled || readingProgress) return;
+    readingProgress = true;
+    let handle;
+    try {
+      handle = await open(eventPath, "r");
+      const size = (await handle.stat()).size;
+      const buffer = Buffer.alloc(Math.min(size, 64 * 1024));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, Math.max(0, size - buffer.length));
+      const events = buffer.subarray(0, bytesRead).toString("utf8")
+        .split(/\r?\n/u).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean);
+      const progress = depthExplorerEventProgress(events);
+      if (!settled && progress) onProgress?.(progress);
+    } catch { /* the worker may still be creating its event file */ }
+    finally { await handle?.close().catch(() => {}); readingProgress = false; }
   }, 500);
   const finish = async (error = null) => {
     if (settled) return;

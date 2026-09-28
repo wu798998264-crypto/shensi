@@ -4,6 +4,7 @@ import { cp, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from 
 import { homedir } from "node:os";
 import { dirname, extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { inspectH3ManagedSession, launchH3ManagedSession, stopH3ManagedSession } from "./local-h3-managed-session.mjs";
 
 const RELEASE = Object.freeze({
   repository: "wu798998264-crypto/shensi-local-h3",
@@ -13,13 +14,13 @@ const RELEASE = Object.freeze({
 });
 
 const jobs = new Map();
-const processes = new Map();
 
 const localDataRoot = () => String(process.env.SHENSI_LOCAL_H3_ROOT || join(process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local"), "Shensi", "runtimes", "local-h3")).trim();
 const runtimeRoot = () => join(localDataRoot(), RELEASE.tag);
 const installJobFile = () => join(localDataRoot(), "install-job.json");
 const runtimeFile = () => join(runtimeRoot(), "runtime.json");
 const workflowFile = () => join(runtimeRoot(), "workflow.json");
+const sessionFile = () => join(runtimeRoot(), "managed-session.json");
 const text = (value, fallback = "") => String(value ?? fallback).trim();
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
 const loopbackUrl = (value) => {
@@ -69,36 +70,52 @@ export const readLocalH3Runtime = async () => {
 };
 
 const runtimeEndpoint = (settings, runtime) => loopbackUrl(settings?.baseUrl || runtime?.baseUrl || "http://127.0.0.1:8188");
+const runtimeComplete = (runtime) => Boolean(runtime?.managedByShensi === true
+  && runtime.requiresExternalRuntime !== true && Array.isArray(runtime.launch?.command) && runtime.launch.command.length);
+const requiredNodeTypes = ["UNETLoader", "CLIPLoader", "MiniMaxH3ReferenceToVideo", "CreateVideo", "SaveVideo"];
 
 export const probeLocalH3Runtime = async ({ settings = {}, start = false } = {}) => {
   const runtime = await readLocalH3Runtime();
   const endpoint = runtimeEndpoint(settings, runtime);
+  const session = await inspectH3ManagedSession(sessionFile(), endpoint);
+  const started = session.started === true;
   const reasons = [];
   if (!runtime) reasons.push("尚未装配本地 H3 运行时");
   if (runtime && runtime.managedByShensi !== true) reasons.push("运行时不是由神思装配，已拒绝连接");
+  if (runtime && !runtimeComplete(runtime)) reasons.push("当前装配包仅含 H3 适配器，缺少完整推理环境、模型或启动命令，不能用于本地生成");
+  if (session.reason) reasons.push(session.reason);
+  if (session.failure) reasons.push(`本地 H3 进程失败：${session.failure}`);
   const hasWorkflow = Boolean(await stat(workflowFile()).catch(() => null));
   if (runtime && !hasWorkflow) reasons.push("本地 H3 固定工作流不存在");
   let workflow = null;
   if (hasWorkflow) workflow = await readJson(workflowFile()).catch(() => null);
   const workflowTypes = new Set(Object.values(workflow || {}).map((node) => text(node?.class_type)));
-  for (const required of ["MiniMaxH3ReferenceToVideo", "CreateVideo", "SaveVideo"]) {
+  for (const required of requiredNodeTypes) {
     if (!workflowTypes.has(required)) reasons.push(`固定工作流缺少节点：${required}`);
   }
   let system = null;
   let objectInfo = null;
-  try { system = await jsonFetch(`${endpoint}/system_stats`, {}, 4_000); } catch (error) { reasons.push(`ComfyUI 未就绪：${error.message}`); }
+  if (!started) reasons.push("本地 H3 尚未启动，请先点击启动");
+  if (started) {
+    try { system = await jsonFetch(`${endpoint}/system_stats`, {}, 4_000); } catch (error) { reasons.push(`ComfyUI 未就绪：${error.message}`); }
+  }
   if (system) {
     try { objectInfo = await jsonFetch(`${endpoint}/object_info`, {}, 8_000); } catch (error) { reasons.push(`ComfyUI 节点目录读取失败：${error.message}`); }
   }
   const objectTypes = new Set(Object.keys(objectInfo || {}));
-  for (const required of ["MiniMaxH3ReferenceToVideo", "CreateVideo", "SaveVideo"]) {
+  for (const required of requiredNodeTypes) {
     if (objectInfo && !objectTypes.has(required)) reasons.push(`ComfyUI 缺少节点：${required}`);
   }
-  const ready = Boolean(runtime?.managedByShensi === true && hasWorkflow && system && objectInfo
-    && ["MiniMaxH3ReferenceToVideo", "CreateVideo", "SaveVideo"].every((required) => workflowTypes.has(required) && objectTypes.has(required)));
+  const ready = Boolean(started && runtimeComplete(runtime) && hasWorkflow && system && objectInfo
+    && requiredNodeTypes.every((required) => workflowTypes.has(required) && objectTypes.has(required)));
   return {
     available: ready,
-    installed: Boolean(runtime),
+    installed: runtimeComplete(runtime) && hasWorkflow,
+    adapterInstalled: Boolean(runtime),
+    started,
+    pid: session.pid || 0,
+    uncertain: session.uncertain === true,
+    starting: session.starting === true,
     ready,
     endpoint,
     version: runtime?.version || RELEASE.tag,
@@ -107,7 +124,7 @@ export const probeLocalH3Runtime = async ({ settings = {}, start = false } = {})
     hasWorkflow,
     models: ready ? ["minimax-h3-reference-video"] : [],
     reasons,
-    installable: !runtime,
+    installable: !runtimeComplete(runtime),
   };
 };
 
@@ -122,22 +139,32 @@ const waitForReady = async (settings, timeoutMs = 60_000) => {
 };
 
 export const ensureLocalH3Runtime = async ({ settings = {}, timeoutMs = 60_000 } = {}) => {
-  let probe = await probeLocalH3Runtime({ settings, start: false });
+  const probe = await probeLocalH3Runtime({ settings, start: false });
   if (probe.ready) return probe;
   const runtime = await readLocalH3Runtime();
   if (!runtime) throw Object.assign(new Error("本地 H3 尚未装配，请先点击“一键装配本地 H3”"), { providerErrorCode: "LOCAL_H3_NOT_INSTALLED" });
-  const endpoint = runtimeEndpoint(settings, runtime);
-  const key = `${runtime.version}:${endpoint}`;
-  if (!processes.has(key) && Array.isArray(runtime.launch?.command) && runtime.launch.command.length) {
-    const [executable, ...args] = runtime.launch.command.map(String);
-    const child = spawn(executable, args, { cwd: runtime.root || runtimeRoot(), windowsHide: true, stdio: ["ignore", "ignore", "ignore"], detached: true });
-    processes.set(key, child);
-    child.once("exit", () => processes.delete(key));
-    child.unref();
-  }
-  probe = await waitForReady({ ...settings, baseUrl: endpoint }, timeoutMs);
+  if (!probe.installed) throw Object.assign(new Error(probe.reasons.join("；")), { providerErrorCode: "LOCAL_H3_RUNTIME_INCOMPLETE" });
+  if (!probe.started) throw Object.assign(new Error("本地 H3 尚未启动，请先点击“启动本地 H3”"), { providerErrorCode: "LOCAL_H3_NOT_STARTED" });
   if (!probe.ready) throw Object.assign(new Error(`本地 H3 运行时尚未就绪：${probe.reasons.join("；") || "请检查 ComfyUI、模型和端口"}`), { providerErrorCode: "LOCAL_H3_NOT_READY" });
   return probe;
+};
+
+export const startLocalH3Runtime = async ({ settings = {}, timeoutMs = 0 } = {}) => {
+  const runtime = await readLocalH3Runtime();
+  if (!runtime) throw Object.assign(new Error("本地 H3 尚未装配，请先点击“一键装配本地 H3”"), { providerErrorCode: "LOCAL_H3_NOT_INSTALLED" });
+  if (!runtimeComplete(runtime)) throw Object.assign(new Error("H3 装配不完整：当前包仅含适配器，没有可启动的本地推理环境"), { providerErrorCode: "LOCAL_H3_RUNTIME_INCOMPLETE" });
+  const endpoint = runtimeEndpoint(settings, runtime);
+  await launchH3ManagedSession(sessionFile(), { endpoint, command: runtime.launch.command.map(String), cwd: runtime.root || runtimeRoot() });
+  return timeoutMs > 0
+    ? waitForReady({ ...settings, baseUrl: endpoint }, Math.min(timeoutMs, 60_000))
+    : probeLocalH3Runtime({ settings });
+};
+
+export const stopLocalH3Runtime = async ({ settings = {} } = {}) => {
+  const runtime = await readLocalH3Runtime();
+  if (!runtime) return { installed: false, started: false, stopped: false, message: "本地 H3 尚未装配" };
+  await stopH3ManagedSession(sessionFile(), runtimeEndpoint(settings, runtime));
+  return { installed: runtimeComplete(runtime), started: false, stopped: true, ready: false, available: false, message: "本地 H3 已停止，已释放受管理的后台进程" };
 };
 
 const downloadBytes = async (url, onProgress) => {
@@ -160,7 +187,7 @@ const downloadBytes = async (url, onProgress) => {
 
 export const startLocalH3Install = async () => {
   const existing = await readLocalH3Runtime();
-  if (existing) return { ok: true, alreadyInstalled: true, status: "complete", percent: 100, message: "本地 H3 装配清单已存在" };
+  if (runtimeComplete(existing)) return { ok: true, alreadyInstalled: true, stage: "complete", percent: 100, message: "本地 H3 运行时已装配；点击启动后才会运行" };
   const active = [...jobs.values()].find((job) => !["complete", "failed"].includes(job.stage));
   if (active) return { ok: true, jobId: active.id, ...active };
   const id = randomUUID();
@@ -176,6 +203,7 @@ export const startLocalH3Install = async () => {
       if (!expectedManifestHash.startsWith("__") && sha256(manifestBytes) !== expectedManifestHash) throw new Error("本地 H3 安装清单校验失败");
       const manifest = JSON.parse(manifestBytes.toString("utf8"));
       if (manifest.schemaVersion !== 1 || manifest.releaseTag !== RELEASE.tag || !manifest.archive?.url || !manifest.archive?.sha256) throw new Error("本地 H3 安装清单版本或字段无效");
+      if (manifest.requiresExternalRuntime === true) throw new Error("固定版本发布包仅包含 H3 适配器，未提供完整本地推理环境与模型；装配未完成，不能用于真实生成");
       job.stage = "download"; job.percent = 8; job.message = "正在下载固定版本本地运行时"; await persistJob(job);
       const archive = await downloadBytes(manifest.archive.url, (fraction) => { job.percent = 8 + Math.round(fraction * 52); job.message = `正在下载本地 H3 运行时（${job.percent}%）`; });
       if (sha256(archive) !== String(manifest.archive.sha256).toLowerCase()) throw new Error("本地 H3 运行时压缩包校验失败，已拒绝安装");
@@ -193,10 +221,11 @@ export const startLocalH3Install = async () => {
       await mkdir(nextRoot, { recursive: true });
       await cp(sourceRoot, nextRoot, { recursive: true, force: true });
       const installedRuntime = { ...(await readJson(join(nextRoot, "runtime.json"))), version: RELEASE.tag, installedAt: new Date().toISOString(), root: runtimeRoot() };
+      if (!runtimeComplete(installedRuntime)) throw new Error("H3 安装包缺少完整推理环境或启动命令，已拒绝标记为装配完成");
       await writeFile(join(nextRoot, "runtime.json"), `${JSON.stringify(installedRuntime, null, 2)}\n`, "utf8");
       await rm(runtimeRoot(), { recursive: true, force: true });
       await rename(nextRoot, runtimeRoot());
-      job.stage = "complete"; job.percent = 100; job.message = "本地 H3 装配清单已安装；首次生成时会启动并检查 ComfyUI"; job.result = await probeLocalH3Runtime();
+      job.stage = "complete"; job.percent = 100; job.message = "本地 H3 已装配；点击启动后才会运行"; job.result = await probeLocalH3Runtime();
       await persistJob(job);
     } catch (error) {
       job.stage = "failed"; job.percent = 0; job.message = String(error?.message || error).slice(0, 500); await persistJob(job);

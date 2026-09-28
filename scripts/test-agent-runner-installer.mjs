@@ -33,14 +33,9 @@ for (const runnerId of Object.keys(AGENT_RUNNER_INSTALL_SPECS)) {
     fetchImpl: async () => new Response("Import-Module Microsoft.PowerShell.Utility\nWrite-Output 'trae test'", { status: 200, headers: { "content-type": "text/plain" } }),
     runProcess: async (request) => { calls.push(request); return { exitCode: 0, stdout: "ok", stderr: "" }; },
   });
-  const expectedCallCount = runnerId === "opencode" ? 2 : 1;
+  const expectedCallCount = 1;
   assert.equal(calls.length, expectedCallCount, `${runnerId} 必须只有白名单安装动作`);
-  if (runnerId === "opencode") {
-    assert.equal(calls[0].executable, "C:\\Windows\\winget.exe");
-    assert.ok(calls[0].args.includes("OpenJS.NodeJS.LTS"));
-    assert.equal(calls[1].executable, "C:\\runtime\\node.exe");
-    assert.ok(calls[1].args.includes(spec.npmPackage));
-  } else if (spec.installKind === "npm") {
+  if (spec.installKind === "npm") {
     assert.equal(calls[0].executable, "C:\\runtime\\node.exe");
     assert.ok(calls[0].args.includes(spec.npmPackage));
   } else if (spec.installKind === "powershell_script") {

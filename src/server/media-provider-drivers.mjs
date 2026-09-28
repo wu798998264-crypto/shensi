@@ -1810,6 +1810,8 @@ export class LocalH3VideoDriver extends MediaProviderDriver {
     const result = await probeLocalH3Runtime({ settings, start: false });
     return {
       available: result.available === true,
+      installed: result.installed === true,
+      started: result.started === true,
       connected: result.ready === true,
       verificationLevel: result.ready ? "runtime_handshake" : "installation",
       visibilityChecked: result.ready === true,

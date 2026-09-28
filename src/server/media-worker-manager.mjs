@@ -3,7 +3,8 @@ import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
 import { appDataRoot } from "./app-data.mjs";
 import { generationRuntimeCredentialsSnapshot } from "./generation-runtime-store.mjs";
-import { updateMediaGenerationJob } from "./generation-job-store.mjs";
+import { getGenerationJob, updateMediaGenerationJob } from "./generation-job-store.mjs";
+import { createMediaWorkerContinuation } from "./media-worker-continuation.mjs";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "media-generation-worker.mjs");
 
@@ -45,6 +46,12 @@ const liveWorker = (key) => {
   }
   return worker;
 };
+
+const continuation = createMediaWorkerContinuation({
+  readJob: (jobId) => getGenerationJob({ jobId }),
+  isRunning: (jobId) => Boolean(liveWorker(`job:${jobId}`)),
+  launch: (options) => launchMediaGenerationWorker(options),
+});
 
 const readWindowsCommandLine = (pid) => new Promise((resolveCommandLine) => {
   if (process.platform !== "win32") return resolveCommandLine("");
@@ -108,6 +115,9 @@ export const mediaWorkerCredentialSnapshot = ({ jobId = "", credentials = null }
 );
 
 export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = null, credentials = null, scanMode = "", spawnImpl = spawn } = {}) => {
+  // A worker performs one durable observation, then exits. The watchdog's
+  // historical-task exclusion must not also exclude this session's new jobs.
+  if (!jobId && scanMode === "watchdog") void continuation.sweep();
   const key = workerKey({ jobId, scanMode });
   const existing = liveWorker(key);
   if (existing) return { pid: existing.pid, jobId: String(jobId || ""), reused: true };
@@ -137,6 +147,7 @@ export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = nu
     stdio: "ignore",
   });
   activeWorkers.set(key, child);
+  if (jobId) continuation.track(String(jobId), { appRoot, jobId, settings, credentials, scanMode, spawnImpl });
   if (jobId && child.pid && /^generation-[a-z0-9-]{20,}$/i.test(String(jobId))) {
     void updateMediaGenerationJob({
       jobId: String(jobId),
@@ -145,6 +156,7 @@ export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = nu
   }
   child.once("exit", () => {
     if (activeWorkers.get(key) === child) activeWorkers.delete(key);
+    if (jobId) void continuation.continueJob(String(jobId));
   });
   child.once("error", () => {
     if (activeWorkers.get(key) === child) activeWorkers.delete(key);
@@ -155,6 +167,7 @@ export const launchMediaGenerationWorker = ({ appRoot, jobId = "", settings = nu
 
 export const terminateMediaGenerationWorker = async ({ jobId = "", pid = 0 } = {}) => {
   const normalizedJobId = String(jobId || "");
+  continuation.forget(normalizedJobId);
   const active = normalizedJobId ? liveWorker(`job:${normalizedJobId}`) : null;
   if (!normalizedJobId) return { terminated: false, verified: false, pid: 0 };
 

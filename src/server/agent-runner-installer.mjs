@@ -27,6 +27,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
   codex: Object.freeze({
     id: "codex",
     label: "Codex",
+    installKind: "npm",
     npmPackage: "@openai/codex@latest",
     wingetId: "OpenAI.Codex",
     officialUrl: "https://learn.chatgpt.com/docs/codex/cli",
@@ -34,6 +35,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
   opencode: Object.freeze({
     id: "opencode",
     label: "OpenCode",
+    installKind: "npm",
     npmPackage: "opencode-ai@latest",
     wingetId: "",
     officialUrl: "https://opencode.ai/docs/",
@@ -41,6 +43,7 @@ export const AGENT_RUNNER_INSTALL_SPECS = Object.freeze({
   claude_code: Object.freeze({
     id: "claude_code",
     label: "Claude Code",
+    installKind: "npm",
     npmPackage: "@anthropic-ai/claude-code@latest",
     wingetId: "Anthropic.ClaudeCode",
     officialUrl: "https://code.claude.com/docs/en/installation",
@@ -950,7 +953,7 @@ export const installAgentRunnerFromOfficialSource = async ({
     await runProcess({ executable: tools.winget, args: wingetInstallArgs(spec.wingetId), cwd, environment, outputSource: "winget", signal });
     return { method: "winget", officialUrl: spec.officialUrl };
   }
-  if (["opencode", "workbuddy"].includes(spec.id) && tools.winget) {
+  if (spec.installKind === "npm" && !tools.npmCli && tools.winget) {
     report({ stage: "prerequisite", progress: 18, message: `本机缺少 npm，正在为 ${spec.label} 安装官方 Node.js LTS 前置组件…`, method: "winget+npm" });
     await runProcess({ executable: tools.winget, args: wingetInstallArgs("OpenJS.NodeJS.LTS"), cwd, environment, outputSource: "winget", signal });
     tools = await locateTools({ environment });

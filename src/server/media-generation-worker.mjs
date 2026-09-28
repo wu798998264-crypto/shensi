@@ -50,6 +50,8 @@ import {
 import {
   dreaminaCancellationReconciliationExpired,
   dreaminaCredentialIdentity,
+  dreaminaBlockingTaskDetails,
+  dreaminaProfileSwitchMessage,
   requireDreaminaCliProfileId,
 } from "../dreamina-manual-profile-policy.js";
 import { dreaminaTaskSessionRecoveryPolicy } from "../dreamina-task-session-recovery-policy.js";
@@ -387,10 +389,24 @@ const transientProviderFailure = (error) => {
     || /fetch failed|network|socket|timeout|timed out|temporarily unavailable|rate limit/i.test(message);
 };
 
+const providerResultRefreshPatch = (current, refreshed) => {
+  const patch = providerPatch(refreshed);
+  // Refreshing an expiring download URL is not a new generation stage. A
+  // stale nonterminal response must not erase already observed completion.
+  if (current.providerStatus === "completed") patch.providerStatus = "completed";
+  return patch;
+};
+
 const explicitDreaminaAccountVerificationFailure = (job, error) => {
   if (!dreaminaCliMediaJob(job)) return false;
   const code = String(error?.providerErrorCode || error?.code || "").toUpperCase();
   const message = errorMessage(error);
+  const accountVerification = dreaminaFailureRequiresAccountVerification({
+    code,
+    message,
+    providerTaskId: job?.providerTaskId,
+    submissionState: job?.submissionState,
+  });
   // A provider task session expiring is a task-level read/reconciliation
   // problem. It is not proof that the saved browser account is logged out;
   // keep the original task ID and retry read-only instead of poisoning the
@@ -399,12 +415,7 @@ const explicitDreaminaAccountVerificationFailure = (job, error) => {
     && (code === "DREAMINA_PROVIDER_SESSION_EXPIRED"
       || /(?:authsdk|session).*(?:expired|失效)|未检测到(?:有效)?登录态/iu.test(`${code} ${message}`));
   if (taskSessionExpired) return false;
-  return dreaminaFailureRequiresAccountVerification({
-    code,
-    message,
-    providerTaskId: job?.providerTaskId,
-    submissionState: job?.submissionState,
-  });
+  return accountVerification;
 };
 
 const libTvMediaJob = (job = {}) => String(job?.request?.settings?.provider || "").trim().toLowerCase() === "libtv"
@@ -830,18 +841,18 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
   const outputPath = join(workRoot, job.channel === "image" ? "provider-result.image" : job.channel === "audio" ? "provider-result.audio" : "provider-result.mp4");
   const forceRedownload = ["video", "audio"].includes(job.channel) && Number(current.downloadRetryCount || 0) > 0;
   const resultExpired = current.resultUrlExpiresAt && Date.parse(current.resultUrlExpiresAt) <= Date.now() + 60_000;
-  if (resultExpired) {
-    const refreshed = await driver.resume({ job: current, settings, workRoot });
-    current = await update(job.id, { ...providerPatch(refreshed), heartbeatAt: new Date().toISOString() });
-  }
   let generated;
   try {
+    if (resultExpired) {
+      const refreshed = await driver.resume({ job: current, settings, workRoot });
+      current = await update(job.id, { ...providerResultRefreshPatch(current, refreshed), heartbeatAt: new Date().toISOString() });
+    }
     try {
       generated = await driver.download({ job: current, settings, workRoot, outputPath, forceRedownload });
     } catch (error) {
       if (!current.providerTaskId || !/HTTP_(?:401|403|404)|MISSING_RESULT_URL/i.test(String(error.providerErrorCode || error.code || error.message))) throw error;
       const refreshed = await driver.resume({ job: current, settings, workRoot });
-      current = await update(job.id, { ...providerPatch(refreshed), heartbeatAt: new Date().toISOString() });
+      current = await update(job.id, { ...providerResultRefreshPatch(current, refreshed), heartbeatAt: new Date().toISOString() });
       generated = await driver.download({ job: current, settings, workRoot, outputPath, forceRedownload });
     }
     if (!generated?.path && !generated?.paths?.length && !generated?.stream && !generated?.body && !generated?.bytes && !generated?.base64) {
@@ -1180,6 +1191,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       && !(requestedIdentity && leaseIdentity && requestedIdentity === leaseIdentity);
     if (physicalLeaseConflicts) {
       const lockConflict = {
+        ...dreaminaBlockingTaskDetails(physicalLease.jobId ? await readGenerationJobForWorker({ jobId: physicalLease.jobId }).catch(() => null) || {} : {}),
         activeProfileId: physicalLease.profileId,
         blockingJobId: physicalLease.jobId || "",
         blockingChannel: physicalLease.channel || "",
@@ -1204,7 +1216,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
             failedAt: "",
             retryAllowed: true,
             nextPollAt: new Date(Date.now() + 1_500).toISOString(),
-            error: `即梦凭证锁当前被配置“${physicalLease.profileId}”占用；已保留原厂商任务 ${job.providerTaskId}，释放后继续只读查询，不会重新提交。`,
+            error: `${dreaminaProfileSwitchMessage(lockConflict)} 已保留原厂商任务 ${job.providerTaskId}，释放后继续只读查询，不会重新提交。`,
             heartbeatAt: new Date().toISOString(),
           },
         });
@@ -1222,7 +1234,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
             failedAt: "",
             retryAllowed: true,
             nextPollAt: new Date(Date.now() + 1_500).toISOString(),
-            error: `即梦凭证锁当前被配置“${physicalLease.profileId}”占用；本任务尚未提交，锁释放后自动继续。`,
+            error: `${dreaminaProfileSwitchMessage(lockConflict)} 本任务尚未提交，锁释放后自动继续。`,
             heartbeatAt: new Date().toISOString(),
           },
         });
@@ -1822,6 +1834,7 @@ const processJob = async (candidate) => {
     }
     const providerControlPlaneTransient = transientProviderFailure(error)
       && Boolean(current.providerTaskId)
+      && String(current.providerStatus || "").toLowerCase() !== "completed"
       && !explicitDreaminaAccountVerification;
     const capabilityFailure = classifyCustomApiCapabilityFailure({
       code: providerCode,
@@ -1974,6 +1987,17 @@ const processJob = async (candidate) => {
       automaticRecoveryStartedAt: current.automaticRecoveryStartedAt || new Date().toISOString(),
       automaticRecoveryStoppedAt: "",
       error: "即梦提交响应中断，正在按当前任务保存的原始配置和幂等键核对厂商任务；不会重新提交或重复扣费。",
+      heartbeatAt: new Date().toISOString(),
+    } : providerControlPlaneTransient && failureCount > MAX_TRANSIENT_FAILURES ? {
+      status: "retry_required",
+      providerStatus: current.providerStatus || "unknown",
+      providerErrorCode: providerCode || "DREAMINA_QUERY_TRANSIENT",
+      transientFailures: failureCount,
+      failedAt: "",
+      retryAllowed: true,
+      nextPollAt: "",
+      automaticRecoveryStoppedAt: new Date().toISOString(),
+      error: `厂商状态连续读取失败，自动续查已停止；原任务 ${current.providerTaskId} 已保留，可在待处理中继续核对，不会重新提交：${failureText}`,
       heartbeatAt: new Date().toISOString(),
     } : providerControlPlaneTransient ? {
       status: "polling",
@@ -2202,12 +2226,14 @@ const main = async () => {
       // changing the explicit submit/poll/download pipeline.
       const targetIsDreamina = normalizedIdentity(targetJob?.request?.settings?.adapter) === "cli"
         && ["即梦", "dreamina"].includes(normalizedIdentity(targetJob?.request?.settings?.provider));
-      const activeDreaminaLease = targetIsDreamina ? await readDreaminaBrokerLease().catch(() => null) : null;
-      const allDreaminaJobs = targetIsDreamina
+      const finishedTarget = targetIsDreamina ? await readGenerationJobForWorker({ jobId: targetJobId }) : null;
+      const targetCompleted = finishedTarget?.status === "complete";
+      const activeDreaminaLease = targetCompleted ? await readDreaminaBrokerLease().catch(() => null) : null;
+      const allDreaminaJobs = targetCompleted
         ? await listMediaGenerationJobsForWorker({ skipDreamina: false }).catch(() => [])
         : [];
       const anotherDreaminaTaskActive = allDreaminaJobs.some((item) => isActiveDreaminaWorkerJob(item, { excludeId: targetJob?.id }));
-      if (targetIsDreamina && !activeDreaminaLease && !anotherDreaminaTaskActive) {
+      if (targetIsDreamina && targetCompleted && !activeDreaminaLease && !anotherDreaminaTaskActive) {
         const args = [workerScriptPath, "--app-root", appRoot, "--scan-mode", "dreamina-deferred"];
         const env = {
           ...process.env,

@@ -149,6 +149,7 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   if (!job || job.appliedAt || job.supersededBy || mediaGenerationResultSuppressed(job)) return false;
   if (job.mode !== "server" || !["image", "video"].includes(String(job.channel || ""))) return false;
   if (job.target?.targetType === "capability-smoke") return false;
+  if (job.runtimeNeedsAttention === true && job.availableActions?.resumeOriginal) return true;
   const status = String(job.status || "");
   const whiteboardTarget = !job.target?.targetType
     || job.target.targetType === "whiteboard-node"
@@ -158,6 +159,9 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   // the dedicated Dreamina occupant dialog instead of polluting this list.
   if (status === "complete") return false;
   if (!MEDIA_RECOVERY_BLOCKING_STATUSES.has(status)) return false;
+  if (job.automaticRecoveryInProgress === true
+    || (status === "retry_required" && job.providerStatus === "reconciling" && job.nextPollAt)) return false;
+  if (["waiting_credentials", "waiting_storage", "reconciliation_required"].includes(status)) return true;
   // A definitive provider failure may remain visible on its originating card
   // with a retry action, but it is terminal for the provider lock and must not
   // pollute the blocking queue. Only an unknown submission outcome remains a
@@ -166,6 +170,10 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   if (whiteboardTarget && whiteboardMediaJobHoldsCard(job)) return true;
   return job.availableActions?.dismissUncertain === true;
 };
+
+export const mediaRecoveryPromptSignature = (job = {}) => JSON.stringify([
+  job.id, job.status, job.providerTaskId, job.providerErrorCode,
+]);
 
 export const mediaRecoveryPromptCandidates = ({
   scanKey = "",
@@ -176,14 +184,7 @@ export const mediaRecoveryPromptCandidates = ({
   const normalizedScanKey = String(scanKey || "");
   const baselineOnly = !baselinedScanKeys.has(normalizedScanKey);
   const freshBlockingJobs = (Array.isArray(blockingJobs) ? blockingJobs : []).filter((job) => {
-    const signature = JSON.stringify([
-      job?.id,
-      job?.status,
-      job?.providerErrorCode,
-      job?.providerTaskId,
-      job?.updatedAt,
-      job?.availableActions || {},
-    ]);
+    const signature = mediaRecoveryPromptSignature(job);
     if (promptedJobSignatures.get(job?.id) === signature) return false;
     promptedJobSignatures.set(job?.id, signature);
     return true;
