@@ -47053,6 +47053,14 @@ elements.moduleContent.addEventListener("contextmenu", (event) => {
 });
 
 elements.documentList.addEventListener("keydown", (event) => {
+  // A whiteboard card can be selected while focus remains on the directory
+  // tree (the canvas itself is intentionally not keyboard-focusable). Let the
+  // document-level whiteboard Delete handler receive that key instead of
+  // opening the directory/tree deletion dialog on the first attempt.
+  if (activeWhiteboardDocument() && (
+    selectedWhiteboardNodeIds().length
+    || (ui.whiteboardSelectedEdgeDocumentId === state.activeDocument && ui.whiteboardSelectedEdgeIds?.size)
+  )) return;
   state.activeModule = directoryModuleForTarget(event.target);
   const commandKey = event.ctrlKey || event.metaKey;
   if (commandKey && ["c", "x"].includes(event.key.toLowerCase())) {
