@@ -111,7 +111,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=8.0.9-workbuddy-hy3";
+} from "./generation-profiles.js?v=9.0.0-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -6081,6 +6081,34 @@ const dynamicModelsForChannel = (providerId, adapter) => adapter === "api"
       : [];
 
 const mediaCapabilityProbeKey = (channel, profileId) => `${channel}:${profileId || "unassigned"}`;
+// 本地 H3 的“已装配”是运行时事实，不依赖媒体能力探测缓存。设置页和
+// 白板栏共用一个短时缓存，避免每次重绘都请求 ComfyUI，同时确保安装完成后
+// 立即隐藏“一键装配”按钮；ready=false 只表示运行时尚未启动，不表示未装配。
+let localH3RuntimeProbeState = { key: "", checkedAt: 0, pending: null, result: null };
+const localH3RuntimeProbeFor = async (profile = {}) => {
+  const key = String(profile?.baseUrl || "http://127.0.0.1:8188").trim();
+  const now = Date.now();
+  if (localH3RuntimeProbeState.key === key
+    && localH3RuntimeProbeState.result
+    && now - localH3RuntimeProbeState.checkedAt < 20_000) return localH3RuntimeProbeState.result;
+  if (localH3RuntimeProbeState.key === key && localH3RuntimeProbeState.pending) return localH3RuntimeProbeState.pending;
+  const pending = fetch("/api/local-h3/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ baseUrl: key }),
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) throw new Error(payload.message || "本地 H3 状态读取失败");
+    localH3RuntimeProbeState = { key, checkedAt: Date.now(), pending: null, result: payload };
+    return payload;
+  }).catch(() => {
+    const fallback = { installed: false, ready: false, available: false, installable: true, reasons: ["本地 H3 状态暂时不可读取"] };
+    localH3RuntimeProbeState = { key, checkedAt: Date.now(), pending: null, result: fallback };
+    return fallback;
+  });
+  localH3RuntimeProbeState = { ...localH3RuntimeProbeState, key, pending };
+  return pending;
+};
 const usesRegisteredMediaDriver = (channel, settings = {}) => channel === "video"
   || (channel === "image" && settings.adapter === "api" && /即梦|dreamina|火山|方舟|volc|ark|可灵|kling|百炼|阿里|dashscope|wanx/i.test(settings.provider))
   || (channel === "image" && settings.adapter === "cli" && settings.cliPath === LIBTV_CLI_ALIAS && String(settings.provider || "").toLowerCase() === "libtv")
@@ -6784,11 +6812,14 @@ const renderVideoModelOptionsInternal = (providerId = state.settings.videoProvid
   const probe = mediaCapabilityProbeFor("video", profile);
   const models = getProviderVideoModelOptions(providerId, form.elements.videoAdapter.value).map((item) => {
     const probeAllowed = modelAllowedByMediaProbe(probe, item.slug, { channel: "video", profile });
-    const available = item.available !== false && (probeAllowed === null ? true : probeAllowed);
+    const localH3AwaitingRuntime = providerId === "本地 H3" && probe?.available !== true;
+    const available = item.available !== false && !localH3AwaitingRuntime && (probeAllowed === null ? true : probeAllowed);
     const availabilityNote = item.available === false
       ? item.availabilityNote || "当前渠道不可用"
-      : !probe
-        ? "待连接测试"
+        : localH3AwaitingRuntime
+          ? "请先装配并启动本地 H3 运行时"
+          : !probe
+            ? "待连接测试"
         : available ? "" : probe.connected === false ? "连接或权限探测未通过" : "当前凭证未探测到该模型";
     return { ...item, available, availabilityNote };
   });
@@ -8911,7 +8942,7 @@ root.innerHTML = `
                 <label class="wide">${modelFieldHelpButton("video", "cliPath", "视频 CLI 程序路径")}<input name="videoCliPath" type="text" placeholder="视频生成 CLI 的程序名或绝对路径" /></label>
                 <label class="wide">${modelFieldHelpButton("video", "cliArgs", "视频 CLI 参数模板")}<input name="videoCliArgs" type="text" placeholder="支持 {promptFile} {referenceImagesFile} {model} {aspectRatio} {duration} {resolution} {mode} {outputFile}" /></label>
                 <p class="wide model-channel-note">视频任务会在后台持续运行。即梦 CLI、OpenAI、火山方舟、可灵和阿里云百炼均按各自原生协议提交、查询、取消与下载；未通过能力检测的型号不能提交。</p>
-                <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
+                <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="installLocalH3" type="button" hidden>${icon("\uE9D9")}<span>一键装配本地 H3</span></button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="video">${icon("\uE710")}<span>新增视频配置</span></button>
               </div>
             </div>
@@ -9656,6 +9687,7 @@ root.innerHTML = `
           </section>
         </div>
       </div>
+      <div class="whiteboard-local-h3-notice" id="whiteboardLocalH3Notice" hidden><span>本地 H3 使用本机 GPU/CPU 运行，首次启动可能需要数分钟。</span><button class="secondary-button" id="whiteboardLocalH3Install" type="button">一键装配本地 H3</button></div>
       <footer class="whiteboard-generation-footer"><output class="whiteboard-generation-credit" id="whiteboardVideoCreditEstimate" hidden aria-live="polite"></output><span class="whiteboard-generation-footer-actions"><button class="secondary-button whiteboard-generation-cancel" type="button" data-close-whiteboard-dialog>${icon("\uE711", "关闭")}<span class="whiteboard-generation-button-label">关闭</span></button><button class="primary-button whiteboard-generation-submit" type="submit" aria-label="生成视频"><span class="whiteboard-generation-button-label">生成视频</span><span class="whiteboard-generation-submit-glyph" aria-hidden="true">${icon("\uE74A")}</span></button></span></footer>
     </form>
   </dialog>
@@ -14007,6 +14039,20 @@ const whiteboardCandidatePhaseKey = (candidate = {}) => JSON.stringify([
   candidate.cardApplyFailed === true,
 ]);
 
+// Card persistence can be observed by both the foreground submitter and a
+// recovery monitor.  A late provider poll must never move a candidate back to
+// an earlier apply phase: once the durable write reached readback, showing
+// "saving" again made a successfully landed image look permanently stuck.
+const WHITEBOARD_CARD_APPLY_STAGE_ORDER = Object.freeze({
+  "": 0,
+  saving: 1,
+  verifying: 2,
+});
+
+const whiteboardCardApplyStageOrder = (stage) => (
+  WHITEBOARD_CARD_APPLY_STAGE_ORDER[String(stage || "").trim().toLowerCase()] || 0
+);
+
 const patchWhiteboardCandidateProgress = (candidate) => {
   if (!candidate || !["text", "image", "video", "audio"].includes(candidate.channel)) return false;
   const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(candidate.nodeId)}"]`);
@@ -14084,6 +14130,13 @@ const updateWhiteboardGenerationCandidate = (candidateKey, patch = {}, { render 
     && patch.jobId
     && String(candidate.jobId) !== String(patch.jobId);
   const normalizedPatch = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(patch, "cardApplyStage") && patch.cardApplyFailed !== true) {
+    const currentStage = String(candidate.cardApplyStage || "").trim().toLowerCase();
+    const incomingStage = String(patch.cardApplyStage || "").trim().toLowerCase();
+    if (whiteboardCardApplyStageOrder(incomingStage) < whiteboardCardApplyStageOrder(currentStage)) {
+      normalizedPatch.cardApplyStage = candidate.cardApplyStage || "";
+    }
+  }
   if (patch.status === "complete" && !Object.prototype.hasOwnProperty.call(patch, "cardApplyStage")) {
     normalizedPatch.cardApplyStage = candidate.cardApplyStage || "saving";
   }
@@ -15785,7 +15838,7 @@ const showInterruptedDocumentArtifactJob = (job, { allowLockDialog = true } = {}
   const target = job.target ?? {};
   if (target.targetType !== "document-artifact" || !state.documents[target.documentId]) return;
   recordCustomGenerationJobCapability(job);
-  promptDreaminaReverificationForJob(job);
+  promptDreaminaReverificationForJob(job, { allowPrompt: allowLockDialog });
   promptDreaminaSubmissionBlockForJob(job, { allowLockDialog });
   updateDocumentArtifactJobProgress(job, { persistNow: true });
   mediaDocumentArtifactProgressSaves.delete(job.id);
@@ -16095,7 +16148,7 @@ const showInterruptedConversationMediaJob = (job, { allowLockDialog = true } = {
   recordCustomGenerationJobCapability(job);
   const target = conversationMessageTarget(job);
   if (!target) return false;
-  promptDreaminaReverificationForJob(job);
+  promptDreaminaReverificationForJob(job, { allowPrompt: allowLockDialog });
   promptDreaminaSubmissionBlockForJob(job, { allowLockDialog });
   const mediaLabel = job.channel === "audio" ? "音频" : job.channel === "video" ? "视频" : "图片";
   const batchTotal = Math.max(1, Number(job.target?.mediaBatchTotal) || 1);
@@ -16223,7 +16276,7 @@ const updateWhiteboardCompletedApplyStage = (job, cardApplyStage) => {
   return true;
 };
 
-const applyCompletedWhiteboardGenerationJob = async (job, { beforeCanvas = null } = {}) => {
+const applyCompletedWhiteboardGenerationJobNow = async (job, { beforeCanvas = null } = {}) => {
   if (!job?.id || job.status !== "complete") return false;
   if (job.appliedAt) {
     finalizeWhiteboardCompletedCandidate(job);
@@ -16299,6 +16352,28 @@ const applyCompletedWhiteboardGenerationJob = async (job, { beforeCanvas = null 
   releaseWhiteboardMediaSubmissionLockForJob(job);
   finalizeWhiteboardCompletedCandidate(job);
   return true;
+};
+
+// A completed result can be noticed by the submitter, the recovery monitor,
+// and a workspace-switch reconciliation in the same turn.  Serialize those
+// observers per durable job so only one path performs the canonical save and
+// card readback.  This keeps the existing save/readback contract intact while
+// preventing duplicate writes from holding the UI in "saving" indefinitely.
+const whiteboardGenerationApplyFlights = new Map();
+
+const applyCompletedWhiteboardGenerationJob = (job, options = {}) => {
+  if (!job?.id || job.status !== "complete") return Promise.resolve(false);
+  const existing = whiteboardGenerationApplyFlights.get(String(job.id));
+  if (existing) return existing;
+  const operation = Promise.resolve()
+    .then(() => applyCompletedWhiteboardGenerationJobNow(job, options))
+    .finally(() => {
+      if (whiteboardGenerationApplyFlights.get(String(job.id)) === operation) {
+        whiteboardGenerationApplyFlights.delete(String(job.id));
+      }
+    });
+  whiteboardGenerationApplyFlights.set(String(job.id), operation);
+  return operation;
 };
 
 const completedWhiteboardApplyRetries = new Map();
@@ -16460,7 +16535,8 @@ const queueDreaminaReverification = ({ settings, account = null, errorMessage = 
   return true;
 };
 
-const promptDreaminaReverificationForJob = (job) => {
+const promptDreaminaReverificationForJob = (job, { allowPrompt = true } = {}) => {
+  if (!allowPrompt) return false;
   if (String(job?.status || "") !== "waiting_credentials" || !job?.id || dreaminaReverifyPromptedJobs.has(job.id)) return;
   if (!dreaminaFailureNeedsVerification({ job })) return;
   const settings = mediaGenerationSettingsForJob(job);
@@ -16565,7 +16641,7 @@ const showInterruptedWhiteboardGenerationJob = (job, { allowLockDialog = true } 
     }
     return;
   }
-  promptDreaminaReverificationForJob(job);
+  promptDreaminaReverificationForJob(job, { allowPrompt: allowLockDialog });
   const targetNode = normalizeCanvas(documentState.canvas).nodes.find((node) => node.id === target.nodeId);
   if (targetNode && whiteboardMediaJobIsSupersededByNodeGeneration(job, targetNode)) {
     if (whiteboardMediaJobMayClearCandidate(job, activeCandidate)) {
@@ -16630,6 +16706,7 @@ const showInterruptedWhiteboardGenerationJob = (job, { allowLockDialog = true } 
     ...(job.result?.attachment?.relativePath ? { attachment: job.result.attachment } : {}),
     error: mediaGenerationErrorText(job),
   });
+  return true;
 };
 
 const monitorWhiteboardGenerationJob = (job) => {
@@ -18323,7 +18400,23 @@ const writeWhiteboardGeneration = async ({ workspaceKind = state.workspaceKind, 
     const historyCanvas = assets.reduce((canvas, item) => appendCanvasAsset(canvas, item), canvasBeforeApply);
     pushWhiteboardHistory(historyCanvas, { documentId, label });
   }
-  if (landingChanged || landedContent?.forceDurableCardWrite) {
+  // A retry can reach this function after the exact asset/card was already
+  // durably written.  Re-posting the whole workspace on every idempotent
+  // retry needlessly re-hashes a large board and can keep the candidate in
+  // "saving" while another autosave is in flight.  Force a canonical save on
+  // the first/changed landing, or when this workspace still has unsaved work;
+  // a clean duplicate is already durable and can proceed straight to
+  // readback verification.
+  const canonicalSaveRequired = landingChanged || (
+    landedContent?.forceDurableCardWrite
+    && (
+      ui.workspaceDirty
+      || ui.workspaceDirtyDocumentIds.has(documentId)
+      || ui.workspaceDocumentChangesUnknown
+      || ui.workspaceStateChangesPending
+    )
+  );
+  if (canonicalSaveRequired) {
     persist({ documentIds: [documentId] });
     await ensureCurrentRecoveryCheckpoint();
     await flushWorkspaceSave({ throwOnError: true });
@@ -18968,8 +19061,8 @@ const renderWhiteboard = (documentState) => {
       || visibleNode.operation?.type === "depth-explorer"
       || (visibleNode.kind === "web" && (visibleNode.url || visibleNode.webSnapshot)),
     );
-    const pendingGenerationType = !hasCardContent && !candidate && !whiteboardAutoOpenIsDisabled(node.id)
-      ? generationDraftByNode.get(node.id)?.channel || ""
+    const pendingGenerationType = !hasCardContent && !candidate
+      ? node.generationIntent?.channel || generationDraftByNode.get(node.id)?.channel || ""
       : "";
     const pendingGenerationTypeLabels = { text: "文字生成", image: "图片生成", video: "视频生成", audio: "音频生成" };
     const pendingGenerationTypeIcons = { text: "\uE8D2", image: "\uEB9F", video: "\uE714", audio: "\uE8D6" };
@@ -19012,8 +19105,12 @@ const renderWhiteboard = (documentState) => {
       ? `${uiText("厂商排队")}${queueLength !== null && queueLength > 0 ? ` · ${uiText("共")} ${queueLength.toLocaleString()} ${uiText("人")}` : ""}${queuePosition !== null && queuePosition > 0 ? ` · ${uiText("当前第")} ${queuePosition.toLocaleString()} ${uiText("位")}` : ""}`
       : "";
     const generationResultReady = candidateResultReady;
+    const resultReadyApplyPending = generationResultReady
+      && ["saving", "verifying"].includes(String(candidate?.cardApplyStage || ""));
     const generationStatusLabel = candidateApplyFailed
       ? uiText("结果已生成，卡片回填失败")
+      : resultReadyApplyPending
+      ? uiText(`${generationChannel === "video" ? "视频" : generationChannel === "audio" ? "音频" : "图片"}已生成，正在回写卡片`)
       : candidate?.cardApplyStage === "saving"
       ? uiText("生成完成，正在保存")
       : candidate?.cardApplyStage === "verifying"
@@ -26259,7 +26356,7 @@ const usableWorkBuddyModelId = (profile = null) => {
   // A stale saved ID (for example the retired `hy3` entry) must never be sent
   // to the real CLI.  Leave the user's saved profile untouched; at runtime an
   // empty value deliberately follows the CLI's own current default model.
-  if (requested && capability?.modelState === "catalog_available" && models.length && !models.includes(requested)) return "";
+  if (requested && models.length && !models.includes(requested)) return "";
   return requested;
 };
 
@@ -51822,6 +51919,7 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
         id: nodeId,
         text: "",
         kind: "text",
+        generationIntent: { channel: "text" },
         x: snapCanvasValue(point.x - 130, documentState.canvas),
         y: snapCanvasValue(point.y - 80, documentState.canvas),
         width: 260,
@@ -51919,7 +52017,9 @@ const applyWhiteboardDragPreview = (drag) => {
     if (path && drag.sourcePoint) path.setAttribute("d", whiteboardEdgePath(drag.sourcePoint, pending));
   } else if (drag.mode === "pan") {
     elements.whiteboardSurface.style.transform = `translate3d(${pending.x}px, ${pending.y}px, 0) scale(${drag.zoom})`;
-    scheduleWhiteboardMediaHydration();
+    // Hydrating media and repositioning popovers on every pointer frame forces
+    // layout work while the whole board is moving. Defer both until the
+    // gesture commits; the surface transform itself is compositor-only.
     if (!elements.whiteboardMultiSelection.hidden) {
       const deltaX = pending.x - drag.viewportX;
       const deltaY = pending.y - drag.viewportY;
@@ -51946,7 +52046,7 @@ const applyWhiteboardDragPreview = (drag) => {
     for (const member of drag.groupMembers ?? []) member.card.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
   }
   updateWhiteboardConnectedEdgePreview(drag);
-  if (["pan", "resize", "card"].includes(drag.mode)) scheduleWhiteboardGenerationDialogPosition();
+  if (["resize", "card"].includes(drag.mode)) scheduleWhiteboardGenerationDialogPosition();
 };
 
 const startWhiteboardPan = (event, documentState) => {
@@ -52164,6 +52264,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     id: nodeId,
     text: "",
     kind: "text",
+    ...(new Set(["text", "image", "video", "audio"]).has(kind) ? { generationIntent: { channel: kind } } : {}),
     name: kind === "depth" ? "深度摸索" : "",
     operation: kind === "depth" ? {
       type: "depth-explorer",
@@ -52776,6 +52877,7 @@ document.addEventListener("pointerup", (event) => {
     renderWhiteboard(documentState);
     if (createdNodeId) selectWhiteboardNode(createdNodeId);
   }
+  if (documentState && changed && drag.mode === "pan") scheduleWhiteboardMediaHydration();
   // A newly connected depth node must enter the same explicit loading state
   // as a newly created one.  Previously the connection path left the button
   // looking unavailable until an unrelated context-menu action primed it.
@@ -52887,6 +52989,7 @@ const createWhiteboardSelectionGenerationTarget = (nodeIds = [], channel = "text
     id: targetNodeId,
     text: "",
     kind: "text",
+    generationIntent: { channel },
     width,
     height,
     x: snapCanvasValue(bounds.right + 120, documentState.canvas),
@@ -56757,6 +56860,30 @@ const videoModelsForConnection = (profile, preferredModel = "") => {
   return sortWhiteboardVideoModels(models);
 };
 
+const syncLocalH3WhiteboardNotice = () => {
+  const notice = document.querySelector("#whiteboardLocalH3Notice");
+  const button = document.querySelector("#whiteboardLocalH3Install");
+  const form = elements.whiteboardVideoForm;
+  if (!notice || !button || !form) return;
+  const profile = currentVideoGenerationSettings(form.elements.connectionId?.value, form.elements.model?.value);
+  const local = String(profile?.provider || "") === "本地 H3";
+  const cachedRuntime = localH3RuntimeProbeState.result;
+  const ready = local && (cachedRuntime?.ready === true || mediaCapabilityProbeFor("video", profile)?.available === true);
+  const installed = local && cachedRuntime?.installed === true;
+  notice.hidden = !local || ready;
+  // 装配完成但 ComfyUI 未启动时也不能再显示“一键装配”；只保留状态提示。
+  button.hidden = !local || installed || ready;
+  if (local && !ready) {
+    const message = installed
+      ? (cachedRuntime?.reasons?.find((reason) => /未就绪|不存在|缺少|失败/u.test(String(reason))) || "本地 H3 已装配，正在等待运行时就绪")
+      : "本地 H3 尚未装配，可点击一键装配";
+    const textNode = notice.querySelector("span");
+    if (textNode) textNode.textContent = `${message}。首次启动可能需要数分钟。`;
+    const probeExpired = !cachedRuntime || Date.now() - Number(localH3RuntimeProbeState.checkedAt || 0) >= 20_000;
+    if (probeExpired) void localH3RuntimeProbeFor(profile).then(() => syncLocalH3WhiteboardNotice());
+  }
+};
+
 const whiteboardVideoRatioShortLabel = whiteboardAspectRatioShortLabel;
 
 const syncWhiteboardVideoSettingsControls = () => {
@@ -57471,9 +57598,24 @@ const openWhiteboardImageEditor = async (nodeId) => {
     showToast("当前卡片没有可编辑的图片");
     return false;
   }
+  const card = elements.whiteboardSurface.querySelector(`[data-canvas-node="${CSS.escape(nodeId)}"]`);
+  const sourceUrl = whiteboardAttachmentUrl(node);
+  const decodedCandidate = card?.querySelector("img[data-attachment-preview=\"image\"]") || null;
+  // Card thumbnails use a `preview=640` URL. Never feed that scaled preview
+  // into the editor; reuse a decoded element only when it is the full source.
+  const decodedCandidateUrl = decodedCandidate?.currentSrc || decodedCandidate?.src || "";
+  const sameSource = decodedCandidateUrl && (() => {
+    try { return new URL(decodedCandidateUrl, window.location.href).href === new URL(sourceUrl, window.location.href).href; } catch { return false; }
+  })();
+  const decodedSourceElement = decodedCandidate
+    && !/[?&]preview=\d+/u.test(decodedCandidateUrl)
+    && sameSource
+    ? decodedCandidate
+    : null;
   try {
     await imageCardEditor.open({
-      src: whiteboardAttachmentUrl(node),
+      src: sourceUrl,
+      sourceElement: decodedSourceElement,
       name: node.name || "图片",
       onSave: async ({ blob, width, height }) => {
         if (state.settings.workspacePath !== sourceWorkspacePath || state.activeDocument !== sourceDocumentId) {
@@ -58143,7 +58285,7 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${loading ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="install">一键装配</button>` : `<button class="whiteboard-depth-generate${loading || runtime.busy ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading || runtime.busy ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
      ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}</small>
   </div>`;
 };
@@ -58333,11 +58475,21 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
         return true;
       });
       if (!fresh.length || !whiteboardNodeById(nodeId)) return;
+      // Depth processing preserves the source dimensions. The worker can
+      // report a reliable video ratio, but image metadata is intentionally not
+      // re-probed there. Reuse the connected source node ratio so a portrait
+      // or landscape depth result never inherits the square operation node.
+      const inputByPath = new Map(inputs.map((input) => [String(input.file || "").replaceAll("\\", "/"), input]));
+      const outputsWithSourceRatio = fresh.map((output) => {
+        const source = inputByPath.get(String(output?.sourceRelativePath || "").replaceAll("\\", "/"));
+        const sourceRatio = Number(source?.aspectRatio);
+        return sourceRatio > 0 ? { ...output, aspectRatio: sourceRatio } : output;
+      });
       const nodeIds = createWhiteboardDerivedMediaNodes({
         sourceNodeId: nodeId,
         historyLabel: "深度摸索并创建下游卡片",
         disableGenerationAutoOpen: true,
-        outputs: fresh.map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" })),
+        outputs: outputsWithSourceRatio.map((output) => ({ ...output, operationLabel: output.kind === "video" ? "生成深度视频" : "生成深度图" })),
       });
       runtime.createdOutputs += nodeIds.length;
     };
@@ -58388,6 +58540,13 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
 };
 
 elements.whiteboardCardToolbar.addEventListener("pointerdown", (event) => event.stopPropagation());
+elements.whiteboardCardToolbar.addEventListener("pointerover", (event) => {
+  const action = event.target.closest("[data-whiteboard-card-tool=\"edit-image\"]");
+  if (!action) return;
+  const nodeId = elements.whiteboardCardToolbar.dataset.nodeId || "";
+  const node = whiteboardNodeById(nodeId);
+  if (node?.kind === "image" && node.file) void imageCardEditor.prefetch({ src: whiteboardAttachmentUrl(node) });
+});
 elements.whiteboardCardToolbar.addEventListener("click", async (event) => {
   const action = event.target.closest("[data-whiteboard-card-tool]");
   if (!action || action.disabled) return;
@@ -60348,6 +60507,7 @@ elements.whiteboardVideoForm.elements.connectionId.addEventListener("change", ()
   if (preferredMode === "smart_multiframe") enforceWhiteboardSmartMultiframeModel();
   syncWhiteboardVideoCapabilityOptions({ preferredMode });
   syncWhiteboardVideoModeLayout({ renderReferences: true });
+  syncLocalH3WhiteboardNotice();
   persistWhiteboardGenerationProfile("video", whiteboardGenerationFormValues(elements.whiteboardVideoForm));
   renderWhiteboardGenerationCredit("video");
   const settings = currentVideoGenerationSettings(elements.whiteboardVideoForm.elements.connectionId.value, elements.whiteboardVideoForm.elements.model.value);
@@ -60357,8 +60517,33 @@ elements.whiteboardVideoForm.elements.model.addEventListener("change", () => {
   const preferredMode = elements.whiteboardVideoForm.elements.generationMode.value;
   syncWhiteboardVideoCapabilityOptions({ preferredMode });
   syncWhiteboardVideoModeLayout({ renderReferences: true });
+  syncLocalH3WhiteboardNotice();
   persistWhiteboardGenerationProfile("video", whiteboardGenerationFormValues(elements.whiteboardVideoForm));
   renderWhiteboardGenerationCredit("video");
+});
+document.querySelector("#whiteboardLocalH3Install")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const notice = document.querySelector("#whiteboardLocalH3Notice");
+  button.disabled = true;
+  button.textContent = "正在装配…";
+  try {
+    const response = await fetch("/api/local-h3/install", { method: "POST" });
+    let status = await response.json();
+    if (!status.ok) throw new Error(status.message || "装配启动失败");
+    while (status.stage && !["complete", "failed"].includes(status.stage)) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      status = await fetch(`/api/local-h3/install/status?jobId=${encodeURIComponent(status.jobId || "")}`).then((item) => item.json());
+      if (notice) notice.querySelector("span").textContent = status.message || "正在装配本地 H3…";
+    }
+    if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
+    if (notice) notice.querySelector("span").textContent = `${status.message || "本地 H3 已装配"}；请启动 ComfyUI 后进行非计费连接检查`;
+  } catch (error) {
+    if (notice) notice.querySelector("span").textContent = `本地 H3 装配失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = "一键装配本地 H3";
+    syncLocalH3WhiteboardNotice();
+  }
 });
 elements.whiteboardVideoForm.elements.generationMode.addEventListener("change", () => {
   const preferredMode = elements.whiteboardVideoForm.elements.generationMode.value;
@@ -75887,9 +76072,30 @@ const syncProviderSpecificCliButtons = async () => {
   const isOpenAiImageCli = form.imageAdapter.value === "cli" && form.imageProvider.value === "OpenAI";
   const imageButton = document.querySelector("#installDreaminaCli");
   const videoButton = document.querySelector("#installDreaminaCliVideo");
+  const localH3Button = document.querySelector("#installLocalH3");
   const openAiImageCliButton = document.querySelector("#useOpenAiImageCli");
   if (imageButton) imageButton.hidden = !isImageDreaminaCli;
   if (videoButton) videoButton.hidden = !isVideoDreaminaCli;
+  if (localH3Button) localH3Button.hidden = form.videoProvider.value !== "本地 H3";
+  if (form.videoProvider.value === "本地 H3") {
+    const h3Profile = activeGenerationProfile(generationWorkingSettings(), "video") || {
+      provider: "本地 H3",
+      adapter: form.videoAdapter.value,
+      protocol: "comfyui",
+      baseUrl: form.videoBaseUrl.value,
+    };
+    void localH3RuntimeProbeFor(h3Profile).then((probe) => {
+      if (!localH3Button || form.videoProvider.value !== "本地 H3") return;
+      localH3Button.hidden = probe.installed === true;
+      if (probe.installed === true && probe.ready !== true) {
+        const result = document.querySelector("#videoAdapterResult");
+        if (result && !/失败|错误/u.test(result.textContent || "")) {
+          result.textContent = "本地 H3 已装配，等待 ComfyUI 运行时就绪；不需要 API Key";
+        }
+      }
+      if (probe.ready === true) renderVideoModelOptions("本地 H3");
+    });
+  }
   if (openAiImageCliButton) openAiImageCliButton.hidden = !isOpenAiImageCli;
   // Preserve the last durable account state while the asynchronous status
   // refresh runs. Clearing the panel here made every settings re-render flash
@@ -76399,6 +76605,33 @@ for (const { button, resultId, channel } of dreaminaCliInstallButtons) {
     }
   });
 }
+
+document.querySelector("#installLocalH3")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#videoAdapterResult");
+  button.disabled = true;
+  result.textContent = "正在读取固定版本清单并装配本地 H3，请稍候…";
+  try {
+    const response = await fetch("/api/local-h3/install", { method: "POST" });
+    const payload = await response.json();
+    if (!payload.ok) throw new Error(payload.message || "本地 H3 装配启动失败");
+    let status = payload;
+    while (status.stage && !["complete", "failed"].includes(status.stage)) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      const current = await fetch(`/api/local-h3/install/status?jobId=${encodeURIComponent(status.jobId || "")}`);
+      status = await current.json();
+      result.textContent = status.message || "正在装配本地 H3…";
+    }
+    if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
+    result.textContent = `${status.message || "本地 H3 已装配"}；请点击“非计费连接检查”确认 ComfyUI 已启动`;
+    renderVideoModelOptions("本地 H3");
+  } catch (error) {
+    result.textContent = `本地 H3 装配失败：${error.message}`;
+  } finally {
+    button.disabled = false;
+    syncProviderSpecificCliButtons();
+  }
+});
 
 elements.settingsForm.elements.imageProvider.addEventListener("change", (event) => {
   const keepModelBlank = activeGenerationProfile(generationWorkingSettings(), "image")?.draft === true;

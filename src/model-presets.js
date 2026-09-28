@@ -1,4 +1,4 @@
-import { DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS } from "./media-cli-presets.js";
+import { DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_IMAGE_CLI_ARGS, DREAMINA_VIDEO_CLI_ALIAS, DREAMINA_VIDEO_CLI_ARGS, LIBTV_CLI_ALIAS, LIBTV_CLI_ARGS, LOCAL_H3_CLI_ALIAS, LOCAL_H3_CLI_ARGS } from "./media-cli-presets.js";
 import {
   LONG_VIDEO_MAX_DURATION_SECONDS,
   LONG_VIDEO_MIN_DURATION_SECONDS,
@@ -103,21 +103,25 @@ export const LIBTV_IMAGE_MODEL_OPTIONS = [
   model("lib-image-2.5-s", "Lib Image 2.5 Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("lib-image-2.5-f", "Lib Image 2.5 Fast", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("lib-image-2", "Lib Image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
-  model("nebula-ultra", "General image Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  // Keep this list aligned with the official CLI's current `model search`
+  // result. The live probe remains authoritative at task time; these are
+  // only the initial picker options shown before the first probe completes.
+  model("nebula-ultra", "全能图片模型V2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("nebula-core", "全能图片模型", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("nebula-2-flash", "General image V2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("doubao-seedream-5-0-pro", "Seedream 5.0 Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("qwen-image-3", "Qwen image 3.0", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-v8.2", "Style Image V8.2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-v8.1", "Style Image V8.1", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("qwen", "Qwen Image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("qwen-edit", "Qwen Image Edit", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("z-image", "Z Image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("orbit-2-image", "艾克斯图片模型", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-v7", "Style Image V7", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-niji7", "Style Image Niji 7", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("jimeng-4.6", "Seedream 4.6", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("seedream-5", "Seedream 5.0 Lite", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("seedream-4.5", "Seedream 4.5", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
-  model("z-image", "Z-image Turbo", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
-  model("nebula-core", "General image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
-  model("qwen", "Qwen Image", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
-  model("qwen-edit", "Qwen Edit", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("seedream-4", "Seedream 4.0", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
 ];
 
@@ -224,6 +228,20 @@ export const PROVIDER_MODEL_OPTIONS = {
     ...LIBTV_IMAGE_MODEL_OPTIONS,
     ...LIBTV_VIDEO_MODEL_OPTIONS,
     ...LIBTV_AUDIO_MODEL_OPTIONS,
+  ],
+  "本地 H3": [
+    model("minimax-h3-reference-video", "MiniMax H3 · 参考生视频（本地）", {
+      capabilities: ["video_generation"],
+      inputCapabilities: ["image_input"],
+      adapters: ["api", "cli"],
+      durationSeconds: [4, 5, 6, 8, 10],
+      resolutions: ["768P", "2K"],
+      aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
+      generationModes: ["image_to_video"],
+      maxMediaReferences: 1,
+      maxUpstreamReferences: 1,
+      availabilityNote: "需要先装配本地 H3 运行时",
+    }),
   ],
   "智谱 GLM": [
     model("cogview-4-250304", "CogView 4", { capabilities: ["image_generation"] }),
@@ -899,6 +917,14 @@ export const PROVIDER_PRESETS = [
     api: { protocol: "media", baseUrl: "", model: "lib-image-2" },
     cli: { path: LIBTV_CLI_ALIAS, args: LIBTV_CLI_ARGS, testArgs: ["--version"], apiKeyEnv: "" },
     mediaCli: true,
+  },
+  {
+    id: "本地 H3",
+    label: "本地 H3（ComfyUI）",
+    api: { protocol: "comfyui", baseUrl: "http://127.0.0.1:8188", model: "minimax-h3-reference-video" },
+    cli: { path: LOCAL_H3_CLI_ALIAS, args: LOCAL_H3_CLI_ARGS, testArgs: ["--probe"], apiKeyEnv: "" },
+    mediaCli: true,
+    localRuntime: true,
   },
   {
     id: "可灵",

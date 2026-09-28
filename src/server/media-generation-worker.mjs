@@ -387,13 +387,28 @@ const transientProviderFailure = (error) => {
     || /fetch failed|network|socket|timeout|timed out|temporarily unavailable|rate limit/i.test(message);
 };
 
-const explicitDreaminaAccountVerificationFailure = (job, error) => dreaminaCliMediaJob(job)
-  && dreaminaFailureRequiresAccountVerification({
-    code: String(error?.providerErrorCode || error?.code || ""),
-    message: errorMessage(error),
+const explicitDreaminaAccountVerificationFailure = (job, error) => {
+  if (!dreaminaCliMediaJob(job)) return false;
+  const code = String(error?.providerErrorCode || error?.code || "").toUpperCase();
+  const message = errorMessage(error);
+  // A provider task session expiring is a task-level read/reconciliation
+  // problem. It is not proof that the saved browser account is logged out;
+  // keep the original task ID and retry read-only instead of poisoning the
+  // profile with a persistent auth_required state.
+  const taskSessionExpired = Boolean(job?.providerTaskId)
+    && (code === "DREAMINA_PROVIDER_SESSION_EXPIRED"
+      || /(?:authsdk|session).*(?:expired|失效)|未检测到(?:有效)?登录态/iu.test(`${code} ${message}`));
+  if (taskSessionExpired) return false;
+  return dreaminaFailureRequiresAccountVerification({
+    code,
+    message,
     providerTaskId: job?.providerTaskId,
     submissionState: job?.submissionState,
   });
+};
+
+const libTvMediaJob = (job = {}) => String(job?.request?.settings?.provider || "").trim().toLowerCase() === "libtv"
+  && String(job?.request?.settings?.adapter || "").trim().toLowerCase() === "cli";
 
 const mediaDownloadIntegrityFailure = (job, error) => {
   if (job?.channel !== "video") return false;
@@ -586,7 +601,14 @@ const executionProfileSignature = (job, settings) => {
     }
   }
   if (!String(job.profileSignature || "").startsWith(CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX)) return "";
-  if (settings.adapter === "api" && !settings.apiKey) {
+  // Local H3 uses the loopback ComfyUI API and deliberately has no API key.
+  // Treating every `api` adapter as key-backed stranded H3 jobs in
+  // `waiting_credentials` before the driver was ever called.  Remote API
+  // providers keep the existing credential gate unchanged.
+  const localH3Loopback = settings.adapter === "api"
+    && String(settings.provider || "").trim() === "本地 H3"
+    && String(settings.protocol || "").trim().toLowerCase() === "comfyui";
+  if (settings.adapter === "api" && !settings.apiKey && !localH3Loopback) {
     throw Object.assign(
       new Error("原媒体任务需要同一连接凭证才能继续，尚未向厂商发起任何操作"),
       { providerErrorCode: "MISSING_CREDENTIALS" },
@@ -609,6 +631,20 @@ const storedDreaminaProfileIdentity = (profileId) => {
     credentialIdentityUserId: expected.verifiedUserId || expected.expectedUserId,
     credentialIdentityFingerprint: expected.credentialFingerprint,
   });
+};
+
+// A profile that has already produced a fully validated result is the highest
+// confidence evidence we have.  Do not force a second account/task-resource
+// probe for every later task; the normal CLI submit still remains the final
+// authority and will classify an explicit auth rejection if the session truly
+// expired. Unknown or explicitly invalid profiles still receive the one fresh
+// pre-submit check.
+const dreaminaCapabilityProbeRequiresFresh = (job, settings = {}) => {
+  if (!dreaminaCliMediaJob(job)) return false;
+  const profileId = String(settings.dreaminaCliProfile || job.request?.settings?.dreaminaCliProfile || "").trim();
+  if (!profileId) return true;
+  const identity = dreaminaExpectedIdentitySync(profileId);
+  return String(identity.runtimeState || "") !== "verified";
 };
 
 const withDreaminaWorkerContext = async (job, callback) => {
@@ -1129,7 +1165,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
   if (!driver) throw Object.assign(new Error("当前媒体连接暂不支持这种生成方式，请检查连接类型和模型"), { providerErrorCode: "DRIVER_NOT_REGISTERED" });
   const workRoot = join(generationJobsDirectory(), "work", job.id);
   await mkdir(workRoot, { recursive: true });
-  const providerName = driver.id === "libtv-cli" ? "LibTV" : "即梦";
+  const providerName = driver.id === "libtv-cli" ? "LibTV" : driver.id === "local-h3-comfyui" ? "本地 H3" : "即梦";
 
   if (dreaminaCliMediaJob(job)) {
     const physicalLease = await readDreaminaBrokerLease();
@@ -1143,18 +1179,55 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       && physicalLease.profileId !== requestedProfileId
       && !(requestedIdentity && leaseIdentity && requestedIdentity === leaseIdentity);
     if (physicalLeaseConflicts) {
-      const lockError = Object.assign(
-        new Error(`即梦通道正被配置“${physicalLease.profileId}”占用；当前任务尚未提交厂商。`),
-        { providerErrorCode: "DREAMINA_PROFILE_SWITCH_BLOCKED", submissionOutcomeKnown: true },
-      );
-      lockError.details = {
+      const lockConflict = {
         activeProfileId: physicalLease.profileId,
         blockingJobId: physicalLease.jobId || "",
         blockingChannel: physicalLease.channel || "",
         blockingCommand: physicalLease.command || "",
         reason: "physical_credential_slot_busy",
       };
-      throw lockError;
+      // Occupancy is a normal serialized execution state, not a failed
+      // generation. If a provider task already exists, preserve it and keep
+      // polling read-only; if submission has not started, leave the job
+      // queued until the slot is free. Neither path opens the manual waiting
+      // queue or marks the profile as requiring verification.
+      if (job.providerTaskId) {
+        await updateActiveMediaGenerationJob({
+          jobId: job.id,
+          expectedDesiredAction: job.desiredAction || "run",
+          expectedStatuses: [job.status],
+          patch: {
+            status: "polling",
+            providerStatus: job.providerStatus || "running",
+            providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
+            lockConflict,
+            failedAt: "",
+            retryAllowed: true,
+            nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+            error: `即梦凭证锁当前被配置“${physicalLease.profileId}”占用；已保留原厂商任务 ${job.providerTaskId}，释放后继续只读查询，不会重新提交。`,
+            heartbeatAt: new Date().toISOString(),
+          },
+        });
+      } else {
+        await updateActiveMediaGenerationJob({
+          jobId: job.id,
+          expectedDesiredAction: job.desiredAction || "run",
+          expectedStatuses: [job.status],
+          patch: {
+            status: "queued",
+            providerStatus: "queued",
+            providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
+            submissionState: "not_submitted",
+            lockConflict,
+            failedAt: "",
+            retryAllowed: true,
+            nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+            error: `即梦凭证锁当前被配置“${physicalLease.profileId}”占用；本任务尚未提交，锁释放后自动继续。`,
+            heartbeatAt: new Date().toISOString(),
+          },
+        });
+      }
+      return;
     }
   }
 
@@ -1253,15 +1326,35 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         );
       }
     }
-    const capability = await driver.probeCapabilities({
-      settings: { ...settings, channel: job.channel, [`${job.channel}Channel`]: true },
-      paid: false,
-      // A settings-page connection probe may be cached briefly for responsive
-      // UI. The last non-billing gate before a Dreamina submission must not
-      // reuse that cache: task-resource sessions can expire independently of
-      // the account/credit session.
-      forceFresh: dreaminaCliMediaJob(job),
-    });
+    const dreaminaFreshProbeRequired = dreaminaCapabilityProbeRequiresFresh(job, settings);
+    // The Dreamina CLI submit command already performs the one authoritative
+    // pre-submit account/task-resource check while holding its profile-scoped
+    // broker slot. Running a second full `--check` here made every durable
+    // verified generation pay the control-plane latency twice (and on a cold
+    // task-resource session could consume the whole 150s probe timeout). A
+    // successful, file-validated generation is durable evidence for this exact
+    // profile; reuse the driver catalogue and let `submit` remain the final
+    // authority. Unknown/auth-required profiles keep the original fresh probe.
+    const capability = dreaminaCliMediaJob(job) && !dreaminaFreshProbeRequired
+      ? {
+        available: true,
+        generationReady: true,
+        taskResourceChecked: true,
+        taskResourceDeferred: false,
+        taskResourceWarning: "",
+        verificationLevel: "durable_generation_success",
+        visibilityChecked: false,
+        models: job.channel === "image"
+          ? ["5.0Pro", "5.0", "4.7", "4.6", "4.5", "4.1", "4.0", "3.1", "3.0"]
+          : ["seedance2.5", "seedance2.0fast", "seedance2.0", "seedance2.0_vip", "seedance2.0fast_vip", "seedance2.0mini", "seedance1.5pro", "seedance1.0fast", "seedance1.0"],
+      }
+      : await driver.probeCapabilities({
+        settings: { ...settings, channel: job.channel, [`${job.channel}Channel`]: true },
+        paid: false,
+        // Unknown or explicitly invalid profiles must still receive the
+        // bounded fresh control-plane check before a paid command.
+        forceFresh: dreaminaCapabilityProbeRequiresFresh(job, settings),
+      });
     if (dreaminaCliMediaJob(job) && capability.taskResourceChecked !== true && capability.taskResourceDeferred !== true) {
       const capabilityCode = String(capability.taskResourceErrorCode || "DREAMINA_TASK_RESOURCE_UNVERIFIED").toUpperCase();
       const retryableCodes = new Set([
@@ -1661,6 +1754,19 @@ const processJob = async (candidate) => {
     const current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
     if (["complete", "cancelled", "superseded"].includes(current.status)) return false;
     const providerCode = String(error.providerErrorCode || error.code || "");
+    // LibTV project/node creation happens before `node --run` and therefore
+    // before a provider task ID exists. A cold CLI or a temporary process
+    // exit in this pre-submit phase cannot have charged a task. Mark only this
+    // isolated LibTV case as a known no-task transport failure so the existing
+    // bounded automatic retry can warm the CLI once or twice instead of
+    // surfacing a false first-generation failure. Once the node callback has
+    // persisted a task ID, all errors keep the normal no-resubmit rules.
+    const libTvPreSubmitTransportFailure = libTvMediaJob(current)
+      && current.status === "submitting"
+      && current.submissionState === "submitting"
+      && !current.providerTaskId
+      && /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/i.test(providerCode);
+    if (libTvPreSubmitTransportFailure) error.submissionOutcomeKnown = true;
     const errorProviderTaskId = String(error?.providerTaskId || error?.provider_task_id || "").trim();
     const usableErrorProviderTaskId = errorProviderTaskId
       && !/^(?:0|-|none|null|undefined|unknown|missing|n\/?a|na)$/iu.test(errorProviderTaskId);
@@ -1743,12 +1849,7 @@ const processJob = async (candidate) => {
       })
       : { applies: false, expired: false };
     const missingCredentials = providerCode === "MISSING_CREDENTIALS"
-      || (dreaminaCliMediaJob(current) && dreaminaFailureRequiresAccountVerification({
-        code: providerCode,
-        message: errorMessage(error),
-        providerTaskId: current.providerTaskId,
-        submissionState: current.submissionState,
-      }))
+      || (dreaminaCliMediaJob(current) && explicitDreaminaAccountVerificationFailure(current, error))
       || providerCode === "LOCAL_RUNTIME_BINDING_REQUIRED"
       || providerCode === "MEDIA_JOB_CANONICAL_PROFILE_MISMATCH"
       || capabilityFailure.invalidatesCredential;
@@ -1763,6 +1864,19 @@ const processJob = async (candidate) => {
     const dreaminaSubmissionRecoveryPending = dreaminaCliMediaJob(current) && submissionUnknown;
     const dreaminaProfileBrokerBusy = providerCode === "DREAMINA_PROFILE_BROKER_BUSY";
     const dreaminaProfileSwitchBlocked = providerCode === "DREAMINA_PROFILE_SWITCH_BLOCKED";
+    // The profile runner can report the same physical credential-slot race
+    // after the worker's initial lease check (another process may acquire the
+    // slot in the meantime). Treat that race exactly like normal occupancy:
+    // preserve an existing provider task for read-only polling, or keep an
+    // unsubmitted job queued. Never persist the race as a failed task or as
+    // auth_required, and never route it to the manual blocking dialog.
+    const dreaminaProfileSwitchQueued = dreaminaProfileSwitchBlocked
+      && dreaminaCliMediaJob(current)
+      && !current.providerTaskId
+      && !submissionUnknown;
+    const dreaminaProfileSwitchDeferred = dreaminaProfileSwitchBlocked
+      && dreaminaCliMediaJob(current)
+      && Boolean(current.providerTaskId);
     const dreaminaReconciliationDeferredByProfileLock = dreaminaProfileSwitchBlocked
       && dreaminaCliMediaJob(current)
       && !current.providerTaskId
@@ -1801,6 +1915,30 @@ const processJob = async (candidate) => {
         : `取消确认暂时失败，将保留取消状态继续核对：${errorMessage(error)}`,
       nextPollAt: new Date(Date.now() + (missingCredentials ? 60_000 : transientBackoffMs(1, error.retryAfterMs))).toISOString(),
       retryAllowed: true,
+      heartbeatAt: new Date().toISOString(),
+    } : dreaminaProfileSwitchDeferred ? {
+      status: "polling",
+      providerStatus: current.providerStatus || "running",
+      providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
+      lockConflict: error.details || current.lockConflict || {},
+      progressPercent: Math.max(24, Number(current.progressPercent) || 0),
+      failedAt: "",
+      retryAllowed: true,
+      nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+      error: `即梦凭证锁在本次查询期间被其他配置短暂占用；已保留原厂商任务 ${current.providerTaskId}，释放后继续只读查询，不会重新提交。`,
+      heartbeatAt: new Date().toISOString(),
+    } : dreaminaProfileSwitchQueued ? {
+      status: "queued",
+      providerStatus: "queued",
+      providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
+      lockConflict: error.details || current.lockConflict || {},
+      submissionState: "not_submitted",
+      progressPercent: Math.max(8, Number(current.progressPercent) || 0),
+      failedAt: "",
+      retryAllowed: true,
+      safeNoTaskRetry: true,
+      nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+      error: "即梦凭证锁在本次提交期间被其他配置短暂占用；本任务尚未提交，释放后自动继续，不会重复扣费。",
       heartbeatAt: new Date().toISOString(),
     } : dreaminaReconciliationDeferredByProfileLock ? {
       // Another verified profile may legitimately own the single Dreamina
@@ -2037,6 +2175,18 @@ const processJob = async (candidate) => {
   }
 };
 
+const isActiveDreaminaWorkerJob = (job, { excludeId = "" } = {}) => {
+  if (!job || String(job.id || "") === String(excludeId || "")) return false;
+  if (normalizedIdentity(job?.request?.settings?.adapter) !== "cli"
+    || !["即梦", "dreamina"].includes(normalizedIdentity(job?.request?.settings?.provider))) return false;
+  const status = String(job.status || "").toLowerCase();
+  // `retry_required` and `waiting_storage` are durable user-attention states,
+  // not a worker currently holding the physical Dreamina credential slot. They
+  // must not starve the one deferred reconciliation pass forever. The broker
+  // lease check immediately before that pass remains the final race guard.
+  return ["submitting", "running", "polling", "downloading", "cancel_requested"].includes(status);
+};
+
 const main = async () => {
   await initializeConfiguredDataRoot();
   const updateBarrier = createUpdateWriteBarrier({ coordinationRoot: appDataRoot() });
@@ -2050,8 +2200,14 @@ const main = async () => {
       // credential slot, run one deferred reconciliation pass in the
       // background. This keeps recovery off the first-launch path without
       // changing the explicit submit/poll/download pipeline.
-      if (normalizedIdentity(targetJob?.request?.settings?.adapter) === "cli"
-        && ["即梦", "dreamina"].includes(normalizedIdentity(targetJob?.request?.settings?.provider))) {
+      const targetIsDreamina = normalizedIdentity(targetJob?.request?.settings?.adapter) === "cli"
+        && ["即梦", "dreamina"].includes(normalizedIdentity(targetJob?.request?.settings?.provider));
+      const activeDreaminaLease = targetIsDreamina ? await readDreaminaBrokerLease().catch(() => null) : null;
+      const allDreaminaJobs = targetIsDreamina
+        ? await listMediaGenerationJobsForWorker({ skipDreamina: false }).catch(() => [])
+        : [];
+      const anotherDreaminaTaskActive = allDreaminaJobs.some((item) => isActiveDreaminaWorkerJob(item, { excludeId: targetJob?.id }));
+      if (targetIsDreamina && !activeDreaminaLease && !anotherDreaminaTaskActive) {
         const args = [workerScriptPath, "--app-root", appRoot, "--scan-mode", "dreamina-deferred"];
         const env = {
           ...process.env,
@@ -2071,6 +2227,15 @@ const main = async () => {
         deferred.unref();
       }
       return;
+    }
+    if (scanMode === "dreamina-deferred") {
+      // Re-check immediately before the reconciliation scan. A new user
+      // generation can start between the targeted worker exit and this
+      // detached process; never let background recovery race it for the one
+      // Dreamina credential slot.
+      const lease = await readDreaminaBrokerLease().catch(() => null);
+      const currentJobs = await listMediaGenerationJobsForWorker({ skipDreamina: false }).catch(() => []);
+      if (lease || currentJobs.some((item) => isActiveDreaminaWorkerJob(item))) return;
     }
     const jobs = await listMediaGenerationJobsForWorker({ skipDreamina: startupRecoveryScan });
     const isDreaminaJob = (job) => String(job.request?.settings?.provider || "") === "即梦"

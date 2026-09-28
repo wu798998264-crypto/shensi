@@ -1,0 +1,9 @@
+{
+  "id": "local-h3",
+  "version": "v0.1.1",
+  "workflowVersion": "0.1.1",
+  "baseUrl": "http://127.0.0.1:8188",
+  "managedByShensi": true,
+  "requiresExternalRuntime": true,
+  "launch": {"command": []}
+}

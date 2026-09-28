@@ -18,11 +18,6 @@ const workerKey = ({ jobId = "", scanMode = "" } = {}) => jobId
   ? `job:${String(jobId)}`
   : scanMode === "credential-rebind" ? "recovery-scan:credential-rebind" : "recovery-scan";
 
-const liveWorker = (key) => {
-  const worker = activeWorkers.get(key);
-  return worker && worker.exitCode === null && worker.signalCode === null ? worker : null;
-};
-
 const processIsAlive = (pid) => {
   const value = Number(pid);
   if (!Number.isInteger(value) || value <= 0) return false;
@@ -32,6 +27,23 @@ const processIsAlive = (pid) => {
   } catch (error) {
     return error?.code !== "ESRCH";
   }
+};
+
+const liveWorker = (key) => {
+  const worker = activeWorkers.get(key);
+  if (!worker || worker.exitCode !== null || worker.signalCode !== null) {
+    if (worker) activeWorkers.delete(key);
+    return null;
+  }
+  // Detached workers may exit without delivering the child `exit` event to a
+  // long-running Electron server (especially after the provider CLI closes
+  // its broker process).  Never let an in-memory ChildProcess object block the
+  // watchdog forever: the persisted PID is the authoritative liveness check.
+  if (!processIsAlive(worker.pid)) {
+    activeWorkers.delete(key);
+    return null;
+  }
+  return worker;
 };
 
 const readWindowsCommandLine = (pid) => new Promise((resolveCommandLine) => {

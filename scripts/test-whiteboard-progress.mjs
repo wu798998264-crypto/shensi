@@ -17,6 +17,7 @@ import {
   whiteboardProviderQueueVisible,
 } from "../src/whiteboard-progress.js";
 import { whiteboardGenerationResult } from "../src/whiteboard.js";
+import { mediaGenerationPollErrorIsTerminal } from "../src/media-generation-coordination.js";
 
 assert.equal(monotonicProgress(40, 18), 40, "进度不得回退");
 assert.equal(monotonicProgress(40, 65), 65, "正常前进进度必须保留");
@@ -44,6 +45,7 @@ assert.equal(formatGenerationDuration(59_600), "1分00秒", "整数秒进位后�
 assert.equal(formatGenerationDuration(61_200, { english: true }), "1m 01s", "英文界面也不得显示小数秒");
 assert.equal(whiteboardGenerationResult({ candidate: "可直接写入卡片的正文", engineExecution: { status: "blocked", result: "余额不足" } }).accepted, true, "有效正文不得被晚到的余额状态降级为失败");
 assert.equal(whiteboardGenerationResult({ candidate: "", engineExecution: { status: "blocked", result: "余额不足" } }).accepted, false, "没有正文时仍必须保留真实失败状态");
+assert.equal(mediaGenerationPollErrorIsTerminal({ status: 409, code: "GENERATION_JOB_BUSY" }, 1), false, "本地任务并发写入冲突必须继续读取，不能伪装成终态失败");
 
 const connectingImage = {
   channel: "image",
@@ -148,6 +150,20 @@ assert.match(app, /厂商排队[\s\S]{0,220}共/u, "厂商排队必须明确显�
 assert.match(app, /uiText\("正式生成"\)/u, "即梦受理占位状态必须显示正式生成，不能误写成排队");
 assert.match(app, /const beginWhiteboardSubmissionFeedback[\s\S]{0,520}status: "connecting"/u, "点击生成后必须立即建立卡片状态与计时");
 assert.match(app, /cardApplyStage: job\.status === "complete" \? "saving" : ""/u, "任务完成回包必须无缝进入卡片保存阶段，不能出现状态空窗");
+assert.match(app, /const WHITEBOARD_CARD_APPLY_STAGE_ORDER = Object\.freeze\(\{[\s\S]{0,120}saving: 1,[\s\S]{0,80}verifying: 2/u,
+  "晚到的任务回包不得把已经进入回读的卡片阶段覆盖回保存");
+assert.match(app, /whiteboardCardApplyStageOrder\(incomingStage\) < whiteboardCardApplyStageOrder\(currentStage\)[\s\S]{0,120}normalizedPatch\.cardApplyStage = candidate\.cardApplyStage/u,
+  "卡片回写阶段必须只允许单调前进");
+assert.match(app, /const whiteboardGenerationApplyFlights = new Map\(\)[\s\S]{0,700}whiteboardGenerationApplyFlights\.get\(String\(job\.id\)\)/u,
+  "同一完成任务的前台回写和恢复回写必须按任务串行");
+assert.match(app, /const resultReadyApplyPending = generationResultReady[\s\S]{0,420}正在回写卡片/u,
+  "附件已经取得但仍在本地落盘时必须显示回写阶段，不能继续伪装成供应商生成中");
+assert.match(app, /const canonicalSaveRequired = landingChanged[\s\S]{0,500}ui\.workspaceDirtyDocumentIds\.has\(documentId\)[\s\S]{0,260}flushWorkspaceSave\(\{ throwOnError: true \}\)/u,
+  "同一媒体结果的幂等回写不得重复保存整个工作区，但有未保存修改时仍必须落盘");
+assert.match(app, /const inputByPath = new Map\(inputs\.map\([\s\S]{0,260}outputsWithSourceRatio/u,
+  "深度结果卡片必须沿用对应图片或视频上游的画幅比例");
+assert.match(app, /sourceElement: decodedSourceElement/u,
+  "图片编辑器应复用白板中已经解码的图片，避免重复读取导致打开变慢");
 assert.match(app, /const applyCompletedWhiteboardGenerationJob[\s\S]{0,260}updateWhiteboardCompletedApplyStage\(job, "saving"\)/u, "落盘开始前必须先显示保存状态");
 assert.match(app, /updateWhiteboardCompletedApplyStage\(job, "verifying"\);\s+const cardReadback = await verifyWhiteboardGenerationCardReadback/u, "回读开始前必须先显示回读状态");
 assert.match(app, /await markWhiteboardGenerationJobApplied[\s\S]{0,180}finalizeWhiteboardCompletedCandidate\(job\)/u, "只有回读和应用标记成功后才能移除活动候选状态");

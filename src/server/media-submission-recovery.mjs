@@ -110,6 +110,15 @@ const safeKnownNoTaskRetry = (code) => [
   "DREAMINA_REFERENCE_UPLOAD_NO_TASK",
 ].includes(code);
 
+const libTvPreSubmitTransportFailure = (job = {}, code = "") => {
+  const settings = job?.request?.settings || {};
+  const provider = String(settings.provider || "").trim().toLowerCase();
+  const adapter = String(settings.adapter || "").trim().toLowerCase();
+  if (provider !== "libtv" || adapter !== "cli") return false;
+  if (job.status !== "submitting" || job.providerTaskId) return false;
+  return /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/.test(code);
+};
+
 export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutomaticRetries = 3 } = {}) => {
   const failureCount = Number(job.transientFailures || 0) + 1;
   const upstreamStreamOpenTimeout = isUpstreamStreamOpenTimeout(error);
@@ -120,7 +129,9 @@ export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutoma
   const code = normalizedProviderCode(error);
   const brokerBusy = code === "DREAMINA_PROFILE_BROKER_BUSY";
   const safeAutomaticRetry = error.submissionOutcomeKnown === true
-    && (safeKnownNoTaskRetry(code) || (job.channel === "image" && safeRejectedImageRetry(code)))
+    && (safeKnownNoTaskRetry(code)
+      || libTvPreSubmitTransportFailure(job, code)
+      || (job.channel === "image" && safeRejectedImageRetry(code)))
     && failureCount <= Math.max(0, Number(maxAutomaticRetries) || 0);
   const retryDelayMs = safeAutomaticRetry
     ? Math.max(Number(error.retryAfterMs) || 0, Math.min(30_000, 1_000 * (2 ** Math.max(0, failureCount - 1))))

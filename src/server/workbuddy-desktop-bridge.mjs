@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const clean = (value = "") => String(value ?? "").replace(/\0/gu, "").trim();
 const DEFAULT_TIMEOUT_MS = 1_800_000;
+const BRIDGE_READINESS_WINDOW_MS = 12_000;
+const BRIDGE_POLL_INTERVAL_MS = 500;
 const ACP_HEADERS = { "x-codebuddy-request": "1", "content-type": "application/json", accept: "application/json, text/event-stream" };
 
 const configRoot = (environment = process.env) => clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR)
@@ -79,6 +81,27 @@ const discoverSidecar = async (options = {}) => {
     if (ping?.pid) return { ...candidate, ping };
   }
   return null;
+};
+
+const waitForSidecar = async ({ environment = process.env, signal = null, timeoutMs = BRIDGE_READINESS_WINDOW_MS } = {}) => {
+  // Synthetic environments used by contract tests intentionally do not touch
+  // the desktop process table. Keep those calls immediate; the bounded wait
+  // is only for the real first-use WorkBuddy startup race.
+  const synthetic = environment !== process.env && environment?.SHENSI_ALLOW_WORKBUDDY_BRIDGE_TEST !== "1";
+  const windowMs = synthetic ? 0 : Math.min(BRIDGE_READINESS_WINDOW_MS, Math.max(0, Number(timeoutMs) || BRIDGE_READINESS_WINDOW_MS));
+  const deadline = Date.now() + windowMs;
+  let sidecar = await discoverSidecar({ environment });
+  while (!sidecar && Date.now() < deadline) {
+    if (signal?.aborted) throw Object.assign(new Error("WorkBuddy ACP 请求已取消"), { name: "AbortError" });
+    await new Promise((resolveDelay, rejectDelay) => {
+      const timer = setTimeout(() => { signal?.removeEventListener?.("abort", abort); resolveDelay(); }, Math.min(BRIDGE_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())));
+      const abort = () => { clearTimeout(timer); signal?.removeEventListener?.("abort", abort); rejectDelay(Object.assign(new Error("WorkBuddy ACP 请求已取消"), { name: "AbortError" })); };
+      signal?.addEventListener?.("abort", abort, { once: true });
+      timer.unref?.();
+    }).catch((error) => { if (error?.name === "AbortError") throw error; });
+    sidecar = await discoverSidecar({ environment });
+  }
+  return sidecar;
 };
 
 const asHeaders = (headers = {}) => Object.entries(headers || {}).filter(([name, value]) => name && value != null).map(([name, value]) => ({ name, value: String(value) }));
@@ -184,26 +207,53 @@ const sessionModels = (result = {}) => (Array.isArray(result?.models?.availableM
   .map((item) => ({ id: clean(item?.modelId || item?.id), name: clean(item?.name || item?.modelId || item?.id) }))
   .filter((item) => item.id);
 
+const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, signal = null, timeoutMs = 120_000 } = {}) => {
+  const listed = await controlRequest(sidecar.controlPipe, { jsonrpc: "2.0", id: 4, method: "session.list", params: {} }).catch(() => []);
+  let session = Array.isArray(listed) && listed[0]?.acpEndpoint ? listed[0] : null;
+  let credentials = null;
+  const prepare = async () => {
+    if (!session) session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
+    credentials = await connectAcp(session.acpEndpoint, { signal });
+    await acpPost(session.acpEndpoint, credentials, {
+      jsonrpc: "2.0", id: 5, method: "initialize",
+      params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "shensi", version: "1.0" } },
+    }, { signal, timeoutMs });
+    const created = await acpPost(session.acpEndpoint, credentials, {
+      jsonrpc: "2.0", id: 6, method: "session/new",
+      params: { cwd: resolve(cwd), mcpServers: toMcpServers(nativeHost) },
+    }, { signal, timeoutMs });
+    if (created?.error) throw Object.assign(new Error(created.error.message || "WorkBuddy ACP 任务会话创建失败"), { code: "WORKBUDDY_ACP_SESSION_FAILED" });
+    const result = created?.result || {};
+    if (!clean(result.sessionId)) throw Object.assign(new Error("WorkBuddy ACP 未创建任务会话"), { code: "WORKBUDDY_ACP_SESSION_FAILED" });
+    return { session, credentials, result };
+  };
+  try {
+    return await prepare();
+  } catch (firstError) {
+    // A desktop sidecar may keep a stale ACP child after a restart/update.
+    // Recreate exactly once, bounded to the lifecycle handshake; never retry
+    // the provider prompt itself and never create a second user task.
+    await closeAcp(session?.acpEndpoint, credentials);
+    session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
+    credentials = null;
+    try {
+      return await prepare();
+    } catch (secondError) {
+      secondError.cause = firstError;
+      throw secondError;
+    }
+  }
+};
+
 export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativeHost = null, environment = process.env, timeoutMs = 90_000 } = {}) => {
-  const sidecar = await discoverSidecar({ environment });
+  const sidecar = await waitForSidecar({ environment, timeoutMs: Math.min(timeoutMs, BRIDGE_READINESS_WINDOW_MS) });
   if (!sidecar) return { connected: false, authenticated: null, state: "bridge_unavailable", models: [], message: "WorkBuddy 桌面端未提供可用 ACP 桥接；桌面端登录状态未被判定为失效" };
   let session;
   let credentials;
   try {
-    const listed = await controlRequest(sidecar.controlPipe, { jsonrpc: "2.0", id: 3, method: "session.list", params: {} }).catch(() => []);
-    session = Array.isArray(listed) && listed[0]?.acpEndpoint ? listed[0] : await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
-    try {
-      credentials = await connectAcp(session.acpEndpoint);
-    } catch (error) {
-      // A sidecar can outlive its last ACP child after a desktop update or a
-      // terminated task.  Recreate one bounded session instead of turning a
-      // stale endpoint into a false login failure.
-      session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
-      credentials = await connectAcp(session.acpEndpoint);
-    }
-    await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "shensi", version: "1.0" } } }, { timeoutMs });
-    const created = await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: resolve(cwd), mcpServers: toMcpServers(nativeHost) } }, { timeoutMs });
-    const result = created?.result || {};
+    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, timeoutMs });
+    ({ session, credentials } = opened);
+    const result = opened.result || {};
     return {
       connected: true,
       authenticated: true,
@@ -223,27 +273,19 @@ export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativ
 };
 
 export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = process.cwd(), nativeHost = null, environment = process.env, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS, onEvent } = {}) => {
-  const sidecar = await discoverSidecar({ environment });
+  const sidecar = await waitForSidecar({ environment, signal, timeoutMs: Math.min(timeoutMs, BRIDGE_READINESS_WINDOW_MS) });
   if (!sidecar) {
     const error = new Error("WorkBuddy 桌面端已登录，但神思未发现可用 ACP 桥接；请保持 WorkBuddy 客户端运行后重试");
     error.code = "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE";
     throw error;
   }
-  const listed = await controlRequest(sidecar.controlPipe, { jsonrpc: "2.0", id: 4, method: "session.list", params: {} }).catch(() => []);
-  let session = Array.isArray(listed) && listed[0]?.acpEndpoint ? listed[0] : await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs: Math.min(timeoutMs, 120_000) });
+  let session;
   let credentials;
   try {
-    credentials = await connectAcp(session.acpEndpoint, { signal });
-  } catch (error) {
-    session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs: Math.min(timeoutMs, 120_000) });
-    credentials = await connectAcp(session.acpEndpoint, { signal });
-  }
-  try {
-    await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 5, method: "initialize", params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "shensi", version: "1.0" } } }, { signal, timeoutMs: Math.min(timeoutMs, 120_000) });
-    const created = await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 6, method: "session/new", params: { cwd: resolve(cwd), mcpServers: toMcpServers(nativeHost) } }, { signal, timeoutMs: Math.min(timeoutMs, 120_000) });
-    const sessionResult = created?.result || {};
+    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, signal, timeoutMs: Math.min(timeoutMs, 120_000) });
+    ({ session, credentials } = opened);
+    const sessionResult = opened.result || {};
     const sessionId = clean(sessionResult.sessionId);
-    if (!sessionId) throw new Error("WorkBuddy ACP 未创建任务会话");
     const available = sessionModels(sessionResult);
     const selectedModel = clean(model) && (available.length === 0 || available.some((item) => item.id === clean(model))) ? clean(model) : "auto";
     if (clean(model) && selectedModel === "auto" && available.length && !available.some((item) => item.id === clean(model))) {

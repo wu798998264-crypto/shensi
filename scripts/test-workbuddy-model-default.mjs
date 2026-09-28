@@ -39,10 +39,12 @@ assert.equal(args.includes("--model"), false, "模型为空时不得向 WorkBudd
 assert.equal(args.includes("只回复 OK"), true);
 
 assert.match(app, /跟随 \$\{externalRunnerLabel\} 默认模型（留空）/u);
-assert.match(app, /跟随 \$\{escapeHtml\(runnerLabel\)\} CLI 默认模型/u);
-assert.match(app, /\$\{escapeHtml\(runnerLabel\)\} CLI 当前账号/u);
+assert.match(app, /跟随 \$\{escapeHtml\(modelSourceLabel\)\}默认模型/u);
+assert.match(app, /const modelSourceLabel = "WorkBuddy 当前会话"/u);
 assert.match(app, /请先登录 \$\{escapeHtml\(runnerLabel\)\}，登录后自动读取模型/u);
 assert.match(app, /正在读取 \$\{runnerLabel\} CLI 当前支持的模型/u);
 assert.match(app, /读取 \$\{capability\.models\.length\} 个真实支持模型/u);
+assert.match(app, /if \(requested && models\.length && !models\.includes\(requested\)\) return ""/u,
+  "保存的 stale WorkBuddy 模型必须在真实目录刷新后回退到 CLI 默认模型，而不是伪装成登录失效");
 
 console.log("WorkBuddy default model contract passed");

@@ -12,6 +12,8 @@ import {
   OPENAI_IMAGE_CLI_ARGS,
   LIBTV_CLI_ALIAS,
   LIBTV_CLI_ARGS,
+  LOCAL_H3_CLI_ALIAS,
+  LOCAL_H3_CLI_ARGS,
 } from "../media-cli-presets.js";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getProviderPreset } from "../model-presets.js";
 import { resolveLocalCodexLaunch } from "../cli/codex-launch.mjs";
@@ -504,6 +506,9 @@ const builtInCliBinding = ({ channel, settings }) => {
   }
   if (["image", "video", "audio"].includes(channel) && String(settings.provider || "").toLowerCase() === "libtv") {
     return { cliPath: LIBTV_CLI_ALIAS, cliArgs: LIBTV_CLI_ARGS, baseUrl: "" };
+  }
+  if (channel === "video" && String(settings.provider || "").trim() === "本地 H3") {
+    return { cliPath: LOCAL_H3_CLI_ALIAS, cliArgs: LOCAL_H3_CLI_ARGS, baseUrl: "http://127.0.0.1:8188" };
   }
   return null;
 };

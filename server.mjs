@@ -167,6 +167,7 @@ import {
 } from "./src/server/generation-job-store.mjs";
 import { launchMediaGenerationWorker, terminateMediaGenerationWorker } from "./src/server/media-worker-manager.mjs";
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
+import { localH3InstallStatus, probeLocalH3Runtime, startLocalH3Install } from "./src/server/local-h3-runtime.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
 import { recordDreaminaProfileGenerationSuccess } from "./src/server/dreamina-profile-identity-store.mjs";
@@ -1053,6 +1054,18 @@ const trustedMediaRecoverySettings = async ({ job, suppliedSettings = {} } = {})
     throw error;
   }
   return trusted;
+};
+
+// 本地 H3 由 ComfyUI 在本机提供，不使用远程 API 凭证。恢复/取消路径与
+// 生成 worker 使用同一严格 loopback 判断，不能把空 API Key 放宽到任何远程连接。
+const isLocalH3LoopbackSettings = (settings = {}) => {
+  if (String(settings.adapter || "").toLowerCase() !== "api"
+    || String(settings.provider || "") !== "本地 H3"
+    || String(settings.protocol || "").toLowerCase() !== "comfyui") return false;
+  try {
+    const url = new URL(String(settings.baseUrl || "http://127.0.0.1:8188"));
+    return ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+  } catch { return false; }
 };
 
 const deferMediaJobIfUnchanged = ({ job, desiredAction, patch }) => updateActiveMediaGenerationJob({
@@ -2192,6 +2205,9 @@ const rateLimits = new Map([
   ["/api/workspace/depth-explorer/install", { limit: 3, windowMs: 10 * 60_000 }],
   ["/api/workspace/depth-explorer/install/status", { limit: 120, windowMs: 60_000 }],
   ["/api/workspace/depth-explorer/run/status", { limit: 180, windowMs: 60_000 }],
+  ["/api/local-h3/install", { limit: 3, windowMs: 10 * 60_000 }],
+  ["/api/local-h3/install/status", { limit: 120, windowMs: 60_000 }],
+  ["/api/local-h3/probe", { limit: 60, windowMs: 60_000 }],
   ["/api/models/list", { limit: 12, windowMs: 60_000 }],
   ["/api/opencode/models", { limit: 20, windowMs: 60_000 }],
   ["/api/update/check", { limit: 12, windowMs: 60_000 }],
@@ -4362,7 +4378,7 @@ const handleApiRequest = async (request, response, pathname) => {
           });
           return sendJson(response, 202, { ok: true, requiresCredentials: waiting.status === "waiting_credentials", job: generationJobWithLifecycle(waiting) });
         }
-        if (trustedSettings.adapter === "api" && !trustedSettings.apiKey) {
+        if (trustedSettings.adapter === "api" && !trustedSettings.apiKey && !isLocalH3LoopbackSettings(trustedSettings)) {
           const waiting = await deferMediaJobIfUnchanged({
             job,
             desiredAction: "run",
@@ -4421,7 +4437,7 @@ const handleApiRequest = async (request, response, pathname) => {
             });
             return sendJson(response, 202, { ok: true, requiresCredentials: waiting.status === "waiting_credentials", job: generationJobWithLifecycle(waiting) });
           }
-          if (trustedSettings.adapter === "api" && !trustedSettings.apiKey) {
+          if (trustedSettings.adapter === "api" && !trustedSettings.apiKey && !isLocalH3LoopbackSettings(trustedSettings)) {
             const waiting = await deferMediaJobIfUnchanged({
               job,
               desiredAction: "cancel",
@@ -9673,6 +9689,19 @@ const handleApiRequest = async (request, response, pathname) => {
     const result = await workspaceDepthExplorerRunStatus(requestUrl.searchParams.get("jobId") || "");
     if (result.status === "complete") await Promise.all((result.outputs || []).map((output) => nutstoreSyncEngine.noteLocalChange(output.attachment.relativePath).catch(() => {})));
     return sendJson(response, 200, result);
+  }
+
+  if (pathname === "/api/local-h3/probe" && request.method === "POST") {
+    const body = await readJsonBody(request, 64 * 1024);
+    return sendJson(response, 200, { ok: true, ...(await probeLocalH3Runtime({ settings: body || {} })) });
+  }
+
+  if (pathname === "/api/local-h3/install" && request.method === "POST") {
+    return sendJson(response, 202, await startLocalH3Install());
+  }
+
+  if (pathname === "/api/local-h3/install/status" && request.method === "GET") {
+    return sendJson(response, 200, await localH3InstallStatus(requestUrl.searchParams.get("jobId") || ""));
   }
 
   if (pathname === "/api/workspace/video-concat" && request.method === "POST") {

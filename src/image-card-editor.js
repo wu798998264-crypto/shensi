@@ -18,6 +18,22 @@ export const IMAGE_CARD_EDITOR_TOOLS = Object.freeze([
   { id: "mosaic", label: "马赛克" },
 ]);
 
+export const IMAGE_EDITOR_CROP_ASPECT_RATIOS = Object.freeze([
+  { value: "free", label: "自由" },
+  { value: "21:9", label: "21:9" },
+  { value: "16:9", label: "16:9" },
+  { value: "4:3", label: "4:3" },
+  { value: "1:1", label: "1:1" },
+  { value: "3:4", label: "3:4" },
+  { value: "9:16", label: "9:16" },
+  { value: "9:21", label: "9:21" },
+]);
+
+export const imageEditorAspectRatioValue = (value) => {
+  const [width, height] = String(value || "").split(":").map(Number);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? width / height : null;
+};
+
 export const imageEditorRasterSize = ({ width, height, maximumDimension = 8192, maximumPixels = 32_000_000 } = {}) => {
   const sourceWidth = Math.max(1, Math.round(Number(width) || 1));
   const sourceHeight = Math.max(1, Math.round(Number(height) || 1));
@@ -92,6 +108,44 @@ export const moveImageCrop = (crop, dx, dy, { width, height } = {}) => {
     x: clamp(normalized.x + (Number(dx) || 0), 0, Math.max(0, canvasWidth - normalized.width)),
     y: clamp(normalized.y + (Number(dy) || 0), 0, Math.max(0, canvasHeight - normalized.height)),
   };
+};
+
+export const imageCropFromDrag = (start, end, aspectRatio, { width, height } = {}) => {
+  const canvasWidth = Math.max(1, Number(width) || 1);
+  const canvasHeight = Math.max(1, Number(height) || 1);
+  const ratio = Number(aspectRatio);
+  if (!(ratio > 0)) return normalizeImageCrop({ x: start?.x, y: start?.y, width: (end?.x || 0) - (start?.x || 0), height: (end?.y || 0) - (start?.y || 0) }, { width: canvasWidth, height: canvasHeight });
+  const dx = (Number(end?.x) || 0) - (Number(start?.x) || 0);
+  const dy = (Number(end?.y) || 0) - (Number(start?.y) || 0);
+  if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return normalizeImageCrop({ x: start?.x, y: start?.y, width: 0, height: 0 }, { width: canvasWidth, height: canvasHeight });
+  let cropWidth = Math.max(1, Math.abs(dx));
+  let cropHeight = Math.max(1, Math.abs(dy));
+  if (cropWidth / cropHeight > ratio) cropHeight = cropWidth / ratio;
+  else cropWidth = cropHeight * ratio;
+  const scale = Math.min(1, canvasWidth / cropWidth, canvasHeight / cropHeight);
+  cropWidth *= scale;
+  cropHeight *= scale;
+  const x = dx < 0 ? (Number(start?.x) || 0) - cropWidth : (Number(start?.x) || 0);
+  const y = dy < 0 ? (Number(start?.y) || 0) - cropHeight : (Number(start?.y) || 0);
+  return normalizeImageCrop({ x, y, width: cropWidth, height: cropHeight }, { width: canvasWidth, height: canvasHeight });
+};
+
+export const fitImageCropToAspect = (crop, aspectRatio, { width, height } = {}) => {
+  const canvasWidth = Math.max(1, Number(width) || 1);
+  const canvasHeight = Math.max(1, Number(height) || 1);
+  const ratio = Number(aspectRatio);
+  if (!(ratio > 0)) return normalizeImageCrop(crop, { width: canvasWidth, height: canvasHeight });
+  const normalized = normalizeImageCrop(crop, { width: canvasWidth, height: canvasHeight });
+  let cropWidth = Math.max(2, normalized.width);
+  let cropHeight = Math.max(2, normalized.height);
+  if (cropWidth / cropHeight > ratio) cropHeight = cropWidth / ratio;
+  else cropWidth = cropHeight * ratio;
+  const scale = Math.min(1, canvasWidth / cropWidth, canvasHeight / cropHeight);
+  cropWidth *= scale;
+  cropHeight *= scale;
+  const centerX = normalized.x + normalized.width / 2;
+  const centerY = normalized.y + normalized.height / 2;
+  return normalizeImageCrop({ x: centerX - cropWidth / 2, y: centerY - cropHeight / 2, width: cropWidth, height: cropHeight }, { width: canvasWidth, height: canvasHeight });
 };
 
 export const resizeImageCrop = (crop, handle, point, { width, height } = {}) => {
@@ -217,6 +271,9 @@ const editorMarkup = () => `<dialog class="image-card-editor-dialog" aria-labell
     <section class="image-card-editor-options" aria-label="工具参数">
       <label data-image-editor-color-field><span>颜色</span><input data-image-editor-color type="color" value="#ff3b30" /></label>
       <label data-image-editor-size-field><span data-image-editor-size-label>粗细</span><input data-image-editor-size type="range" min="2" max="32" step="1" value="6" /><output data-image-editor-size-output>6</output></label>
+      <div class="image-card-editor-crop-presets" data-image-editor-crop-presets role="group" aria-label="裁剪比例">
+        <span>比例</span>${IMAGE_EDITOR_CROP_ASPECT_RATIOS.map(({ value, label }) => `<button type="button" data-image-editor-crop-ratio="${value}" aria-pressed="${value === "free"}">${label}</button>`).join("")}
+      </div>
       <span class="image-card-editor-tip" data-image-editor-tip>拖拽已有标注可移动；拖拽控制点可调整大小。</span>
     </section>
     <footer class="image-card-editor-footer">
@@ -485,6 +542,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
   const sizeOutput = dialog.querySelector("[data-image-editor-size-output]");
   const sizeLabel = dialog.querySelector("[data-image-editor-size-label]");
   const sizeField = dialog.querySelector("[data-image-editor-size-field]");
+  const cropPresets = dialog.querySelector("[data-image-editor-crop-presets]");
   const colorField = dialog.querySelector("[data-image-editor-color-field]");
   const textBox = dialog.querySelector("[data-image-editor-text-box]");
   const tip = dialog.querySelector("[data-image-editor-tip]");
@@ -496,6 +554,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
   let tool = "select";
   let operations = [];
   let crop = null;
+  let cropAspectRatio = null;
   let selectedIndex = -1;
   let draft = null;
   let pointerDrag = null;
@@ -509,6 +568,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
   let liveStrokePointIndex = 0;
   let liveMosaicPattern = null;
   let brushCursorClientPoint = null;
+  const prefetches = new Map();
   const sizeMemory = { drawing: 6, text: 32, mosaic: 20 };
   const sizeBucket = (value) => value === "text" ? "text" : value === "mosaic" ? "mosaic" : ["rectangle", "line", "pen", "arrow"].includes(value) ? "drawing" : "";
 
@@ -531,11 +591,13 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
   const stageResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => syncCanvasPresentationSize()) : null;
   stageResizeObserver?.observe(stage);
 
-  const snapshot = () => ({ operations: cloneValue(operations), crop: crop ? { ...crop } : null });
+  const snapshot = () => ({ operations: cloneValue(operations), crop: crop ? { ...crop } : null, cropAspectRatio });
   const restore = (value) => {
     operations = cloneValue(value?.operations || []);
     crop = value?.crop ? { ...value.crop } : null;
+    cropAspectRatio = Number(value?.cropAspectRatio) > 0 ? Number(value.cropAspectRatio) : null;
     selectedIndex = -1;
+    syncCropPresetButtons();
     render();
   };
   const syncHistoryButtons = () => {
@@ -746,6 +808,26 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     colorInput.value = operation.color || colorInput.value;
   };
 
+  function syncCropPresetButtons() {
+    if (!cropPresets) return;
+    cropPresets.hidden = tool !== "crop";
+    cropPresets.querySelectorAll("[data-image-editor-crop-ratio]").forEach((button) => {
+      const value = button.dataset.imageEditorCropRatio;
+      const selected = value === "free" ? !cropAspectRatio : imageEditorAspectRatioValue(value) === cropAspectRatio;
+      button.setAttribute("aria-pressed", String(selected));
+    });
+  }
+
+  const setCropPreset = (value) => {
+    cropAspectRatio = value === "free" ? null : imageEditorAspectRatioValue(value);
+    if (cropAspectRatio && canvas.width && canvas.height) {
+      crop = fitImageCropToAspect(crop || { x: 0, y: 0, width: canvas.width, height: canvas.height }, cropAspectRatio, canvas);
+    }
+    syncCropPresetButtons();
+    commit();
+    renderNow();
+  };
+
   const finishTextEditing = ({ accept = true } = {}) => {
     if (!textEditing) return false;
     const editing = textEditing;
@@ -845,6 +927,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
         : tool === "text"
           ? "单击已有文字可选择；在空白处拖出区域才会创建新文字，双击已有文字可修改内容。"
           : "在图片上拖拽绘制；完成后可用选择工具移动或调整。";
+    syncCropPresetButtons();
     updateBrushCursor();
     render();
   };
@@ -863,9 +946,12 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     next.src = source;
   });
 
-  const loadImage = async (source) => {
+  const loadImage = async (source, preferredElement = null) => {
+    // The whiteboard already decodes the visible image card. Reusing that
+    // element avoids a second authenticated fetch when the editor opens.
+    if (preferredElement?.complete && Number(preferredElement.naturalWidth) > 0) return preferredElement;
     try {
-      const response = await fetch(source, { credentials: "include", cache: "no-store" });
+      const response = await fetch(source, { credentials: "include", cache: "force-cache" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
       if (!blob.size) throw new Error("图片数据为空");
@@ -886,6 +972,22 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     } catch {
       return loadHtmlImage(source);
     }
+  };
+
+  const prefetch = async ({ src } = {}) => {
+    const source = String(src || "").trim();
+    if (!source) return false;
+    if (prefetches.has(source)) return prefetches.get(source);
+    const operation = fetch(source, { credentials: "include", cache: "force-cache" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await response.arrayBuffer();
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => prefetches.delete(source));
+    prefetches.set(source, operation);
+    return operation;
   };
 
   const close = () => {
@@ -910,10 +1012,11 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     if (dialog.open) dialog.close();
   };
 
-  const open = async ({ src, name = "图片", onSave } = {}) => {
+  const open = async ({ src, name = "图片", sourceElement = null, onSave } = {}) => {
     if (!src) throw new Error("当前图片没有可编辑的文件");
     operations = [];
     crop = null;
+    cropAspectRatio = null;
     selectedIndex = -1;
     draft = null;
     textEditing = null;
@@ -933,7 +1036,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     if (!dialog.open) dialog.showModal();
     try {
       imageUrl = src;
-      image = await loadImage(src);
+      image = await loadImage(src, sourceElement);
       const raster = imageEditorRasterSize({ width: image.naturalWidth || image.width, height: image.naturalHeight || image.height });
       canvas.width = raster.width;
       canvas.height = raster.height;
@@ -1053,13 +1156,16 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
       pointerDrag.changed ||= Math.hypot(point.x - pointerDrag.last.x, point.y - pointerDrag.last.y) > 0.05;
       pointerDrag.last = point;
     } else if (pointerDrag.mode === "crop-create") {
-      crop = { x: pointerDrag.start.x, y: pointerDrag.start.y, width: point.x - pointerDrag.start.x, height: point.y - pointerDrag.start.y };
+      crop = cropAspectRatio
+        ? imageCropFromDrag(pointerDrag.start, point, cropAspectRatio, canvas)
+        : { x: pointerDrag.start.x, y: pointerDrag.start.y, width: point.x - pointerDrag.start.x, height: point.y - pointerDrag.start.y };
       pointerDrag.changed = true;
     } else if (pointerDrag.mode === "crop-move") {
       crop = moveImageCrop(pointerDrag.startCrop, point.x - pointerDrag.start.x, point.y - pointerDrag.start.y, canvas);
       pointerDrag.changed = true;
     } else if (pointerDrag.mode === "crop-resize") {
       crop = resizeImageCrop(pointerDrag.startCrop, pointerDrag.handle, point, canvas);
+      if (cropAspectRatio) crop = fitImageCropToAspect(crop, cropAspectRatio, canvas);
       pointerDrag.changed = true;
     }
     else if (pointerDrag.mode === "text-create") {
@@ -1096,6 +1202,7 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     if (pointerDrag.mode === "transform" && pointerDrag.changed) commit();
     else if (["crop-create", "crop-move", "crop-resize"].includes(pointerDrag.mode)) {
       crop = normalizeImageCrop(crop, canvas);
+      if (cropAspectRatio) crop = fitImageCropToAspect(crop, cropAspectRatio, canvas);
       commit();
     } else if (pointerDrag.mode === "text-create") {
       const scale = canvas.width / Math.max(canvas.clientWidth, 1);
@@ -1137,6 +1244,11 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
   });
 
   dialog.addEventListener("click", async (event) => {
+    const cropRatioButton = event.target.closest("[data-image-editor-crop-ratio]");
+    if (cropRatioButton) {
+      setCropPreset(cropRatioButton.dataset.imageEditorCropRatio || "free");
+      return;
+    }
     const toolButton = event.target.closest("[data-image-editor-tool]");
     if (toolButton) {
       setTool(toolButton.dataset.imageEditorTool);
@@ -1239,5 +1351,5 @@ export const createImageCardEditor = ({ mount = document.body } = {}) => {
     syncHistoryButtons();
   });
 
-  return { dialog, open, close, exportResult, getState: () => snapshot() };
+  return { dialog, open, close, prefetch, exportResult, getState: () => snapshot() };
 };

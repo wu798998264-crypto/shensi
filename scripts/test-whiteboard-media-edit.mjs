@@ -127,6 +127,8 @@ try {
   assert.match(appSource, /本功能使用本地 CPU 或 GPU，配置较低不建议使用/u);
   assert.match(appSource, /inputs\.length > 10/u);
   assert.match(appSource, /runtime\.busy \|\| runtime\.checking \|\| !inputs\.length \|\| tooMany \|\| unavailable/u);
+  assert.match(appSource, /whiteboard-depth-generate\$\{loading \|\| runtime\.busy \? " loading" : ""\}/u, "深度摸索运行中按钮必须进入加载/灰态");
+  assert.match(appSource, /loading \|\| runtime\.busy \? ' aria-busy="true"' : ""/u, "深度摸索运行中必须暴露 aria-busy 状态");
   assert.match(appSource, /\/api\/workspace\/depth-explorer\/run/u);
   assert.match(appSource, /updateCanvasNode\(canvas, nodeId, \{ kind: output\.kind \}\);\s*canvas = updateCanvasNode\(canvas, nodeId, \{\s*file: attachment\.relativePath/u);
   assert.doesNotMatch(appSource, /class="whiteboard-image-edit-button"/);

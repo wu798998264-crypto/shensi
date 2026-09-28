@@ -291,11 +291,12 @@ const BUILT_IN_LIBTV_IMAGE = {
   id: "image-libtv",
   name: "libtv",
   remarkName: "libtv",
+  systemManaged: true,
   adapter: "cli",
   provider: "LibTV",
   protocol: "media",
   baseUrl: "",
-  model: "lib-image-2",
+  model: "nebula-ultra",
   timeoutMs: "900000",
   apiKey: "",
   cliPath: LIBTV_CLI_ALIAS,
@@ -349,6 +350,28 @@ const BUILT_IN_LIBTV_AUDIO_PROFILES = [
     reserved: false,
   },
 ];
+
+// Keep the local H3 connection discoverable even before its optional runtime
+// is installed.  The profile is intentionally a normal video profile (rather
+// than a transient settings-page draft), so a one-click installation can
+// immediately bind the existing profile and the picker never loses the
+// connection after a restart.  Availability is still decided by the runtime
+// capability probe at generation time.
+const BUILT_IN_LOCAL_H3_VIDEO = {
+  id: "video-local-h3",
+  name: "本地 H3（ComfyUI）",
+  remarkName: "本地 H3",
+  systemManaged: true,
+  adapter: "api",
+  provider: "本地 H3",
+  protocol: "comfyui",
+  baseUrl: "http://127.0.0.1:8188",
+  model: "minimax-h3-reference-video",
+  timeoutMs: "1800000",
+  apiKey: "",
+  cliPath: "",
+  cliArgs: "",
+};
 
 const BUILT_IN_DREAMINA_VIDEO = {
   id: "video-dreamina-cli",
@@ -1153,6 +1176,9 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
       // Workspace documents intentionally omit machine-local runtime fields.
       // Restore the bundled LibTV driver on every normalization so a restart
       // cannot turn a valid built-in profile into an unavailable placeholder.
+      const existing = next[existingIndex];
+      const legacyImageModel = channel === "image"
+        && ["lib-image-2", "lib-image-2.5-s", "lib-image-2.5-f"].includes(String(existing.model || "").trim());
       next[existingIndex] = normalizedProfile(channel, {
         ...next[existingIndex],
         adapter: builtIn.adapter,
@@ -1161,6 +1187,11 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
         baseUrl: builtIn.baseUrl,
         cliPath: builtIn.cliPath,
         cliArgs: builtIn.cliArgs,
+        systemManaged: builtIn.systemManaged === true || existing.systemManaged === true,
+        // These were historical ShenSi aliases, not models returned by the
+        // current LibTV CLI. Migrate only the built-in profile's stale
+        // defaults; user-created LibTV profiles remain untouched.
+        ...(legacyImageModel ? { model: BUILT_IN_LIBTV_IMAGE.model } : {}),
         ...(channel === "audio" ? { reserved: false } : {}),
       }, existingIndex, secrets);
       continue;
@@ -1168,6 +1199,30 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
     next = [...next, normalizedProfile(channel, builtIn, next.length, secrets)];
   }
   return next;
+};
+
+const ensureBuiltInLocalH3Profile = (profiles, secrets = {}) => {
+  const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_LOCAL_H3_VIDEO.id);
+  if (existingIndex >= 0) {
+    const existing = profiles[existingIndex];
+    profiles = profiles.map((profile, index) => index === existingIndex
+      ? normalizedProfile("video", {
+          ...BUILT_IN_LOCAL_H3_VIDEO,
+          ...existing,
+          id: BUILT_IN_LOCAL_H3_VIDEO.id,
+          name: BUILT_IN_LOCAL_H3_VIDEO.name,
+          remarkName: BUILT_IN_LOCAL_H3_VIDEO.remarkName,
+          systemManaged: true,
+          adapter: BUILT_IN_LOCAL_H3_VIDEO.adapter,
+          provider: BUILT_IN_LOCAL_H3_VIDEO.provider,
+          protocol: BUILT_IN_LOCAL_H3_VIDEO.protocol,
+          baseUrl: existing.baseUrl || BUILT_IN_LOCAL_H3_VIDEO.baseUrl,
+          model: existing.model || BUILT_IN_LOCAL_H3_VIDEO.model,
+        }, index, secrets)
+      : profile);
+    return profiles;
+  }
+  return [...profiles, normalizedProfile("video", BUILT_IN_LOCAL_H3_VIDEO, profiles.length, secrets)];
 };
 
 const migratePreferredDreaminaVideoModel = (profile) => profile.adapter === "cli"
@@ -1405,6 +1460,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       next.videoCliDefaultVersion = VIDEO_CLI_DEFAULT_VERSION;
       next.videoProfileCleanupVersion = VIDEO_PROFILE_CLEANUP_VERSION;
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.video ?? {});
+      profiles = ensureBuiltInLocalH3Profile(profiles, secrets.video ?? {});
     }
     if (channel === "audio") {
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.audio ?? {});

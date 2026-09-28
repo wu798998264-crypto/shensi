@@ -1,17 +1,18 @@
 import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { isIP } from "node:net";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
-import { DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_VIDEO_CLI_ALIAS, LIBTV_CLI_ALIAS } from "../media-cli-presets.js";
+import { DREAMINA_IMAGE_CLI_ALIAS, DREAMINA_VIDEO_CLI_ALIAS, LIBTV_CLI_ALIAS, LOCAL_H3_CLI_ALIAS } from "../media-cli-presets.js";
 import { isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { sanitizeMediaProviderPrompt } from "../media-prompt.js";
 import { dreaminaCliEnvironment } from "./dreamina-cli-profile.mjs";
+import { ensureLocalH3Runtime, localH3WorkflowPath, probeLocalH3Runtime } from "./local-h3-runtime.mjs";
 
 const moduleRoot = dirname(fileURLToPath(import.meta.url));
 const DREAMINA_IMAGE_BRIDGE_PATH = resolve(moduleRoot, "../cli/dreamina-image-cli.mjs");
@@ -1240,9 +1241,9 @@ const libTvCachedValue = (cache, key) => {
   return entry && entry.expiresAt > Date.now() ? entry.value : null;
 };
 
-const loadLibTvModelSchema = async ({ modelKey, settings = {} } = {}) => {
+const loadLibTvModelSchema = async ({ modelKey, settings = {}, forceFresh = false } = {}) => {
   const key = libTvCacheKey(settings, `schema:${modelKey}`);
-  const cached = libTvCachedValue(libTvModelSchemaCache, key);
+  const cached = forceFresh ? null : libTvCachedValue(libTvModelSchemaCache, key);
   if (cached) return cached;
   const payload = await spawnJson({
     executable: libtvExecutable(settings),
@@ -1267,11 +1268,33 @@ const mapWithConcurrency = async (items, worker, concurrency = 4) => {
   return results;
 };
 
-export const listLibTvModels = async ({ channel = "image", settings = {} } = {}) => {
+export const listLibTvModels = async ({ channel = "image", settings = {}, selectedModel = "", forceFresh = false } = {}) => {
   if (!['image', 'video', 'audio'].includes(channel)) return [];
   const cacheKey = libTvCacheKey(settings, `catalog:${channel}`);
-  const cached = libTvCachedValue(libTvModelCatalogCache, cacheKey);
-  if (cached) return cached;
+  const cached = forceFresh ? null : libTvCachedValue(libTvModelCatalogCache, cacheKey);
+  if (cached) {
+    const selected = String(selectedModel || "").trim();
+    if (!selected || cached.some((item) => item.slug === selected)) return cached;
+    // A cached search result can lag a provider account's model visibility.
+    // Verify only the selected missing model once through the authoritative
+    // schema endpoint; do not widen the catalog from a guessed alias.
+    try {
+      const schemaPayload = await loadLibTvModelSchema({ modelKey: selected, settings, forceFresh: true });
+      const modality = String(schemaPayload?.modality || schemaPayload?.schema?.modality || "").toLowerCase();
+      const expected = channel === "image" ? "image" : channel === "video" ? "video" : "audio";
+      const schemaKey = String(schemaPayload?.modelKey || schemaPayload?.schema?.modelKey || "").trim();
+      if (schemaKey === selected && (!modality || modality === expected)) {
+        const recovered = [...cached, {
+          slug: selected,
+          label: String(schemaPayload?.modelName || schemaPayload?.schema?.modelName || selected),
+          description: String(schemaPayload?.description || schemaPayload?.schema?.description || ""),
+        }];
+        libTvModelCatalogCache.set(cacheKey, { value: recovered, expiresAt: Date.now() + LIBTV_MODEL_SCHEMA_CACHE_TTL_MS });
+        return recovered;
+      }
+    } catch {}
+    return cached;
+  }
   const payload = await spawnJson({
     executable: libtvExecutable(settings),
     args: ["model", "search", "--type", channel],
@@ -1295,8 +1318,8 @@ export const listLibTvModels = async ({ channel = "image", settings = {} } = {})
   return models;
 };
 
-export const listLibTvModelCapabilities = async ({ channel = "video", settings = {} } = {}) => {
-  const models = await listLibTvModels({ channel, settings });
+export const listLibTvModelCapabilities = async ({ channel = "video", settings = {}, selectedModel = "", forceFresh = false } = {}) => {
+  const models = await listLibTvModels({ channel, settings, selectedModel, forceFresh });
   if (channel !== "video") return { models, modelCapabilities: {}, schemaErrors: {} };
   const records = await mapWithConcurrency(models, async (model) => {
     try {
@@ -1438,29 +1461,70 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     }
   }
 
+  async useProjectWithBoundedRecovery(projectUuid, workRoot, settings = {}) {
+    const id = String(projectUuid || "").trim();
+    if (!id) throw asError("LibTV 画布缺少 UUID", "LIBTV_PROJECT_USE_FAILED");
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.invoke(["project", "use", id], { cwd: workRoot, timeoutMs: 30_000, settings });
+        return;
+      } catch (error) {
+        lastError = error;
+        const code = String(error?.providerErrorCode || error?.code || "").toUpperCase();
+        const message = String(error?.message || "");
+        const transport = /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code);
+        const eventualConsistency = /(?:project|画布).*(?:not found|不存在|not ready|未就绪|初始化|暂不可用)|(?:not found|不存在|not ready|未就绪).*(?:project|画布)/iu.test(message);
+        if ((!transport && !eventualConsistency) || attempt >= 2) throw error;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 750 * (attempt + 1)));
+      }
+    }
+    throw lastError || asError("LibTV 无法切换到临时画布", "LIBTV_PROJECT_USE_FAILED");
+  }
+
+  async persistProjectMetadata(metadataPath, metadata) {
+    const temporaryPath = `${metadataPath}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(temporaryPath, JSON.stringify(metadata), "utf8");
+    await rename(temporaryPath, metadataPath);
+  }
+
   async project(workRoot, settings = {}) {
     const metadataPath = join(workRoot, "libtv-project.json");
     await mkdir(join(workRoot, ".libtv"), { recursive: true });
-    try {
-      const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
-      if (metadata.projectUuid) {
-        await this.invoke(["project", "use", metadata.projectUuid], { cwd: workRoot, timeoutMs: 30_000, settings });
-        return metadata;
-      }
-    } catch {}
+    let metadata = null;
+    try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
+    if (metadata?.projectUuid) {
+      // A project can be created remotely before the first `project use`
+      // response becomes visible to the CLI. Keep the UUID durable and retry
+      // only this bounded, pre-node activation step; never create a second
+      // remote project when the first one already exists.
+      await this.useProjectWithBoundedRecovery(metadata.projectUuid, workRoot, settings);
+      const active = { ...metadata, projectUuid: String(metadata.projectUuid), state: "active" };
+      await this.persistProjectMetadata(metadataPath, active);
+      return active;
+    }
     const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000, settings });
     const projectUuid = String(created.projectMeta?.uuid || created.uuid || "").trim();
     if (!projectUuid) throw asError("LibTV 创建临时画布未返回 UUID", "LIBTV_PROJECT_CREATE_FAILED");
-    await this.invoke(["project", "use", projectUuid], { cwd: workRoot, timeoutMs: 30_000, settings });
-    const metadata = { projectUuid };
-    await writeFile(metadataPath, JSON.stringify(metadata), "utf8");
-    return metadata;
+    // Persist immediately after create, before the eventual-consistency
+    // sensitive `use` call. A process exit here must resume this exact canvas
+    // instead of creating another orphan project on the next worker pass.
+    await this.persistProjectMetadata(metadataPath, { projectUuid, state: "created" });
+    await this.useProjectWithBoundedRecovery(projectUuid, workRoot, settings);
+    const active = { projectUuid, state: "active" };
+    await this.persistProjectMetadata(metadataPath, active);
+    return active;
   }
 
-  async probeCapabilities({ settings = {} } = {}) {
+  async probeCapabilities({ settings = {}, forceFresh = false } = {}) {
     const channel = settings.channel
       || (settings.imageChannel ? "image" : settings.videoChannel ? "video" : settings.audioChannel ? "audio" : "image");
-    const catalog = await listLibTvModelCapabilities({ channel, settings });
+    const catalog = await listLibTvModelCapabilities({
+      channel,
+      settings,
+      selectedModel: settings.model,
+      forceFresh,
+    });
     const models = catalog.models;
     const names = models.map((item) => item.slug);
     return {
@@ -1684,6 +1748,154 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     const extension = extname(sourcePath).toLowerCase();
     const mimeType = extension === ".png" ? "image/png" : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : extension === ".wav" ? "audio/wav" : extension === ".m4a" ? "audio/mp4" : extension === ".ogg" ? "audio/ogg" : extension === ".mp3" ? "audio/mpeg" : extension === ".webm" ? "video/webm" : extension === ".mov" ? "video/quicktime" : "video/mp4";
     return { path: sourcePath, mimeType, providerTaskId: job.providerTaskId };
+  }
+}
+
+const localH3JsonRequest = async (url, options = {}, timeoutMs = 60_000) => {
+  const response = await fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+  const raw = await response.text();
+  let payload = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { raw }; }
+  if (!response.ok) {
+    const error = asError(payload?.error?.message || payload?.message || `本地 H3 返回 HTTP ${response.status}`, `LOCAL_H3_HTTP_${response.status}`);
+    throw error;
+  }
+  return payload;
+};
+
+const localH3OutputFiles = (history = {}) => {
+  const files = [];
+  const visit = (value) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const filename = String(value.filename || value.file_name || value.name || "").trim();
+    if (filename && /\.(?:mp4|webm|mov)$/iu.test(filename)) files.push({
+      filename,
+      subfolder: String(value.subfolder || ""),
+      type: String(value.type || "output"),
+    });
+    Object.values(value).forEach(visit);
+  };
+  visit(history?.outputs || history);
+  return files;
+};
+
+const localH3ExecutionError = (record = {}) => {
+  const messages = Array.isArray(record?.status?.messages) ? record.status.messages : [];
+  for (const entry of messages) {
+    const kind = String(entry?.[0] || "").trim();
+    const payload = entry?.[1] || {};
+    if (kind === "execution_error") {
+      return String(payload.exception_message || payload.message || payload.details || "本地 H3 工作流执行失败").trim();
+    }
+  }
+  return "本地 H3 工作流执行失败";
+};
+
+const replaceLocalH3Tokens = (value, tokens) => {
+  if (typeof value === "string") {
+    const exact = value.match(/^\{\{([A-Z0-9_]+)\}\}$/u);
+    if (exact && Object.hasOwn(tokens, exact[1])) return tokens[exact[1]];
+    return value.replace(/\{\{([A-Z0-9_]+)\}\}/gu, (_, key) => tokens[key] ?? "");
+  }
+  if (Array.isArray(value)) return value.map((item) => replaceLocalH3Tokens(item, tokens));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceLocalH3Tokens(item, tokens)]));
+  return value;
+};
+
+export class LocalH3VideoDriver extends MediaProviderDriver {
+  constructor() { super("local-h3-comfyui"); }
+
+  async probeCapabilities({ settings = {} } = {}) {
+    const result = await probeLocalH3Runtime({ settings, start: false });
+    return {
+      available: result.available === true,
+      connected: result.ready === true,
+      verificationLevel: result.ready ? "runtime_handshake" : "installation",
+      visibilityChecked: result.ready === true,
+      softwareIntegrated: true,
+      generationPermissionChecked: false,
+      models: result.ready ? ["minimax-h3-reference-video"] : [],
+      inputTypes: ["text", "image"],
+      message: result.ready ? "本地 H3 已就绪" : (result.reasons?.join("；") || "本地 H3 尚未就绪"),
+      runtime: result,
+    };
+  }
+
+  async submit({ job, settings, references = [], workRoot }) {
+    const runtime = await ensureLocalH3Runtime({ settings, timeoutMs: Math.max(30_000, Number(settings.timeoutMs) || 60_000) });
+    const reference = references.find((item) => String(item?.mimeType || "").startsWith("image/"));
+    if (!reference?.absolutePath) throw asError("本地 H3 第一版只支持连接一张图片作为参考", "LOCAL_H3_IMAGE_REFERENCE_REQUIRED");
+    const imageBody = new FormData();
+    imageBody.set("image", new Blob([await readFile(reference.absolutePath)], { type: reference.mimeType || "image/png" }), basename(reference.absolutePath));
+    imageBody.set("overwrite", "true");
+    const uploaded = await localH3JsonRequest(`${runtime.endpoint}/upload/image`, { method: "POST", body: imageBody }, 120_000);
+    const workflow = JSON.parse(await readFile(localH3WorkflowPath(), "utf8"));
+    const requiredNodes = ["UNETLoader", "CLIPLoader", "MiniMaxH3ReferenceToVideo", "CreateVideo", "SaveVideo"];
+    const nodeTypes = new Set(Object.values(workflow).map((node) => String(node?.class_type || "")));
+    const missingNodes = requiredNodes.filter((nodeType) => !nodeTypes.has(nodeType));
+    if (missingNodes.length) throw asError(`本地 H3 固定工作流缺少节点：${missingNodes.join("、")}`, "LOCAL_H3_WORKFLOW_MISMATCH");
+    const prompt = providerPrompt(job);
+    const graph = replaceLocalH3Tokens(workflow, {
+      PROMPT: prompt,
+      IMAGE_NAME: uploaded.name || basename(reference.absolutePath),
+      WIDTH: job.request.aspectRatio === "9:16" ? 768 : 1024,
+      HEIGHT: job.request.aspectRatio === "9:16" ? 1365 : 576,
+      FRAMES: Math.max(5, Math.round((Number(job.request.duration) || 4) * 24)),
+      DURATION: Math.max(4, Number(job.request.duration) || 4),
+      RESOLUTION: String(job.request.resolution || "768P"),
+      MODEL: String(settings.model || "minimax-h3-reference-video"),
+    });
+    const submitted = await localH3JsonRequest(`${runtime.endpoint}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: graph, client_id: `shensi-${job.id}` }),
+    }, 120_000);
+    const providerTaskId = String(submitted.prompt_id || submitted.promptId || "").trim();
+    if (!providerTaskId) throw asError("本地 H3 未返回 ComfyUI prompt_id", "LOCAL_H3_MISSING_PROMPT_ID");
+    await mkdir(workRoot, { recursive: true });
+    await writeFile(join(workRoot, "local-h3-task.json"), JSON.stringify({ providerTaskId, endpoint: runtime.endpoint }, null, 2), "utf8");
+    return { providerTaskId, providerStatus: "queued", rawStatus: "prompt_submitted", raw: submitted };
+  }
+
+  async getStatus({ job, workRoot }) {
+    let metadata = {};
+    try { metadata = JSON.parse(await readFile(join(workRoot, "local-h3-task.json"), "utf8")); } catch {}
+    const providerTaskId = String(job.providerTaskId || metadata.providerTaskId || "").trim();
+    if (!providerTaskId) throw asError("本地 H3 任务缺少 prompt_id", "LOCAL_H3_TASK_ID_MISSING");
+    const endpoint = String(metadata.endpoint || "http://127.0.0.1:8188");
+    const history = await localH3JsonRequest(`${endpoint}/history/${encodeURIComponent(providerTaskId)}`, {}, 60_000);
+    const record = history?.[providerTaskId] || history;
+    const status = String(record?.status?.status_str || record?.status?.status || "").toLowerCase();
+    const files = localH3OutputFiles(record);
+    if (status === "error" || record?.status?.completed === false && record?.status?.messages?.some?.((item) => String(item).toLowerCase().includes("error"))) {
+      return { providerTaskId, providerStatus: "failed", rawStatus: status || "error", error: localH3ExecutionError(record), raw: record };
+    }
+    if (files.length) {
+      const query = new URLSearchParams({ filename: files[0].filename, subfolder: files[0].subfolder, type: files[0].type });
+      return { providerTaskId, providerStatus: "completed", rawStatus: status || "completed", resultUrl: `${endpoint}/view?${query}`, resultUrlExpiresAt: new Date(Date.now() + 24 * 60 * 60_000).toISOString(), raw: record };
+    }
+    const progress = Number(record?.status?.progress?.value ?? record?.progress ?? 0);
+    return { providerTaskId, providerStatus: status === "running" ? "running" : "queued", rawStatus: status || "queued", progress: Number.isFinite(progress) ? progress : 0, raw: record };
+  }
+
+  async cancel({ job, workRoot }) {
+    let metadata = {};
+    try { metadata = JSON.parse(await readFile(join(workRoot, "local-h3-task.json"), "utf8")); } catch {}
+    await localH3JsonRequest(`${metadata.endpoint || "http://127.0.0.1:8188"}/interrupt`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, 30_000).catch(() => {});
+    return { providerTaskId: job.providerTaskId, providerStatus: "cancelled", rawStatus: "interrupt_requested" };
+  }
+
+  async download({ job, workRoot, outputPath }) {
+    let metadata = {};
+    try { metadata = JSON.parse(await readFile(join(workRoot, "local-h3-task.json"), "utf8")); } catch {}
+    const status = await this.getStatus({ job, workRoot });
+    if (!status.resultUrl) throw asError("本地 H3 已完成但没有可下载的视频", "LOCAL_H3_RESULT_MISSING");
+    const response = await fetch(status.resultUrl, { signal: AbortSignal.timeout(10 * 60_000) });
+    if (!response.ok) throw asError(`本地 H3 结果下载失败（HTTP ${response.status}）`, `LOCAL_H3_HTTP_${response.status}`);
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, Buffer.from(await response.arrayBuffer()));
+    return { path: outputPath, mimeType: "video/mp4", providerTaskId: job.providerTaskId || metadata.providerTaskId };
   }
 }
 
@@ -2233,6 +2445,7 @@ export const mediaProviderDrivers = Object.freeze({
   klingImage: new KlingImageDriver(),
   dashscopeImage: new DashScopeImageDriver(),
   libtv: new LibTvMediaDriver(),
+  localH3: new LocalH3VideoDriver(),
 });
 
 export const resolveMediaProviderDriver = ({ channel, settings = {} } = {}) => {
@@ -2257,6 +2470,7 @@ export const resolveMediaProviderDriver = ({ channel, settings = {} } = {}) => {
       ? mediaProviderDrivers.libtv : null;
   }
   if (channel !== "video") return null;
+  if (isProvider("本地 H3", "local-h3") && ["api", "cli"].includes(adapter)) return mediaProviderDrivers.localH3;
   if (adapter === "cli") {
     if (settings.cliPath === LIBTV_CLI_ALIAS && isProvider("libtv")) return mediaProviderDrivers.libtv;
     return settings.cliPath === DREAMINA_VIDEO_CLI_ALIAS && isProvider("即梦", "dreamina")

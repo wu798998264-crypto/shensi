@@ -24,6 +24,11 @@ export const mediaGenerationPollDelayMs = ({
 };
 
 export const mediaGenerationPollErrorIsTerminal = (error, transientFailures = 0) => {
+  // A concurrent renderer/worker update is a local, short-lived write
+  // contention—not a terminal generation failure.  Keep polling so a real
+  // completed job wins over a stale 409 response and never surface a false
+  // “生成失败” message to the user.
+  if (error?.code === "GENERATION_JOB_BUSY") return false;
   const status = Number(error?.status);
   if (Number.isInteger(status) && status >= 400 && status < 500 && ![408, 429].includes(status)) return true;
   if (error?.code === "INVALID_GENERATION_JOB_PAYLOAD" && Number(transientFailures) >= 3) return true;

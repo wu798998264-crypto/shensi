@@ -154,6 +154,15 @@ const normalizeGeneration = (generation) => {
   } : null;
 };
 
+// A generation target can exist before the user has entered a prompt or the
+// provider has returned an asset. Keep that intent on the canvas itself so the
+// card type survives closing the operation bar, cache eviction and restart.
+// This is separate from `generation`, which remains formal result metadata.
+const normalizeGenerationIntent = (intent) => {
+  if (!intent || typeof intent !== "object" || !GENERATION_CHANNELS.has(intent.channel)) return null;
+  return { channel: intent.channel };
+};
+
 const normalizeLocalOperation = (operation) => {
   if (!operation || typeof operation !== "object" || operation.type !== "depth-explorer") return null;
   const settings = operation.settings && typeof operation.settings === "object" ? operation.settings : {};
@@ -240,6 +249,7 @@ const normalizeNode = (node) => {
     } : {}),
     ...(normalizeReference(node.reference) ? { reference: normalizeReference(node.reference) } : {}),
     ...(normalizeGeneration(node.generation) ? { generation: normalizeGeneration(node.generation) } : {}),
+    ...(normalizeGenerationIntent(node.generationIntent) ? { generationIntent: normalizeGenerationIntent(node.generationIntent) } : {}),
     ...(localOperation ? { operation: localOperation } : {}),
   };
 };
@@ -902,7 +912,7 @@ export const canvasSelectionBounds = (canvas, nodeIds = [], padding = 18) => {
   return { left, top, right, bottom, width: right - left, height: bottom - top };
 };
 
-export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, operation = null, url = "", webSnapshot = null } = {}) => ({
+export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, generationIntent = null, operation = null, url = "", webSnapshot = null } = {}) => ({
   id: String(id || `canvas-node-${Date.now()}`),
   type: "text",
   kind: NODE_KINDS.has(kind) && !MEDIA_NODE_KINDS.has(kind) ? kind : "text",
@@ -919,6 +929,7 @@ export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40,
   } : {}),
   ...(normalizeReference(reference) ? { reference: normalizeReference(reference) } : {}),
   ...(normalizeGeneration(generation) ? { generation: normalizeGeneration(generation) } : {}),
+  ...(normalizeGenerationIntent(generationIntent) ? { generationIntent: normalizeGenerationIntent(generationIntent) } : {}),
   ...(normalizeLocalOperation(operation) ? { operation: normalizeLocalOperation(operation) } : {}),
 });
 
@@ -1024,6 +1035,7 @@ export const pasteCanvasNode = (canvas, record, {
         color: source.color,
         reference: source.reference,
         generation: source.generation,
+        generationIntent: source.generationIntent,
         operation: source.operation,
         url: source.url,
         width: limited(source.width, maxTextWidth),
@@ -1234,6 +1246,11 @@ const patchCanvasNode = (node, patch = {}) => {
     const generation = normalizeGeneration(patch.generation);
     if (generation) next.generation = generation;
     else delete next.generation;
+  }
+  if (Object.hasOwn(patch, "generationIntent")) {
+    const generationIntent = normalizeGenerationIntent(patch.generationIntent);
+    if (generationIntent) next.generationIntent = generationIntent;
+    else delete next.generationIntent;
   }
   if (Object.hasOwn(patch, "operation")) {
     const operation = normalizeLocalOperation(patch.operation);

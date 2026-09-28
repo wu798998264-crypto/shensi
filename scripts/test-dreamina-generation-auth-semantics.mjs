@@ -96,6 +96,10 @@ assert.match(worker, /dreaminaReconciliationDeferredByProfileLock[\s\S]{0,1800}s
   "临时配置锁冲突必须保留原提交不确定性和计费保护");
 assert.match(worker, /recordDreaminaProfileGenerationSuccess/u,
   "真实生成成功必须写入该即梦配置的最高可信可用证据");
+assert.match(worker, /const dreaminaCapabilityProbeRequiresFresh[\s\S]{0,900}runtimeState[\s\S]{0,180}verified/u,
+  "未知或明确失效配置必须由持久状态决定是否需要新探测");
+assert.match(worker, /forceFresh: dreaminaCapabilityProbeRequiresFresh\(job, settings\)/u,
+  "已真实生成成功的配置不得每次任务都强制重复探测");
 assert.match(oauth, /runtimeAuthRequired = expected\.runtimeState === "auth_required"/u,
   "状态读取必须消费同一配置的明确 auth_required 证据");
 assert.match(oauth, /runtimeState: "verified"[\s\S]{0,420}lastAuthFailureAt: ""/u,
@@ -124,6 +128,12 @@ assert.match(app, /showInterruptedDocumentArtifactJob\(job, \{ allowLockDialog: 
   "启动恢复文档媒体任务时不得重放历史即梦锁弹窗");
 assert.match(app, /showInterruptedWhiteboardGenerationJob\(job, \{ allowLockDialog: false \}\)/u,
   "启动恢复白板媒体任务时不得重放历史即梦锁弹窗");
+assert.match(app, /promptDreaminaReverificationForJob = \(job, \{ allowPrompt = true \}/u,
+  "历史任务恢复必须能够显式禁止自动弹出核验窗口");
+assert.match(app, /promptDreaminaReverificationForJob\(job, \{ allowPrompt: allowLockDialog \}\)/u,
+  "只有当前任务进入阻塞时才允许显示即梦核验入口");
+assert.match(worker, /taskSessionExpired[\s\S]{0,700}return false/u,
+  "任务号已存在时的 session 过期只能进入任务级续查，不得污染配置核验状态");
 assert.match(app, /凭证锁已经释放，不影响新的生成/u);
 assert.doesNotMatch(app, /已暂停新的提交；请查看占用任务/u);
 

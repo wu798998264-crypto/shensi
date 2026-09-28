@@ -5,6 +5,10 @@ export const DREAMINA_VIDEO_CLI_ALIAS = "shensi-dreamina-video";
 // profile so the server can route only image/video/audio work to it.
 export const LIBTV_CLI_ALIAS = "libtv";
 export const LIBTV_CLI_ARGS = "";
+// Local H3 is a managed, loopback-only ComfyUI runtime. Keep a dedicated
+// alias so it can never be mistaken for LibTV or a Dreamina CLI.
+export const LOCAL_H3_CLI_ALIAS = "shensi-local-h3";
+export const LOCAL_H3_CLI_ARGS = "--workflow {workflowFile} --prompt-file {promptFile} --reference-images-file {referenceImagesFile}";
 
 export const DREAMINA_CLI_PROFILES = Object.freeze([
   // The profile IDs and credential folders are stable machine identities.
