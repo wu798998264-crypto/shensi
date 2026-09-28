@@ -114,7 +114,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.0.1-workbuddy-hy3";
+} from "./generation-profiles.js?v=9.0.2-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -8222,7 +8222,7 @@ root.innerHTML = `
           </section>
           <section class="compilation-decision-summary" id="compilationDecisionSummary" aria-label="编译报告决策摘要" hidden></section>
           <article class="manuscript-editor" id="editor" contenteditable="true" spellcheck="false" data-text-edit-context aria-label="可编辑正文"></article>
-          <section class="whiteboard-editor" id="whiteboardEditor" hidden aria-label="可编辑白板">
+          <section class="whiteboard-editor" id="whiteboardEditor" tabindex="-1" hidden aria-label="可编辑白板">
             <section class="whiteboard-find-panel document-find-panel" id="whiteboardFindPanel" aria-label="查找和替换白板卡片" aria-keyshortcuts="Control+F" hidden>
               <div class="document-find-row">
                 <label class="document-find-input"><span class="sr-only">查找白板卡片</span><input id="whiteboardFindQuery" type="search" placeholder="查找选中卡片…" autocomplete="off" /></label>
@@ -47053,14 +47053,6 @@ elements.moduleContent.addEventListener("contextmenu", (event) => {
 });
 
 elements.documentList.addEventListener("keydown", (event) => {
-  // A whiteboard card can be selected while focus remains on the directory
-  // tree (the canvas itself is intentionally not keyboard-focusable). Let the
-  // document-level whiteboard Delete handler receive that key instead of
-  // opening the directory/tree deletion dialog on the first attempt.
-  if (activeWhiteboardDocument() && (
-    selectedWhiteboardNodeIds().length
-    || (ui.whiteboardSelectedEdgeDocumentId === state.activeDocument && ui.whiteboardSelectedEdgeIds?.size)
-  )) return;
   state.activeModule = directoryModuleForTarget(event.target);
   const commandKey = event.ctrlKey || event.metaKey;
   if (commandKey && ["c", "x"].includes(event.key.toLowerCase())) {
@@ -52431,6 +52423,15 @@ const restoreWhiteboardSpaceTextSnapshotForPan = () => {
   if (dialog?.open) saveWhiteboardGenerationDraft(dialog, { active: true, open: true });
 };
 
+const focusWhiteboardCanvasKeyboard = (target) => {
+  const control = target?.closest("button, input, select, textarea, a, audio, video, [contenteditable='true']");
+  if (control && !control.matches("textarea[data-canvas-text][readonly]")) return;
+  // Marquee/edge gestures prevent native focus changes. Claim keyboard focus
+  // explicitly so Delete cannot bubble through the previously focused tree
+  // row. Re-clicking the directory still restores its normal shortcuts.
+  elements.whiteboardEditor.focus({ preventScroll: true });
+};
+
 elements.whiteboardEditor.addEventListener("pointerdown", (event) => {
   if (event.button !== 0) return;
   if (event.target.closest(".whiteboard-find-panel")) {
@@ -52462,6 +52463,7 @@ elements.whiteboardEditor.addEventListener("pointerdown", (event) => {
   }
   const documentState = activeWhiteboardDocument();
   if (!documentState) return;
+  focusWhiteboardCanvasKeyboard(event.target);
   if (!ui.whiteboardSpacePressed) closeWhiteboardGenerationDialogsOutside(event.target);
   const activeEditingCard = ui.whiteboardEditingNodeId
     ? event.target.closest(`[data-canvas-node="${CSS.escape(ui.whiteboardEditingNodeId)}"]`)
@@ -53430,7 +53432,7 @@ elements.whiteboardMenu.addEventListener("click", handleWhiteboardMenuClick);
 elements.whiteboardSubmenuPanel?.addEventListener("click", handleWhiteboardMenuClick);
 
 document.addEventListener("keydown", (event) => {
-  if (!activeWhiteboardDocument() || document.querySelector("dialog[open]:not(.whiteboard-generation-popover)")) return;
+  if (event.defaultPrevented || !activeWhiteboardDocument() || document.querySelector("dialog[open]:not(.whiteboard-generation-popover)")) return;
   const target = event.target instanceof Element ? event.target : null;
   const editingText = target?.matches("input, textarea, select")
     || target?.closest("[contenteditable='true']")

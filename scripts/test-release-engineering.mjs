@@ -12,6 +12,7 @@ const updateManager = await readFile(new URL("../src/server/update-manager.mjs",
 const updatePreparation = await readFile(new URL("./windows/prepare-github-release.mjs", import.meta.url), "utf8");
 
 assert.match(packageScript, /yyyyMMddHHmmssfff/u, "every installer must get a unique timestamp build id");
+assert.match(packageScript, /git -C \$repoRoot rev-parse HEAD[\s\S]{0,350}NotePropertyName commit -NotePropertyValue \$sourceCommit/u, "packaging must refresh the source revision rather than retaining an earlier build's commit");
 assert.match(packageScript, /sameVersionInstaller[\s\S]{0,500}Increment package\.json version/u, "a semantic version must not be packaged twice");
 assert.match(finalSigning, /existingSignature\.Status -eq 'Valid'[\s\S]{0,180}TimeStamperCertificate[\s\S]{0,180}exit 0/u, "final signing must preserve an existing valid timestamp instead of requiring a second timestamp request");
 assert.match(packageJson.build?.artifactName || "", /Shensi-Setup-\$\{version\}-\$\{env\.SHENSI_BUILD_ID\}-\$\{arch\}/u);

@@ -93,6 +93,11 @@ $releaseBuild.version = $version
 $releaseBuild.buildId = $buildId
 $releaseBuild.createdAt = $createdAt
 $releaseBuild.publishable = $true
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40,64}$') {
+    throw "Cannot determine the source revision for this installer."
+}
+$releaseBuild | Add-Member -NotePropertyName commit -NotePropertyValue $sourceCommit -Force
 
 $releaseBuildJson = $releaseBuild | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($releaseBuildPath, $releaseBuildJson, [System.Text.UTF8Encoding]::new($false))
