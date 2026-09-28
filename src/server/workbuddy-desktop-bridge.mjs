@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { readdir, readFile, stat } from "node:fs/promises";
 import net from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,6 +15,37 @@ const ACP_HEADERS = { "x-codebuddy-request": "1", "content-type": "application/j
 
 const configRoot = (environment = process.env) => clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR)
   || join(homedir(), ".workbuddy");
+
+const resolvedProductConfigPath = async (environment = process.env) => {
+  const root = configRoot(environment);
+  const cacheRoot = join(root, "cache");
+  const spillRoot = join(cacheRoot, "conversation-product-spill");
+  const entries = await readdir(spillRoot, { withFileTypes: true }).catch(() => []);
+  const candidates = [
+    join(cacheRoot, "acc-product-config-v3.json"),
+    ...entries
+      .filter((entry) => entry.isFile() && /^acc-product-config-v3-[a-f0-9]+\.json$/iu.test(entry.name))
+      .map((entry) => join(spillRoot, entry.name)),
+  ];
+  const valid = [];
+  for (const candidate of candidates) {
+    const source = await readFile(candidate, "utf8").catch(() => "");
+    if (!source) continue;
+    let payload;
+    try {
+      payload = JSON.parse(source);
+      if (!payload || typeof payload !== "object" || (!Array.isArray(payload.models) && !Array.isArray(payload.agents))) continue;
+    } catch { continue; }
+    const metadata = await stat(candidate).catch(() => null);
+    const cliAgent = Array.isArray(payload.agents)
+      ? payload.agents.find((agent) => clean(agent?.name).toLocaleLowerCase() === "cli")
+      : null;
+    const modelCount = Array.isArray(cliAgent?.models) ? cliAgent.models.length : 0;
+    valid.push({ path: candidate, modelCount, mtimeMs: Number(metadata?.mtimeMs || 0), size: source.length });
+  }
+  valid.sort((left, right) => right.modelCount - left.modelCount || right.mtimeMs - left.mtimeMs || right.size - left.size);
+  return valid[0]?.path || "";
+};
 
 const controlPipePath = (root, uuid) => `\\\\.\\pipe\\workbuddy-${createHash("sha1").update(resolve(root)).digest("hex").slice(0, 12)}-sidecar-control-${uuid}`;
 
@@ -112,11 +144,12 @@ const toMcpServers = (nativeHost) => nativeHost?.url ? [{
   headers: asHeaders(nativeHost.headers),
 }] : [];
 
-const createHeadlessSession = async ({ sidecar, cwd, nativeHost, sessionId = randomUUID(), timeoutMs = 90_000 } = {}) => {
+const createHeadlessSession = async ({ sidecar, cwd, nativeHost, environment = process.env, sessionId = randomUUID(), timeoutMs = 90_000 } = {}) => {
   const executable = sidecar.executable || join(dirname(dirname(sidecar.commandLine || "")), "WorkBuddy.exe");
   const root = executable ? dirname(executable) : "";
   const codebuddy = root ? join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy") : "";
   if (!executable || !codebuddy) throw new Error("未找到 WorkBuddy 桌面端或内置 ACP CLI");
+  const productConfigPath = await resolvedProductConfigPath(environment);
   const result = await controlRequest(sidecar.controlPipe, {
     jsonrpc: "2.0",
     id: 2,
@@ -132,7 +165,12 @@ const createHeadlessSession = async ({ sidecar, cwd, nativeHost, sessionId = ran
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         CODEBUDDY_FORCE_HEADLESS_BUNDLE: "1",
-        CODEBUDDY_FORCE_LITE_WB_BUNDLE: "1",
+        // The lite bundle only exposes the stale built-in nine-model list.
+        // Keep the headless bundle for a deterministic ACP child, but let the
+        // resolved desktop product catalogue provide the full current model
+        // set (including hy3 and the current fast/balanced/deep aliases).
+        CODEBUDDY_FORCE_LITE_WB_BUNDLE: "0",
+        ...(productConfigPath ? { ACC_PRODUCT_CONFIG_PATH: productConfigPath } : {}),
       },
     },
   }, timeoutMs);
@@ -191,28 +229,40 @@ const connectAcp = async (endpoint, options = {}) => {
   return credentials;
 };
 
-const closeAcp = async (endpoint, credentials) => {
-  if (!credentials?.connectionId) return;
-  await fetch(String(endpoint), {
-    method: "DELETE",
-    headers: {
-      ...ACP_HEADERS,
-      "acp-connection-id": credentials.connectionId,
-      ...(credentials.sessionToken ? { "acp-session-token": credentials.sessionToken } : {}),
-    },
-  }).catch(() => {});
+const closeAcp = async (endpoint, credentials, { sidecar = null, sessionId = "" } = {}) => {
+  if (credentials?.connectionId) {
+    await fetch(String(endpoint), {
+      method: "DELETE",
+      headers: {
+        ...ACP_HEADERS,
+        "acp-connection-id": credentials.connectionId,
+        ...(credentials.sessionToken ? { "acp-session-token": credentials.sessionToken } : {}),
+      },
+    }).catch(() => {});
+  }
+  if (sidecar?.controlPipe && clean(sessionId)) {
+    await controlRequest(sidecar.controlPipe, {
+      jsonrpc: "2.0",
+      id: 10,
+      method: "session.kill",
+      params: { sessionId: clean(sessionId) },
+    }).catch(() => {});
+  }
 };
 
 const sessionModels = (result = {}) => (Array.isArray(result?.models?.availableModels) ? result.models.availableModels : [])
   .map((item) => ({ id: clean(item?.modelId || item?.id), name: clean(item?.name || item?.modelId || item?.id) }))
   .filter((item) => item.id);
 
-const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, signal = null, timeoutMs = 120_000 } = {}) => {
-  const listed = await controlRequest(sidecar.controlPipe, { jsonrpc: "2.0", id: 4, method: "session.list", params: {} }).catch(() => []);
-  let session = Array.isArray(listed) && listed[0]?.acpEndpoint ? listed[0] : null;
+const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, environment = process.env, signal = null, timeoutMs = 120_000 } = {}) => {
+  // Never reuse an arbitrary sidecar session.  It may have been created by an
+  // older Shensi build (or by WorkBuddy itself) with a stale model catalogue
+  // and a different environment.  A fresh, explicitly owned session keeps the
+  // account/model context deterministic; it is killed in closeAcp below.
+  let session = null;
   let credentials = null;
   const prepare = async () => {
-    if (!session) session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
+    if (!session) session = await createHeadlessSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
     credentials = await connectAcp(session.acpEndpoint, { signal });
     await acpPost(session.acpEndpoint, credentials, {
       jsonrpc: "2.0", id: 5, method: "initialize",
@@ -233,8 +283,8 @@ const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, signal = null, tim
     // A desktop sidecar may keep a stale ACP child after a restart/update.
     // Recreate exactly once, bounded to the lifecycle handshake; never retry
     // the provider prompt itself and never create a second user task.
-    await closeAcp(session?.acpEndpoint, credentials);
-    session = await createHeadlessSession({ sidecar, cwd, nativeHost, timeoutMs });
+    await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
+    session = await createHeadlessSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
     credentials = null;
     try {
       return await prepare();
@@ -251,7 +301,7 @@ export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativ
   let session;
   let credentials;
   try {
-    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, timeoutMs });
+    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
     ({ session, credentials } = opened);
     const result = opened.result || {};
     return {
@@ -268,7 +318,7 @@ export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativ
   } catch (error) {
     return { connected: false, authenticated: null, state: "bridge_error", models: [], message: clean(error?.message || error).slice(0, 500), errorCode: "WORKBUDDY_DESKTOP_BRIDGE_ERROR" };
   } finally {
-    await closeAcp(session?.acpEndpoint, credentials);
+    await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
   }
 };
 
@@ -282,7 +332,7 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
   let session;
   let credentials;
   try {
-    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, signal, timeoutMs: Math.min(timeoutMs, 120_000) });
+    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, environment, signal, timeoutMs: Math.min(timeoutMs, 120_000) });
     ({ session, credentials } = opened);
     const sessionResult = opened.result || {};
     const sessionId = clean(sessionResult.sessionId);
@@ -314,6 +364,6 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
     if (!finalText) throw new Error("WorkBuddy ACP 已结束，但没有返回可用文本");
     return { text: finalText.trim(), sessionId, actualProvider: "WorkBuddy", actualModel: selectedModel, executionRuntime: "workbuddy_desktop_acp", permissionMode: "shensi_only" };
   } finally {
-    await closeAcp(session?.acpEndpoint, credentials);
+    await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
   }
 };

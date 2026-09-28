@@ -7,5 +7,11 @@ assert.match(source, /const waitForSidecar\s*=\s*async/u, "首次使用必须等
 assert.match(source, /Date\.now\(\)\s*<\s*deadline/u, "桥接发现不得无限轮询");
 assert.match(source, /const openAcpTaskSession\s*=\s*async/u, "ACP 会话生命周期必须独立封装");
 assert.match(source, /session\s*=\s*await createHeadlessSession[\s\S]{0,900}return await prepare\(\)/u, "旧 ACP 会话失败后只能有界重建一次");
+assert.match(source, /CODEBUDDY_FORCE_HEADLESS_BUNDLE:\s*"1"/u, "ACP 子进程必须使用稳定的 headless bundle");
+assert.match(source, /CODEBUDDY_FORCE_LITE_WB_BUNDLE:\s*"0"/u, "ACP 子进程不得强制旧的 lite 模型目录");
+assert.match(source, /ACC_PRODUCT_CONFIG_PATH:\s*productConfigPath/u, "ACP 子进程必须读取当前 WorkBuddy resolved product catalogue");
+assert.match(source, /const resolvedProductConfigPath\s*=\s*async/u, "WorkBuddy 产品目录路径必须从当前缓存解析");
+assert.match(source, /method:\s*"session\.kill"/u, "神思创建的 ACP 子进程结束后必须释放自身会话");
+assert.match(source, /if \(credentials\?\.connectionId\)/u, "ACP 连接失败时仍必须执行会话清理");
 assert.match(source, /actualProvider:\s*"WorkBuddy"/u, "真实桥接结果必须保留 WorkBuddy 提供方标识");
 console.log("WorkBuddy desktop bridge bounded recovery contract passed");
