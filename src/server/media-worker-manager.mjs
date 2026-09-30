@@ -3,8 +3,15 @@ import { fileURLToPath } from "node:url";
 import { execFile, spawn } from "node:child_process";
 import { appDataRoot } from "./app-data.mjs";
 import { generationRuntimeCredentialsSnapshot } from "./generation-runtime-store.mjs";
-import { getGenerationJob, updateMediaGenerationJob } from "./generation-job-store.mjs";
-import { createMediaWorkerContinuation } from "./media-worker-continuation.mjs";
+import {
+  getGenerationJob,
+  updateMediaGenerationJob,
+  listDreaminaQueueJobs,
+  deferDreaminaQueueForStartup,
+  resumeDeferredDreaminaQueue,
+} from "./generation-job-store.mjs";
+import { isDreaminaQueueReorderable } from "../dreamina-task-queue.js";
+import { createMediaWorkerContinuation, dreaminaWorkerNeedsContinuation } from "./media-worker-continuation.mjs";
 
 const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "media-generation-worker.mjs");
 
@@ -47,11 +54,49 @@ const liveWorker = (key) => {
   return worker;
 };
 
+let queueSnapshotPromise = null;
+let queueSnapshotAt = 0;
+const canContinueDreaminaJob = async (job) => {
+  if (!isDreaminaQueueReorderable(job)) return true;
+  if (!queueSnapshotPromise || Date.now() - queueSnapshotAt > 250) {
+    queueSnapshotAt = Date.now();
+    queueSnapshotPromise = listDreaminaQueueJobs().catch((error) => { queueSnapshotPromise = null; throw error; });
+  }
+  const jobs = await queueSnapshotPromise;
+  if (jobs.some((item) => item.queueStage === '准备提交' && !item.providerTaskId)) return false;
+  return jobs.find((item) => item.queuePosition === 1)?.id === job.id;
+};
 const continuation = createMediaWorkerContinuation({
   readJob: (jobId) => getGenerationJob({ jobId }),
   isRunning: (jobId) => Boolean(liveWorker(`job:${jobId}`)),
   launch: (options) => launchMediaGenerationWorker(options),
+  canLaunch: canContinueDreaminaJob,
 });
+
+let queueRestore = null;
+const restoreDreaminaQueue = (options) => {
+  if (queueRestore) return queueRestore;
+  queueRestore = resumeDeferredDreaminaQueue().then(() => listDreaminaQueueJobs()).then(async (jobs) => {
+    for (const job of jobs) {
+      if (job.dreaminaQueuePolicy !== 'command-lease-v1' || !dreaminaWorkerNeedsContinuation(job)) continue;
+      if (!continuation.has(job.id)) continuation.track(job.id, { ...options, jobId: job.id, scanMode: '' });
+    }
+    await continuation.sweep();
+  }).catch(() => { /* Retry a local read on the existing watchdog; never submit from a failed read. */ })
+    .finally(() => { queueRestore = null; });
+  return queueRestore;
+};
+
+// Historical Dreamina jobs are restored automatically after the startup
+// boundary has been fenced.  The queue panel remains observation-only; it
+// never needs a manual "continue" action to resume persisted work.
+export const resumeDreaminaQueue = ({ appRoot, credentials, spawnImpl = spawn } = {}) =>
+  restoreDreaminaQueue({ appRoot, credentials, spawnImpl });
+
+// Startup only fences old unsubmitted queue records.  It deliberately does
+// not launch workers or acquire the Dreamina provider lease; a user's first
+// new submission can therefore claim the local queue turn immediately.
+export const deferDreaminaQueueAtStartup = ({ before = new Date().toISOString() } = {}) => deferDreaminaQueueForStartup({ before });
 
 const readWindowsCommandLine = (pid) => new Promise((resolveCommandLine) => {
   if (process.platform !== "win32") return resolveCommandLine("");

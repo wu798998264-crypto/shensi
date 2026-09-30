@@ -21,9 +21,23 @@ export const whiteboardGenerationSurfaceIsActive = ({
   && cleanPart(anchorWorkspaceId) === cleanPart(activeWorkspaceId)
   && cleanPart(anchorDocumentId) === cleanPart(activeDocumentId);
 
+const normalizeDraftValue = (value, depth = 0) => {
+  if (depth > 3) return null;
+  if (typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return value.slice(0, WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS);
+  if (Array.isArray(value)) return value.slice(0, 120).map((item) => normalizeDraftValue(item, depth + 1));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => key)
+      .slice(0, 120)
+      .map(([key, item]) => [cleanPart(key), normalizeDraftValue(item, depth + 1)]));
+  }
+  return null;
+};
+
 const normalizeValues = (values) => Object.fromEntries(Object.entries(values && typeof values === "object" ? values : {})
-  .filter(([key, value]) => key && (typeof value === "string" || typeof value === "boolean"))
-  .map(([key, value]) => [cleanPart(key), typeof value === "boolean" ? value : String(value).slice(0, WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS)]));
+  .filter(([key, value]) => key && value !== undefined && value !== null)
+  .map(([key, value]) => [cleanPart(key), normalizeDraftValue(value)]));
 
 export const whiteboardGenerationDraftScope = (value = {}) => {
   const source = value && typeof value === "object" ? value : {};
@@ -127,6 +141,31 @@ export const updateWhiteboardGenerationDraftCache = (cache, scope, values, {
   // 120-entry cache a second time made every prompt keystroke needlessly walk,
   // sort and clone all saved drafts again.
   return normalized;
+};
+
+// Recovery checkpoints are written asynchronously and can legitimately lag
+// behind the renderer's localStorage copy. Merge by entry timestamp so a
+// restart never replaces the newest prompt/reference/options with an older
+// server snapshot. The caller may pass either order; the newest entry wins.
+export const mergeWhiteboardGenerationDraftCaches = (left, right) => {
+  const first = normalizeWhiteboardGenerationDraftCache(left);
+  const second = normalizeWhiteboardGenerationDraftCache(right);
+  const entries = { ...first.entries };
+  for (const [key, candidate] of Object.entries(second.entries)) {
+    const existing = entries[key];
+    if (!existing || Number(candidate.updatedAt || 0) >= Number(existing.updatedAt || 0)) entries[key] = candidate;
+  }
+  const merged = normalizeWhiteboardGenerationDraftCache({
+    version: Math.max(first.version, second.version),
+    entries,
+  });
+  const activeCandidates = [first.active, second.active].filter(Boolean).sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  const active = activeCandidates.find((candidate) => merged.entries[candidate.key]) || null;
+  return {
+    ...merged,
+    active: active ? { ...active, collapsed: false } : null,
+    openSessions: active ? [{ ...active, collapsed: false }] : [],
+  };
 };
 
 export const duplicateWhiteboardGenerationDraftEntries = (cache, {

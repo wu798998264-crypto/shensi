@@ -26,9 +26,10 @@ const normalizeWithModel = (model) => normalizeGenerationProfiles({
   activeImageConnectionId: "image-libtv",
 }).imageConnections.find((item) => item.id === "image-libtv");
 
-assert.equal(normalizeWithModel("lib-image-2").model, "nebula-ultra", "内置 LibTV 图片旧默认必须迁移到当前 CLI 可见模型");
-assert.equal(normalizeWithModel("lib-image-2.5-s").model, "nebula-ultra");
-assert.equal(normalizeWithModel("lib-image-2.5-f").model, "nebula-ultra");
+assert.equal(normalizeWithModel("lib-image-2").model, "lib-image-2.5-s", "内置 LibTV 图片旧默认必须迁移到 2.5 默认模型");
+assert.equal(normalizeWithModel("nebula-ultra").model, "lib-image-2.5-s", "内置 LibTV 图片旧兼容默认必须迁移到 2.5 默认模型");
+assert.equal(normalizeWithModel("lib-image-2.5-s").model, "lib-image-2.5-s");
+assert.equal(normalizeWithModel("lib-image-2.5-f").model, "lib-image-2.5-f");
 
 const normalizedVideo = normalizeGenerationProfiles({}).videoConnections;
 const localH3 = normalizedVideo.find((profile) => profile.id === "video-local-h3");

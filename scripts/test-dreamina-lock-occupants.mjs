@@ -11,10 +11,12 @@ process.env.SHENSI_MACHINE_DATA_ROOT = root;
 const {
   createMediaGenerationJob,
   forceReleaseDreaminaJob,
+  stopDreaminaQueueJob,
   listDreaminaProfileBlockingJobs,
   listMediaGenerationJobsForWorker,
   updateMediaGenerationJob,
 } = await import("../src/server/generation-job-store.mjs");
+const { writeDreaminaBrokerLease, clearDreaminaBrokerLease } = await import('../src/server/dreamina-broker-lease.mjs');
 
 const target = (nodeId) => ({
   workspaceKind: "project",
@@ -69,20 +71,23 @@ try {
     },
   });
 
+  await writeDreaminaBrokerLease({ profileId: 'account-a', token: 'test-command', pid: process.pid, jobId: first.id, command: 'query' });
   const initial = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id, second.id, completed.id]), "列表只应显示仍处于生成至卡片回写链路的任务");
+  assert.deepEqual(new Set(initial.map((job) => job.id)), new Set([first.id]), "只显示真实命令租约，排队、远端生成和回写不占锁");
   assert.equal(initial.find((job) => job.id === first.id)?.providerTaskId, "dreamina-provider-task-1");
   const workerJobs = await listMediaGenerationJobsForWorker();
   assert.equal(workerJobs.some((job) => job.id === second.id), false, "强制解除处理中不得被 watchdog 再次调度");
 
-  const released = await forceReleaseDreaminaJob({ jobId: first.id });
+  const released = await stopDreaminaQueueJob({ jobId: first.id });
   assert.equal(released.status, "cancelled");
   assert.equal(released.providerStatus, "cancel_unconfirmed", "有厂商任务 ID 时不得伪造远端已取消");
   assert.equal(released.result.attachment.relativePath, "assets/kept-result.png", "强制解除不得删除已生成结果记录");
   assert.equal(released.request.prompt, "临时锁占用测试，不调用厂商生成", "强制解除不得删除提示词");
 
+  await clearDreaminaBrokerLease('test-command');
+  await updateMediaGenerationJob({ jobId: first.id, patch: { forceReleaseCompletedAt: new Date().toISOString() } });
   const after = await listDreaminaProfileBlockingJobs();
-  assert.deepEqual(new Set(after.map((job) => job.id)), new Set([second.id, completed.id]), "单条强制解除后其他占用任务仍应保留");
+  assert.deepEqual(after, [], "停止且已确认释放命令租约后不应保留占用");
   await assert.rejects(
     forceReleaseDreaminaJob({ jobId: first.id }),
     (error) => error?.code === "DREAMINA_PROFILE_NOT_HELD",

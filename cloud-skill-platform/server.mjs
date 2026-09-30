@@ -8,7 +8,10 @@ import { createProductionDependencies } from "./lib/production-dependencies.mjs"
 import {
   bearerToken, createId, createOpaqueToken, hashPassword, hashRecoveryAnswer, hashToken, publicUser, sessionExpiry, verifyPassword, verifyRecoveryAnswer,
 } from "./lib/security.mjs";
-import { adjustQuota, ensureQuotaAccount, refundQuota, reserveQuota, settleQuota } from "./lib/quota.mjs";
+import { adjustQuota, ensureQuotaAccount } from "./lib/quota.mjs";
+import { createMeteredGenerationService, membershipView } from './lib/membership-core.mjs';
+import { createPlatformRoutes } from './lib/platform-routes.mjs';
+import { createEmailAuth } from './lib/email-auth.mjs';
 import {
   artifactFromSkill, catalogItems, ensureSigningKey, findPublishedArtifact, prepareSkillSubmission, publicArtifact, publicSkill, scanSkillPackage,
 } from "./lib/skills.mjs";
@@ -111,12 +114,7 @@ const normalizeBootstrapAccount = () => {
   return RESERVED_BOOTSTRAP_ADMIN_ACCOUNT;
 };
 
-const publicMembership = (membership) => membership ? ({
-  tier: String(membership.tier || "free"),
-  status: String(membership.status || "inactive"),
-  units: Number(membership.units) || 0,
-  expiresAt: Number(membership.expiresAt) || 0,
-}) : ({ tier: "free", status: "inactive", units: 0, expiresAt: 0 });
+const publicMembership = membershipView;
 
 const sessionCookie = (token, rememberMe = true) => `shensi_session=${encodeURIComponent(token)}; Max-Age=${rememberMe ? 30 * 24 * 60 * 60 : 24 * 60 * 60}; Path=/; HttpOnly; Secure; SameSite=Lax`;
 
@@ -134,7 +132,7 @@ const staticAsset = async (response, path, contentType) => {
   response.end(content);
 };
 
-export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingKeyPath = defaultSigningKeyPath, publicBaseUrl = "", store: suppliedStore } = {}) => {
+export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingKeyPath = defaultSigningKeyPath, publicBaseUrl = "", store: suppliedStore, generationOptions = {}, emailOptions = {} } = {}) => {
   const production = String(process.env.SHENSI_CLOUD_ENV || "development") === "production";
   const postgresUrl = String(process.env.SHENSI_CLOUD_DATABASE_URL || "").trim();
   const store = suppliedStore || (production && postgresUrl
@@ -212,9 +210,9 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
     return user || null;
   };
   const requireUser = (request) => currentUser(request) || fail("请先登录后再操作", 401);
-  const requireAdmin = (request) => {
+  const requireAdmin = (request, additionalRoles = []) => {
     const user = requireUser(request);
-    if (!roleAllowed(user, ["admin", "reviewer", "membership_admin"])) fail("当前账号没有管理员权限", 403);
+    if (!roleAllowed(user, ['admin', ...additionalRoles])) fail("当前账号没有此项管理权限", 403);
     return user;
   };
   const audit = async ({ actorUserId = "system", action, targetType, targetId, detail = {} }) => {
@@ -234,7 +232,7 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
     if (account === RESERVED_BOOTSTRAP_ADMIN_ACCOUNT) fail("该账号由神思后台管理固定使用，不能注册", 409);
     let user;
     await store.transact((state) => {
-      if (state.users.some((entry) => (entry.account || entry.email) === account && entry.status !== "deleted")) fail("该账号已注册", 409);
+      if (state.users.some((entry) => ((entry.account || entry.email) === account || (entry.emailVerifiedAt > 0 && entry.email === account)) && entry.status !== "deleted")) fail("该账号已注册", 409);
       user = { id: createId("user"), account, email: recoveryContact.includes("@") ? recoveryContact : "", phone: recoveryContact.includes("@") ? "" : recoveryContact, recoveryContact, displayName, securityQuestion, securityAnswerHash, role: "user", status: "active", passwordHash, createdAt: Date.now(), updatedAt: Date.now() };
       state.users.push(user);
       state.memberships.push({ id: createId("membership"), userId: user.id, tier: "free", status: "active", units: 0, expiresAt: 0, updatedAt: Date.now() });
@@ -282,12 +280,23 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
     return { ok: true, message: "密码已重置，请使用新密码登录" };
   };
 
+  const emailAuth = createEmailAuth({ ...emailOptions, store });
+  const generation = createMeteredGenerationService({ ...generationOptions, store });
+  const platformRoutes = createPlatformRoutes({ store, requireUser, requireAdmin, bodyJson, json, generation,
+    readSkillBytes: (version) => productionDependencies ? productionDependencies.objects.read(version.objectKey) : Buffer.from(version.bytesBase64 || '', 'base64url'),
+  });
   const handle = async (request, response) => {
     const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
     const headers = corsHeaders(request, allowedOrigins);
     void cleanupRetention().catch(() => {});
     if (request.method === "OPTIONS") return json(response, 204, {}, { ...headers, "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS" });
     try {
+      if (store.refresh) await store.refresh();
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method) && cookieToken(request) && !bearerToken(request)) {
+        const origin = String(request.headers.origin || '');
+        const expected = baseUrl ? new URL(baseUrl).origin : url.origin;
+        if (origin !== expected && !allowedOrigins.has(origin)) fail('请求来源不可信，请重新打开管理页面', 403);
+      }
       if (url.pathname === "/health" && request.method === "GET") {
         const local = !production;
         const status = await readiness();
@@ -302,7 +311,11 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
           message: local ? "开发/测试存储已启用；生产部署前必须接入 PostgreSQL、Redis、OSS 和 ClamAV。" : (status.ready ? "生产服务依赖项已通过真实探针。" : "生产服务依赖项未全部通过真实探针，上传与发布保持关闭。"),
         }, headers);
       }
-      if (url.pathname === "/admin" || url.pathname === "/admin/") {
+      if (url.pathname === "/admin") {
+        response.writeHead(302, { Location: baseUrl + '/admin/', 'Cache-Control': 'no-store' });
+        return response.end();
+      }
+      if (url.pathname === "/admin/") {
         return staticAsset(response, adminHtmlPath, "text/html; charset=utf-8");
       }
       if (url.pathname === "/admin/styles.css") {
@@ -322,6 +335,11 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
             download: true,
             accountLogin: true,
             accountRegistration: true,
+            emailCodeLogin: emailAuth.config().enabled,
+            profileEditing: true,
+            skillReviews: true,
+            platformGeneration: generation.enabled,
+            payment: false,
             adminConsole: true,
             publish: (await readiness()).ready,
           },
@@ -331,6 +349,7 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         return json(response, 200, { connected: true, items: catalogItems(store.state).slice(0, Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 100))) }, headers);
       }
       const segments = url.pathname.split("/").filter(Boolean).map((value) => decodeURIComponent(value));
+      if (await platformRoutes(request, response, url, headers, segments)) return;
       if (segments[0] === "v1" && segments[1] === "artifacts" && segments[4] === "download" && request.method === "GET") {
         const found = findPublishedArtifact(store.state, segments[2], segments[3]);
         if (!found) return json(response, 404, { ok: false, message: "Skill 制品不存在" }, headers);
@@ -343,8 +362,36 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         const bytes = productionDependencies
           ? await productionDependencies.objects.read(found.versionRecord.objectKey)
           : Buffer.from(found.versionRecord.bytesBase64, "base64url");
-        response.writeHead(200, { ...headers, "Cache-Control": "public, max-age=31536000, immutable", "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Content-Type-Options": "nosniff" });
+        const reader = currentUser(request);
+        if (reader) await store.transact((state) => {
+          if (!state.skillDownloads.some((entry) => entry.userId === reader.id && entry.skillId === found.skill.skillId)) {
+            state.skillDownloads.push({ userId: reader.id, skillId: found.skill.skillId, version: segments[3], downloadedAt: Date.now() });
+          }
+        });
+        response.writeHead(200, { ...headers, "Cache-Control": reader ? 'private, no-store' : "public, max-age=31536000, immutable", "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "X-Content-Type-Options": "nosniff" });
         return response.end(bytes);
+      }
+      if (url.pathname === '/v1/auth/email-config' && request.method === 'GET') {
+        return json(response, 200, emailAuth.config(), headers);
+      }
+      if (url.pathname === '/v1/auth/email-code' && request.method === 'POST') {
+        const body = await bodyJson(request, 4096);
+        const userId = body.purpose === 'bind' ? requireUser(request).id : '';
+        const result = await emailAuth.sendCode({ email: body.email, purpose: body.purpose || 'login', userId, ip: emailAuth.ip(request) });
+        return json(response, 200, result, headers);
+      }
+      if (url.pathname === '/v1/auth/email-login' && request.method === 'POST') {
+        const body = await bodyJson(request, 4096);
+        const result = await emailAuth.verify({ email: body.email, challengeId: body.challengeId, code: body.code,
+          purpose: 'login', rememberMe: body.rememberMe === true, ip: emailAuth.ip(request) });
+        return json(response, 200, result, { ...headers, 'Set-Cookie': sessionCookie(result.token, body.rememberMe === true) });
+      }
+      if (url.pathname === '/v1/account/email-bind' && request.method === 'POST') {
+        const user = requireUser(request);
+        const body = await bodyJson(request, 4096);
+        const result = await emailAuth.verify({ email: body.email, challengeId: body.challengeId, code: body.code,
+          purpose: 'bind', userId: user.id, ip: emailAuth.ip(request) });
+        return json(response, 200, result, headers);
       }
       if (url.pathname === "/v1/auth/register" && request.method === "POST") {
         const body = await bodyJson(request);
@@ -375,7 +422,7 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
       }
       if (url.pathname === "/v1/auth/me" && request.method === "GET") return json(response, 200, { user: publicUser(requireUser(request)) }, headers);
       if (segments[0] === "v1" && segments[1] === "skills" && segments[2] && request.method === "GET") {
-        const skill = store.state.skills.find((entry) => entry.skillId === segments[2] && entry.status === "published");
+        const skill = store.state.skills.filter((entry) => entry.skillId === segments[2] && entry.status === "published").sort((a, b) => b.updatedAt - a.updatedAt)[0];
         if (!skill) return json(response, 404, { ok: false, message: "Skill 不存在" }, headers);
         const version = skill.versions.find((entry) => entry.publishedAt) || skill.versions.at(-1);
         return json(response, 200, { skill: publicSkill(skill, version), artifact: version.artifact ? publicArtifact(version.artifact) : null }, headers);
@@ -415,7 +462,12 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
           submission = prepareSkillSubmission({ body, bytes, owner });
         }
         try {
-          await store.transact((state) => state.skills.push(submission));
+          await store.transact((state) => {
+            const existing = state.skills.filter((entry) => entry.skillId === submission.skillId);
+            if (existing.some((entry) => entry.ownerUserId !== owner.id)) fail('该 Skill 标识属于其他作者', 409);
+            if (existing.some((entry) => entry.versions.some((version) => version.version === submission.versions[0].version))) fail('同一 Skill 的版本不可覆盖，请增加版本号', 409);
+            state.skills.push(submission);
+          });
         } catch (error) {
           if (production && submission.versions[0]?.objectKey) await productionDependencies.objects.remove(submission.versions[0].objectKey).catch(() => {});
           throw error;
@@ -429,43 +481,28 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
       }
       if (url.pathname === "/v1/quota" && request.method === "GET") {
         const user = requireUser(request);
-        const account = ensureQuotaAccount(store.state, user.id);
+        const account = store.state.quotaAccounts.find((entry) => entry.userId === user.id) || { available: 0, reserved: 0 };
         return json(response, 200, { available: account.available, reserved: account.reserved, ledger: store.state.quotaLedger.filter((entry) => entry.userId === user.id).slice(-50) }, headers);
       }
-      if (url.pathname === "/v1/ai/text/reserve" && request.method === "POST") {
-        const user = requireUser(request);
-        const body = await bodyJson(request);
-        let result;
-        await store.transact((state) => { result = reserveQuota({ state, userId: user.id, amount: body.amount, idempotencyKey: body.idempotencyKey, reason: body.reason || "文字 AI 请求" }); });
-        return json(response, 200, { reservationId: result.reservationId, idempotent: result.idempotent, available: result.account.available, reserved: result.account.reserved }, headers);
-      }
-      if (url.pathname === "/v1/ai/text/settle" && request.method === "POST") {
-        const user = requireUser(request);
-        const body = await bodyJson(request);
-        let account;
-        await store.transact((state) => { account = settleQuota({ state, userId: user.id, reservationId: body.reservationId, usedAmount: body.usedAmount }); });
-        return json(response, 200, { available: account.available, reserved: account.reserved }, headers);
-      }
-      if (url.pathname === "/v1/ai/text/refund" && request.method === "POST") {
-        const user = requireUser(request);
-        const body = await bodyJson(request);
-        let account;
-        await store.transact((state) => { account = refundQuota({ state, userId: user.id, reservationId: body.reservationId }); });
-        return json(response, 200, { available: account.available, reserved: account.reserved }, headers);
+      if (['/v1/ai/text/reserve', '/v1/ai/text/settle', '/v1/ai/text/refund'].includes(url.pathname) && request.method === 'POST') {
+        requireUser(request);
+        fail('积分只能由服务端生成任务预留和结算，客户端不可直接操作', 403);
       }
       if (url.pathname === "/v1/admin/skills" && request.method === "GET") {
-        requireAdmin(request);
+        requireAdmin(request, ['reviewer']);
         return json(response, 200, { items: store.state.skills.map((skill) => ({ ...publicSkill(skill), recordId: skill.id, scan: skill.scan, review: skill.review || null })) }, headers);
       }
       if (url.pathname === "/v1/admin/users" && request.method === "GET") {
-        requireAdmin(request);
+        requireAdmin(request, ['membership_admin']);
         return json(response, 200, { items: store.state.users.map((user) => ({ user: publicUser(user), membership: publicMembership(store.state.memberships.find((entry) => entry.userId === user.id)), quota: store.state.quotaAccounts.find((entry) => entry.userId === user.id) ? { available: store.state.quotaAccounts.find((entry) => entry.userId === user.id).available, reserved: store.state.quotaAccounts.find((entry) => entry.userId === user.id).reserved } : { available: 0, reserved: 0 } })) }, headers);
       }
       if (segments[0] === "v1" && segments[1] === "admin" && segments[2] === "skills" && segments[3] && request.method !== "DELETE") {
-        const actor = requireAdmin(request);
+        const actor = requireAdmin(request, ['reviewer']);
         const skill = store.state.skills.find((entry) => entry.id === segments[3] || entry.skillId === segments[3]);
         if (!skill) return json(response, 404, { ok: false, message: "Skill 不存在" }, headers);
         if (segments[4] === "review" && request.method === "POST") {
+          if (skill.status !== 'pending_review') fail('仅待审核版本可以执行发布审核', 409);
+          if (skill.ownerUserId === actor.id) fail('不能审核自己上传的 Skill', 403);
           if (production) await requireProductionReady();
           const body = await bodyJson(request);
           const decision = String(body.decision || "");
@@ -524,35 +561,54 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
         return json(response, 200, { ok: true }, headers);
       }
       if (url.pathname === "/v1/admin/quota/adjust" && request.method === "POST") {
-        const actor = requireAdmin(request);
+        const actor = requireAdmin(request, ['membership_admin']);
         const body = await bodyJson(request);
         const userId = String(body.userId || "");
         if (!store.state.users.some((entry) => entry.id === userId)) fail("目标用户不存在", 404);
+        const reason = String(body.reason || '').trim();
+        const key = String(body.idempotencyKey || '');
+        if (!reason || reason.length > 500) fail('请填写 1–500 字的调账理由');
+        if (!/^[a-zA-Z0-9_-]{8,128}$/.test(key)) fail('调账请求标识无效');
+        if (!Number.isSafeInteger(body.amount) || !body.amount || Math.abs(body.amount) > 10_000_000) fail('调账积分必须为非零整数，绝对值不超过 10000000');
         let account;
-        await store.transact((state) => { account = adjustQuota({ state, userId, amount: body.amount, reason: body.reason || "管理员调整", actorUserId: actor.id }); });
-        await audit({ actorUserId: actor.id, action: "quota.adjust", targetType: "user", targetId: userId, detail: { amount: Number(body.amount) || 0 } });
+        await store.transact((state) => {
+          const previous = state.auditLogs.find((row) => row.action === 'quota.adjust' && row.actorUserId === actor.id && row.detail?.idempotencyKey === key);
+          if (previous) {
+            if (previous.targetId !== userId || previous.detail.amount !== body.amount || previous.detail.reason !== reason) fail('调账请求标识已用于其他操作', 409);
+            account = ensureQuotaAccount(state, userId); return;
+          }
+          account = adjustQuota({ state, userId, amount: body.amount, reason, actorUserId: actor.id });
+          state.auditLogs.push({ id: createId('audit'), actorUserId: actor.id, action: 'quota.adjust', targetType: 'user', targetId: userId, detail: { amount: body.amount, reason, idempotencyKey: key }, createdAt: Date.now() });
+        });
         return json(response, 200, { available: account.available, reserved: account.reserved }, headers);
       }
       if (url.pathname === "/v1/admin/memberships" && request.method === "POST") {
-        const actor = requireAdmin(request);
+        const actor = requireAdmin(request, ['membership_admin']);
         const body = await bodyJson(request);
         const userId = String(body.userId || "");
         if (!store.state.users.some((entry) => entry.id === userId)) fail("目标用户不存在", 404);
         let membership;
         let account;
+        if (!Number.isSafeInteger(body.units) || body.units < 0 || body.units > 10_000_000) fail('会员额度必须为 0–10000000 的整数');
+        if (body.expiresAt !== undefined && (!Number.isSafeInteger(body.expiresAt) || body.expiresAt < 0)) fail('会员到期时间无效');
+        if (body.status !== undefined && !['active', 'inactive'].includes(body.status)) fail('会员状态无效');
+        const reason = String(body.reason || '').trim();
+        if (!reason || reason.length > 500) fail('请填写会员调整理由');
+        if (typeof body.tier !== 'string' || !body.tier.trim() || body.tier.length > 40) fail('会员标识无效');
         await store.transact((state) => {
           membership = state.memberships.find((entry) => entry.userId === userId) || { id: createId("membership"), userId };
+          if (body.expectedUpdatedAt !== (membership.updatedAt || 0)) fail('会员资料已变化，请刷新后重试', 409);
           const previousUnits = Number(membership.units) || 0;
           membership.tier = String(body.tier || "vip").slice(0, 40);
-          membership.status = "active";
+          membership.status = body.status || 'active';
           membership.units = Number(body.units) || 0;
           membership.expiresAt = Number(body.expiresAt) || 0;
-          membership.updatedAt = Date.now();
+          membership.updatedAt = Math.max(Date.now(), (membership.updatedAt || 0) + 1);
           if (!state.memberships.includes(membership)) state.memberships.push(membership);
           const delta = membership.units - previousUnits;
           account = delta ? adjustQuota({ state, userId, amount: delta, reason: `会员${membership.tier}额度调整`, actorUserId: actor.id }) : ensureQuotaAccount(state, userId);
+          state.auditLogs.push({ id: createId('audit'), actorUserId: actor.id, action: 'membership.update', targetType: 'user', targetId: userId, detail: { tier: membership.tier, units: membership.units, quotaAvailable: account.available, reason }, createdAt: Date.now() });
         });
-        await audit({ actorUserId: actor.id, action: "membership.update", targetType: "user", targetId: userId, detail: { tier: membership.tier, units: membership.units, quotaAvailable: account.available } });
         return json(response, 200, { membership: publicMembership(membership), quota: { available: account.available, reserved: account.reserved } }, headers);
       }
       if (segments[0] === "v1" && segments[1] === "admin" && segments[2] === "users" && segments[3] && segments[4] === "status" && request.method === "POST") {
@@ -574,10 +630,13 @@ export const createCloudSkillApp = async ({ dataPath = defaultDataPath, signingK
       }
       return json(response, 404, { ok: false, message: "接口不存在" }, headers);
     } catch (error) {
-      return json(response, Number(error?.statusCode) || 400, { ok: false, message: publicError(error) }, headers);
+      const emailError = String(error?.code || '').startsWith('EMAIL_');
+      return json(response, Number(error?.statusCode) || 400, { ok: false, message: publicError(error),
+        ...(emailError ? { code: error.code, ...(error.retryAfterSeconds ? { retryAfterSeconds: error.retryAfterSeconds } : {}) } : {}),
+      }, { ...headers, ...(emailError && error.retryAfterSeconds ? { 'Retry-After': String(error.retryAfterSeconds) } : {}) });
     }
   };
-  return { store, signingKey, handler: handle, close: () => clearInterval(cleanupTimer) };
+  return { store, signingKey, handler: handle, close: () => { clearInterval(cleanupTimer); emailAuth.close(); } };
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

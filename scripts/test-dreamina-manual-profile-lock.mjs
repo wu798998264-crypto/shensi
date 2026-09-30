@@ -44,10 +44,11 @@ const blocked = dreaminaProfileSwitchDecision({
   jobs: [job({ profileId: "account-a" })],
   requestedProfileId: "account-b",
 });
-assert.equal(blocked.allowed, false, "当前账号有任务时必须阻止切换另一即梦配置");
+assert.equal(blocked.allowed, true, "当前账号有任务时另一即梦配置应进入本地队列");
+assert.equal(blocked.queuedBehindCurrent, true);
 assert.equal(blocked.activeProfileId, "account-a");
 assert.match(dreaminaProfileSwitchMessage(blocked), /只有一个共享凭证锁/u);
-assert.match(dreaminaProfileSwitchMessage(blocked), /其他即梦配置暂时无法生成/u);
+assert.match(dreaminaProfileSwitchMessage(blocked), /进入本地队列/u);
 assert.match(dreaminaProfileSwitchMessage(blocked), /非即梦配置不受影响/u);
 
 assert.equal(dreaminaProfileSwitchDecision({
@@ -110,9 +111,8 @@ const workspace = await readFile(new URL("../src/server/workspace.mjs", import.m
 const server = await readFile(new URL("../src/server/generation-job-store.mjs", import.meta.url), "utf8");
 assert.doesNotMatch(app, /selectDreaminaAccountCandidate/u, "生成界面不得继续调用自动账号池选择器");
 assert.doesNotMatch(app, /即梦 · 自动账号池/u, "生成界面不得继续显示自动账号池");
-assert.match(server, /DREAMINA_PROFILE_SWITCH_BLOCKED/u, "服务端必须有跨账号并发的最终门禁");
-assert.match(app, /当前即梦配置暂时无法生成/u, "跨即梦配置冲突必须使用可见弹窗提示");
-assert.match(app, /openDreaminaProfileLockDialog\(error\.details \|\| \{\}\)/u, "图片和视频生成必须把服务端凭证锁冲突转换为弹窗");
+assert.match(server, /dreaminaQueuePolicy\s*=\s*['"]command-lease-v1['"]/u, "服务端必须把即梦跨账号冲突落成本地队列");
+assert.match(app, /本地排队|进入本地队列/u, "跨即梦配置冲突必须进入本地队列");
 assert.match(app, /setWhiteboardGenerationSubmitBusy\(elements\.whiteboardImageForm, whiteboardMediaSubmissionLocks\.has\(whiteboardMediaSubmissionKey\(\{ channel: "image", nodeId \}\)\)\)/u, "切换到另一图片卡片时必须按目标任务重置按钮，不能沿用上一张卡片的禁用态");
 assert.match(app, /setWhiteboardGenerationSubmitBusy\(elements\.whiteboardVideoForm, whiteboardMediaSubmissionLocks\.has\(whiteboardMediaSubmissionKey\(\{ channel: "video", nodeId \}\)\)\)/u, "切换到另一视频卡片时必须按目标任务重置按钮");
 const imageSubmitBlock = app.slice(

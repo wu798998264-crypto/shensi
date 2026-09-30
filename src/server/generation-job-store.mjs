@@ -25,7 +25,6 @@ import {
   dreaminaCredentialIdentity,
   dreaminaBlockingTaskDetails,
   dreaminaJobRequiresCredentialProfile,
-  dreaminaProfileSwitchDecision,
   dreaminaProfileSwitchMessage,
   isDreaminaCliSettings,
   requireDreaminaCliProfileId,
@@ -35,6 +34,8 @@ import {
   recordDreaminaProfileGenerationSuccess,
 } from "./dreamina-profile-identity-store.mjs";
 import { readDreaminaBrokerLease } from "./dreamina-broker-lease.mjs";
+import { isDreaminaQueueJob, isDreaminaQueueReorderable, dreaminaQueueVisible, dreaminaQueueView, orderDreaminaQueueJobs } from "../dreamina-task-queue.js";
+import { generationParameterSnapshot } from "../generation-parameter-snapshot.js";
 import { builtInAggregateImageRecoveryJob, legacyAggregateReferencePreflightFailurePatch } from "./media-submission-recovery.mjs";
 
 const JOB_SCHEMA_VERSION = 3;
@@ -352,6 +353,10 @@ export const publicGenerationJob = (job) => {
   delete safe.replacementReservationOwnerToken;
   delete safe.replacementReservationOwnerPid;
   delete safe.replacementSourceReservationId;
+  safe.dreaminaDispatching = job.dreaminaDispatching === true
+    || Boolean(job.dreaminaDispatchToken && processIsAlive(Number(job.dreaminaDispatchPid)));
+  delete safe.dreaminaDispatchToken;
+  delete safe.dreaminaDispatchPid;
   const serverMedia = safe.mode === "server" && ["image", "video"].includes(safe.channel);
   const terminal = ["complete", "cancelled", "superseded"].includes(safe.status)
     || Boolean(safe.supersededBy);
@@ -496,6 +501,7 @@ const publicGenerationProfile = (value = {}) => {
     agentModel: String(source.agentModel || "").trim().slice(0, 240),
     agentReasoningEffort: String(source.agentReasoningEffort || "").trim().slice(0, 40),
     agentSpeedMode: String(source.agentSpeedMode || "default").trim().slice(0, 40),
+    ...generationParameterSnapshot(source),
   };
   return Object.fromEntries(Object.entries(safe).filter(([, item]) => item !== ""));
 };
@@ -534,6 +540,11 @@ const publicRequest = (channel, request = {}) => {
   capabilityProfileSignature: String(request.capabilityProfileSignature || request.settings?.capabilityProfileSignature || "").slice(0, 2000),
   aspectRatio: String(request.aspectRatio || ""),
   quality: String(request.quality || ""),
+  background: String(request.background || ""),
+  ...generationParameterSnapshot(Object.fromEntries(
+    ["audioType", "scene", "voiceId", "language", "speed", "format", "sampleRate"]
+      .map((field) => [field, request[field]]),
+  )),
   imageCount: Math.max(1, Math.min(4, Number(request.imageCount) || 1)),
   spec: String(request.spec || ""),
   generationMode: String(request.generationMode || ""),
@@ -1035,16 +1046,187 @@ export const abandonMediaGenerationJobForReplacement = ({ jobId } = {}) => trans
 });
 
 export const listDreaminaProfileBlockingJobs = async () => {
-  await mkdir(jobsRoot(), { recursive: true });
-  const entries = await readdir(jobsRoot(), { withFileTypes: true });
-  const jobs = [];
-  for (let job of await readGenerationJobs(entries)) {
-    job = await recoverLegacyDreaminaGenerationAuthFailure(job);
-    const forceReleasePending = Boolean(job?.forceReleasePendingAt && !job?.forceReleaseCompletedAt);
-    if (job && (dreaminaJobRequiresCredentialProfile(job) || forceReleasePending)) jobs.push(publicGenerationJob(job));
-  }
-  return jobs.sort((left, right) => Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
+  const lease = await readDreaminaBrokerLease();
+  const job = lease?.jobId ? await readJob(lease.jobId) : null;
+  return job ? [publicGenerationJob({ ...job, credentialCommandActive: true })] : [];
 };
+
+const dreaminaQueuePath = () => join(jobsRoot(), 'dreamina-queue-order.json');
+const readDreaminaQueueOrder = async () => {
+  try {
+    const value = JSON.parse(await readFile(dreaminaQueuePath(), 'utf8'));
+    return Array.isArray(value.jobIds) ? value.jobIds : [];
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  }
+};
+const readDreaminaQueueRecords = async () => {
+  await mkdir(jobsRoot(), { recursive: true });
+  return (await readGenerationJobs(await readdir(jobsRoot(), { withFileTypes: true }))).filter(isDreaminaQueueJob);
+};
+const liveDreaminaDispatch = (job) => Boolean(job.dreaminaDispatchToken && processIsAlive(Number(job.dreaminaDispatchPid)));
+const withoutDeadDispatch = (job) => job.dreaminaDispatchToken && !liveDreaminaDispatch(job)
+  ? { ...job, dreaminaDispatchToken: '', dreaminaDispatchPid: 0 } : job;
+
+const unsubmittedDreaminaQueueJob = (job = {}) => isDreaminaQueueJob(job)
+  && job.dreaminaQueuePolicy === 'command-lease-v1'
+  && job.status === 'queued'
+  && job.submissionState === 'not_submitted'
+  && !job.providerTaskId
+  && !job.userStoppedAt
+  && job.desiredAction !== 'cancel'
+  && !job.supersededBy;
+
+// A server restart must not let an old, never-submitted record silently claim
+// the next credential turn.  Mark only those local queue records; provider
+// task IDs and already-submitted work remain untouched and auditable.  This
+// writes ordinary job metadata under the local queue lock, never the provider
+// credential lock and never starts a worker.
+export const deferDreaminaQueueForStartup = async ({ before = new Date().toISOString() } = {}) => {
+  const release = await acquireCapabilitySmokeLock('dreamina-local-queue');
+  try {
+    const deferredAt = new Date().toISOString();
+    const startupBoundaryMs = Date.parse(String(before || ''));
+    let deferred = 0;
+    for (const raw of await readDreaminaQueueRecords()) {
+      const job = withoutDeadDispatch(raw);
+      if (!unsubmittedDreaminaQueueJob(job) || job.dreaminaQueueDeferredAt) continue;
+      if (job.dreaminaDispatchToken || job.dreaminaDispatching) continue;
+      const createdAtMs = Date.parse(String(job.createdAt || ''));
+      // The server captures `before` before its first await.  A request that
+      // races startup and is created after that boundary must remain active;
+      // otherwise the fence could pause the very first user submission.
+      if (Number.isFinite(startupBoundaryMs)
+        && (!Number.isFinite(createdAtMs) || createdAtMs >= startupBoundaryMs)) continue;
+      await updateJob(job.id, {
+        dreaminaQueueDeferredAt: deferredAt,
+        dreaminaQueueDeferredReason: 'server_restart',
+      });
+      deferred += 1;
+    }
+    return { deferred };
+  } finally {
+    await release();
+  }
+};
+
+// Used by the startup recovery worker. Clearing the marker does not rewrite
+// dreamina-queue-order.json, so the user's persisted ordering remains
+// authoritative when dispatch resumes. There is no user-facing resume button.
+export const resumeDeferredDreaminaQueue = async () => {
+  const release = await acquireCapabilitySmokeLock('dreamina-local-queue');
+  try {
+    let resumed = 0;
+    for (const job of await readDreaminaQueueRecords()) {
+      if (!job.dreaminaQueueDeferredAt) continue;
+      await updateJob(job.id, {
+        dreaminaQueueDeferredAt: '',
+        dreaminaQueueDeferredReason: '',
+      });
+      resumed += 1;
+    }
+    return { resumed };
+  } finally {
+    await release();
+  }
+};
+
+export const listDreaminaQueueJobs = async () => {
+  const records = (await readDreaminaQueueRecords()).map(withoutDeadDispatch).filter(dreaminaQueueVisible);
+  const ordered = orderDreaminaQueueJobs(records, await readDreaminaQueueOrder());
+  let position = 0;
+  return ordered.map((job) => {
+    const view = dreaminaQueueView(publicGenerationJob(job), { position: isDreaminaQueueReorderable(job) ? ++position : 0 });
+    delete view.dreaminaDispatchToken;
+    delete view.dreaminaDispatchPid;
+    return view;
+  });
+};
+
+export const reorderDreaminaQueue = async ({ jobIds = [] } = {}) => {
+  if (!Array.isArray(jobIds) || jobIds.some((id) => typeof id !== 'string') || new Set(jobIds).size !== jobIds.length) {
+    throw jobTransitionError('排队顺序包含重复或无效任务', 'DREAMINA_QUEUE_ORDER_INVALID', 422);
+  }
+  const release = await acquireCapabilitySmokeLock('dreamina-local-queue');
+  try {
+    const records = (await readDreaminaQueueRecords()).map(withoutDeadDispatch).filter(dreaminaQueueVisible);
+    const jobs = records.filter(isDreaminaQueueReorderable);
+    const ids = new Set(jobs.map((job) => job.id));
+    if (jobIds.some((id) => !ids.has(id))) {
+      throw jobTransitionError('任务已经开始提交或结束，请刷新队列后重排', 'DREAMINA_QUEUE_ORDER_STALE', 409);
+    }
+    const persistedOrder = await readDreaminaQueueOrder();
+    const activeOrder = orderDreaminaQueueJobs(jobs, persistedOrder)
+      .map((job) => job.id)
+      .filter((id) => !jobIds.includes(id));
+    const requestedActiveOrder = [...jobIds, ...activeOrder];
+    // Only reorder not-yet-submitted tasks. Keep paused-after-restart,
+    // submitted, and result-pending records in their existing slots so a
+    // reorder cannot silently erase their durable order from disk.
+    const orderedRecords = orderDreaminaQueueJobs(records, persistedOrder);
+    let activeIndex = 0;
+    const mergedOrder = orderedRecords.map((job) => {
+      if (!isDreaminaQueueReorderable(job)) return job.id;
+      const next = requestedActiveOrder[activeIndex];
+      activeIndex += 1;
+      return next || job.id;
+    });
+    const path = dreaminaQueuePath();
+    const temporary = path + '.' + randomUUID() + '.tmp';
+    try {
+      await writeFile(temporary, JSON.stringify({ version: 1, jobIds: mergedOrder }), 'utf8');
+      await rename(temporary, path);
+    } finally { await rm(temporary, { force: true }); }
+  } finally { await release(); }
+  return listDreaminaQueueJobs();
+};
+
+// Serialize only dispatch selection. The existing broker remains the sole
+// credential mutex, held for individual CLI commands, never a remote task.
+export const claimDreaminaQueueTurn = async ({ jobId } = {}) => {
+  const release = await acquireCapabilitySmokeLock('dreamina-local-queue');
+  try {
+    const jobs = (await readDreaminaQueueRecords()).map(withoutDeadDispatch);
+    if (jobs.some((job) => liveDreaminaDispatch(job) && !job.providerTaskId
+      && job.desiredAction !== 'cancel' && ['queued', 'submitting'].includes(job.status))) return '';
+    const pending = jobs.filter((job) => isDreaminaQueueReorderable(job)
+      || (liveDreaminaDispatch(job) && !job.providerTaskId && job.desiredAction !== 'cancel'
+        && ['queued', 'submitting'].includes(job.status)));
+    const head = orderDreaminaQueueJobs(pending, await readDreaminaQueueOrder())[0];
+    if (head?.id !== jobId || liveDreaminaDispatch(head)) return '';
+    const token = randomUUID();
+    const claimed = await transitionJob(jobId, (job) => {
+      if (!isDreaminaQueueReorderable(withoutDeadDispatch(job))) return null;
+      return { dreaminaDispatchToken: token, dreaminaDispatchPid: process.pid, dreaminaDispatchStartedAt: new Date().toISOString() };
+    });
+    return claimed?.dreaminaDispatchToken === token ? token : '';
+  } finally { await release(); }
+};
+
+export const releaseDreaminaQueueTurn = ({ jobId, token } = {}) => transitionJob(jobId, (job) =>
+  job.dreaminaDispatchToken === token ? { dreaminaDispatchToken: '', dreaminaDispatchPid: 0 } : null);
+
+export const stopDreaminaQueueJob = ({ jobId } = {}) => transitionJob(safeJobId(jobId), (job) => {
+  if (!isDreaminaQueueJob(job)) throw jobTransitionError('该任务不属于即梦队列', 'DREAMINA_QUEUE_JOB_REQUIRED', 422);
+  if (job.status === 'complete') throw jobTransitionError('结果已落盘，请使用回填或放弃回填操作', 'MEDIA_JOB_TERMINAL', 409);
+  // Keep the endpoint idempotent. A double click or a retry after the first
+  // stop must return the durable cancelled record instead of making the HTTP
+  // handler dereference a null job and masking the original result.
+  if (job.status === 'cancelled') return job;
+  const now = new Date().toISOString();
+  const unsubmitted = !job.providerTaskId && job.submissionState === 'not_submitted';
+  return {
+    status: 'cancelled', desiredAction: 'cancel', userStoppedAt: now, resultSuppressed: true,
+    cancelledAt: now, cancellationFinalizedAt: now, profileSwitchReleasedAt: now,
+    forceReleasePendingAt: now, forceReleaseCompletedAt: '',
+    providerStatus: unsubmitted ? 'cancelled' : 'cancel_unconfirmed',
+    cancelOutcome: unsubmitted ? 'not_submitted' : 'local_terminalized_unconfirmed',
+    cancellationFinalizationReason: 'user_stopped_queue_task', nextPollAt: '', retryAllowed: false,
+    error: unsubmitted ? '已取消本地排队，尚未提交厂商，不会扣费。'
+      : '已停止本地跟踪，原任务记录保留；远端任务可能继续生成并产生费用，请在厂商侧核对。',
+  };
+});
 
 export const forceReleaseDreaminaJob = ({ jobId = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
   const forceReleasePending = Boolean(job?.forceReleasePendingAt && !job?.forceReleaseCompletedAt);
@@ -1207,46 +1389,10 @@ export const createMediaGenerationJob = async ({ channel, target, request, repla
       resultAssetId: "",
     };
     if (isDreaminaCliSettings(normalizedRequest.settings || {})) {
-      const releaseProfileGate = await acquireCapabilitySmokeLock("dreamina-cli-manual-profile-gate");
+      const releaseProfileGate = await acquireCapabilitySmokeLock("dreamina-local-queue");
       try {
-        const requestedProfileId = requireDreaminaCliProfileId(normalizedRequest.settings || {});
-        const brokerLease = await readDreaminaBrokerLease();
-        const brokerLeaseIdentity = brokerLease
-          ? dreaminaProfileIdentityKey({ dreaminaCliProfile: brokerLease.profileId })
-          : "";
-        const brokerLeaseConflicts = brokerLease
-          && brokerLease.profileId !== requestedProfileId
-          && !(profileIdentityKey && brokerLeaseIdentity && profileIdentityKey === brokerLeaseIdentity);
-        if (brokerLeaseConflicts) {
-          const error = jobTransitionError(
-            `即梦通道正被配置“${brokerLease.profileId}”占用；本次任务未创建、未提交厂商，也不会扣费。`,
-            "DREAMINA_PROFILE_SWITCH_BLOCKED",
-            409,
-          );
-          error.details = {
-            ...dreaminaBlockingTaskDetails(brokerLease.jobId ? await getGenerationJob({ jobId: brokerLease.jobId }).catch(() => null) || {} : {}),
-            activeProfileId: brokerLease.profileId,
-            blockingJobId: brokerLease.jobId || "",
-            blockingChannel: brokerLease.channel || "",
-            blockingCommand: brokerLease.command || "",
-            reason: "physical_credential_slot_busy",
-          };
-          throw error;
-        }
-        const decision = dreaminaProfileSwitchDecision({
-          jobs: await listDreaminaProfileBlockingJobs(),
-          requestedProfileId,
-          requestedCredentialIdentity: profileIdentityKey,
-        });
-        if (!decision.allowed) {
-          const error = jobTransitionError(
-            dreaminaProfileSwitchMessage(decision),
-            "DREAMINA_PROFILE_SWITCH_BLOCKED",
-            409,
-          );
-          error.details = decision;
-          throw error;
-        }
+        // A busy credential slot never rejects a durable, idempotent request.
+        job.dreaminaQueuePolicy = 'command-lease-v1';
         await writeJob(job);
       } finally {
         await releaseProfileGate();
@@ -1503,6 +1649,14 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
   if (job.desiredAction === "cancel" || job.status === "cancel_requested") {
     throw jobTransitionError("此任务已经受理取消，正在等待厂商确认，不能恢复生成", "MEDIA_JOB_CANCEL_PENDING");
   }
+  // An explicitly requested new submission must re-enter the local queue, not
+  // inherit a failed provider ID/limit flag that would bypass or strand it.
+  const newDreaminaSubmission = isDreaminaQueueJob(job) && job.dreaminaQueuePolicy === 'command-lease-v1' ? {
+    providerTaskId: null, submissionState: 'not_submitted', providerErrorCode: '',
+    capacityRetrySafe: false, capacityRetryExhaustedAt: '', safeNoTaskRetry: false,
+    billingRisk: '', failedAt: '', nextPollAt: '', transientFailures: 0,
+    dreaminaDispatchToken: '', dreaminaDispatchPid: 0,
+  } : {};
   if (job.providerTaskId && !(job.status === "failed" && job.providerStatus === "failed")) {
     return {
       status: job.providerStatus === "completed" || job.status === "waiting_storage" ? "downloading" : "polling",
@@ -1530,6 +1684,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
       resubmitConfirmedAt: new Date().toISOString(),
       resubmitConfirmationRequired: false,
       previousProviderTaskId: String(job.providerTaskId || ""),
+      ...newDreaminaSubmission,
       error: "",
       retryAllowed: true,
     };
@@ -1547,6 +1702,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
       submissionState: "not_submitted",
       desiredAction: "run",
       resumeKind: "safe_no_task_retry",
+      ...newDreaminaSubmission,
       resumeRequestId: String(requestId || ""),
       explicitRetryAt: new Date().toISOString(),
       safeNoTaskRetry: false,
@@ -1563,6 +1719,7 @@ export const requestMediaGenerationResume = ({ jobId, allowNewSubmission = false
     providerStatus: "queued",
     desiredAction: "run",
     resumeKind: "confirmed_new_submission",
+    ...newDreaminaSubmission,
     resumeRequestId: String(requestId || ""),
     explicitRetryAt: new Date().toISOString(),
     resubmitConfirmedAt: new Date().toISOString(),
@@ -2172,31 +2329,36 @@ const recoverLegacyAggregateReferencePreflightFailure = async (job) => {
   return patch ? updateJob(job.id, patch) : job;
 };
 
-export const listMediaGenerationJobsForWorker = async ({ skipDreamina = false } = {}) => {
+export const listMediaGenerationJobsForWorker = async ({ skipDreamina = false, skipDreaminaLegacyRecovery = false } = {}) => {
   await mkdir(jobsRoot(), { recursive: true });
   const entries = await readdir(jobsRoot(), { withFileTypes: true });
   const jobs = [];
   for (let job of await readGenerationJobs(entries)) {
+    const dreaminaRecord = isDreaminaCliSettings(job?.request?.settings || {});
     // Startup/watchdog recovery must not touch historical Dreamina records.
     // In particular, do not run the legacy migration helpers below: some of
     // them rewrite old auth/transport states and would make the first window
     // launch probe the provider before the user starts a task. Dreamina
     // recovery is explicitly deferred until a user-triggered worker releases
     // the credential slot.
-    if (skipDreamina
-      && normalizedIdentity(job?.request?.settings?.adapter) === "cli"
-      && ["即梦", "dreamina"].includes(normalizedIdentity(job?.request?.settings?.provider))) continue;
+    if (skipDreamina && dreaminaRecord) continue;
     if (await pruneExpiredGenerationJob(job)) continue;
-    job = await recoverLegacyDreaminaGenerationAuthFailure(job);
-    job = await recoverLegacyAggregateReferencePreflightFailure(job);
-    job = await recoverLegacyDreaminaPreSubmitTransportFailure(job);
-    job = await recoverLegacyDreaminaConcurrencyFailure(job);
-    job = await recoverTransientProviderTrackingFailure(job);
-    if (mediaGenerationCancellationFinalizationExpired(job)) {
-      job = await finalizeMediaGenerationCancellation({
-        jobId: job.id,
-        reason: "provider_cancel_confirmation_timeout",
-      });
+    // A deferred Dreamina pass may observe an existing provider task, but it
+    // must not run compatibility migrations that rewrite historical auth or
+    // transport states before the exact targeted worker gets a chance to
+    // query that task. Startup already skipped the record above entirely.
+    if (!(skipDreaminaLegacyRecovery && dreaminaRecord)) {
+      job = await recoverLegacyDreaminaGenerationAuthFailure(job);
+      job = await recoverLegacyAggregateReferencePreflightFailure(job);
+      job = await recoverLegacyDreaminaPreSubmitTransportFailure(job);
+      job = await recoverLegacyDreaminaConcurrencyFailure(job);
+      job = await recoverTransientProviderTrackingFailure(job);
+      if (mediaGenerationCancellationFinalizationExpired(job)) {
+        job = await finalizeMediaGenerationCancellation({
+          jobId: job.id,
+          reason: "provider_cancel_confirmation_timeout",
+        });
+      }
     }
     if (!job || ["complete", "cancelled", "superseded"].includes(job.status)) continue;
     // A force-release request has already stopped the local worker. Keep the
@@ -2224,7 +2386,7 @@ export const listMediaGenerationJobsForWorker = async ({ skipDreamina = false } 
       && ["即梦", "dreamina"].includes(normalizedIdentity(job.request?.settings?.provider));
     if (job?.mode === "server" && (["queued", "submitting", "running", "polling", "downloading", "waiting_storage", "cancel_requested"].includes(job.status) || automaticSubmissionReconciliation || recoverableDreaminaAuthTransport)) jobs.push(job);
   }
-  return jobs.sort((left, right) => Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
+  return orderDreaminaQueueJobs(jobs, await readDreaminaQueueOrder());
 };
 
 export const generationJobsDirectory = () => jobsRoot();

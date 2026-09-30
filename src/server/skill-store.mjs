@@ -3747,9 +3747,9 @@ const collapseManagedSkillHistory = async ({ root, registry, entry, versionRecor
   return discarded;
 };
 
-export const installMarketplaceSkill = async ({ id, shensiRoot = "", replaceLocalVersions = false } = {}) => {
+export const installMarketplaceSkill = async ({ id, shensiRoot = "", replaceLocalVersions = false, token = "" } = {}) => {
   if (String(id || "").startsWith("remote:")) {
-    const downloaded = await downloadRemoteMarketplaceArtifact(id);
+    const downloaded = await downloadRemoteMarketplaceArtifact(id, { token });
     const artifact = downloaded.artifact;
     if (artifact.assetType === "skill") {
       if (artifact.packageFormat !== "shensi-skill-package-v1") throw new Error("远程 Skill 包格式不受支持");

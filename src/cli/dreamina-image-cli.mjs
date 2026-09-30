@@ -377,14 +377,23 @@ const friendlyFailureReason = (value) => concurrencyLimited(value)
   : String(value || "Dreamina 图片任务失败");
 const normalizedStatus = (payload, { missingStatus = "unknown" } = {}) => {
   const status = rawStatus(payload);
-  if (!status) return missingStatus;
+  const queue = queueInfo(payload);
+  const queueStatus = String(queue.status || "").trim().toLowerCase();
+  const activeStatuses = ["submit", "submitted", "submitting", "querying", "running", "processing", "generating", "in_progress", "in-progress", "started", "executing"];
+  const queuedStatuses = ["queued", "queue", "pending", "created", "waiting", "wait"];
   if (["success", "succeeded", "completed", "complete", "done"].includes(status)) return "completed";
   if (["fail", "failed", "error"].includes(status)) return "failed";
   if (["cancelled", "canceled"].includes(status)) return "cancelled";
-  if (["queued", "pending", "created", "waiting"].includes(status)) return "queued";
-  const queue = queueInfo(payload);
+  // Dreamina can report queue_position=1 while the task has already entered
+  // provider-side generation.  An explicit generating/running status is
+  // stronger than the position hint; classify it as running so the UI does
+  // not make an active task look permanently queued.  The provider places
+  // this explicit state in queue_status on some responses, so consider both
+  // fields before looking at queue_position.
+  if (activeStatuses.includes(status) || activeStatuses.includes(queueStatus)) return "running";
+  if (queuedStatuses.includes(status) || queuedStatuses.includes(queueStatus)) return "queued";
+  if (!status) return missingStatus;
   if ((queue.position !== null && queue.position > 0) || /queue|wait|排队/iu.test(queue.status)) return "queued";
-  if (["submit", "submitted", "submitting", "querying", "running", "processing", "generating", "in_progress", "in-progress"].includes(status)) return "running";
   return "unknown";
 };
 
@@ -688,8 +697,10 @@ const submit = async () => {
     assertDreaminaGenerationCredit(account);
     assertDreaminaCliGenerationAccess(account);
     // Balance/identity and task resources are separate Dreamina auth surfaces.
-    // Verify the latter with a read-only command before any paid submission.
-    await ensureDreaminaTaskStoreSession();
+    // A durable verified profile already paid the control-plane cost during
+    // its bounded verification.  Do not add a second user_credit/list_task
+    // round before every generation; the real submit command is authoritative.
+    if (account.preSubmitControlPlaneSkipped !== true) await ensureDreaminaTaskStoreSession();
   } catch (error) {
     throw markDreaminaPreSubmitNoTask(error);
   }

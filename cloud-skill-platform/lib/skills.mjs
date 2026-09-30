@@ -2,6 +2,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "no
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createId } from "./security.mjs";
+import { skillReviewsView } from './community.mjs';
 import { normalizeSkillId, normalizeVersion, publicError, sha256 } from "./validation.mjs";
 
 const dangerPatterns = [
@@ -153,10 +154,12 @@ export const catalogItems = (state) => state.skills
   .filter((skill) => skill.status === "published")
   .flatMap((skill) => skill.versions.filter((version) => version.publishedAt).map((version) => ({
     ...publicArtifact(version.artifact),
+    ...skillReviewsView(state, skill.skillId),
   })));
 
 export const findPublishedArtifact = (state, artifactId, version) => {
-  const skill = state.skills.find((entry) => entry.skillId === artifactId && entry.status === "published");
+  const skill = state.skills.find((entry) => entry.skillId === artifactId && entry.status === "published"
+    && entry.versions.some((record) => record.version === version && record.publishedAt));
   const record = skill?.versions.find((entry) => entry.version === version && entry.publishedAt);
   return skill && record ? { skill, versionRecord: record, artifact: record.artifact } : null;
 };

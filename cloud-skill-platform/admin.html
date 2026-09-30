@@ -23,7 +23,7 @@
           <form id="authForm" novalidate>
             <label>后台账号<input id="authAccount" type="text" autocomplete="username" required placeholder="请输入后台账号" /></label>
             <label>密码<input id="authPassword" type="password" autocomplete="current-password" minlength="8" required placeholder="至少 8 个字符" /></label>
-            <label class="checkbox-row"><input id="rememberMe" type="checkbox" checked /> 保持登录 30 天</label>
+            <p>后台登录仅保留在当前标签页，请勿在公共电脑上保持登录。</p>
             <button class="primary-button" type="submit" id="authSubmit">登录神思后台管理</button>
             <p class="form-message" id="authMessage" role="status"></p>
           </form>
@@ -36,23 +36,33 @@
           <div class="topbar-actions"><span id="adminIdentity" class="identity"></span><button class="ghost-button" id="logoutButton" type="button">退出登录</button></div>
         </header>
         <div id="adminMessage" class="banner" role="status" hidden></div>
+        <p class="banner">基础管理台 · 收款尚未启用。会员额度为人工管理，平台模型调用默认关闭。</p>
         <section class="overview-grid" id="overviewCards"></section>
         <div class="content-grid">
-          <section class="panel wide-panel">
+          <section class="panel wide-panel" data-role-panel="review">
             <div class="panel-heading"><div><p class="eyebrow">CONTENT REVIEW</p><h2>Skill 审核队列</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
             <div class="table-wrap"><table><thead><tr><th>名称</th><th>作者</th><th>版本</th><th>状态</th><th>安全检查</th><th>操作</th></tr></thead><tbody id="skillsTable"></tbody></table></div>
           </section>
-          <section class="panel">
+          <section class="panel wide-panel" data-role-panel="members">
             <div class="panel-heading"><div><p class="eyebrow">ACCOUNT CONTROL</p><h2>账号管理</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
             <div class="table-wrap"><table><thead><tr><th>账号</th><th>角色</th><th>状态</th><th>额度</th><th>操作</th></tr></thead><tbody id="usersTable"></tbody></table></div>
           </section>
-          <section class="panel">
+          <section class="panel wide-panel" data-role-panel="review">
+            <div class="panel-heading"><div><p class="eyebrow">COMMUNITY REVIEW</p><h2>评分与评价审核</h2></div></div>
+            <div class="table-wrap"><table><thead><tr><th>Skill</th><th>用户</th><th>评分</th><th>评价</th><th>状态</th><th>操作</th></tr></thead><tbody id="reviewsTable"></tbody></table></div>
+          </section>
+          <section class="panel wide-panel" data-role-panel="audit">
             <div class="panel-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>最近操作</h2></div><button class="ghost-button" data-refresh type="button">刷新</button></div>
             <ol class="audit-list" id="auditList"></ol>
           </section>
         </div>
       </section>
     </main>
+    <dialog id="managementDialog" aria-labelledby="managementTitle"><form id="managementForm">
+      <header class="panel-heading"><h2 id="managementTitle"></h2><button type="button" class="ghost-button" data-close-dialog aria-label="关闭">×</button></header>
+      <div id="managementBody"></div><p id="managementMessage" class="form-message" role="status"></p>
+      <footer class="dialog-actions"><button type="button" class="ghost-button" data-close-dialog>关闭</button><button type="submit" class="primary-button" id="managementSubmit">确认保存</button></footer>
+    </form></dialog>
     <script src="./app.js" defer></script>
   </body>
 </html>

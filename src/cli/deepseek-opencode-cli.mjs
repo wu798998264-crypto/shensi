@@ -43,9 +43,27 @@ const openCodeErrorMessage = (event = {}) => event?.error?.data?.message
   || event?.error?.name
   || "OpenCode 返回错误事件";
 
+const openCodeTextFromEvent = (event = {}) => {
+  const direct = [event?.part?.text, event?.text, event?.part?.content, event?.content]
+    .find((value) => typeof value === "string" && value);
+  if (direct) return direct;
+  const content = event?.message?.content;
+  return Array.isArray(content)
+    ? content.filter((item) => item?.type === "text" || item?.type === "output_text").map((item) => item.text || "").join("")
+    : typeof content === "string" ? content : "";
+};
+
+const openCodeTerminalError = (event = {}) => {
+  const state = event?.part?.state || event?.state;
+  return event?.type === "error" || state?.status === "error" || state?.status === "failed"
+    ? state?.error || state?.output || openCodeErrorMessage(event) || "OpenCode 返回错误事件"
+    : "";
+};
+
 export const parseOpenCodeJsonEvents = (stdout = "") => {
   const textParts = [];
   let parsedEvents = 0;
+  let terminalError = "";
   for (const rawLine of String(stdout).split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line) continue;
@@ -56,15 +74,15 @@ export const parseOpenCodeJsonEvents = (stdout = "") => {
       continue;
     }
     parsedEvents += 1;
+    terminalError ||= openCodeTerminalError(event);
     if (event?.type === "error") throw new Error(openCodeErrorMessage(event));
-    if (event?.type !== "text" && event?.part?.type !== "text") continue;
-    const value = event?.part?.text ?? event?.text ?? event?.content;
-    if (typeof value === "string" && value) textParts.push(value);
+    const value = openCodeTextFromEvent(event);
+    if (value) textParts.push(value);
   }
   const text = textParts.join("").trim();
   if (!text) {
     throw new Error(parsedEvents
-      ? "OpenCode 已结束，但没有返回可用文本"
+      ? terminalError ? `OpenCode 未返回最终文本：${terminalError}` : "OpenCode 已结束，但没有返回可用文本；请检查 OpenCode 是否在结束前完成最后一步"
       : "OpenCode 没有返回可解析的 JSON 事件");
   }
   return text;

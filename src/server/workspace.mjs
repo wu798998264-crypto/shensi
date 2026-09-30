@@ -4531,13 +4531,22 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
           requestPath,
           eventPath,
           timeoutMs: source.kind === "video" ? 90 * 60_000 : 20 * 60_000,
-          onProgress: (progress) => onProgress?.({
-            completed: index,
-            total: inputs.length,
-            currentIndex: index + 1,
-            percent: Math.round((index / inputs.length) * 100 + ((Number(progress.currentPercent) || 0) / inputs.length)),
-            ...progress,
-          }),
+          onProgress: (progress) => {
+            const currentPercent = Math.max(0, Math.min(100, Number(
+              progress?.currentPercent ?? progress?.progress ?? progress?.percent,
+            ) || 0));
+            // The worker's percent is per-media progress.  Compute the batch
+            // percent after spreading the worker payload so a stale/zero
+            // worker field cannot overwrite the visible total progress bar.
+            onProgress?.({
+              ...(progress || {}),
+              completed: index,
+              total: inputs.length,
+              currentIndex: index + 1,
+              currentPercent,
+              percent: Math.round((index / inputs.length) * 100 + (currentPercent / inputs.length)),
+            });
+          },
         });
         const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || (source.kind === "image" ? "图片" : "视频"));
         const attachment = await saveWorkspaceAttachmentFromPath({
@@ -6262,7 +6271,16 @@ export const saveWorkspaceState = async ({ appRoot, requestedPath, state, expect
       if (currentStateStamp !== expectedStateStamp) throw workspaceStateConflict();
     }
     const currentState = await readJsonIfExists(join(resolveWorkspaceInternalRoot(workspaceRoot), "current-state.json"));
-    if (currentState?.savedAt && state?.savedAt && currentState.savedAt !== state.savedAt) {
+    // The content/state stamp above is the authoritative optimistic-lock
+    // boundary.  Conversation autosaves and document-only saves can carry a
+    // harmlessly older `savedAt` value while the stamped workspace has not
+    // changed (for example, a background task persisted its task card between
+    // the client snapshot and this queued write).  Treating that timestamp
+    // alone as a conflict produced false "同一内容正在被另一处修改" errors
+    // for a single user working in one window.  When no stamp is supplied we
+    // retain the legacy savedAt guard for callers that cannot participate in
+    // optimistic locking.
+    if (!expectedStateStamp && currentState?.savedAt && state?.savedAt && currentState.savedAt !== state.savedAt) {
       throw workspaceStateConflict();
     }
     let requestedState = state ?? {};

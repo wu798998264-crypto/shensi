@@ -6,7 +6,12 @@ export const emptyState = () => ({
   schemaVersion: 1,
   users: [],
   sessions: [],
+  emailChallenges: [],
+  emailRateLimits: [],
   skills: [],
+  skillReviews: [],
+  skillDownloads: [],
+  generationRuns: [],
   memberships: [],
   quotaAccounts: [],
   quotaLedger: [],
@@ -23,7 +28,15 @@ const atomicWrite = async (target, value) => {
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporary, JSON.stringify(value, null, 2), "utf8");
   try {
-    await rename(temporary, target);
+    // Windows scanners may briefly hold the destination. Keep the old file
+    // intact and retry the atomic rename for at most 300ms, never delete it.
+    for (let attempt = 0; ; attempt++) {
+      try { await rename(temporary, target); break; }
+      catch (error) {
+        if (process.platform !== 'win32' || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code) || attempt >= 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 20 * 2 ** attempt));
+      }
+    }
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => {});
     throw error;
@@ -54,14 +67,15 @@ export class JsonStore {
   }
 
   async transact(mutator) {
-    this.queue = this.queue.then(async () => {
+    const operation = this.queue.then(async () => {
       const next = structuredClone(this.state || emptyState());
       const result = await mutator(next);
-      this.state = next;
       await atomicWrite(this.filePath, next);
+      this.state = next;
       return result;
     });
-    return this.queue;
+    this.queue = operation.catch(() => {});
+    return operation;
   }
 }
 

@@ -46,14 +46,24 @@ export const mediaSubmissionOutcomeIsUncertain = (error = {}) => {
   return error?.responseReceived !== true && [408, 425, 429, 502, 503, 504].includes(status);
 };
 
+// A lost response is retried with the same submission id so the server can
+// return the original durable job. Keep this recovery bounded: after the
+// limit, the persisted job remains available for reconciliation instead of
+// leaving the UI in an unbounded "正在确认" state.
+export const DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS = 3;
+
 export const recoverUnknownMediaSubmission = async (submit, {
   onUncertain = null,
   onRecovered = null,
   wait = (delayMs) => new Promise((resolveWait) => setTimeout(resolveWait, delayMs)),
-  maxAttempts = Infinity,
+  maxAttempts = DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS,
   baseDelayMs = 650,
   maximumDelayMs = 15_000,
 } = {}) => {
+  const configuredAttempts = Number(maxAttempts);
+  const attemptLimit = Number.isFinite(configuredAttempts)
+    ? Math.max(1, Math.floor(configuredAttempts))
+    : DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS;
   let uncertainFailures = 0;
   while (true) {
     try {
@@ -65,7 +75,7 @@ export const recoverUnknownMediaSubmission = async (submit, {
       uncertainFailures += 1;
       error.submissionOutcomeUnknown = true;
       onUncertain?.({ error, uncertainFailures });
-      if (uncertainFailures >= maxAttempts) throw error;
+      if (uncertainFailures >= attemptLimit) throw error;
       const delayMs = Math.min(
         Math.max(0, Number(maximumDelayMs) || 0),
         Math.max(0, Number(baseDelayMs) || 0) * (2 ** Math.min(5, uncertainFailures - 1)),
@@ -151,6 +161,12 @@ export const mediaRecoveryJobBlocksOperation = (job = {}) => {
   if (job.target?.targetType === "capability-smoke") return false;
   if (job.runtimeNeedsAttention === true && job.availableActions?.resumeOriginal) return true;
   const status = String(job.status || "");
+  // Dreamina command-lease jobs are intentionally decoupled from the global
+  // recovery/pending dialog. Queue occupancy, remote generation and card
+  // writeback are normal lifecycle states; only explicit credential/storage
+  // or unreconciled-result states below may become actionable.
+  if (job.dreaminaQueuePolicy === 'command-lease-v1'
+    && ["queued", "submitting", "running", "polling", "downloading", "cancel_requested"].includes(status)) return false;
   const whiteboardTarget = !job.target?.targetType
     || job.target.targetType === "whiteboard-node"
     || Boolean(job.target?.nodeId);

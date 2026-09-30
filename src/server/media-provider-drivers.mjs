@@ -24,7 +24,20 @@ const asError = (message, code = "") => {
   return error;
 };
 
-export const classifyLibTvCliError = (error) => {
+const libTvRunTransportFailure = (error) => {
+  const code = String(error?.providerErrorCode || error?.code || "").trim().toUpperCase();
+  const message = [error?.message, error?.stderr, error?.stdout]
+    .map((value) => String(value || ""))
+    .join(" ");
+  // Keep the existing bounded timeout contract unchanged.  A plain command
+  // timeout has no proof that the remote node exists; only a transport error
+  // that explicitly identifies a network failure may enter read-only recovery.
+  if (code === "DRIVER_TIMEOUT") return false;
+  if (!/^(?:DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code)) return false;
+  return /fetch failed|network|网络|socket hang up|connection reset|connection refused|timed out|timeout|超时|temporarily unavailable|暂不可用/iu.test(message);
+};
+
+export const classifyLibTvCliError = (error, { args = [] } = {}) => {
   const raw = [error?.stderr, error?.stdout, error?.message]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
@@ -39,6 +52,22 @@ export const classifyLibTvCliError = (error) => {
     error.capacityLimited = true;
     error.retryAfterMs = Math.max(Number(error.retryAfterMs) || 0, 60_000);
     error.message = "LibTV 厂商当前算力不足，未能创建生成任务；请稍后重试。";
+    return error;
+  }
+  // Watermark-free output is a download-only capability.  Do not silently
+  // retry without the flags (which would return a different artifact), and
+  // never re-submit the already completed LibTV node.  Preserve a stable
+  // code so the worker can expose the existing download-failed/retry state.
+  const downloadArgs = Array.isArray(args) && String(args[0] || "").toLowerCase() === "download";
+  const watermarkFlagsRequested = Array.isArray(args)
+    && args.some((value) => ["--without-ai-watermark", "--vip"].includes(String(value)));
+  const unsupportedDownloadOption = downloadArgs && watermarkFlagsRequested
+    && /(?:unknown|unrecognized|invalid|unsupported|未知|不支持|无效).{0,80}(?:option|flag|argument|参数|without-ai-watermark|vip)|(?:without-ai-watermark|--vip).{0,80}(?:unknown|unrecognized|invalid|unsupported|未知|不支持|无效)/iu.test(raw);
+  if (unsupportedDownloadOption) {
+    error.providerErrorCode = "LIBTV_DOWNLOAD_OPTION_UNSUPPORTED";
+    error.submissionOutcomeKnown = true;
+    error.downloadOptionUnsupported = true;
+    error.message = "LibTV 当前 CLI 不支持无水印下载参数；未回退为带水印文件，也未重新生成任务。";
     return error;
   }
   // LibTV's CLI emits provider-side JSON errors with a non-zero exit code.
@@ -952,6 +981,9 @@ const LIBTV_IMAGE_NAMES = Object.freeze({
   "lib-image-2": "Lib Image",
   "lib-image-2.5-s": "Lib Image 2.5 Pro",
   "lib-image-2.5-f": "Lib Image 2.5 Fast",
+  // `model search` exposes the newer catalog label, but the installed CLI's
+  // node-create endpoint still accepts this legacy display name. Keep the
+  // proven create-time alias until that CLI contract changes.
   "nebula-ultra": "General image Pro",
   "nebula-2-flash": "General image V2",
   "doubao-seedream-5-0-pro": "Seedream 5.0 Pro",
@@ -1039,6 +1071,19 @@ const LIBTV_DOWNLOAD_TIMEOUT_MS = Math.max(
   30_000,
   Number(process.env.SHENSI_LIBTV_DOWNLOAD_TIMEOUT_MS) || 180_000,
 );
+
+// Keep the no-watermark policy at the final download boundary.  Nothing in
+// submission, node creation, polling, locking, or card writeback consumes
+// these flags.
+export const libTvDownloadArgs = ({ job = {}, node = {}, outputDir = "" } = {}) => [
+  "download",
+  "-n", node.nodeKey,
+  "-p", node.projectUuid,
+  "-o", outputDir,
+  ...(["image", "video"].includes(String(job.channel || "").toLowerCase())
+    ? ["--without-ai-watermark", "--vip"]
+    : []),
+];
 
 const libtvStatus = (value) => {
   const numeric = Number(value);
@@ -1457,7 +1502,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     try {
       return raw ? await spawnRaw(request) : await spawnJson(request);
     } catch (error) {
-      throw classifyLibTvCliError(error);
+      throw classifyLibTvCliError(error, { args });
     }
   }
 
@@ -1585,6 +1630,14 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         let imageSchema = {};
         try { imageSchema = (await loadLibTvModelSchema({ modelKey, settings: job.request.settings || {} }))?.schema || {}; } catch {}
         const imageProperties = imageSchema?.properties && typeof imageSchema.properties === "object" ? imageSchema.properties : {};
+        const hasImageReference = references.some((reference) => String(reference?.mimeType || "").toLowerCase().startsWith("image/"));
+        // LibTV validates reference edges against the node's mode.  The
+        // previous path uploaded a left image node but left the target in its
+        // text2image default, so every referenced image failed during the
+        // provider-side validation before generation began.  Select the
+        // provider's image2image mode only when a real image reference is
+        // present; text-only generation remains unchanged.
+        if (hasImageReference) args.push("-s", "modeType=image2image");
         const appendImageSetting = (field, requested, aliases = {}) => {
           const property = imageProperties[field];
           if (!property) return false;
@@ -1681,12 +1734,12 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       // read-only status path instead of leaving the card spinning forever or
       // submitting the same node again. Explicit provider errors still pass
       // through unchanged.
-      if (error?.code === "DRIVER_TIMEOUT" && node.nodeKey) {
+      if (node.nodeKey && libTvRunTransportFailure(error)) {
         return {
           providerTaskId: node.nodeKey,
           providerStatus: "running",
-          rawStatus: "run_timeout",
-          error: "LibTV 已接受任务，正在读取厂商状态",
+          rawStatus: "run_transport_recovery",
+          error: "LibTV 已创建任务，正在读取厂商状态",
           errorCode: "",
         };
       }
@@ -1741,7 +1794,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     const outputDir = join(workRoot, "libtv-download");
     await rm(outputDir, { recursive: true, force: true });
     await mkdir(outputDir, { recursive: true });
-    await this.invoke(["download", "-n", node.nodeKey, "-p", node.projectUuid, "-o", outputDir], { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {} });
+    await this.invoke(libTvDownloadArgs({ job, node, outputDir }), { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {} });
     const files = (await readdir(outputDir, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => join(outputDir, entry.name));
     if (!files.length) throw asError("LibTV 任务已完成但没有下载到结果文件", "MISSING_RESULT_FILE");
     const sourcePath = files[0];

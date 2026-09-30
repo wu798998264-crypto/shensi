@@ -34,7 +34,7 @@ export class PostgresStore {
   }
 
   async transact(mutator) {
-    this.queue = this.queue.then(async () => {
+    const operation = this.queue.then(async () => {
       const client = await this.pool.connect();
       try {
         await client.query("BEGIN");
@@ -58,12 +58,22 @@ export class PostgresStore {
         client.release();
       }
     });
-    return this.queue;
+    this.queue = operation.catch(() => {});
+    return operation;
   }
 
   async health() {
     const result = await this.pool.query("SELECT 1 AS ok");
     return result.rows[0]?.ok === 1;
+  }
+
+  async refresh() {
+    const operation = this.queue.then(async () => {
+      const result = await this.pool.query('SELECT payload FROM shensi_skill_platform_state WHERE state_key = $1', [STATE_KEY]);
+      this.state = normalizeState(result.rows[0]?.payload);
+    });
+    this.queue = operation.catch(() => {});
+    return operation;
   }
 }
 

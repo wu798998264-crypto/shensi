@@ -44,7 +44,7 @@ assert.match(app, /const modelSourceLabel = "WorkBuddy 当前会话"/u);
 assert.match(app, /请先登录 \$\{escapeHtml\(runnerLabel\)\}，登录后自动读取模型/u);
 assert.match(app, /正在读取 \$\{runnerLabel\} CLI 当前支持的模型/u);
 assert.match(app, /读取 \$\{capability\.models\.length\} 个真实支持模型/u);
-assert.match(app, /if \(requested && models\.length && !models\.includes\(requested\)\) return ""/u,
-  "保存的 stale WorkBuddy 模型必须在真实目录刷新后回退到 CLI 默认模型，而不是伪装成登录失效");
+assert.match(app, /const aliases = \{ hy3: "hy3", hy3c: "hy3", hy3x: "hy3" \}/u,
+  "保存的旧 WorkBuddy Hy3 模型必须通过当前真实目录标签解析，而不是伪装成登录失效");
 
 console.log("WorkBuddy default model contract passed");

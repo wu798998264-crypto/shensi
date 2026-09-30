@@ -22,11 +22,12 @@ const sameProfile = dreaminaProfileSwitchDecision({ jobs: [job()], requestedProf
 assert.equal(sameProfile.allowed, true);
 assert.equal(sameProfile.queuedBehindCurrent, false, "不得把同配置的新卡片任务伪装为跨账号队列");
 const otherProfile = dreaminaProfileSwitchDecision({ jobs: [job()], requestedProfileId: "b" });
-assert.equal(otherProfile.allowed, false, "仍在与厂商通信时才拦截切换另一个配置");
+assert.equal(otherProfile.allowed, true, "仍在与厂商通信时另一个配置应进入本地队列");
+assert.equal(otherProfile.queuedBehindCurrent, true);
 assert.equal(dreaminaProfileSwitchDecision({
   jobs: [job({ status: "complete", providerStatus: "completed" })],
   requestedProfileId: "b",
-}).allowed, false, "卡片回填未完成时必须保持原账号，避免跨配置串号");
+}).allowed, false, "卡片回填未完成且结果未落盘时必须保持原账号，避免跨配置串号");
 assert.equal(dreaminaProfileSwitchDecision({
   jobs: [{ ...job({ status: "complete", providerStatus: "completed" }), appliedAt: new Date().toISOString() }],
   requestedProfileId: "b",

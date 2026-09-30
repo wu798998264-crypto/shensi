@@ -47,7 +47,7 @@ try {
   assert.equal(fixedAdminLogin.payload.user.role, "admin");
 
   const registered = await call("/v1/auth/register", { method: "POST", body: { account: "test-user", contact: "user@example.com", password: "correct horse battery staple", displayName: "测试上传者", securityQuestion: "测试问题是什么？", securityAnswer: "测试答案", rememberMe: true } });
-  assert.equal(registered.response.status, 201);
+  assert.equal(registered.response.status, 201, JSON.stringify(registered.payload));
   assert.equal(registered.payload.user.displayName, "测试上传者");
   assert.ok(registered.payload.token);
   const recoveryQuestion = await call("/v1/auth/recovery-question", { method: "POST", body: { account: "test-user" } });
@@ -99,27 +99,29 @@ try {
 
   const forbiddenQuota = await call("/v1/admin/quota/adjust", { method: "POST", token: recoveredLogin.payload.token, body: { userId: adminUser.id, amount: 100 } });
   assert.equal(forbiddenQuota.response.status, 403);
-  const quota = await call("/v1/admin/quota/adjust", { method: "POST", token: adminRegistration.payload.token, body: { userId: adminUser.id, amount: 100, reason: "测试赠送" } });
+  const quota = await call("/v1/admin/quota/adjust", { method: "POST", token: adminRegistration.payload.token, body: { userId: adminUser.id, amount: 100, reason: "测试赠送", idempotencyKey: "admin-adjust-100" } });
   assert.equal(quota.response.status, 200);
   assert.equal(quota.payload.available, 100);
-  const membership = await call("/v1/admin/memberships", { method: "POST", token: adminRegistration.payload.token, body: { userId: store.state.users.find((entry) => entry.account === "test-user").id, tier: "vip", units: 500 } });
+  const memberUser = store.state.users.find((entry) => entry.account === "test-user");
+  const membership = await call("/v1/admin/memberships", { method: "POST", token: adminRegistration.payload.token, body: { userId: memberUser.id, tier: "vip", units: 500, reason: "测试会员", expectedUpdatedAt: store.state.memberships.find((entry) => entry.userId === memberUser.id).updatedAt } });
   assert.equal(membership.response.status, 200);
   assert.equal(membership.payload.membership.tier, "vip");
   assert.equal(membership.payload.quota.available, 500);
   const userQuota = await call("/v1/quota", { token: recoveredLogin.payload.token });
   assert.equal(userQuota.payload.available, 500);
   const reserved = await call("/v1/ai/text/reserve", { method: "POST", token: recoveredLogin.payload.token, body: { amount: 120, idempotencyKey: "request-1" } });
-  assert.equal(reserved.response.status, 200);
-  assert.equal(reserved.payload.available, 380);
-  const reservedAgain = await call("/v1/ai/text/reserve", { method: "POST", token: recoveredLogin.payload.token, body: { amount: 120, idempotencyKey: "request-1" } });
-  assert.equal(reservedAgain.payload.reservationId, reserved.payload.reservationId);
-  const settled = await call("/v1/ai/text/settle", { method: "POST", token: recoveredLogin.payload.token, body: { reservationId: reserved.payload.reservationId, usedAmount: 75 } });
-  assert.equal(settled.payload.available, 425);
+  assert.equal(reserved.response.status, 403);
+  for (const action of ['settle', 'refund']) {
+    const denied = await call('/v1/ai/text/' + action, { method: 'POST', token: recoveredLogin.payload.token, body: { usedAmount: 0 } });
+    assert.equal(denied.response.status, 403);
+  }
+  assert.equal((await call('/v1/quota', { token: recoveredLogin.payload.token })).payload.available, 500);
   const auditLogs = await call("/v1/admin/audit-logs", { token: adminRegistration.payload.token });
   assert.ok(auditLogs.payload.items.some((entry) => entry.action === "membership.update"));
 
   console.log("cloud skill platform contract: PASS");
 } finally {
+  app.close();
   await new Promise((resolve) => server.close(resolve));
   await rm(store.filePath, { force: true }).catch(() => {});
   await rm(signingKeyPath, { force: true }).catch(() => {});

@@ -28,7 +28,7 @@ for (const provider of ["OpenAI", "自定义兼容接口"]) {
 
 for (const model of ["lib-image-2.5-s", "lib-image-2.5-f"]) {
   const capabilities = imageModelCapabilities("LibTV", model);
-  assert.deepEqual(capabilities.qualityOptions, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(capabilities.qualityOptions, ["low", "standard", "high", "ultra", "max"]);
   assert.deepEqual(capabilities.outputResolutions, ["1k", "2k", "4k"]);
   assert.deepEqual(capabilities.backgrounds, ["auto", "opaque", "transparent"]);
 }

@@ -43,8 +43,8 @@ assert.match(app, /generationJobInteractionStartedAt\(job\)/u);
 assert.match(store, /interactionStartedAt: normalizedInteractionStartedAt\(request\)/u);
 assert.match(store, /startedAt: normalizedInteractionStartedAt\(normalizedRequest, now\)/u);
 assert.match(worker, /capability\.taskResourceChecked !== true/u);
-assert.match(worker, /forceFresh: dreaminaCliMediaJob\(job\)/u);
-assert.match(worker, /task-resource sessions can expire independently/u);
+assert.match(worker, /forceFresh: dreaminaCapabilityProbeRequiresFresh\(job, settings\)/u);
+assert.match(worker, /durable_generation_success/u, '已验收生成证据可复用，未知或失效账号才需要现有探测');
 assert.match(await readFile(new URL("../src/server/media-provider-drivers.mjs", import.meta.url), "utf8"), /forceFresh \? \{ SHENSI_DREAMINA_CONNECTION_CACHE_MS: "0" \} : \{\}/u);
 assert.match(server, /dreaminaTaskResourceReady/u);
 
@@ -77,8 +77,11 @@ try {
     assert.equal(payload.generationReady, true);
 
     const rejected = runBridgeProbe(bridge, join(temporaryRoot, bridge, "rejected"), true);
-    assert.notEqual(rejected.status, 0, `${bridge} 的任务资源未登录不得误报连接成功`);
-    assert.match(rejected.stderr, /DREAMINA_AUTH_REQUIRED/u);
+    assert.equal(rejected.status, 0, '只读任务会话延迟由真实提交裁决，不伪造账号过期');
+    const deferred = JSON.parse(rejected.stdout);
+    assert.equal(deferred.taskResourceChecked, false);
+    assert.equal(deferred.taskResourceDeferred, true);
+    assert.match(deferred.taskResourceWarning, /本次真实.*提交/u);
   }
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });

@@ -21,7 +21,7 @@ import { startConversationAgentMcp } from "./src/server/conversation-agent-mcp.m
 import { toolsWithPermissionPrompt } from "./src/server/agent-permission-prompt-tools.mjs";
 import { configureGlobalFetchProxy, fetchProvider } from "./src/server/network-proxy.mjs";
 import { DEEPSEEK_OPENCODE_CLI_ALIAS, DEEPSEEK_OPENCODE_CLI_ARGS, getModelOption, getProviderPreset, supportedSpeedModes, webSearchMode } from "./src/model-presets.js";
-import { activateTextExecutionModeProfile } from "./src/generation-profiles.js";
+import { activateTextExecutionModeProfile, isOpenCodeFreeModel, normalizeOpenCodeCredentialSource } from "./src/generation-profiles.js";
 import { freePublicModels, modelDisplayName } from "./src/public-model-catalog.js";
 import { buildProjectQuestionContext } from "./src/general-project-context.js";
 import {
@@ -152,6 +152,9 @@ import {
   heartbeatGenerationJob,
   forceReleaseDreaminaJob,
   listDreaminaProfileBlockingJobs,
+  listDreaminaQueueJobs,
+  reorderDreaminaQueue,
+  stopDreaminaQueueJob,
   listGenerationJobs,
   markGenerationJobApplied,
   publicGenerationJob as basePublicGenerationJob,
@@ -165,11 +168,17 @@ import {
   updateActiveMediaGenerationJob,
   updateMediaGenerationJob,
 } from "./src/server/generation-job-store.mjs";
-import { launchMediaGenerationWorker, terminateMediaGenerationWorker } from "./src/server/media-worker-manager.mjs";
+import {
+  deferDreaminaQueueAtStartup,
+  launchMediaGenerationWorker,
+  resumeDreaminaQueue,
+  terminateMediaGenerationWorker,
+} from "./src/server/media-worker-manager.mjs";
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
 import { localH3InstallStatus, probeLocalH3Runtime, startLocalH3Install, startLocalH3Runtime, stopLocalH3Runtime } from "./src/server/local-h3-runtime.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
+import { readDreaminaBrokerLease } from "./src/server/dreamina-broker-lease.mjs";
 import { recordDreaminaProfileGenerationSuccess } from "./src/server/dreamina-profile-identity-store.mjs";
 import { claimDreaminaPromptSignature } from "./src/server/dreamina-prompt-ledger.mjs";
 import { generationRuntimeCredentialsSnapshot, listGenerationRuntimeBindings, rememberGenerationRuntimeCredentials, resolveTrustedGenerationSettings, saveGenerationRuntimeBindings } from "./src/server/generation-runtime-store.mjs";
@@ -615,11 +624,22 @@ let mediaRecoveryWatchdog = null;
 const startMediaRecoveryWorkers = () => {
   if (/^(?:1|true)$/i.test(String(process.env.SHENSI_DISABLE_MEDIA_RECOVERY_WORKERS || ""))) return;
   if (mediaRecoveryWatchdog) return;
-  launchMediaGenerationWorker({
-    appRoot: root,
-    scanMode: "startup",
-    credentials: generationRuntimeCredentialsSnapshot({ channels: ["image", "video", "audio"] }),
-  });
+  // Fence only historical, never-submitted local queue records before the
+  // observation scan. This does not acquire a provider credential lease and
+  // keeps a fresh user submission from waiting behind an old queue head.
+  const startupBoundary = new Date().toISOString();
+  void deferDreaminaQueueAtStartup({ before: startupBoundary })
+    .then(() => resumeDreaminaQueue({
+      appRoot: root,
+      credentials: generationRuntimeCredentialsSnapshot({ channels: ["image", "video", "audio"] }),
+    }))
+    .catch(() => ({ deferred: 0 }))
+    .finally(() => launchMediaGenerationWorker({
+      appRoot: root,
+      scanMode: "startup",
+      credentials: generationRuntimeCredentialsSnapshot({ channels: ["image", "video", "audio"] }),
+    }))
+    .catch(() => {});
   mediaRecoveryWatchdog = setInterval(() => {
     void recoverLegacyReplacementTransactions()
       .catch((error) => diagnosticManager.log("media-legacy-replacement-recovery-failed", { message: String(error?.message || error) }))
@@ -677,9 +697,12 @@ const resolveOpenCodeAgentSettings = (settings = {}) => {
   if (!/^[^/\s]+\/[^/\s]+$/u.test(model)) {
     throw Object.assign(new Error("OpenCode Agent 缺少完整 provider/model 模型 ID"), { code: "OPENCODE_MODEL_REQUIRED", statusCode: 409 });
   }
-  const credentialSource = profile.credentialSource === "shensi" ? "shensi" : "opencode";
+  const credentialSource = normalizeOpenCodeCredentialSource(profile.credentialSource);
   if (credentialSource === "shensi" && !String(profile.apiKey || "").trim()) {
     throw Object.assign(new Error("OpenCode Agent 缺少神思安全凭据"), { code: "OPENCODE_CREDENTIAL_REQUIRED", statusCode: 409 });
+  }
+  if (credentialSource === "opencode_free" && !isOpenCodeFreeModel(profile.agentModelId || profile.model)) {
+    throw Object.assign(new Error("当前 OpenCode 配置不是官方免费模型；请切换到 OpenCode 免费模型后重试"), { code: "OPENCODE_FREE_MODEL_REQUIRED", statusCode: 409 });
   }
   return {
     ...profile,
@@ -2846,7 +2869,7 @@ const handleApiRequest = async (request, response, pathname) => {
   if (pathname === "/api/agent-runners/install" && request.method === "POST") {
     try {
       const body = await readJsonBody(request, 32 * 1024);
-      const job = await agentRunnerInstallManager.start(String(body.runnerId || ""));
+      const job = await agentRunnerInstallManager.start(String(body.runnerId || ""), { forceLatest: body.forceLatest === true });
       return sendJson(response, job.status === "completed" ? 200 : 202, { ok: true, job });
     } catch (error) {
       return sendJson(response, error?.code === "AGENT_RUNNER_NOT_ALLOWED" ? 400 : 503, {
@@ -2928,6 +2951,7 @@ const handleApiRequest = async (request, response, pathname) => {
           provider: requestUrl.searchParams.get("provider") || "",
           baseUrl: requestUrl.searchParams.get("baseUrl") || "",
         }),
+        credentialSource: requestUrl.searchParams.get("credentialSource") || "opencode",
         environment: requestUrl.searchParams.get("cliPath")
           ? { ...process.env, SHENSI_OPENCODE_EXECUTABLE: requestUrl.searchParams.get("cliPath") }
           : process.env,
@@ -3378,6 +3402,17 @@ const handleApiRequest = async (request, response, pathname) => {
   if (dreaminaLockReleaseMatch && request.method === "POST") {
     const [, jobId] = dreaminaLockReleaseMatch;
     let current = await getGenerationJob({ jobId });
+    if (current.dreaminaQueuePolicy === "command-lease-v1") {
+      const queuedStopped = await stopDreaminaQueueJob({ jobId });
+      const worker = await terminateMediaGenerationWorker({ jobId, pid: queuedStopped.workerPid });
+      const lease = await readDreaminaBrokerLease();
+      if (lease?.jobId === jobId) {
+        return sendJson(response, 409, { ok: false, code: "DREAMINA_QUEUE_STOP_PENDING",
+          message: "停止意图已保存，但本机凭证锁尚未确认释放，请再次点击停止。", job: generationJobWithLifecycle(queuedStopped) });
+      }
+      const stopped = await updateMediaGenerationJob({ jobId, patch: { forceReleaseCompletedAt: new Date().toISOString() } });
+      return sendJson(response, 200, { ok: true, released: true, lockReleased: true, worker, job: generationJobWithLifecycle(stopped) });
+    }
     const forceReleasePending = Boolean(current.forceReleasePendingAt && !current.forceReleaseCompletedAt);
     if (!forceReleasePending && !dreaminaJobRequiresCredentialProfile(current)) {
       const error = new Error("当前任务已不再占用即梦凭证锁，请重新读取占用任务");
@@ -4243,6 +4278,65 @@ const handleApiRequest = async (request, response, pathname) => {
       abandonedPreviousTask: abandonedJobIds.length > 0,
       job: generationJobWithLifecycle(responseJob),
     });
+  }
+
+  if (pathname === '/api/dreamina-queue' && request.method === 'GET') {
+    const jobs = await listDreaminaQueueJobs();
+    return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
+  }
+
+  if (pathname === '/api/dreamina-queue/stop-failed' && request.method === 'POST') {
+    // Only terminal provider failures are included.  Queueing, active
+    // generation, authentication review, and uncertain/red tasks are left
+    // untouched so this bulk action cannot cancel recoverable work.
+    const failed = (await listDreaminaQueueJobs()).filter((job) => job.status === 'failed'
+      || String(job.providerStatus || '').toLowerCase() === 'failed');
+    const stopped = [];
+    const pending = [];
+    const errors = [];
+    for (const queuedJob of failed) {
+      try {
+        const job = await stopDreaminaQueueJob({ jobId: queuedJob.id });
+        await terminateMediaGenerationWorker({ jobId: queuedJob.id, pid: job.workerPid }).catch(() => ({ terminated: false }));
+        const lease = await readDreaminaBrokerLease();
+        if (lease?.jobId === queuedJob.id) {
+          pending.push(queuedJob.id);
+          continue;
+        }
+        const finalized = await updateMediaGenerationJob({ jobId: queuedJob.id, patch: { forceReleaseCompletedAt: new Date().toISOString() } });
+        stopped.push(generationJobWithLifecycle(finalized));
+      } catch (error) {
+        errors.push({ jobId: queuedJob.id, message: String(error?.message || '终止失败') });
+      }
+    }
+    const jobs = await listDreaminaQueueJobs();
+    return sendJson(response, 200, {
+      ok: true,
+      stoppedCount: stopped.length,
+      pendingCount: pending.length,
+      errors,
+      jobs: jobs.map(generationJobWithLifecycle),
+    });
+  }
+
+  if (pathname === '/api/dreamina-queue/reorder' && request.method === 'POST') {
+    const body = await readJsonBody(request, 128 * 1024);
+    const jobs = await reorderDreaminaQueue({ jobIds: body.jobIds });
+    return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
+  }
+
+  const dreaminaQueueStopMatch = pathname.match(new RegExp('^/api/dreamina-queue/(generation-[a-z0-9-]+)/stop$', 'i'));
+  if (dreaminaQueueStopMatch && request.method === 'POST') {
+    const jobId = dreaminaQueueStopMatch[1];
+    const job = await stopDreaminaQueueJob({ jobId });
+    const worker = await terminateMediaGenerationWorker({ jobId, pid: job.workerPid });
+    const lease = await readDreaminaBrokerLease();
+    if (lease?.jobId === jobId) {
+      return sendJson(response, 409, { ok: false, code: 'DREAMINA_QUEUE_STOP_PENDING',
+        message: '停止意图已保存，但本机凭证锁尚未确认释放，请再次点击停止。', job: generationJobWithLifecycle(job) });
+    }
+    const stopped = await updateMediaGenerationJob({ jobId, patch: { forceReleaseCompletedAt: new Date().toISOString() } });
+    return sendJson(response, 200, { ok: true, lockReleased: true, worker, job: generationJobWithLifecycle(stopped) });
   }
 
   if (pathname === "/api/generation/jobs/client" && request.method === "POST") {
@@ -9287,6 +9381,22 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/recovery-question", { method: "POST", body })) });
   }
 
+  if (pathname === '/api/account/email-config' && request.method === 'GET') {
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest('/v1/auth/email-config')) });
+  }
+  if (['/api/account/email-code', '/api/account/email-login', '/api/account/email-bind'].includes(pathname) && request.method === 'POST') {
+    const body = await readJsonBody(request, 4096);
+    const routes = { '/api/account/email-code': '/v1/auth/email-code', '/api/account/email-login': '/v1/auth/email-login', '/api/account/email-bind': '/v1/account/email-bind' };
+    try {
+      const result = await marketplaceServiceRequest(routes[pathname], { method: 'POST', token: remoteMarketplaceToken(request), body });
+      return sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      return sendJson(response, Number(error.statusCode) || 503, { ok: false, message: error.message || '邮箱服务暂不可用',
+        ...(String(error.code || '').startsWith('EMAIL_') ? { code: error.code, retryAfterSeconds: Number(error.retryAfterSeconds) || 0 } : {}),
+      });
+    }
+  }
+
   if (pathname === "/api/account/recover" && request.method === "POST") {
     const body = await readJsonBody(request, 16 * 1024);
     return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/recover", { method: "POST", body })) });
@@ -9300,9 +9410,19 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/auth/logout", { method: "POST", token: remoteMarketplaceToken(request) })) });
   }
 
+  if (pathname === "/api/account/profile" && request.method === "POST") {
+    const body = await readJsonBody(request, 200_000);
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest("/v1/account/profile", { method: "POST", token: remoteMarketplaceToken(request), body })) });
+  }
+
+  if (["/api/account/membership", "/api/account/quota"].includes(pathname) && request.method === "GET") {
+    const target = pathname.endsWith("/membership") ? "/v1/membership" : "/v1/quota";
+    return sendJson(response, 200, { ok: true, ...(await marketplaceServiceRequest(target, { token: remoteMarketplaceToken(request) })) });
+  }
+
   if (pathname === "/api/skill-marketplace/install" && request.method === "POST") {
     const body = await readJsonBody(request);
-    return sendJson(response, 200, { ok: true, ...(await installMarketplaceSkill({ id: body.id, shensiRoot: defaultShensiRoot, replaceLocalVersions: body.replaceLocalVersions === true })) });
+    return sendJson(response, 200, { ok: true, ...(await installMarketplaceSkill({ id: body.id, shensiRoot: defaultShensiRoot, replaceLocalVersions: body.replaceLocalVersions === true, token: remoteMarketplaceToken(request) })) });
   }
 
   if (pathname === "/api/skill-marketplace/read" && request.method === "POST") {
@@ -9318,6 +9438,12 @@ const handleApiRequest = async (request, response, pathname) => {
 
   if (pathname === "/api/skill-marketplace/rating" && request.method === "POST") {
     const body = await readJsonBody(request);
+    const remote = String(body.id || "").match(/^remote:(.+)@([^@]+)$/);
+    if (remote) {
+      const path = "/v1/skills/" + encodeURIComponent(remote[1]) + "/reviews";
+      const submitted = await marketplaceServiceRequest(path, { method: "POST", token: remoteMarketplaceToken(request), body: { rating: body.rating, comment: body.comment } });
+      return sendJson(response, 200, { ok: true, ...submitted, skill: await marketplaceServiceRequest(path) });
+    }
     return sendJson(response, 200, { ok: true, skill: await setMarketplaceSkillRating({ id: body.id, rating: body.rating, comment: body.comment, profile: body.profile }) });
   }
 

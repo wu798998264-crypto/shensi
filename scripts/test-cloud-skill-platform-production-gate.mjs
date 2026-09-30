@@ -30,6 +30,7 @@ try {
 } finally {
   server.close();
   app.close();
+  await rm(app.store.filePath, { force: true });
   await rm(signingKeyPath, { force: true });
   if (previous.env === undefined) delete process.env.SHENSI_CLOUD_ENV; else process.env.SHENSI_CLOUD_ENV = previous.env;
   if (previous.password === undefined) delete process.env.SHENSI_CLOUD_BOOTSTRAP_ADMIN_PASSWORD; else process.env.SHENSI_CLOUD_BOOTSTRAP_ADMIN_PASSWORD = previous.password;

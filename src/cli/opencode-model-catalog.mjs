@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resolveLocalOpenCodeLaunch } from "./opencode-launch.mjs";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -31,9 +34,32 @@ export const parseOpenCodeModelCatalog = (raw = "") => {
   } catch {
     values = clean.split(/\r?\n/).map((line) => line.trim().replace(/^[•*\-]\s*/, ""));
   }
+  const metadataById = new Map();
+  if (Array.isArray(values)) {
+    const source = (() => {
+      try {
+        const parsed = JSON.parse(clean);
+        return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.models) ? parsed.models : [];
+      } catch { return []; }
+    })();
+    for (const item of source) {
+      const id = modelId(typeof item === "string" ? item : item?.id || item?.slug || item?.model);
+      if (!id || !item || typeof item !== "object") continue;
+      metadataById.set(id, {
+        free: item.free === true || item.isFree === true || item.requiresLogin === false || item.requiresAuth === false,
+        requiresLogin: item.requiresLogin,
+        requiresAuth: item.requiresAuth,
+        cost: item.cost || item.pricing || item.price || null,
+        label: item.name || item.label || id,
+        displayName: item.displayName || item.name || item.label || id,
+      });
+    }
+  }
   const models = [...new Set(values.map(modelId).filter(Boolean))].map((id) => {
     const provider = id.slice(0, id.indexOf("/"));
-    return { id, slug: id, label: id, displayName: id, provider };
+    const metadata = metadataById.get(id) || {};
+    const shortId = id.slice(id.indexOf("/") + 1).toLowerCase();
+    return { id, slug: id, label: metadata.label || id, displayName: metadata.displayName || id, provider, ...metadata, free: metadata.free === true || /(?:^|[-:])free$/u.test(shortId) || shortId === "big-pickle" };
   });
   const groups = [...new Set(models.map((item) => item.provider))].map((provider) => ({
     provider,
@@ -82,33 +108,56 @@ const spawnCaptured = ({ executable, args, cwd, environment, timeoutMs }) => new
   timer.unref?.();
 });
 
-const probe = async ({ cwd, environment, launchResolver, timeoutMs }) => {
-  const launch = await launchResolver({ environment });
-  const prefix = Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [];
-  const versionOutput = await spawnCaptured({
-    executable: launch.executable,
-    args: [...prefix, "--version"],
-    cwd,
-    environment,
-    timeoutMs: Math.min(timeoutMs, 8_000),
-  });
-  const catalogOutput = await spawnCaptured({
-    executable: launch.executable,
-    args: [...prefix, "models", "--pure"],
-    cwd,
-    environment,
-    timeoutMs,
-  });
-  const parsed = parseOpenCodeModelCatalog(catalogOutput);
-  if (!parsed.models.length) throw new Error("OpenCode 没有返回任何完整 provider/model 模型 ID");
-  return {
-    available: true,
-    version: String(versionOutput).split(/\r?\n/)[0].trim() || "OpenCode CLI",
-    cliPath: "opencode",
-    modelsVerified: true,
-    ...parsed,
-    checkedAt: new Date().toISOString(),
-  };
+const probe = async ({ cwd, environment, credentialSource = "opencode", launchResolver, timeoutMs }) => {
+  const freeProbe = String(credentialSource || "").trim().toLowerCase() === "opencode_free";
+  let isolationRoot = "";
+  let probeEnvironment = environment;
+  if (freeProbe) {
+    isolationRoot = await mkdtemp(join(tmpdir(), "shensi-opencode-free-probe-"));
+    const dirs = ["config", "data", "cache", "state"].map((name) => join(isolationRoot, name));
+    await Promise.all(dirs.map((path) => mkdir(path, { recursive: true })));
+    probeEnvironment = {
+      ...environment,
+      XDG_CONFIG_HOME: dirs[0],
+      XDG_DATA_HOME: dirs[1],
+      XDG_CACHE_HOME: dirs[2],
+      XDG_STATE_HOME: dirs[3],
+      OPENCODE_CONFIG_CONTENT: JSON.stringify({ share: "disabled" }),
+    };
+    delete probeEnvironment.OPENCODE_API_KEY;
+    delete probeEnvironment.SHENSI_OPENCODE_API_KEY;
+  }
+  try {
+    const launch = await launchResolver({ environment: probeEnvironment });
+    const prefix = Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [];
+    const versionOutput = await spawnCaptured({
+      executable: launch.executable,
+      args: [...prefix, "--version"],
+      cwd,
+      environment: probeEnvironment,
+      timeoutMs: Math.min(timeoutMs, 8_000),
+    });
+    const catalogOutput = await spawnCaptured({
+      executable: launch.executable,
+      args: [...prefix, "models", "--pure"],
+      cwd,
+      environment: probeEnvironment,
+      timeoutMs,
+    });
+    const parsed = parseOpenCodeModelCatalog(catalogOutput);
+    if (!parsed.models.length) throw new Error("OpenCode 没有返回任何完整 provider/model 模型 ID");
+    return {
+      available: true,
+      version: String(versionOutput).split(/\r?\n/)[0].trim() || "OpenCode CLI",
+      cliPath: "opencode",
+      credentialSource: freeProbe ? "opencode_free" : "opencode",
+      modelsVerified: true,
+      ...parsed,
+      checkedAt: new Date().toISOString(),
+    };
+  } finally {
+    if (isolationRoot) await rm(isolationRoot, { recursive: true, force: true }).catch(() => {});
+  }
 };
 
 const abortable = (promise, signal) => {
@@ -130,13 +179,14 @@ export const detectOpenCodeModelCatalog = ({
   cacheMs = DEFAULT_CACHE_MS,
   signal = null,
   cacheKey = "default",
+  credentialSource = "opencode",
 } = {}) => {
   const key = normalizedCacheKey(cacheKey);
   const now = Date.now();
   const cached = caches.get(key);
   if (!force && cached && now - cached.savedAt < cacheMs) return abortable(Promise.resolve(cached.value), signal);
   if (!inFlights.has(key)) {
-    const pending = probe({ cwd, environment, launchResolver, timeoutMs })
+    const pending = probe({ cwd, environment, launchResolver, timeoutMs, credentialSource })
       .then((value) => {
         caches.set(key, { value, savedAt: Date.now() });
         return value;

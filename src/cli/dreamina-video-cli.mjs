@@ -556,14 +556,21 @@ const normalizedProgressPercent = (payload) => {
 };
 const normalizedStatus = (payload, { missingStatus = "unknown" } = {}) => {
   const status = rawStatus(payload);
-  if (!status) return missingStatus;
+  const queue = queueInfo(payload);
+  const queueStatus = String(queue.status || "").trim().toLowerCase();
+  const activeStatuses = ["submit", "submitted", "submitting", "querying", "running", "processing", "generating", "in_progress", "in-progress", "started", "executing"];
+  const queuedStatuses = ["queued", "queue", "pending", "created", "waiting", "wait"];
   if (["success", "succeeded", "completed", "complete", "done"].includes(status)) return "completed";
   if (["fail", "failed", "error"].includes(status)) return "failed";
   if (["cancelled", "canceled"].includes(status)) return "cancelled";
-  if (["queued", "pending", "created", "waiting"].includes(status)) return "queued";
-  const queue = queueInfo(payload);
+  // queue_position is only a hint.  When the provider explicitly reports
+  // Generating/Running/Processing, the task is already active even if its
+  // position is still 1.  Keep the active state visible in the UI.  Some
+  // responses put that explicit state in queue_status rather than status.
+  if (activeStatuses.includes(status) || activeStatuses.includes(queueStatus)) return "running";
+  if (queuedStatuses.includes(status) || queuedStatuses.includes(queueStatus)) return "queued";
+  if (!status) return missingStatus;
   if ((queue.position !== null && queue.position > 0) || /queue|wait|排队/i.test(queue.status)) return "queued";
-  if (["submit", "submitted", "submitting", "querying", "running", "processing", "generating", "in_progress", "in-progress"].includes(status)) return "running";
   return "unknown";
 };
 
@@ -1289,8 +1296,10 @@ const submit = async () => {
     assertDreaminaGenerationCredit(account);
     assertDreaminaCliGenerationAccess(account);
     // Balance/identity and task resources are separate Dreamina auth surfaces.
-    // Verify the latter with a read-only command before any paid submission.
-    await ensureDreaminaTaskStoreSession();
+    // A durable verified profile already paid the control-plane cost during
+    // its bounded verification.  Do not add a second user_credit/list_task
+    // round before every generation; the real submit command is authoritative.
+    if (account.preSubmitControlPlaneSkipped !== true) await ensureDreaminaTaskStoreSession();
   } catch (error) {
     throw markDreaminaPreSubmitNoTask(error);
   }

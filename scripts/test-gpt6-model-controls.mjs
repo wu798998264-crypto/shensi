@@ -8,6 +8,13 @@ import { createCodexApiAgentRuntime } from "../src/server/codex-api-agent-runtim
 
 const levels = ["low", "medium", "high", "xhigh", "max"];
 const model = "gpt-6-astra";
+const lunaModel = "gpt-6-luna";
+const lunaLevels = ["low", "medium", "high", "xhigh", "max"];
+assert.ok(getProviderModelOptions("OpenAI").some((item) => item.slug === lunaModel), "OpenAI 模型选择必须包含 GPT-6 Luna");
+assert.deepEqual(getModelOption("OpenAI", lunaModel).reasoningLevels, lunaLevels);
+assert.deepEqual(supportedSpeedModes(getModelOption("OpenAI", lunaModel)), ["fast"]);
+assert.ok(!getProviderImageModelOptions("OpenAI").some((item) => item.slug === lunaModel));
+assert.ok(!getProviderVideoModelOptions("OpenAI").some((item) => item.slug === lunaModel));
 for (const provider of ["OpenAI", "自定义兼容接口"]) {
   assert.ok(getProviderModelOptions(provider).some((item) => item.slug === model));
   assert.deepEqual(getModelOption(provider, model).reasoningLevels, levels);

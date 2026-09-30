@@ -32,6 +32,9 @@ assert.ok(performance.now() - start < 1_000, "50 references must validate entire
 const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const submit = app.slice(app.indexOf('elements.whiteboardVideoForm.addEventListener("submit"'), app.indexOf('elements.whiteboardVideoForm.addEventListener("submit"') + 18_000);
 assert.ok(submit.indexOf("seedanceReferenceValidation") < submit.indexOf("ensureDreaminaGenerationAccountAvailable"));
-assert.doesNotMatch(app, /warnWhiteboardAudioReferenceDuration/u, "no connect-time duration toast");
+assert.match(app, /const warnWhiteboardAudioReferenceDuration[\s\S]{0,1800}audioDurationMs <= 30_000/u,
+  "连线时应对 Seedance 2.5/超长视频的音频参考总时长做非阻断提醒");
+assert.match(app, /if \(capacity\.ok\) \{[\s\S]{0,180}warnWhiteboardAudioReferenceDuration\(nextCanvas/u,
+  "音频参考超长提示不得阻止连线提交");
 assert.match(app, /operation === "connect"[\s\S]{0,250}seedance2\.5[\s\S]{0,90}continue/u, "Dreamina quotas no longer reject canvas connections");
 console.log("Seedance fast reference preflight: 30/10/10, 11 total, separate 30s limits, unknown metadata and submit order passed");

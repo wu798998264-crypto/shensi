@@ -70,6 +70,7 @@ export const marketplaceServiceRequest = async (path, { method = "GET", token = 
   if (!response.ok) {
     const error = new Error(String(payload.message || "云端请求失败"));
     error.statusCode = response.status;
+    if (String(payload.code || '').startsWith('EMAIL_')) { error.code = payload.code; error.retryAfterSeconds = Number(payload.retryAfterSeconds) || 0; }
     throw error;
   }
   return payload;
@@ -129,7 +130,9 @@ const publicRemoteItem = (item = {}) => ({
   reviews: Array.isArray(item.reviews) ? item.reviews.slice(0, 50).map((review) => ({
     id: String(review.id || ""),
     authorName: String(review.authorName || "神思用户").slice(0, 80),
-    avatarUrl: String(review.avatarUrl || "").slice(0, 500),
+    avatarUrl: String(review.avatarUrl || "").startsWith('data:image/png;base64,')
+      ? (String(review.avatarUrl).length <= 180_000 ? String(review.avatarUrl) : '')
+      : String(review.avatarUrl || "").slice(0, 500),
     rating: Number(review.rating) || 0,
     comment: String(review.comment || "").slice(0, 1_000),
     createdAt: review.createdAt || 0,
@@ -233,7 +236,7 @@ const parseRemoteId = (value = "") => {
   return { artifactId: match[1], version: match[2] };
 };
 
-export const downloadRemoteMarketplaceArtifact = async (id) => {
+export const downloadRemoteMarketplaceArtifact = async (id, { token = "" } = {}) => {
   const remote = await readRemoteMarketplace({ force: true });
   if (!remote.connected) throw new Error(remote.message || "远程 Skill 广场未连接");
   if (!pinnedPublicKey().includes("PUBLIC KEY")) throw new Error("远程 Skill 广场已连接，但尚未取得制品验签公钥");
@@ -245,7 +248,10 @@ export const downloadRemoteMarketplaceArtifact = async (id) => {
   if (artifact.signature.schemaVersion !== 2 || artifact.signature.algorithm !== "Ed25519") throw new Error("远程制品签名协议版本不受支持");
   const signatureValid = verify(null, marketplaceArtifactSignaturePayload(artifact), createPublicKey(pinnedPublicKey()), Buffer.from(artifact.signature.signature, "base64url"));
   if (!signatureValid) throw new Error("远程制品签名校验失败");
-  const response = await fetch(descriptor.downloadUrl, { signal: AbortSignal.timeout(60_000) });
+  // Never forward account credentials to an object store or redirect target.
+  const authenticated = Boolean(token) && new URL(descriptor.downloadUrl).origin === new URL(remote.baseUrl).origin;
+  const response = await fetch(descriptor.downloadUrl, { signal: AbortSignal.timeout(60_000),
+    ...(authenticated ? { headers: { authorization: "Bearer " + token }, redirect: "error" } : {}) });
   if (!response.ok || !response.body) throw new Error(`远程制品下载失败（${response.status}）`);
   const expectedBytes = Number(artifact.sizeBytes) || 0;
   const typeLimit = REMOTE_PACKAGE_LIMITS[artifact.assetType] || 0;

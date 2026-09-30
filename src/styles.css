@@ -26,6 +26,29 @@
   text-rendering: optimizeLegibility;
 }
 
+.generation-queue-controls { display:flex; align-items:center; flex-shrink:0; }
+.generation-queue-controls[hidden] { display:none; }
+.generation-queue-button { position:relative; }
+.generation-queue-badge { position:absolute; right:-5px; top:-3px; min-width:16px; height:16px; padding:0 3px; border-radius:9px; background:var(--inverse); color:var(--inverse-text); font-size:10px; line-height:16px; }
+.generation-queue-dialog { width:min(820px, 94vw); color:var(--text); background:var(--surface); }
+.generation-queue-dialog > form > footer { justify-content: flex-end; }
+.generation-queue-count { font-size:13px; color:var(--text-secondary); }
+.generation-queue-list { max-height:65vh; overflow:auto; padding:4px; }
+.generation-queue-item { border:1px solid var(--border); border-left:4px solid #2777ce; background:var(--surface); border-radius:9px; padding:14px; margin:0 0 12px; }
+.generation-queue-item[data-tone="green"] { border-left-color:#23965c; }
+.generation-queue-item[data-tone="red"] { border-left-color:#d54848; }
+.generation-queue-item header, .generation-queue-item footer { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.generation-queue-item header { justify-content:space-between; }
+.generation-queue-item p { margin:8px 0; font-size:12px; color:var(--text-secondary); overflow-wrap:anywhere; }
+.generation-queue-item .queue-error { color:var(--text); }
+.generation-queue-item footer { margin-top:12px; justify-content:flex-end; }
+.queue-drag-hint { margin-right:auto; color:var(--text-tertiary); font-size:12px; }
+.generation-queue-item[draggable="true"] { cursor:grab; }
+.queue-progress { display:flex; align-items:center; gap:12px; font-size:12px; }
+.queue-progress progress { flex:1; height:7px; accent-color:#2777ce; }
+.generation-queue-item[data-tone="green"] progress { accent-color:#23965c; }
+.generation-queue-item[data-tone="red"] progress { accent-color:#d54848; }
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #111111;
@@ -302,7 +325,7 @@ textarea:focus-visible,
 .topbar {
   position: relative;
   display: grid;
-  grid-template-columns: auto 1px minmax(120px, 300px) minmax(96px, 1fr) auto auto auto;
+  grid-template-columns: auto 1px auto minmax(120px, 300px) minmax(96px, 1fr) auto auto auto;
   align-items: center;
   width: calc(100vw - 8px);
   height: 60px;
@@ -405,6 +428,27 @@ textarea:focus-visible,
   border-radius: 4px;
   background: transparent;
   font-size: 15px;
+}
+
+.workspace-kind-switcher {
+  position: relative;
+  z-index: 7;
+  margin-left: 10px;
+}
+
+.workspace-kind-switcher .workspace-kind-button {
+  white-space: nowrap;
+}
+
+.workspace-kind-switcher .workspace-kind-menu {
+  left: 0;
+  top: 38px;
+}
+
+/* The mode picker belongs inside the expanded work/notebook list. The
+   toolbar name opens that list; it is not a second, external mode picker. */
+.workspace-kind-compatibility {
+  display: block;
 }
 
 .project-switcher:hover {
@@ -518,6 +562,20 @@ textarea:focus-visible,
   flex: 0 0 auto;
   gap: 10px;
   min-width: 176px;
+}
+
+/* Queue, autosave and version controls move together into the editor tab row
+   while fullscreen. Keep their inline grouping stable in both hosts. */
+.global-task-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.global-task-controls .generation-queue-controls {
+  display: inline-flex;
+  align-items: center;
 }
 
 #activityButton[hidden] {
@@ -974,6 +1032,33 @@ textarea:focus-visible,
   color: var(--text-secondary);
   z-index: 12;
   pointer-events: auto;
+}
+
+/* The collapsed directory keeps its utility actions reachable without
+   reopening the pane.  Match the compact bottom-left control cluster used by
+   the whiteboard while leaving the expanded sidebar layout unchanged. */
+.workspace.left-sidebar-collapsed .sidebar-tools {
+  position: fixed;
+  z-index: 20;
+  left: 12px;
+  right: auto;
+  bottom: 8px;
+  width: auto;
+  height: 40px;
+  padding: 0;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.workspace.left-sidebar-collapsed .sidebar-tools .update-button {
+  display: none;
+}
+
+.workspace.left-sidebar-collapsed .sidebar-tools #trashButton {
+  margin-left: 0;
 }
 
 body.resizing-panes,
@@ -18572,7 +18657,7 @@ button.trash-entry-main:focus-visible {
   background: var(--surface-subtle);
 }
 
-.account-login-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.account-login-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .account-login-tabs button,
 .membership-tabs button {
@@ -24305,7 +24390,7 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 1280px) {
   .topbar {
-    grid-template-columns: auto 1px minmax(110px, 220px) minmax(80px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px auto minmax(110px, 220px) minmax(80px, 1fr) auto auto auto;
     padding-inline: 16px;
   }
 
@@ -24322,7 +24407,7 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 900px) {
   .topbar {
-    grid-template-columns: auto 1px minmax(72px, 150px) minmax(56px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px auto minmax(72px, 150px) minmax(56px, 1fr) auto auto auto;
     padding-inline: 10px;
   }
 
@@ -24349,7 +24434,7 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 700px) {
   .topbar {
-    grid-template-columns: auto 1px minmax(52px, 100px) minmax(44px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px auto minmax(52px, 100px) minmax(44px, 1fr) auto auto auto;
     padding-inline: 6px;
   }
 
@@ -24378,7 +24463,7 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 560px) {
   .topbar {
-    grid-template-columns: auto 1px minmax(44px, 72px) minmax(36px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px auto minmax(44px, 72px) minmax(36px, 1fr) auto auto auto;
   }
 
   .autosave-state {
@@ -24711,6 +24796,16 @@ button.trash-entry-main:focus-visible {
 .composer-highlight {
   animation: composer-pulse 0.8s ease-out;
 }
+
+.account-profile-dialog { width: min(460px, calc(100vw - 32px)); }
+.account-profile-dialog .account-login-body { display: grid; gap: 14px; }
+.account-profile-dialog label { display: grid; gap: 6px; }
+.account-profile-dialog input[name=displayName] { min-height: 38px; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 5px; color: var(--text); background: var(--surface-subtle); font: inherit; }
+.account-profile-dialog input[type=file] { color: var(--text); font: inherit; }
+.account-profile-dialog small { color: var(--text-secondary); line-height: 1.5; }
+.account-profile-preview { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; }
+.account-profile-avatar img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.account-profile-dialog [data-profile-status] { min-height: 20px; margin: 0; }
 
 .composer-summoned {
   animation: composer-summon 1.2s ease-out;

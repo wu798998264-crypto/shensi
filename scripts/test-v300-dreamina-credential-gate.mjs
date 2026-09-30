@@ -51,7 +51,7 @@ assert.equal(sameProfile.queuedBehindCurrent, false, "配置门禁不应把新�
 assert.equal(dreaminaProfileSwitchDecision({
   jobs: [job()],
   requestedProfileId: "account-b",
-}).allowed, false, "仍需厂商通信时才阻止切换另一配置");
+}).allowed, true, "仍需厂商通信时另一配置应进入本地队列");
 
 const recentUnknown = job({
   status: "reconciliation_required",

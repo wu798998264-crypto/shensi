@@ -66,6 +66,9 @@ export const isGpt6AstraModel = (slug = "") => /^(?:openai\/)?gpt-6-astra$/iu.te
 
 export const OPENAI_MODEL_OPTIONS = [
   GPT6_ASTRA_MODEL,
+  model("gpt-6.1-sol", "GPT-6.1 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
+  model("gpt-6-sol", "GPT-6 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
+  model("gpt-6-luna", "GPT-6 Luna", { reasoningLevels: ["low", "medium", "high", "xhigh", "max"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
   model("gpt-5.6-sol", "GPT-5.6 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
   model("gpt-5.6-terra", "GPT-5.6 Terra", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
   model("gpt-5.6-luna", "GPT-5.6 Luna", { reasoningLevels: ["low", "medium", "high", "xhigh", "max"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
@@ -786,9 +789,12 @@ export const imageModelCapabilities = (provider, slug, dynamicModels = []) => {
     : declaredAspectRatios;
   return {
     resolutions: option?.resolutions?.length ? option.resolutions : ["standard", "high"],
-    qualityOptions: gptImage25
+    // LibTV's 2.5 image driver accepts the same user-facing quality names as
+    // GPT Image. The CLI maps `standard` to its native medium tier, so expose
+    // the stable label instead of leaking the provider-specific alias.
+    qualityOptions: gptImage25 || libImage25
       ? ["low", "standard", "high", "ultra", "max"]
-      : libImage25 ? ["low", "medium", "high", "xhigh", "max"] : null,
+      : null,
     outputResolutions: gptImage25 || libImage25 ? ["1k", "2k", "4k"] : [],
     backgrounds: gptImage25 || libImage25 ? ["auto", "opaque", "transparent"] : [],
     aspectRatios,

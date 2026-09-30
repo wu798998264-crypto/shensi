@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,10 +14,12 @@ import {
   replyToOpenCodePermission,
 } from "./opencode-permission-bridge.mjs";
 import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
+import { isOpenCodeFreeModel } from "../generation-profiles.js";
 
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
+const runFlagCache = new Map();
 
 const validModelId = (value = "") => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:+-]{0,159}$/.test(String(value).trim());
 const safeError = (value = "") => String(value || "OpenCode Agent 调用失败")
@@ -27,7 +29,39 @@ const safeError = (value = "") => String(value || "OpenCode Agent 调用失败")
   .trim()
   .slice(0, 4_000);
 
+const supportedRunIsolationFlags = (executable, prefixArgs = []) => {
+  const key = `${executable}\0${JSON.stringify(prefixArgs)}`;
+  if (runFlagCache.has(key)) return runFlagCache.get(key);
+  let help = "";
+  try {
+    const result = spawnSync(executable, [...prefixArgs, "run", "--help"], { encoding: "utf8", timeout: 5_000, windowsHide: true });
+    help = `${result.stdout || ""}\n${result.stderr || ""}`;
+  } catch {}
+  const knownFlags = /(?:^|\s)--(?:pure|standalone)(?:\s|$)/m.test(help);
+  const flags = { pure: !knownFlags || /(?:^|\s)--pure(?:\s|$)/m.test(help), standalone: /(?:^|\s)--standalone(?:\s|$)/m.test(help) };
+  runFlagCache.set(key, flags);
+  return flags;
+};
+
 const eventError = (event = {}) => event?.error?.data?.message || event?.error?.message || event?.message || "OpenCode 返回错误事件";
+
+const openCodeTextFromEvent = (event = {}) => {
+  const direct = [event?.part?.text, event?.text, event?.part?.content, event?.content, event?.response?.output_text]
+    .find((value) => typeof value === "string" && value);
+  if (direct) return direct;
+  const content = event?.message?.content;
+  return Array.isArray(content)
+    ? content.filter((item) => item?.type === "text" || item?.type === "output_text").map((item) => item.text || "").join("")
+    : typeof content === "string" ? content : "";
+};
+
+const openCodeTerminalError = (event = {}) => {
+  const state = event?.part?.state || event?.state;
+  if (event?.type === "error" || state?.status === "error" || state?.status === "failed") {
+    return safeError(state?.error || state?.output || eventError(event) || "OpenCode 返回错误事件");
+  }
+  return "";
+};
 
 export { openCodePermissionPrompt, replyToOpenCodePermission };
 
@@ -120,6 +154,9 @@ export const runOpenCodeAgent = async ({
   const accessMode = normalizeAgentPermissionMode(permissionContract?.mode || agentPermissionMode);
   const requestedModel = String(model || "").trim();
   if (!validModelId(requestedModel)) throw new Error("OpenCode Agent 模型必须是完整 provider/model ID");
+  if (credentialSource === "opencode_free" && !isOpenCodeFreeModel(requestedModel)) {
+    throw new Error("OpenCode 免费模型配置只能使用官方免费模型");
+  }
   const task = String(prompt || "").trim();
   if (!task) throw new Error("OpenCode Agent 没有收到任务指令");
   const projectDirectory = String(cwd || "").trim();
@@ -143,9 +180,11 @@ export const runOpenCodeAgent = async ({
     ? { ...environment, SHENSI_OPENCODE_EXECUTABLE: String(cliPath).trim() }
     : environment;
   const launch = await launchResolver({ environment: launchEnvironment });
+  const prefixArgs = Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [];
+  const isolationFlags = supportedRunIsolationFlags(String(launch?.executable || ""), prefixArgs);
   const args = [
-    ...(Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : []),
-    "run", "--pure", "--model", requestedModel, "--format", "json", "--title", "Shensi OpenCode Agent",
+    ...prefixArgs,
+    "run", ...(isolationFlags.pure ? ["--pure"] : isolationFlags.standalone ? ["--standalone"] : []), "--model", requestedModel, "--format", "json", "--title", "Shensi OpenCode Agent",
   ];
   const variant = String(reasoningEffort || "").trim().toLowerCase();
   if (["high", "max"].includes(variant)) args.push("--variant", variant);
@@ -162,7 +201,14 @@ export const runOpenCodeAgent = async ({
   }
   let tempRoot = "";
   const managedCredential = credentialSource === "shensi";
-  const isolateHostConfiguration = accessMode === "shensi_only";
+  const freeCredential = credentialSource === "opencode_free";
+  // Free OpenCode models must run without inheriting the user's login store.
+  // Keep the current-login source attached to the host profile, while the
+  // Shensi and free sources receive an isolated XDG environment.
+  // OpenCode free-tier models are only eligible when invoked by the running
+  // OpenCode desktop service. Do not move them into a temporary XDG store;
+  // Shensi-managed credentials remain fully isolated below.
+  const isolateHostConfiguration = accessMode === "shensi_only" && !freeCredential;
   const secret = managedCredential ? String(apiKey || "").trim() : "";
   if (managedCredential && !secret) throw new Error(`${String(provider || "模型服务商").trim()} Agent 缺少安全凭据`);
   let isolatedEnvironment = {};
@@ -172,7 +218,7 @@ export const runOpenCodeAgent = async ({
     const xdgData = join(tempRoot, "xdg-data");
     const xdgCache = join(tempRoot, "xdg-cache");
     const xdgState = join(tempRoot, "xdg-state");
-    const isolatedDirectories = [xdgConfig, xdgCache, xdgState, ...(managedCredential ? [xdgData] : [])];
+    const isolatedDirectories = [xdgConfig, xdgCache, xdgState, ...(managedCredential || freeCredential ? [xdgData] : [])];
     await Promise.all(isolatedDirectories.map((path) => mkdir(path, { recursive: true })));
     const config = {
       ...(managedCredential ? managedProviderConfig({ provider, baseUrl, model: requestedModel }) : {}),
@@ -193,12 +239,12 @@ export const runOpenCodeAgent = async ({
     isolatedEnvironment = {
       ...(managedCredential ? { SHENSI_OPENCODE_API_KEY: secret } : {}),
       OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-      ...(isolateHostConfiguration ? {
+        ...(isolateHostConfiguration ? {
         XDG_CONFIG_HOME: xdgConfig,
         // A runner-managed login may live in its data store. Keep that store
         // only when the selected credential source is OpenCode itself; --pure,
         // the empty config root and the deny matrix still block ambient tools.
-        ...(managedCredential ? { XDG_DATA_HOME: xdgData } : {}),
+         ...(managedCredential ? { XDG_DATA_HOME: xdgData } : {}),
         XDG_CACHE_HOME: xdgCache,
         XDG_STATE_HOME: xdgState,
       } : {}),
@@ -209,7 +255,13 @@ export const runOpenCodeAgent = async ({
     }
   }
   if (nativeHost && !managedCredential && !isolateHostConfiguration) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
-  if (accessMode !== "shensi_only") { const pureIndex = args.indexOf("--pure"); if (pureIndex >= 0) args.splice(pureIndex, 1); }
+  if (freeCredential) {
+    const isolationIndex = args.findIndex((item) => item === "--pure" || item === "--standalone");
+    if (isolationIndex >= 0) args.splice(isolationIndex, 1);
+  } else if (accessMode !== "shensi_only") {
+    const pureIndex = args.indexOf("--pure");
+    if (pureIndex >= 0) args.splice(pureIndex, 1);
+  }
   // `opencode run` is non-interactive. Without --auto it converts an MCP
   // permission prompt into "the user rejected permission" even when our
   // isolated config explicitly allows shensi_* tools. All native tools are
@@ -256,6 +308,7 @@ export const runOpenCodeAgent = async ({
     let stderr = "";
     let lineBuffer = "";
     let textOutput = "";
+    let terminalError = "";
     let sessionId = "";
     let actualProvider = "";
     let actualModel = "";
@@ -282,11 +335,10 @@ export const runOpenCodeAgent = async ({
       actualProvider ||= reportedModel.provider;
       actualModel ||= reportedModel.model;
       onEvent?.(event);
+      terminalError ||= openCodeTerminalError(event);
       if (event.type === "error") throw new Error(eventError(event));
-      if (event.type === "text" || event?.part?.type === "text") {
-        const value = event?.part?.text ?? event?.text ?? event?.content;
-        if (typeof value === "string" && value) textOutput += value;
-      }
+      const value = openCodeTextFromEvent(event);
+      if (value) textOutput += value;
     };
     const abort = () => {
       aborted = true;
@@ -330,7 +382,12 @@ export const runOpenCodeAgent = async ({
       if (aborted) { finish(Object.assign(new Error("OpenCode Agent 任务已停止"), { name: "AbortError" })); return; }
       if (code !== 0) { finish(new Error(`OpenCode Agent 退出码 ${code}：${safeError(stderr || "没有错误输出")}`)); return; }
       const text = textOutput.trim();
-      if (!text) { finish(new Error("OpenCode Agent 已结束，但没有返回可用文本")); return; }
+      if (!text) {
+        finish(new Error(terminalError
+          ? `OpenCode 未返回最终文本：${terminalError}`
+          : "OpenCode Agent 已结束，但没有返回可用文本；请检查 OpenCode 是否在结束前完成最后一步"));
+        return;
+      }
       const requestedProvider = requestedModel.slice(0, requestedModel.indexOf("/"));
       finish(null, {
         text,
@@ -354,7 +411,11 @@ export const runOpenCodeAgent = async ({
       child.stdin.end();
     });
   } finally {
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        try { await rm(tempRoot, { recursive: true, force: true }); break; } catch { await new Promise((resolve) => setTimeout(resolve, 250)); }
+      }
+    }
   }
 };
 

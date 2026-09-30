@@ -66,12 +66,22 @@ export const dreaminaJobRequiresCredentialProfile = (job = {}, { nowMs = Date.no
   // the job to waiting_credentials or retry_required. Cancellation auditing
   // must never reacquire the one shared Dreamina credential slot.
   if (normalized(job.desiredAction) === "cancel" || job.userStoppedAt) return false;
+  if (job.credentialCommandActive === true) return true;
+  // New queue tasks own a credential only during an actual broker command.
+  // Remote generation, local waiting and card application hold no account lock.
+  if (job.dreaminaQueuePolicy === 'command-lease-v1') return false;
   if (["failed", "cancelled", "canceled"].includes(providerStatus)) return false;
   if (DREAMINA_ACTIVE_STATUSES.has(status)) return true;
   // The durable job reaches complete before the renderer confirms the result
-  // is present on its card. Keep the profile stable through that final write
-  // and readback only; a completed, applied task releases immediately.
-  if (status === "complete") return !job.appliedAt && !job.resultSuppressed;
+  // is present on its card. Once the provider result has been downloaded and
+  // the asset receipt is durable, the provider credential is no longer in
+  // use; a slow card writeback must never block a fresh generation. Legacy
+  // complete records without an asset receipt keep the old conservative gate.
+  if (status === "complete") {
+    const providerResultDurable = Boolean(job.assetSavedAt)
+      || Boolean(job.landingReceipt?.sha256 && job.result?.attachment?.relativePath);
+    return !job.appliedAt && !job.resultSuppressed && !providerResultDurable;
+  }
   // The user's cancel action immediately releases the profile-switch gate.
   // Provider-side cancellation may still be verified in the background, but
   // that audit work must never hold another Dreamina profile hostage.
@@ -124,9 +134,20 @@ export const dreaminaProfileSwitchDecision = ({ jobs = [], requestedProfileId = 
   });
   const active = different || blockingJobs[0];
   const activeProfileId = dreaminaCliProfileId(active.request?.settings);
+  const activeIdentity = normalizedIdentity(dreaminaCredentialIdentity(active));
+  const identityMismatch = Boolean(requestedIdentity && activeIdentity
+    && requestedIdentity !== activeIdentity
+    && activeProfileId === requested);
+  const unresolvedResult = blockingJobs.some((job) => normalized(job.status) === 'complete'
+    && !job.appliedAt && !job.assetSavedAt
+    && !(job.landingReceipt?.sha256 && job.result?.attachment?.relativePath));
   return {
-    allowed: !different,
-    queuedBehindCurrent: false,
+    // The physical credential slot is a command lease, not a submission
+    // gate. A different account is accepted into the durable local queue; a
+    // credential/identity mismatch is still rejected by the caller's exact
+    // identity checks, never silently merged into another account.
+    allowed: !identityMismatch && !unresolvedResult,
+    queuedBehindCurrent: Boolean(different) && !unresolvedResult,
     activeProfileId,
     blockingJobId: String(active.id || ""),
     ...dreaminaBlockingTaskDetails(active),
@@ -144,6 +165,6 @@ export const dreaminaProfileSwitchMessage = (decision = {}) => {
   const target = decision.blockingTarget || {};
   const title = target.documentTitle || target.documentId;
   const location = [target.workspacePath, title ? `${target.documentKind === "whiteboard" ? "白板" : "文档"}《${title}》` : "", target.nodeName ? `卡片《${target.nodeName}》` : ""].filter(Boolean).join(" → ");
-  return `即梦 CLI 只有一个共享凭证锁，正在被配置“${current}”的任务使用。${location ? `占用位置：${location}。` : decision.blockingJobId ? `占用任务：${decision.blockingJobId}。` : ""}该任务仍在提交、生成、下载或结果回写；同一配置可继续提交，其他即梦配置暂时无法生成。任务完成、明确失败或手动终止后释放；非即梦配置不受影响。`;
+  return `即梦 CLI 只有一个共享凭证锁，正在被配置“${current}”的任务使用。${location ? `占用位置：${location}。` : decision.blockingJobId ? `占用任务：${decision.blockingJobId}。` : ""}当前任务仍在提交、生成、下载或结果验收；新任务已进入本地队列，锁释放后自动继续，不会触发核验或重复提交。非即梦配置不受影响。`;
 };
 import { normalizeDreaminaCliProfileId, validDreaminaCliProfileId } from "./media-cli-presets.js";

@@ -137,10 +137,19 @@ const normalizeGeneration = (generation) => {
   const profileSource = generation.profile && typeof generation.profile === "object" ? generation.profile : {};
   const profileFields = generation.channel === "text"
     ? ["executionSurface", "connectionId", "model", "reasoningEffort", "speedMode", "agentEngine", "agentConnectionId", "agentModel", "agentReasoningEffort", "agentSpeedMode"]
-    : ["connectionId", "model"];
+    : [
+      "connectionId", "model", "aspectRatio", "quality", "resolution", "duration",
+      "generationMode", "generateAudio", "background", "imageCount", "videoCount",
+      "audioType", "scene", "voiceId", "language", "speed", "format", "sampleRate",
+    ];
   const profile = Object.fromEntries(profileFields
-    .map((field) => [field, String(profileSource[field] ?? "").trim().slice(0, 300)])
-    .filter(([, value]) => value));
+    .map((field) => {
+      const raw = profileSource[field];
+      if (typeof raw === "boolean") return [field, raw];
+      if (typeof raw === "number" && Number.isFinite(raw)) return [field, raw];
+      return [field, String(raw ?? "").trim().slice(0, 300)];
+    })
+    .filter(([, value]) => value !== "" && value !== null && value !== undefined));
   return prompt ? {
       channel: generation.channel,
       prompt,

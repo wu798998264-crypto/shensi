@@ -21,12 +21,20 @@ export const resolveCodexOpenAiApiKey = async ({
   readText = readFile,
 } = {}) => {
   const environmentKey = String(environment.OPENAI_API_KEY || "").trim();
-  if (environmentKey) return { apiKey: environmentKey, source: "environment" };
+  // Codex stores its ChatGPT/Responses session token in OPENAI_API_KEY too
+  // (for example `agt_code_…`).  That token is valid for the Codex app-server
+  // but is not an OpenAI Images API key.  Treat only the documented `sk-…`
+  // family as a direct Images API credential; otherwise continue through the
+  // normal Codex CLI/app-server path instead of misclassifying the session as
+  // an invalid Images key.
+  if (/^sk-[A-Za-z0-9_-]+$/u.test(environmentKey)) return { apiKey: environmentKey, source: "environment" };
   const authPath = resolve(String(environment.CODEX_HOME || join(homeDirectory, ".codex")), "auth.json");
   try {
     const auth = JSON.parse(await readText(authPath, "utf8"));
     const apiKey = String(auth?.OPENAI_API_KEY || "").trim();
-    return apiKey ? { apiKey, source: "codex_api_key" } : { apiKey: "", source: "chatgpt" };
+    return /^sk-[A-Za-z0-9_-]+$/u.test(apiKey)
+      ? { apiKey, source: "codex_api_key" }
+      : { apiKey: "", source: apiKey ? "codex_session" : "chatgpt" };
   } catch (error) {
     if (error.code === "ENOENT" || error instanceof SyntaxError) return { apiKey: "", source: "unknown" };
     throw error;

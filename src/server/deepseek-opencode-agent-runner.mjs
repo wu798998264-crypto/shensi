@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +16,21 @@ import { createEffectiveAgentTimeout } from "./effective-agent-timeout.mjs";
 const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
+const runFlagCache = new Map();
+
+const supportedRunIsolationFlags = (executable, prefixArgs = []) => {
+  const key = `${executable}\0${JSON.stringify(prefixArgs)}`;
+  if (runFlagCache.has(key)) return runFlagCache.get(key);
+  let help = "";
+  try {
+    const result = spawnSync(executable, [...prefixArgs, "run", "--help"], { encoding: "utf8", timeout: 5_000, windowsHide: true });
+    help = `${result.stdout || ""}\n${result.stderr || ""}`;
+  } catch {}
+  const knownFlags = /(?:^|\s)--(?:pure|standalone)(?:\s|$)/m.test(help);
+  const flags = { pure: !knownFlags || /(?:^|\s)--pure(?:\s|$)/m.test(help), standalone: /(?:^|\s)--standalone(?:\s|$)/m.test(help) };
+  runFlagCache.set(key, flags);
+  return flags;
+};
 
 export const probeDeepSeekOpenCodeSessionCapabilities = () => Object.freeze({
   resume: false,
@@ -38,6 +53,24 @@ const eventError = (event = {}) => event?.error?.data?.message
   || event?.message
   || event?.error?.name
   || "OpenCode 返回错误事件";
+
+const openCodeTextFromEvent = (event = {}) => {
+  const direct = [event?.part?.text, event?.text, event?.part?.content, event?.content]
+    .find((value) => typeof value === "string" && value);
+  if (direct) return direct;
+  const content = event?.message?.content;
+  return Array.isArray(content)
+    ? content.filter((item) => item?.type === "text" || item?.type === "output_text").map((item) => item.text || "").join("")
+    : typeof content === "string" ? content : "";
+};
+
+const openCodeTerminalError = (event = {}, secret = "") => {
+  const state = event?.part?.state || event?.state;
+  if (event?.type === "error" || state?.status === "error" || state?.status === "failed") {
+    return safeError(state?.error || state?.output || eventError(event) || "OpenCode 返回错误事件", secret);
+  }
+  return "";
+};
 
 const agentPermissions = ({ allowEdits = false, allowNetwork = false, agentPermissionMode = "" } = {}) => {
   const explicitMode = String(agentPermissionMode || "").trim();
@@ -193,10 +226,12 @@ export const runDeepSeekOpenCodeAgent = async ({
       mcp: nativeHost ? { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } : {},
       ...(isolateHostConfiguration ? { plugin: [] } : {}),
     };
+    const prefixArgs = Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [];
+    const isolationFlags = supportedRunIsolationFlags(String(launch?.executable || ""), prefixArgs);
     const args = [
-      ...(Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : []),
+      ...prefixArgs,
       "run",
-      "--pure",
+      ...(isolationFlags.pure ? ["--pure"] : isolationFlags.standalone ? ["--standalone"] : []),
       "--agent",
       "shensi",
       "--model",
@@ -248,6 +283,7 @@ export const runDeepSeekOpenCodeAgent = async ({
       let stderr = "";
       let lineBuffer = "";
       let textOutput = "";
+      let terminalError = "";
       let sessionId = "";
       let settled = false;
       let aborted = false;
@@ -270,10 +306,9 @@ export const runDeepSeekOpenCodeAgent = async ({
         sessionId ||= String(event.sessionID || event.sessionId || "");
         onEvent?.(event);
         if (event.type === "error") throw new Error(eventError(event));
-        if (event.type === "text" || event?.part?.type === "text") {
-          const value = event?.part?.text ?? event?.text ?? event?.content;
-          if (typeof value === "string" && value) textOutput += value;
-        }
+        terminalError ||= openCodeTerminalError(event, secret);
+        const value = openCodeTextFromEvent(event);
+        if (value) textOutput += value;
       };
       const abort = () => {
         aborted = true;
@@ -333,7 +368,7 @@ export const runDeepSeekOpenCodeAgent = async ({
         }
         const text = textOutput.trim();
         if (!text) {
-          finish(new Error("OpenCode Agent 已结束，但没有返回可用文本"));
+          finish(new Error(terminalError ? `OpenCode 未返回最终文本：${terminalError}` : "OpenCode Agent 已结束，但没有返回可用文本；请检查 OpenCode 是否在结束前完成最后一步"));
           return;
         }
       finish(null, { text, sessionId, executionSourceReceipt, permissionMode: accessMode });
@@ -350,7 +385,11 @@ export const runDeepSeekOpenCodeAgent = async ({
       child.stdin.end(input);
     });
   } finally {
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) {
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        try { await rm(tempRoot, { recursive: true, force: true }); break; } catch { await new Promise((resolve) => setTimeout(resolve, 250)); }
+      }
+    }
   }
 };
 

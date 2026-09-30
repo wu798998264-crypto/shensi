@@ -10,7 +10,9 @@ const providerNamespace = (value = "") => {
 
 export const openCodeCatalogCacheKey = ({ runner = "opencode", credentialSource = "opencode", provider = "", baseUrl = "" } = {}) => [
   clean(runner).toLowerCase() || "opencode",
-  credentialSource === "shensi" ? "shensi" : "opencode",
+  ["shensi", "opencode_free"].includes(String(credentialSource || "").trim().toLowerCase())
+    ? String(credentialSource).trim().toLowerCase()
+    : "opencode",
   normalizedProvider(provider) || "*",
   clean(baseUrl).replace(/\/+$/u, "").toLowerCase() || "*",
 ].join("|");
@@ -31,6 +33,20 @@ export const openCodeCatalogGroupsForProvider = (groups = [], provider = "") => 
     )),
   })).filter((group) => group.models.length > 0);
 };
+
+export const openCodeFreeCatalogGroups = (groups = []) => (Array.isArray(groups) ? groups : [])
+  .map((group) => ({
+    ...group,
+    models: (Array.isArray(group?.models) ? group.models : []).filter((item) => (
+      item?.free === true
+      || item?.isFree === true
+      || item?.requiresLogin === false
+      || item?.requiresAuth === false
+      || /(?:^|[-:])free$/iu.test(String(item?.slug || item?.id || ""))
+      || String(item?.slug || item?.id || "").toLowerCase().endsWith("/big-pickle")
+    )),
+  }))
+  .filter((group) => group.models.length > 0);
 
 export const openCodeProviderFallbackGroup = (provider = "", models = []) => {
   const namespace = providerNamespace(provider);

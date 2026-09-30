@@ -60,10 +60,9 @@ try {
   const sameProfile = await createMediaGenerationJob({ channel: "image", target: target("card-b"), request: request("account-a") });
   assert.notEqual(first.id, sameProfile.id, "同一配置在不同卡片应创建两条串行任务");
 
-  await assert.rejects(
-    createMediaGenerationJob({ channel: "image", target: target("card-c"), request: request("account-b") }),
-    (error) => error?.code === "DREAMINA_PROFILE_SWITCH_BLOCKED" && error?.statusCode === 409,
-  );
+  const queuedOtherProfile = await createMediaGenerationJob({ channel: "image", target: target("card-c"), request: request("account-b") });
+  assert.equal(queuedOtherProfile.status, "queued", "不同账号也必须先创建本地排队任务");
+  assert.equal(queuedOtherProfile.dreaminaQueuePolicy, "command-lease-v1");
 
   await completeAndApply(first);
   await completeAndApply(sameProfile);

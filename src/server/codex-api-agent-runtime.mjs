@@ -8,7 +8,18 @@ const text = (value = "") => String(value ?? "").trim();
 const safeJson = async (response) => {
   const raw = await response.text();
   let payload = null;
-  try { payload = raw ? JSON.parse(raw) : null; } catch {}
+  try { payload = raw ? JSON.parse(raw) : null; } catch {
+    // Some compatible Responses relays ignore the JSON preference and emit
+    // SSE anyway. Recover only the already-returned terminal event; never
+    // retry or resubmit the provider request.
+    const events = String(raw).split(/\r?\n\r?\n/u)
+      .map((chunk) => chunk.match(/data:\s*(\{[\s\S]*\})/u)?.[1])
+      .filter(Boolean);
+    const completed = [...events].reverse().map((item) => {
+      try { return JSON.parse(item); } catch { return null; }
+    }).find((item) => item?.type === "response.completed" && item.response);
+    if (completed?.response) payload = completed.response;
+  }
   if (!response.ok) {
     const rawDetail = text(payload?.error?.message || payload?.message || raw).slice(0, 600);
     const capacityLimited = /(?:selected model.*capacity|model.*at capacity|capacity.*(?:model|available)|模型.*容量|容量.*模型|当前模型.*繁忙)/iu.test(rawDetail);
@@ -429,6 +440,9 @@ export const createCodexApiAgentRuntime = ({ fetchImpl = globalThis.fetch, now =
           // OpenAI-only max_tool_calls request parameter. The runtime enforces
           // the same hard limit locally before invoking any returned tools.
           ...(tools.length ? { tools, tool_choice: "auto" } : {}),
+          // Do not let an OpenAI-compatible relay silently switch this agent
+          // request to SSE and close before response.completed.
+          stream: false,
       };
       let input = [{ role: "user", content: [{ type: "input_text", text: String(prompt || "") }] }];
       let manualInput = [...input];

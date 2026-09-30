@@ -29,7 +29,7 @@ try {
   assert.match(app, /uniqueConversationForAttempt\(attempt, existingLocations\)/u);
   const recoverySource = app.slice(app.indexOf("const discoverUnfinishedGenerationAttempts"), app.indexOf("const requestWorkspaceOperationPlan"));
   assert.doesNotMatch(recoverySource, /state\.messages\.push\(message\)/u);
-  assert.match(app, /\["password", "register", "recover"\]\.includes\(ui\.account\.loginMode\)/u);
+  assert.ok(app.includes('["password", "email", "register", "recover"].includes(ui.account.loginMode)'));
   assert.match(app, /data-account-login-mode="recover"/u);
   assert.match(app, /data-account-password-reveal="password"/u);
   assert.match(app, /rememberAccountSession/u);

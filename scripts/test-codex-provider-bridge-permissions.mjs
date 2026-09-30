@@ -48,14 +48,14 @@ const requestedTools = [
   },
 ];
 
-const invokeBridge = async ({ protocol, providerReply, input = null }) => {
+const invokeBridge = async ({ protocol, providerReply, input = null, baseUrl = "https://provider.invalid/v1" }) => {
   let upstreamBody = null;
   let upstreamUrl = "";
   let upstreamHeaders = null;
   const bridge = await startCodexProviderBridge({
     settings: {
       protocol,
-      baseUrl: "https://provider.invalid/v1",
+      baseUrl,
       apiKey: "test-only",
       model: "test-model",
     },
@@ -127,6 +127,13 @@ const chat = await invokeBridge({
     }],
   },
 });
+
+const localRelay = await invokeBridge({
+  protocol: "responses",
+  providerReply: { choices: [{ message: { role: "assistant", content: "本地中继自检通过" } }] },
+  baseUrl: "http://127.0.0.1:5317/v1",
+});
+assert.equal(localRelay.upstreamUrl, "http://127.0.0.1:5317/v1/chat/completions");
 assert.deepEqual(
   chat.upstreamBody.tools.map((tool) => tool.function.name),
   ["exec_command", "apply_patch", "documents_list"],

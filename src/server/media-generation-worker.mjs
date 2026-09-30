@@ -9,6 +9,7 @@ import { OPENAI_IMAGE_CLI_ALIAS } from "../media-cli-presets.js";
 import { classifyCustomApiCapabilityFailure } from "../custom-api-capabilities.js";
 import { dreaminaFailureDiagnosis, dreaminaFailureRequiresAccountVerification } from "../dreamina-failure.js";
 import { dreaminaResultRecoveryPolicy } from "../dreamina-result-recovery-policy.js";
+import { dreaminaCredentialWaitState, isDreaminaCredentialBusy } from "../dreamina-task-queue.js";
 import { appDataRoot, initializeConfiguredDataRoot } from "./app-data.mjs";
 import { createUpdateWriteBarrier } from "./update-write-barrier.mjs";
 import {
@@ -20,6 +21,8 @@ import {
   updateActiveMediaGenerationJob,
   updateMediaGenerationJob,
   updateRunnableMediaGenerationJob,
+  claimDreaminaQueueTurn,
+  releaseDreaminaQueueTurn,
 } from "./generation-job-store.mjs";
 import { resolveMediaProviderDriver } from "./media-provider-drivers.mjs";
 import {
@@ -885,6 +888,7 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
         heartbeatAt: new Date().toISOString(),
       } });
     }
+    if (dreaminaCliMediaJob(current) && isDreaminaCredentialBusy(error)) throw error;
     if (!current.providerTaskId || !transientProviderFailure(error)) throw error;
     const failures = Number(current.transientFailures || 0) + 1;
     const dreaminaResultRecovery = dreaminaCliMediaJob(current)
@@ -1172,7 +1176,9 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
   return completed;
 };
 
-const processProviderJob = async (job, settings, driver = resolveMediaProviderDriver({ channel: job.channel, settings })) => {
+const processProviderJob = async (job, settings, driver = resolveMediaProviderDriver({ channel: job.channel, settings }), {
+  onSubmissionAccepted = null,
+} = {}) => {
   if (!driver) throw Object.assign(new Error("当前媒体连接暂不支持这种生成方式，请检查连接类型和模型"), { providerErrorCode: "DRIVER_NOT_REGISTERED" });
   const workRoot = join(generationJobsDirectory(), "work", job.id);
   await mkdir(workRoot, { recursive: true });
@@ -1203,7 +1209,15 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       // polling read-only; if submission has not started, leave the job
       // queued until the slot is free. Neither path opens the manual waiting
       // queue or marks the profile as requiring verification.
-      if (job.providerTaskId) {
+      if (!job.providerTaskId && submissionOutcomeUnknown(job)) {
+        // An occupied slot during reconciliation is not proof of non-submission.
+        // Never erase uncertainty or send this record through submit again.
+        await updateActiveMediaGenerationJob({ jobId: job.id, expectedDesiredAction: job.desiredAction || 'run', expectedStatuses: [job.status], patch: {
+          status: 'retry_required', providerStatus: 'reconciling', lockConflict,
+          nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+          error: '凭证槽暂时占用，保留原提交不确定状态，稍后仅找回原任务，不会再次提交。',
+        } });
+      } else if (job.providerTaskId) {
         await updateActiveMediaGenerationJob({
           jobId: job.id,
           expectedDesiredAction: job.desiredAction || "run",
@@ -1230,6 +1244,11 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
             providerStatus: "queued",
             providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
             submissionState: "not_submitted",
+            // A previous provider-capacity retry flag must not leak into a
+            // normal credential-slot wait. This task is known unsubmitted
+            // and should re-enter the local queue when the slot is free.
+            capacityRetrySafe: false,
+            capacityRetryExhaustedAt: "",
             lockConflict,
             failedAt: "",
             retryAllowed: true,
@@ -1272,6 +1291,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     try {
       reconciled = await driver.reconcileSubmission({ job, settings, workRoot });
     } catch (error) {
+      if (dreaminaCliMediaJob(job) && isDreaminaCredentialBusy(error)) throw error;
       const delayMs = transientBackoffMs(Number(job.transientFailures || 0) + 1, error.retryAfterMs);
       await update(job.id, {
         status: "retry_required",
@@ -1316,9 +1336,11 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
   }
 
   if (!job.providerTaskId) {
+    const preSubmitStartedAt = Date.now();
+    const capabilityProbeStartedAt = new Date(preSubmitStartedAt).toISOString();
     const explicitRetry = Boolean(job.explicitRetryAt);
     const safeAutomaticResubmit = job.capacityRetrySafe === true || job.safeNoTaskRetry === true;
-    if (!explicitRetry && !safeAutomaticResubmit && (recoveryScan || Number(job.attempt || 0) > 0 || job.status !== "queued")) {
+    if (!explicitRetry && !safeAutomaticResubmit && ((recoveryScan && job.dreaminaQueuePolicy !== 'command-lease-v1') || Number(job.attempt || 0) > 0 || job.status !== "queued")) {
       await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
         status: "retry_required",
         providerStatus: "unknown",
@@ -1367,6 +1389,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         // bounded fresh control-plane check before a paid command.
         forceFresh: dreaminaCapabilityProbeRequiresFresh(job, settings),
       });
+    const capabilityProbeCompletedAt = new Date().toISOString();
     if (dreaminaCliMediaJob(job) && capability.taskResourceChecked !== true && capability.taskResourceDeferred !== true) {
       const capabilityCode = String(capability.taskResourceErrorCode || "DREAMINA_TASK_RESOURCE_UNVERIFIED").toUpperCase();
       const retryableCodes = new Set([
@@ -1415,6 +1438,14 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       progressPercent: 12,
       attempt,
       startedAt: job.startedAt || new Date().toISOString(),
+      preSubmitTiming: {
+        ...(job.preSubmitTiming && typeof job.preSubmitTiming === "object" ? job.preSubmitTiming : {}),
+        queuedAt: String(job.createdAt || ""),
+        preSubmitStartedAt: new Date(preSubmitStartedAt).toISOString(),
+        capabilityProbeStartedAt,
+        capabilityProbeCompletedAt,
+        driverSubmitStartedAt: new Date().toISOString(),
+      },
       heartbeatAt: new Date().toISOString(),
     } });
     if (submitting.status !== "submitting" || submitting.desiredAction === "cancel") return;
@@ -1436,6 +1467,10 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
             ...providerPatch(earlyResult),
             providerTaskId: String(earlyResult.providerTaskId),
             submissionState: "submitted",
+            preSubmitTiming: {
+              ...(job.preSubmitTiming && typeof job.preSubmitTiming === "object" ? job.preSubmitTiming : {}),
+              providerTaskAcceptedAt: new Date().toISOString(),
+            },
             billingRisk: "",
             resubmitConfirmationRequired: false,
             progressPercent: Math.max(24, Number(job.progressPercent) || 0),
@@ -1445,13 +1480,17 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
             heartbeatAt: new Date().toISOString(),
           },
         });
+        // The provider task ID is now durable.  Release the local dispatch
+        // turn before the driver performs its first status query so another
+        // queued task can submit while this remote task runs independently.
+        await onSubmissionAccepted?.();
       },
     });
     if (!submitted.providerTaskId) throw new Error("媒体厂商提交成功响应缺少任务 ID，已停止轮询以防重复扣费");
     const submittedStatus = assertProviderStatus(submitted, "媒体厂商提交");
     if (submittedStatus === "failed" && providerCapacityLimited(submitted)) {
       const failures = Number(job.transientFailures || 0) + 1;
-      if (failures > MAX_CAPACITY_AUTOMATIC_RETRIES) {
+      if (job.dreaminaQueuePolicy === 'command-lease-v1' || failures > MAX_CAPACITY_AUTOMATIC_RETRIES) {
         await update(job.id, {
           status: "failed",
           ...providerPatch(submitted),
@@ -1470,7 +1509,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
           nextPollAt: "",
           retryAllowed: true,
           heartbeatAt: new Date().toISOString(),
-          error: `厂商连续 ${failures} 次明确返回并发名额已满，本次没有创建收费任务。自动重试已停止；可稍后在卡片上重新生成。`,
+          error: job.dreaminaQueuePolicy === 'command-lease-v1'
+            ? '即梦厂商明确返回并发名额已满，本次未创建收费任务。已暂停提交并标红；请等待厂商名额释放后手动重新生成。'
+            : `厂商连续 ${failures} 次明确返回并发名额已满，本次没有创建收费任务。自动重试已停止；可稍后在卡片上重新生成。`,
         });
         return;
       }
@@ -1509,11 +1550,16 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       transientFailures: 0,
       safeNoTaskRetry: false,
       submittedAt: new Date().toISOString(),
+      preSubmitTiming: {
+        ...(job.preSubmitTiming && typeof job.preSubmitTiming === "object" ? job.preSubmitTiming : {}),
+        providerResponseAt: new Date().toISOString(),
+      },
       heartbeatAt: new Date().toISOString(),
       error: submittedStatus === "failed" ? submitted.error || "媒体厂商拒绝创建任务" : "",
       ...(submittedStatus === "failed" ? { failedAt: new Date().toISOString(), retryAllowed: true } : {}),
       ...(submittedStatus === "cancelled" ? { cancelledAt: new Date().toISOString() } : {}),
     });
+    if (!submittedTerminal) await onSubmissionAccepted?.();
     if (submittedStatus === "failed" || submittedStatus === "cancelled") return;
     if (submittedStatus === "completed") {
       await downloadProviderResult({ job, settings, driver, workRoot });
@@ -1561,6 +1607,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     try {
       status = await driver.resume({ job, settings, workRoot });
     } catch (error) {
+      if (dreaminaCliMediaJob(job) && isDreaminaCredentialBusy(error)) throw error;
       const failures = Number(job.transientFailures || 0) + 1;
       // An explicit login rejection is a terminal credential state, even when
       // an older bridge wrapped it as DRIVER_EXIT_FAILED. Do not spend twelve
@@ -1683,14 +1730,27 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
 };
 
 const processJob = async (candidate) => {
-  if (recoveryScan && freshUnsubmittedJob(candidate)) return false;
+  if (recoveryScan && freshUnsubmittedJob(candidate) && candidate.dreaminaQueuePolicy !== 'command-lease-v1') return false;
   const nextPollAt = Date.parse(candidate.nextPollAt || "");
   if (Number.isFinite(nextPollAt) && nextPollAt > Date.now()) return false;
   const release = await acquireJobLock(candidate.id);
   if (!release) return false;
   let heartbeat = null;
+  let queueToken = '';
   try {
     let job = await readGenerationJobForWorker({ jobId: candidate.id });
+    if (dreaminaCliMediaJob(job) && job.dreaminaQueuePolicy === 'command-lease-v1' && job.status === 'queued' && !job.providerTaskId && job.submissionState === 'not_submitted') {
+      queueToken = await claimDreaminaQueueTurn({ jobId: job.id });
+      if (!queueToken) {
+        await updateActiveMediaGenerationJob({ jobId: job.id, expectedDesiredAction: 'run', expectedStatuses: ['queued'], patch: {
+          nextPollAt: new Date(Date.now() + 1_500).toISOString(),
+          error: '本任务已进入本地队列，轮到后自动提交；不会重复提交或触发核验。',
+        } });
+        return false;
+      }
+      job = await readGenerationJobForWorker({ jobId: job.id });
+      if (['complete', 'cancelled', 'superseded'].includes(job.status) || job.desiredAction === 'cancel') return false;
+    }
     if (job.status === "waiting_credentials" && String(job.providerErrorCode || "") === "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED") {
       const uncertain = submissionOutcomeUnknown(job);
       job = await update(job.id, {
@@ -1743,18 +1803,30 @@ const processJob = async (candidate) => {
         heartbeatAt: new Date().toISOString(),
       });
     }
+    const releaseQueueTurnAfterSubmission = async () => {
+      if (!queueToken) return;
+      const token = queueToken;
+      try {
+        await releaseDreaminaQueueTurn({ jobId: candidate.id, token });
+        queueToken = '';
+      } catch {
+        // The outer finally retries the release.  A local queue bookkeeping
+        // failure must never turn an already accepted paid submission into a
+        // provider failure or trigger a duplicate submission.
+      }
+    };
     await withDreaminaWorkerContext(job, async () => {
       if (job.channel === "image") {
         const providerDriver = resolveMediaProviderDriver({ channel: "image", settings });
         if (providerDriver) {
-          await processProviderJob(job, settings, providerDriver);
+          await processProviderJob(job, settings, providerDriver, { onSubmissionAccepted: releaseQueueTurnAfterSubmission });
         } else if (recoveryScan && !job.providerTaskId && !openAiImageCliJob(job) && !builtInAggregateImageRecoveryJob(job)) {
           await updateRunnableMediaGenerationJob({ jobId: job.id, patch: { status: "retry_required", progressPercent: 100, error: "图片任务在结果落盘前中断，请使用保留的提示词重试。", retryAllowed: true } });
         } else {
           await processImageJob(job, settings);
         }
       } else {
-        await processProviderJob(job, settings);
+        await processProviderJob(job, settings, undefined, { onSubmissionAccepted: releaseQueueTurnAfterSubmission });
       }
     });
     return true;
@@ -1766,6 +1838,12 @@ const processJob = async (candidate) => {
     const current = await readGenerationJobForWorker({ jobId: candidate.id }).catch(() => candidate);
     if (["complete", "cancelled", "superseded"].includes(current.status)) return false;
     const providerCode = String(error.providerErrorCode || error.code || "");
+    // Deterministic LibTV preflight/parameter failures happen before the CLI
+    // can create a provider task. They are known no-task failures: mark them
+    // failed immediately instead of hiding the actionable reason behind the
+    // generic "submission outcome unknown" recovery state.
+    const knownNoTaskFailure = !current.providerTaskId
+      && /^(?:LIBTV_PARAMETER_UNSUPPORTED|LIBTV_REFERENCE_MODE_UNSUPPORTED|LIBTV_DOWNLOAD_OPTION_UNSUPPORTED|MODEL_NOT_AVAILABLE|DRIVER_NOT_REGISTERED)$/iu.test(providerCode);
     // LibTV project/node creation happens before `node --run` and therefore
     // before a provider task ID exists. A cold CLI or a temporary process
     // exit in this pre-submit phase cannot have charged a task. Mark only this
@@ -1877,25 +1955,39 @@ const processJob = async (candidate) => {
     const dreaminaSubmissionRecoveryPending = dreaminaCliMediaJob(current) && submissionUnknown;
     const dreaminaProfileBrokerBusy = providerCode === "DREAMINA_PROFILE_BROKER_BUSY";
     const dreaminaProfileSwitchBlocked = providerCode === "DREAMINA_PROFILE_SWITCH_BLOCKED";
+    const credentialWaitState = dreaminaCredentialWaitState(current, error);
+    const brokerOccupant = (dreaminaProfileBrokerBusy || dreaminaProfileSwitchBlocked)
+      ? await readDreaminaBrokerLease().catch(() => null)
+      : null;
+    const brokerOccupantJob = brokerOccupant?.jobId && brokerOccupant.jobId !== current.id
+      ? await readGenerationJobForWorker({ jobId: brokerOccupant.jobId }).catch(() => null)
+      : null;
+    const lockConflict = brokerOccupantJob
+      ? {
+        ...dreaminaBlockingTaskDetails(brokerOccupantJob),
+        activeProfileId: String(brokerOccupant.profileId || ''),
+        blockingJobId: String(brokerOccupant.jobId || ''),
+        blockingChannel: String(brokerOccupant.channel || ''),
+        blockingCommand: String(brokerOccupant.command || ''),
+        reason: 'physical_credential_slot_busy',
+      }
+      : (error.details || current.lockConflict || {});
     // The profile runner can report the same physical credential-slot race
     // after the worker's initial lease check (another process may acquire the
     // slot in the meantime). Treat that race exactly like normal occupancy:
     // preserve an existing provider task for read-only polling, or keep an
     // unsubmitted job queued. Never persist the race as a failed task or as
     // auth_required, and never route it to the manual blocking dialog.
-    const dreaminaProfileSwitchQueued = dreaminaProfileSwitchBlocked
+    const dreaminaProfileSwitchQueued = credentialWaitState === 'queued'
       && dreaminaCliMediaJob(current)
       && !current.providerTaskId
       && !submissionUnknown;
-    const dreaminaProfileSwitchDeferred = dreaminaProfileSwitchBlocked
+    const dreaminaProfileSwitchDeferred = credentialWaitState === 'polling'
       && dreaminaCliMediaJob(current)
       && Boolean(current.providerTaskId);
-    const dreaminaReconciliationDeferredByProfileLock = dreaminaProfileSwitchBlocked
+    const dreaminaReconciliationDeferredByProfileLock = credentialWaitState === 'reconciling'
       && dreaminaCliMediaJob(current)
-      && !current.providerTaskId
-      && (current.submissionState === "uncertain"
-        || current.providerStatus === "reconciling"
-        || current.billingRisk === "submission_outcome_unknown");
+      && !current.providerTaskId;
     const localImageRecoveryPending = openAiImageCliJob(current)
       && (submissionUnknown || /OPENAI_IMAGE_RECOVERY_PENDING/.test(failureText));
     const localImageRecoveryPolicy = localImageRecoveryPending
@@ -1933,7 +2025,7 @@ const processJob = async (candidate) => {
       status: "polling",
       providerStatus: current.providerStatus || "running",
       providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
-      lockConflict: error.details || current.lockConflict || {},
+      lockConflict,
       progressPercent: Math.max(24, Number(current.progressPercent) || 0),
       failedAt: "",
       retryAllowed: true,
@@ -1944,8 +2036,13 @@ const processJob = async (candidate) => {
       status: "queued",
       providerStatus: "queued",
       providerErrorCode: "DREAMINA_PROFILE_BROKER_BUSY",
-      lockConflict: error.details || current.lockConflict || {},
+      lockConflict,
       submissionState: "not_submitted",
+      // Broker occupancy is scheduling, not provider capacity exhaustion.
+      // Clear stale capacity metadata so the durable local queue can claim
+      // this known-no-task retry on its next turn.
+      capacityRetrySafe: false,
+      capacityRetryExhaustedAt: "",
       progressPercent: Math.max(8, Number(current.progressPercent) || 0),
       failedAt: "",
       retryAllowed: true,
@@ -2153,7 +2250,7 @@ const processJob = async (candidate) => {
         ? "waiting_credentials"
         : storageBlocked && current.providerTaskId
           ? "waiting_storage"
-          : submissionUnknown ? "retry_required" : "failed",
+          : submissionUnknown && !knownNoTaskFailure ? "retry_required" : "failed",
       providerStatus: providerCode.toUpperCase() === "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
         ? "failed"
         : current.providerStatus || "failed",
@@ -2161,23 +2258,25 @@ const processJob = async (candidate) => {
       ...(dreaminaProfileSwitchBlocked && error.details ? { lockConflict: error.details } : {}),
       ...dreaminaFailurePatch,
       progressPercent: storageBlocked ? 92 : missingCredentials ? Math.max(24, Number(current.progressPercent) || 0) : 100,
-      failedAt: missingCredentials || storageBlocked || submissionUnknown ? "" : new Date().toISOString(),
+      failedAt: missingCredentials || storageBlocked || (submissionUnknown && !knownNoTaskFailure) ? "" : new Date().toISOString(),
       nextPollAt: missingCredentials ? "" : current.nextPollAt || "",
       error: explicitDreaminaAccountVerification && current.providerTaskId
         ? `即梦明确返回当前配置未登录。原厂商任务 ${current.providerTaskId} 和原账号配置均已保留；请核验该配置，核验成功后只续查原任务，不会重新提交或重复扣费。`
         : dreaminaTaskSessionRecovery.applies && dreaminaTaskSessionRecovery.expired
         ? `即梦原任务 ${current.providerTaskId} 已使用原配置自动恢复会话至安全时限，仍收到明确未登录响应。请仅核验该任务原来使用的即梦配置；任务号已保留，不会重新提交或扣费。`
-        : submissionUnknown
+        : submissionUnknown && !knownNoTaskFailure
           ? "提交期间连接中断，未取得厂商任务 ID。为防重复计费，已禁止自动重投；请先在厂商后台核查任务。原始幂等键已保留。"
-        : dreaminaProfileSwitchBlocked
-          ? `${errorMessage(error)} 已停止本次任务，不会创建本地排队任务；请等待占用配置完成或手动处理占用任务后重新生成。`
+        : (dreaminaProfileSwitchBlocked || dreaminaProfileBrokerBusy) && current.dreaminaQueuePolicy === "command-lease-v1"
+          ? `${errorMessage(error) || "即梦凭证锁当前被其他配置占用。"} 本任务已保留在本地队列，锁释放后自动继续，不会触发核验或重复提交。`
+        : (dreaminaProfileSwitchBlocked || dreaminaProfileBrokerBusy)
+          ? `${errorMessage(error) || "即梦凭证锁当前被其他配置占用。"} 旧任务未自动重试，请在待处理中核对原任务后再决定。`
           : errorMessage(error),
-      billingRisk: submissionUnknown ? "submission_outcome_unknown" : current.billingRisk || "",
-      ...(submissionUnknown ? {
+      billingRisk: submissionUnknown && !knownNoTaskFailure ? "submission_outcome_unknown" : "",
+      ...(submissionUnknown && !knownNoTaskFailure ? {
         automaticRecoveryStartedAt: current.automaticRecoveryStartedAt || new Date().toISOString(),
         automaticRecoveryStoppedAt: "",
       } : {}),
-      resubmitConfirmationRequired: submissionUnknown,
+      resubmitConfirmationRequired: submissionUnknown && !knownNoTaskFailure,
       ...(dreaminaTaskSessionRecovery.applies ? {
         dreaminaSessionRecoveryStartedAt: dreaminaTaskSessionRecovery.startedAt,
         dreaminaSessionRecoveryAttempts: dreaminaTaskSessionRecovery.attempts,
@@ -2195,7 +2294,9 @@ const processJob = async (candidate) => {
     return false;
   } finally {
     if (heartbeat) clearInterval(heartbeat);
-    await release();
+    try {
+      if (queueToken) await releaseDreaminaQueueTurn({ jobId: candidate.id, token: queueToken });
+    } finally { await release(); }
   }
 };
 
@@ -2204,6 +2305,15 @@ const isActiveDreaminaWorkerJob = (job, { excludeId = "" } = {}) => {
   if (normalizedIdentity(job?.request?.settings?.adapter) !== "cli"
     || !["即梦", "dreamina"].includes(normalizedIdentity(job?.request?.settings?.provider))) return false;
   const status = String(job.status || "").toLowerCase();
+  // A current-session local queue item is still a user task even before a
+  // provider task ID exists.  Do not let deferred historical reconciliation
+  // jump ahead of it; paused-after-restart records are intentionally exempt
+  // until the startup recovery worker clears their fence.
+  if (job.dreaminaQueuePolicy === "command-lease-v1"
+    && status === "queued"
+    && !job.dreaminaQueueDeferredAt
+    && !job.userStoppedAt
+    && job.desiredAction !== "cancel") return true;
   // `retry_required` and `waiting_storage` are durable user-attention states,
   // not a worker currently holding the physical Dreamina credential slot. They
   // must not starve the one deferred reconciliation pass forever. The broker
@@ -2230,7 +2340,7 @@ const main = async () => {
       const targetCompleted = finishedTarget?.status === "complete";
       const activeDreaminaLease = targetCompleted ? await readDreaminaBrokerLease().catch(() => null) : null;
       const allDreaminaJobs = targetCompleted
-        ? await listMediaGenerationJobsForWorker({ skipDreamina: false }).catch(() => [])
+        ? await listMediaGenerationJobsForWorker({ skipDreamina: false, skipDreaminaLegacyRecovery: true }).catch(() => [])
         : [];
       const anotherDreaminaTaskActive = allDreaminaJobs.some((item) => isActiveDreaminaWorkerJob(item, { excludeId: targetJob?.id }));
       if (targetIsDreamina && targetCompleted && !activeDreaminaLease && !anotherDreaminaTaskActive) {
@@ -2260,10 +2370,17 @@ const main = async () => {
       // detached process; never let background recovery race it for the one
       // Dreamina credential slot.
       const lease = await readDreaminaBrokerLease().catch(() => null);
-      const currentJobs = await listMediaGenerationJobsForWorker({ skipDreamina: false }).catch(() => []);
+      const currentJobs = await listMediaGenerationJobsForWorker({ skipDreamina: false, skipDreaminaLegacyRecovery: true }).catch(() => []);
       if (lease || currentJobs.some((item) => isActiveDreaminaWorkerJob(item))) return;
     }
-    const jobs = await listMediaGenerationJobsForWorker({ skipDreamina: startupRecoveryScan });
+    // Durable local-queue jobs normally resume through individually stoppable
+    // --job workers in the manager. The one exception is a deferred scan of a
+    // record that already has a provider task ID: it may safely query/download
+    // that exact task, but an old unsubmitted command-lease record must never
+    // be auto-submitted from this background path.
+    const jobs = (await listMediaGenerationJobsForWorker({ skipDreamina: startupRecoveryScan }))
+      .filter((job) => job.dreaminaQueuePolicy !== 'command-lease-v1'
+        || (scanMode === 'dreamina-deferred' && Boolean(job.providerTaskId)));
     const isDreaminaJob = (job) => String(job.request?.settings?.provider || "") === "即梦"
       && String(job.request?.settings?.adapter || "") === "cli";
     const dreaminaJobs = jobs.filter((job) => isDreaminaJob(job)
@@ -2284,10 +2401,11 @@ const main = async () => {
       if (automaticSubmissionRecoveryJob(job)) return 4;
       return 3;
     };
-    dreaminaJobs.sort((left, right) => priority(left) - priority(right)
-      || Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
-    for (const job of dreaminaJobs) await processJob(job);
-    await Promise.allSettled(otherJobs.map((job) => processJob(job)));
+    dreaminaJobs.sort((left, right) => priority(left) - priority(right));
+    await Promise.allSettled([
+      (async () => { for (const job of dreaminaJobs) await processJob(job); })(),
+      ...otherJobs.map((job) => processJob(job)),
+    ]);
   } finally {
     releaseMutation();
   }

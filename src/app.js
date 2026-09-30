@@ -1,4 +1,6 @@
 import { MODULES, MODULE_ITEMS, MODULE_VIEWS, clone, createBlankNotebookState, createBlankProjectState, createInitialState, ensureScriptOutlineSeries, normalizeChapterNumbering } from "./data.js";
+import { installAccountPlatformUI } from "./account-platform.js";
+import { installAccountEmailUI } from "./account-email-login.js";
 import { MAX_DOCUMENT_TABS, activateDocumentTab as activateDocumentTabState, closeDocumentTab, normalizeDocumentTabState, normalizeDocumentViewStates, openBlankDocumentTab, openDocumentInTabs, removeDocumentFromTabs, reorderDocumentTabs, updateDocumentViewState } from "./document-tabs.js";
 import { selectPendingAgentMessage } from "./codex-agent-event-routing.js";
 import { conversationAgentRequest, watchConversationAgent, snapshotAgentConfiguration } from "./conversation-agent-client.js";
@@ -9,6 +11,9 @@ import { dreaminaProfileSwitchMessage, isDreaminaCliSettings } from "./dreamina-
 import { seedanceReferenceDurationSeconds, seedanceReferenceValidation } from "./seedance-reference-limits.js";
 import { createLocalH3StatusStore } from "./local-h3-runtime-state.js";
 import { mediaRecoveryPromptSignature } from "./media-generation-coordination.js?v=7.5.9-startup-recovery-baseline";
+import { installDreaminaQueuePanel } from "./dreamina-queue-panel.js";
+import { dreaminaQueueCandidateState } from "./dreamina-task-queue.js";
+import { generationParameterSnapshot } from "./generation-parameter-snapshot.js";
 import { candidateBatchCoversRequestedTargets, mergeAgentExecutionTaskRoute } from "./agent-task-route-merge.js?v=5.4.11-semantic-contract-lock";
 import { mediaResultLifecycleStage } from "./media-result-lifecycle.js?v=3.0.10";
 import { formatGenerationDuration, monotonicElapsedMs, monotonicProgress, smoothProgressStep, syntheticMediaProgress, whiteboardGenerationConnectionPhase, whiteboardGenerationMeasurementActive, whiteboardGenerationProgressActive, whiteboardGenerationProgressTarget, whiteboardGenerationResultReady, whiteboardGenerationStartedAt, whiteboardMediaProviderAccepted } from "./whiteboard-progress.js?v=5.2.7-result-ready";
@@ -101,6 +106,8 @@ import {
   mergeGenerationProfileDraftsById,
   mergeGenerationSecrets,
   normalizeGenerationProfiles,
+  normalizeOpenCodeCredentialSource,
+  isOpenCodeFreeModel,
   portableGenerationSettings,
   pruneRetiredTextProfileSecrets,
   removeGenerationProfile,
@@ -114,7 +121,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.0.2-workbuddy-hy3";
+} from "./generation-profiles.js?v=9.0.5-workbuddy-hy3";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -138,7 +145,7 @@ import { agentTaskRouteFromDelivery, agentTaskRouteFromMediaDispatch, agentTaskW
 import { conversationImageRepeatRequest, DEFAULT_IMAGE_GENERATION_ASPECT_RATIO, DEFAULT_IMAGE_GENERATION_MODEL, DEFAULT_IMAGE_GENERATION_QUALITY, explicitConversationImageAspectRatio, explicitConversationImageQuality, mergeConversationImageRepeatParameters, requestedConversationImageOptions } from "./conversation-image-settings.js?v=0.45.0-conversation-parameter-selection";
 import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, explicitConversationVideoDuration, normalizeConversationMediaDefaults } from "./conversation-media-defaults.js?v=1.0.0-conversation-media-defaults";
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
-import { WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, deactivateWhiteboardGenerationDraft, duplicateWhiteboardGenerationDraftEntries, normalizeWhiteboardGenerationDraftCache, preferredWhiteboardGenerationDraftForNode, updateWhiteboardGenerationDraftCache, whiteboardGenerationDraftKey, whiteboardGenerationSurfaceIsActive } from "./whiteboard-generation-draft.js?v=5.4.10-audio-draft-v9";
+import { WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, deactivateWhiteboardGenerationDraft, duplicateWhiteboardGenerationDraftEntries, mergeWhiteboardGenerationDraftCaches, normalizeWhiteboardGenerationDraftCache, preferredWhiteboardGenerationDraftForNode, updateWhiteboardGenerationDraftCache, whiteboardGenerationDraftKey, whiteboardGenerationSurfaceIsActive } from "./whiteboard-generation-draft.js?v=5.4.10-audio-draft-v9";
 import { createWhiteboardPromptHistory, normalizeWhiteboardPromptHistorySnapshot, pushWhiteboardPromptHistory, stepWhiteboardPromptHistory } from "./whiteboard-generation-prompt-history.js?v=1.0.0";
 import { WHITEBOARD_RICH_PROMPT_CARET_GUARD, WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS, serializeWhiteboardRichPromptBeforePoint, serializeWhiteboardRichPromptNode, whiteboardPromptAtomicDropOffset, whiteboardPromptReferenceIdentityMatches, whiteboardPromptReferenceReplacementIsSafe, whiteboardPromptReferenceSequenceAfterInsertion, whiteboardPromptReferenceSequenceAfterReplacement } from "./whiteboard-rich-prompt.js?v=1.0.3-reference-replacement";
 import { buildBudgetedConversationContext, candidateComparisonContextMessages, conversationGeneratedImageAttachmentsForReference, conversationGeneratedMediaContext, conversationMessageContentForModel, conversationMessageEligibleForModel, conversationMessagesForActiveAssociation, extractConversationConstraintIndex, historicalConversationReferencePrompt, mergeConversationConstraintIndex, modelConversationCharacterBudget, rebuildConversationDerivedContext, resolveHistoricalConversationTaskReference } from "./conversation-context.js?v=1.0.24-candidate-comparison";
@@ -173,6 +180,7 @@ import {
   openCodeCatalogCacheKey,
   openCodeCatalogGroupsForProvider,
   openCodeModelMatchesProvider,
+  openCodeFreeCatalogGroups,
   openCodeProviderFallbackGroup,
   openCodeRunnerDefaults,
   usableOpenCodeCliOverride,
@@ -297,6 +305,7 @@ import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from ".
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
 import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.8-prompt-input";
+import { buildFrontendTaskRoute, frontendRouteCanUseGeneralLane } from "./frontend-task-route.js?v=1.0.0-light-route";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
 import { memoryReviewCandidateEvidence, memoryReviewCandidatesForPlan, memoryReviewUiSummary, toggleRecommendedMemorySelection } from "./memory-review-ui-model.js?v=0.42.14-product-evidence-ux";
@@ -874,6 +883,7 @@ const whiteboardGenerationProfileFromSettings = (settings = null, executionSurfa
     agentModel: String(source.agentModel || ""),
     agentReasoningEffort: String(source.agentReasoningEffort || ""),
     agentSpeedMode: String(source.agentSpeedMode || "default"),
+    ...generationParameterSnapshot(source),
   };
 };
 
@@ -5973,8 +5983,16 @@ const hydrateWorkspace = async () => {
     ui.workspaceRevision = ui.recoveryCheckpointRevision;
     ui.workspaceDirty = checkpointCanRestore;
     ui.workspaceStateChangesPending = checkpointCanRestore;
-    if (checkpointCanRestore && checkpoint.whiteboardGenerationDrafts) {
-      writeWhiteboardGenerationDraftCache(checkpoint.whiteboardGenerationDrafts);
+    if (checkpoint?.whiteboardGenerationDrafts) {
+      // A checkpoint can be older than the renderer's local draft cache when
+      // the process crashed between localStorage and the asynchronous server
+      // write. Merge by per-entry updatedAt instead of overwriting the newest
+      // prompt/reference/options with the stale checkpoint.
+      const mergedDrafts = mergeWhiteboardGenerationDraftCaches(
+        readWhiteboardGenerationDraftCache(),
+        checkpoint.whiteboardGenerationDrafts,
+      );
+      writeWhiteboardGenerationDraftCache(mergedDrafts);
     }
     persistActiveWorkspacePointer();
     rememberCurrentWorkspaceState();
@@ -6355,6 +6373,9 @@ const syncGenerationAdapterFields = (channel = "text") => {
   const managedOpenCode = channel === "text"
     && ["opencode", "claude_code"].includes(form.elements.namedItem("textAgentEngine")?.value)
     && form.elements.namedItem("textCredentialSource")?.value === "shensi";
+  const openCodeFree = channel === "text"
+    && form.elements.namedItem("textAgentEngine")?.value === "opencode"
+    && form.elements.namedItem("textCredentialSource")?.value === "opencode_free";
   for (const key of ["baseUrl", "apiKey"]) {
     const label = form.elements[fields[key]]?.closest("label");
     if (label) label.hidden = isCli && !managedOpenCode;
@@ -6373,7 +6394,7 @@ const syncGenerationAdapterFields = (channel = "text") => {
   }
   if (channel === "text") {
     const providerLabel = document.querySelector("#textProviderField");
-    if (providerLabel) providerLabel.hidden = externalAgent;
+    if (providerLabel) providerLabel.hidden = externalAgent || openCodeFree;
     const protocolLabel = form.elements.protocol?.closest("label");
     if (protocolLabel) protocolLabel.hidden = externalAgent || (isCli && !managedOpenCode);
   }
@@ -6430,8 +6451,8 @@ const syncModelCapabilityControls = () => {
   const capability = executionModeOptionState(profileForCapability, { existing: unchangedLegacyShape });
   const openCodeEngine = formEngine === "opencode";
   const externalAgentEngine = ["opencode", "claude_code", ...EXTERNAL_AGENT_RUNNER_IDS].includes(formEngine);
-  const credentialSource = field("textCredentialSource")?.value === "shensi"
-    ? "shensi"
+  const credentialSource = formEngine === "opencode"
+    ? normalizeOpenCodeCredentialSource(field("textCredentialSource")?.value)
     : formEngine === "claude_code" ? "claude" : "opencode";
   const isDeepSeekOpenCode = isCli && field("provider")?.value === "DeepSeek" && !openCodeEngine;
   const executionModeSelect = field("textExecutionMode");
@@ -6455,7 +6476,7 @@ const syncModelCapabilityControls = () => {
     const sourceSelect = credentialSourceField.querySelector("select");
     if (sourceSelect) for (const option of sourceSelect.options) option.hidden = formEngine === "claude_code"
       ? !["claude", "shensi"].includes(option.value)
-      : !["opencode", "shensi"].includes(option.value);
+      : !["opencode", "opencode_free", "shensi"].includes(option.value);
   }
   const providerField = document.querySelector("#textProviderField");
   if (providerField) providerField.hidden = EXTERNAL_AGENT_RUNNER_IDS.includes(formEngine);
@@ -6523,9 +6544,11 @@ const syncModelCapabilityControls = () => {
         },
         capability: catalog || ui.genericOpenCode || {},
       });
-      const credentialLabel = credentialSource === "shensi" ? "神思安全凭据" : "凭据由 OpenCode 管理";
+      const credentialLabel = credentialSource === "shensi"
+        ? "神思安全凭据"
+        : credentialSource === "opencode_free" ? "OpenCode 免费模型（无需登录）" : "OpenCode 当前登录";
       genericHint.textContent = ui.genericOpenCode?.available
-        ? `${ui.genericOpenCode.version} · ${credentialSource === "shensi" ? "神思安全凭据" : "OpenCode 当前登录"} · ${validation.message}`
+        ? `${ui.genericOpenCode.version} · ${credentialLabel} · ${validation.message}`
         : `OpenCode 尚未探测 · ${credentialLabel}${ui.genericOpenCode?.message ? `：${ui.genericOpenCode.message}` : ""}`;
       genericHint.classList.toggle("is-warning", !validation.ok);
     }
@@ -6649,13 +6672,15 @@ const renderModelOptionsInternal = (providerId = state.settings.provider, { allo
     const profile = activeGenerationProfile(generationWorkingSettings(), "text");
     const presented = profile?.agentEngine === "deepseek_opencode" ? unifiedOpenCodeProfile(profile) : profile;
     const provider = field("provider")?.value || providerId;
-    const credentialSource = field("textCredentialSource")?.value === "shensi" ? "shensi" : "opencode";
+    const credentialSource = normalizeOpenCodeCredentialSource(field("textCredentialSource")?.value);
     const candidateCurrent = String(preferredModel || presented?.agentModelId || presented?.model || select.value || "").trim();
     const current = openCodeModelMatchesProvider(candidateCurrent, provider) ? candidateCurrent : "";
     const cacheKey = openCodeCatalogCacheKey({ credentialSource, provider, baseUrl: field("baseUrl")?.value });
     const catalog = ui.openCodeCatalogs.get(cacheKey) || null;
     const groups = Array.isArray(catalog?.groups) ? catalog.groups : [];
-    const liveGroups = openCodeCatalogGroupsForProvider(groups, provider);
+    const liveGroups = credentialSource === "opencode_free"
+      ? openCodeFreeCatalogGroups(groups)
+      : openCodeCatalogGroupsForProvider(groups, provider);
     const fallbackGroup = credentialSource === "shensi"
       ? openCodeProviderFallbackGroup(provider, modelOptionsForProvider(provider, field("adapter")?.value))
       : null;
@@ -6667,7 +6692,7 @@ const renderModelOptionsInternal = (providerId = state.settings.provider, { allo
       ? `<optgroup label="当前模型"><option value="${escapeHtml(current)}">${escapeHtml(modelPickerDisplayName(current))}</option></optgroup>`
       : "";
     select.innerHTML = `${allowBlank || !filteredGroups.length ? '<option value="">选择 OpenCode 模型</option>' : ""}${preservedCurrent}${filteredGroups.map((group) => `<optgroup label="${escapeHtml(group.source === "provider_preset_unverified" ? `${group.provider}（待刷新验证）` : group.provider)}">${group.models.map((item) => `<option value="${escapeHtml(item.slug)}">${escapeHtml(modelPickerDisplayName(item))}</option>`).join("")}</optgroup>`).join("")}`;
-    select.value = current || (credentialSource === "shensi" ? filteredGroups[0]?.models?.[0]?.slug || "" : "");
+    select.value = current || ((credentialSource === "shensi" || credentialSource === "opencode_free") ? filteredGroups[0]?.models?.[0]?.slug || "" : "");
     syncModelCapabilityControls();
     return;
   }
@@ -7119,7 +7144,7 @@ const captureGenerationFormProfile = (channel) => {
       patch.adapter = "cli";
       patch.agentEngine = "opencode";
       patch.agentModelId = patch.model;
-      patch.credentialSource = patch.credentialSource === "shensi" ? "shensi" : "opencode";
+      patch.credentialSource = normalizeOpenCodeCredentialSource(patch.credentialSource);
       if (patch.credentialSource !== "shensi") {
         patch.executionMode = "agent";
         patch.executionModes = ["agent"];
@@ -7439,7 +7464,7 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
     // confirmed WorkBuddy choices.  Keep them visible while marking the
     // catalogue stale; a confirmed login-required result still wins and
     // intentionally hides the stale list until the user logs in again.
-    const workBuddy = incoming.workbuddy;
+    let workBuddy = incoming.workbuddy;
     const previousWorkBuddy = previous.workbuddy;
     // The safe startup probe only reads --version/--help and therefore returns
     // an unknown authentication state. Keep a previously verified session
@@ -7464,6 +7489,10 @@ const hydrateAgentRunnerStatuses = async ({ force = false } = {}) => {
         modelState: Array.isArray(workBuddy.models) && workBuddy.models.length ? "catalog_available" : previousWorkBuddy.modelState,
         message: workBuddy.message || "已恢复上次确认的 WorkBuddy 登录会话，模型目录正在复核",
       };
+      // Use the merged capability below. Keeping the pre-merge reference here
+      // would let the stale `generation_check_required` result overwrite the
+      // verified state again a few lines later during startup hydration.
+      workBuddy = incoming.workbuddy;
     }
     if (workBuddy?.authenticated === true && Array.isArray(workBuddy.models) && workBuddy.models.length > 0) {
       persistWorkBuddyCapability(workBuddy);
@@ -7552,8 +7581,12 @@ const renderAgentRunnerInstallJob = (job = null) => {
         ? "请保持神思运行；安装期间不会改动作品、笔记、模型配置或凭据。"
         : "安装成功后会自动复检版本；不会修改你的模型、API、凭据或现有运行器配置。";
   elements.agentRunnerInstallSource.textContent = job?.officialUrl ? `官方来源：${job.officialUrl}${job?.scriptSha256 ? ` · 脚本 SHA-256：${job.scriptSha256}` : ""}` : runnerId === "custom" ? "自定义运行器不会自动下载，请在下方填写 CLI 程序和参数模板。" : "仅使用对应运行器的官方安装源。";
-  elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running || installed;
-  elements.startAgentRunnerInstall.textContent = runnerId === "custom" ? "无需下载" : running ? "正在装配…" : installed ? "已安装" : status === "failed" ? "重新下载并装配" : "下载并装配";
+  elements.startAgentRunnerInstall.disabled = runnerId === "custom" || running;
+  elements.startAgentRunnerInstall.textContent = runnerId === "custom"
+    ? "无需下载"
+    : running ? "正在装配…"
+      : installed ? "更新到最新"
+        : status === "failed" ? "重新下载并装配" : "下载并装配";
   if (elements.loginAgentRunner) {
     elements.loginAgentRunner.hidden = !installed || runnerId !== "workbuddy" || (!loginRequired && !loginAwaitingConfirmation);
     elements.loginAgentRunner.disabled = running || dialog.dataset.loginPolling === runnerId;
@@ -7934,7 +7967,7 @@ const hydrateGenericOpenCodeCatalog = async ({ force = false } = {}) => {
     const query = new URLSearchParams();
     if (force) query.set("refresh", "true");
     query.set("runner", "opencode");
-    query.set("credentialSource", form?.textCredentialSource?.value === "shensi" ? "shensi" : "opencode");
+    query.set("credentialSource", normalizeOpenCodeCredentialSource(form?.textCredentialSource?.value));
     query.set("provider", form?.provider?.value || "");
     query.set("baseUrl", form?.baseUrl?.value || "");
     const cliPath = usableOpenCodeCliOverride(elements.settingsForm?.elements?.cliPath?.value);
@@ -8032,6 +8065,12 @@ root.innerHTML = `
           ${icon("\uE77B", "登录神思账号")}
           <span class="account-entry-status" aria-hidden="true"></span>
         </button>
+        <div class="global-task-controls" id="globalTaskControls">
+          <div class="generation-queue-controls" id="generationQueueControls" role="group" aria-label="生成任务队列" hidden>
+            <button class="icon-button bare generation-queue-button" id="generationQueueButton" type="button" title="查看排队任务" aria-label="查看排队任务" aria-haspopup="dialog" aria-expanded="false">
+              ${icon("\uE8FD", "排队任务")}<b id="generationQueueBadge" class="generation-queue-badge" hidden>0</b>
+            </button>
+          </div>
         <div class="autosave-control">
           <button class="autosave-state" data-state="saved" type="button" aria-live="polite" aria-label="已自动保存" aria-expanded="false" title="已自动保存">${icon("\uE73E")}</button>
           <div class="autosave-error-panel" role="alert" hidden>
@@ -8042,6 +8081,7 @@ root.innerHTML = `
           </div>
         </div>
         <button class="icon-button bare" id="saveVersionButton" type="button" title="版本保存">${icon("\uE74E", "版本保存")}</button>
+        </div>
         <button class="icon-button bare" id="activityButton" type="button" title="最近活动" hidden disabled>${icon("\uE81C", "最近活动")}</button>
       </div>
       <div class="window-controls" aria-label="窗口控制">
@@ -8072,6 +8112,14 @@ root.innerHTML = `
       </form>
     </dialog>
 
+    <dialog class="text-dialog media-recovery-dialog generation-queue-dialog" id="generationQueueDialog" aria-labelledby="generationQueueTitle">
+      <form method="dialog">
+        <header class="dialog-header"><div><h2 id="generationQueueTitle">生成任务队列 <span id="generationQueueCount" class="generation-queue-count">0</span></h2><p>即梦图片和视频会先进入本地队列；排队任务可拖动调整顺序。已提交到厂商的任务不能重新排序。</p></div><button class="icon-button bare" value="cancel" type="submit" title="关闭" aria-label="关闭生成任务队列">${icon("\uE711", "关闭生成任务队列")}</button></header>
+        <section class="media-recovery-list generation-queue-list" id="generationQueueList" aria-live="polite"><p class="panel-empty">正在读取排队任务…</p></section>
+        <footer><button class="secondary-button" id="refreshGenerationQueue" type="button">重新读取</button><button class="primary-button" value="cancel" type="submit">完成</button></footer>
+      </form>
+    </dialog>
+
     <div class="workspace">
       <aside class="left-sidebar">
         <nav class="module-switcher" id="moduleSwitcher" aria-label="作品模块"></nav>
@@ -8099,11 +8147,11 @@ root.innerHTML = `
         <header class="editor-header">
           <div class="breadcrumbs" id="breadcrumbs"></div>
           <nav class="document-tabs" id="documentTabs" aria-label="文档标签页"></nav>
-          <div class="whiteboard-history-controls" id="whiteboardHistoryControls" role="group" aria-label="白板操作历史" hidden>
-            <button class="icon-button bare" id="whiteboardUndo" type="button" title="上一步（Ctrl + Z）" aria-label="上一步" disabled>${icon("\uE7A7", "上一步")}</button>
-            <button class="icon-button bare" id="whiteboardRedo" type="button" title="下一步（Ctrl + Y）" aria-label="下一步" disabled>${icon("\uE7A6", "下一步")}</button>
-          </div>
           <div class="editor-header-actions">
+            <div class="whiteboard-history-controls" id="whiteboardHistoryControls" role="group" aria-label="白板操作历史" hidden>
+              <button class="icon-button bare" id="whiteboardUndo" type="button" title="上一步（Ctrl + Z）" aria-label="上一步" disabled>${icon("\uE7A7", "上一步")}</button>
+              <button class="icon-button bare" id="whiteboardRedo" type="button" title="下一步（Ctrl + Y）" aria-label="下一步" disabled>${icon("\uE7A6", "下一步")}</button>
+            </div>
             <div class="writing-timer" id="writingTimer" aria-label="码字计时器" hidden>
               <button class="writing-timer-clock" id="writingTimerToggle" type="button" title="展开码字计时器" aria-label="展开码字计时器" aria-expanded="false">${icon("\uE823", "码字计时器")}</button>
               <div class="writing-timer-controls" id="writingTimerControls" role="group" aria-label="码字计时器控制" hidden>
@@ -8248,7 +8296,7 @@ root.innerHTML = `
             </div>
             <div class="whiteboard-tool-controls" role="group" aria-label="白板整理工具">
               <button class="whiteboard-tool-button one-shot" id="whiteboardAssetHistory" type="button" title="全部资产" aria-label="全部资产">${icon("\uE81C", "全部资产")}</button>
-              <button class="whiteboard-tool-button one-shot" id="whiteboardFindButton" type="button" title="查找选中卡片或生成操作栏（Ctrl + F）" aria-label="查找选中卡片或生成操作栏">${icon("\uE721", "查找")}</button>
+              <button class="whiteboard-tool-button one-shot" id="whiteboardFindButton" type="button" title="查找选中卡片或生成操作栏（Ctrl + F）" aria-label="查找选中卡片或生成操作栏" hidden>${icon("\uE721", "查找")}</button>
               <button class="whiteboard-tool-button" id="whiteboardSnapToggle" type="button" title="开启自动吸附" aria-label="开启自动吸附" aria-pressed="false"><span class="whiteboard-tool-glyph">⌁</span></button>
               <button class="whiteboard-tool-button one-shot" id="whiteboardCenterAll" type="button" title="一键居中所有卡片（仅执行一次）" aria-label="一键居中所有卡片，仅执行一次"><span class="whiteboard-tool-glyph">⌖</span></button>
               <button class="whiteboard-tool-button one-shot" id="whiteboardArrange" type="button" title="预览自动整理方案" aria-label="预览自动整理方案"><span class="whiteboard-tool-glyph">▦</span></button>
@@ -8775,6 +8823,7 @@ root.innerHTML = `
             <section class="account-settings-section">
               <header><div><h4>账户安全</h4><p>登录方式已具备对应凭据时无需重复绑定或设置。</p></div></header>
               <div class="account-security-list">
+                <div><span aria-hidden="true">✉</span><div><strong>验证邮箱</strong><small data-account-email-state>尚未验证邮箱。</small></div><b data-account-email-verified>未验证</b><button class="secondary-button compact" type="button" id="accountBindEmail">验证绑定</button></div>
                 <div><span>${icon("\uE717")}</span><div><strong>绑定手机号</strong><small>手机号服务尚未接入。</small></div><b>未接入</b><button class="secondary-button compact" type="button" data-account-requires-login="phone">绑定 / 更换</button></div>
                 <div><span>${icon("\uE72E")}</span><div><strong>账户密码</strong><small>可通过密保问题找回密码；密码修改入口将按服务器能力开放。</small></div><b>已接入</b><button class="secondary-button compact" type="button" data-account-requires-login="password">设置 / 修改</button></div>
               </div>
@@ -8783,7 +8832,8 @@ root.innerHTML = `
             </div>
             <section class="account-settings-section account-membership-summary">
               <header><div><h4>会员、支付与积分</h4><p>登录后可读取服务器返回的会员与积分状态；支付渠道未接入时不会创建订单或扣费。</p></div><button class="secondary-button compact" id="accountSettingsMembership" type="button">查看套餐</button></header>
-              <div><span><small>会员状态</small><strong>登录后读取</strong></span><span><small>积分余额</small><strong>登录后读取</strong></span><span><small>原生云同步</small><strong>按服务状态</strong></span></div>
+              <div><span><small>会员状态</small><strong data-account-membership>登录后读取</strong></span><span><small>可用积分</small><strong data-account-quota>登录后读取</strong></span><span><small>任务预留积分</small><strong data-account-reserved>登录后读取</strong></span></div>
+              <p data-account-service-status role="status">支付和平台计费尚未开放。</p>
             </section>
           </section>
           <section class="settings-page" data-settings-page="quick" hidden>
@@ -8884,7 +8934,7 @@ root.innerHTML = `
                 <select name="textExecutionMode" hidden aria-hidden="true"><option value="agent" selected>${CODEX_AGENT_MODE_LABEL}</option></select>
                 <label>调用方式<select name="adapter"><option value="api">API</option><option value="cli">CLI</option></select></label>
                 <label id="textAgentEngineField">运行器<select id="textAgentEngineSelect" name="textAgentEngine"><option value="codex_api">神思运行器</option><option value="codex">Codex</option><option value="opencode">OpenCode</option><option value="claude_code">Claude Code</option><option value="workbuddy">WorkBuddy</option><option value="custom">自定义运行器</option></select></label>
-                <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">可复用当前运行器登录，或使用神思中已安全保存的服务商凭据。</small></label>
+                <label id="textCredentialSourceField" hidden>凭据来源<select name="textCredentialSource"><option value="opencode">OpenCode 当前登录</option><option value="opencode_free">OpenCode 免费模型（无需登录）</option><option value="claude">Claude Code 当前登录</option><option value="shensi">神思安全凭据</option></select><small class="setting-field-help">当前登录可使用付费和登录后特有模型；免费模型使用隔离的免登录环境，不读取当前登录。</small></label>
                 <label id="textProviderField">模型服务商<select name="provider">${providerOptions}</select></label>
                 <label>API 协议<select name="protocol"><option value="responses">Responses API</option><option value="chat_completions">Chat Completions</option><option value="anthropic_messages">Anthropic Messages</option></select></label>
                 <label class="model-setting-field">模型<span class="settings-input-action"><select name="model" id="modelInput"></select><input id="customModelInput" type="text" placeholder="输入模型 ID" autocomplete="off" hidden /><button class="icon-button bare" id="refreshModels" type="button" title="刷新可用模型">${icon("\uE72C", "刷新可用模型")}</button></span></label>
@@ -9097,7 +9147,7 @@ root.innerHTML = `
       <header class="dialog-header"><div><h2>神思账号</h2><p>登录后可上传 Skill 到广场并使用会员与积分服务。</p></div><button class="icon-button bare" id="closeAccountLogin" type="button" title="关闭">${icon("\uE711", "关闭")}</button></header>
       <div class="account-login-body">
         <div class="account-login-tabs" role="tablist" aria-label="登录方式">
-          <button class="active" type="button" role="tab" aria-selected="true" data-account-login-mode="password">登录</button>
+          <button class="active" type="button" role="tab" aria-selected="true" data-account-login-mode="password">密码登录</button>
           <button type="button" role="tab" aria-selected="false" data-account-login-mode="register">注册</button>
         </div>
         <section class="account-login-panel" data-account-login-panel="password">
@@ -9884,8 +9934,10 @@ const elements = {
   shell: document.querySelector(".app-shell"),
   topbar: document.querySelector(".topbar"),
   editorPane: document.querySelector(".editor-pane"),
+  editorHeaderActions: document.querySelector(".editor-header-actions"),
   globalSearchContainer: document.querySelector(".global-search"),
   topActions: document.querySelector(".top-actions"),
+  globalTaskControls: document.querySelector("#globalTaskControls"),
   mediaRecoveryBanner: document.querySelector("#mediaRecoveryBanner"),
   mediaRecoveryBannerCopy: document.querySelector("#mediaRecoveryBannerCopy"),
   openMediaRecovery: document.querySelector("#openMediaRecovery"),
@@ -9896,6 +9948,13 @@ const elements = {
   mediaRecoveryDialog: document.querySelector("#mediaRecoveryDialog"),
   mediaRecoveryList: document.querySelector("#mediaRecoveryList"),
   refreshMediaRecoveryList: document.querySelector("#refreshMediaRecoveryList"),
+  generationQueueControls: document.querySelector("#generationQueueControls"),
+  generationQueueButton: document.querySelector("#generationQueueButton"),
+  generationQueueBadge: document.querySelector("#generationQueueBadge"),
+  generationQueueDialog: document.querySelector("#generationQueueDialog"),
+  generationQueueList: document.querySelector("#generationQueueList"),
+  generationQueueCount: document.querySelector("#generationQueueCount"),
+  refreshGenerationQueue: document.querySelector("#refreshGenerationQueue"),
   projectButton: document.querySelector("#projectButton"),
   moduleSwitcher: document.querySelector("#moduleSwitcher"),
   sidebarDivider: document.querySelector(".sidebar-divider"),
@@ -11049,6 +11108,11 @@ const syncWindowControlState = async () => {
 
 const syncNoteFullscreenState = () => {
   const active = elements.workspace.classList.contains("editor-fullscreen-active");
+  const taskControlsHost = active ? elements.editorHeaderActions : elements.topActions;
+  if (elements.globalTaskControls?.parentElement !== taskControlsHost) {
+    if (active) taskControlsHost.insertBefore(elements.globalTaskControls, elements.whiteboardFullscreenButton);
+    else taskControlsHost.insertBefore(elements.globalTaskControls, elements.activityButton);
+  }
   syncNoteToolbarLayout();
   if (elements.whiteboardFullscreenButton) {
     const preview = elements.editorCanvas?.classList.contains("document-preview-mode");
@@ -14736,6 +14800,19 @@ const mediaGenerationErrorText = (job = {}) => {
   return raw;
 };
 
+const dreaminaQueueOccupancyNotifiedJobs = new Map();
+const maybeNotifyDreaminaQueueOccupancy = (job = {}) => {
+  const code = String(job.providerErrorCode || job.errorCode || '').toUpperCase();
+  if (job.dreaminaQueuePolicy !== 'command-lease-v1'
+    || !['DREAMINA_PROFILE_BROKER_BUSY', 'DREAMINA_PROFILE_SWITCH_BLOCKED'].includes(code)
+    || job.providerTaskId) return;
+  const conflict = job.lockConflict && typeof job.lockConflict === 'object' ? job.lockConflict : {};
+  const signature = `${job.id}:${code}:${conflict.blockingJobId || ''}:${conflict.activeProfileId || ''}`;
+  if (dreaminaQueueOccupancyNotifiedJobs.get(job.id) === signature) return;
+  dreaminaQueueOccupancyNotifiedJobs.set(job.id, signature);
+  showToast(dreaminaProfileSwitchMessage({ ...conflict, activeProfileId: conflict.activeProfileId || mediaGenerationProfileLabel(job) }));
+};
+
 const dreaminaFailureInput = ({ error = null, job = null } = {}) => ({
   code: job?.providerErrorCode || job?.errorCode || error?.code || error?.errorCode || "",
   message: job?.error || error?.message || "",
@@ -14757,6 +14834,7 @@ const mediaGenerationProviderName = (job = {}) => String(
 
 const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = {}) => {
   const current = job && typeof job === "object" ? job : {};
+  maybeNotifyDreaminaQueueOccupancy(current);
   const status = String(current.status || "").trim();
   const localTaskId = String(current.id || current.jobId || "").trim();
   if (!status) return uiText("正在连接生成任务");
@@ -14790,8 +14868,12 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
       ? uiText("已提交厂商，可能已收费")
       : uiText("未收费");
   if (current.userStoppedAt || current.resultSuppressed || current.userStopped) {
-    const cancelLabel = current.status === "cancelled" || current.providerStatus === "cancelled"
-      ? uiText("用户已停止 · 厂商取消已确认")
+    const cancelLabel = current.cancelOutcome === 'not_submitted'
+      ? uiText("已取消本地排队 · 尚未提交厂商")
+      : current.providerStatus === 'cancel_unconfirmed' || ['local_terminalized_unconfirmed', 'replacement_local_abandonment'].includes(current.cancelOutcome)
+        ? uiText("本机已停止 · 远端可能继续生成并产生费用")
+        : current.providerStatus === "cancelled"
+          ? uiText("用户已停止 · 厂商取消已确认")
       : current.status === "waiting_credentials"
         ? uiText("用户已停止 · 取消意图已保存，等待恢复原凭据")
         : current.status === "cancel_requested"
@@ -14813,6 +14895,11 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
     const retryAt = Date.parse(current.nextPollAt || "");
     const retryIn = Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - Date.now()) / 1000)) : 0;
     if (capacityLimited) return `${uiText("即梦并发名额已满")} · ${uiText("未收费")}${retryIn > 0 ? ` · ${retryIn}${uiText("秒后重试")}` : ""}${taskLabel}`;
+    const credentialSlotBusy = ["DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_PROFILE_SWITCH_BLOCKED"]
+      .includes(providerErrorCode);
+    if (current.dreaminaQueuePolicy === 'command-lease-v1' && (!current.safeNoTaskRetry || credentialSlotBusy)) {
+      return `${uiText(current.dreaminaDispatching ? '准备提交' : '本地排队，尚未提交')} · ${uiText('未收费')}${taskLabel}`;
+    }
     const updatedAt = Date.parse(current.updatedAt || current.createdAt || "");
     const submissionAge = Number.isFinite(updatedAt) ? Math.max(0, Date.now() - updatedAt) : 0;
     const submissionError = mediaGenerationErrorText(current);
@@ -15223,7 +15310,8 @@ const handleMediaGenerationActionElement = async (element) => {
     const adapter = String(settings.adapter || "").trim().toLowerCase();
     if (provider === "即梦" && adapter === "cli") {
       rememberDreaminaJobForReverification(job, settings);
-      openDreaminaReverifyDialog({ settings, jobId: job.id, errorMessage: mediaGenerationErrorText(job) });
+      const started = await startDreaminaProfileVerification(settings.dreaminaCliProfile, { channel: job.channel });
+      if (!started) throw new Error("即梦账号核验未能启动，请检查该配置绑定的浏览器");
       return job;
     }
     throw new Error("当前任务的连接凭据已失效，请到模型设置中重新核验该连接");
@@ -15458,6 +15546,7 @@ const waitForWhiteboardGenerationJob = (jobId, candidateKey) => waitForGeneratio
   onProgress: (job) => {
     if (!whiteboardCandidateBelongsToJob(candidateKey, jobId)) return;
     updateWhiteboardGenerationCandidate(candidateKey, {
+      ...dreaminaQueueCandidateState(job),
       jobId,
       status: job.status,
       desiredAction: job.desiredAction || "run",
@@ -15558,9 +15647,11 @@ const whiteboardGenerationContentFromJob = (job) => {
     // so a card the user intentionally deleted is not recreated.
     recoverMissingTarget: Boolean(job.reconciledProviderTaskAt)
       || (job.status === "complete" && !job.appliedAt && ["image", "video", "audio"].includes(job.channel)),
-    generationProfile: explicitGenerationProfile ?? {
+    generationProfile: {
       connectionId: String(requestSettings.connectionId || requestSettings.id || ""),
       model: String(requestSettings.model || ""),
+      ...generationParameterSnapshot(job.request),
+      ...(explicitGenerationProfile || {}),
     },
   };
   if (job.channel === "image") {
@@ -16579,35 +16670,14 @@ const promptDreaminaSubmissionBlockForJob = (job, { allowLockDialog = true } = {
   const reconciliationOnly = String(job.submissionState || "").toLowerCase() === "uncertain"
     || String(job.providerStatus || "").toLowerCase() === "reconciling"
     || String(job.billingRisk || "").toLowerCase() === "submission_outcome_unknown";
-  if (String(job.providerErrorCode || "").toUpperCase() === "DREAMINA_PROFILE_SWITCH_BLOCKED"
-    // A worker-side race can persist the lock conflict as `failed` before the
-    // renderer receives it.  It is still actionable: the user needs the
-    // occupant list to release the other task.  Only successful/cancelled
-    // jobs should suppress the lock dialog.
+  if (["DREAMINA_PROFILE_SWITCH_BLOCKED", "DREAMINA_PROFILE_BROKER_BUSY"].includes(String(job.providerErrorCode || "").toUpperCase())
     && !["complete", "cancelled"].includes(jobStatus)
     && !reconciliationOnly) {
-    // Startup/workspace recovery replays historical failed jobs so their
-    // cards can be restored.  Those old records must never open a lock dialog:
-    // only a lock conflict observed during the current generation attempt is
-    // actionable.  Keep the durable job untouched so a later real conflict
-    // can still surface normally.
+    // Legacy lock errors are now ordinary local-queue state too. Never reopen
+    // the removed lock/pending modal; show one lightweight toast and leave
+    // stop/reorder actions in the queue panel.
     if (!allowLockDialog) return false;
-    const conflict = job.lockConflict && typeof job.lockConflict === "object" ? job.lockConflict : {};
-    const fallbackSettings = mediaGenerationSettingsForJob(job) || job.request?.settings || {};
-    dreaminaSubmissionBlockPromptedJobs.add(job.id);
-    void claimDreaminaPrompt(job, "lock").then((claimed) => {
-      if (!claimed) {
-        dreaminaSubmissionBlockPromptedJobs.delete(job.id);
-        return;
-      }
-      openDreaminaProfileLockDialog({
-        ...conflict,
-        activeProfileId: conflict.activeProfileId || String(fallbackSettings.dreaminaCliProfile || ""),
-        blockingJobId: conflict.blockingJobId || "",
-        reason: conflict.reason || "physical_credential_slot_busy",
-      });
-      showToast(mediaGenerationErrorText(job) || "即梦通道正被其他配置占用，本次任务未提交厂商。");
-    });
+    maybeNotifyDreaminaQueueOccupancy(job);
     return true;
   }
   if (String(job.status || "") !== "retry_required"
@@ -16703,6 +16773,7 @@ const showInterruptedWhiteboardGenerationJob = (job, { allowLockDialog = true } 
     prompt: job.request?.prompt || "",
     jobId: job.id,
     providerTaskId: job.providerTaskId || "",
+    ...dreaminaQueueCandidateState(job),
     submissionState: job.submissionState || "",
     submittedAt: job.submittedAt || "",
     billingRisk: job.billingRisk || "",
@@ -16744,6 +16815,7 @@ const monitorWhiteboardGenerationJob = (job) => {
       prompt: job.request?.prompt || "",
       jobId: job.id,
       desiredAction: job.desiredAction || "run",
+      ...dreaminaQueueCandidateState(job),
       availableActions: job.availableActions ?? {},
       providerErrorCode: job.providerErrorCode || "",
       providerStatus: job.providerStatus || "",
@@ -16770,23 +16842,27 @@ const monitorWhiteboardGenerationJob = (job) => {
 
 let dismissedMediaRecoveryMessage = "";
 
-const showMediaRecoveryBanner = (message, { checking = false } = {}) => {
+const showMediaRecoveryBanner = (message, { checking = false, route = "recovery" } = {}) => {
   if (!elements.mediaRecoveryBanner) return;
   const copy = String(message || "未能重新连接本机媒体任务，请重新检查。");
   if (!checking && dismissedMediaRecoveryMessage === copy) return;
   elements.mediaRecoveryBanner.hidden = false;
   elements.mediaRecoveryBanner.dataset.state = checking ? "checking" : "error";
+  elements.mediaRecoveryBanner.dataset.route = route;
   elements.mediaRecoveryBannerCopy.textContent = copy;
   elements.retryMediaRecovery.disabled = checking;
   elements.retryMediaRecovery.textContent = checking ? "正在检查…" : "重新检查";
+  elements.openMediaRecovery.textContent = route === "queue" ? "查看生成队列" : "查看待处理";
 };
 
 const clearMediaRecoveryBanner = () => {
   if (!elements.mediaRecoveryBanner) return;
   elements.mediaRecoveryBanner.hidden = true;
   elements.mediaRecoveryBanner.dataset.state = "ready";
+  elements.mediaRecoveryBanner.dataset.route = "recovery";
   elements.retryMediaRecovery.disabled = false;
   elements.retryMediaRecovery.textContent = "重新检查";
+  elements.openMediaRecovery.textContent = "查看待处理";
 };
 
 const mediaRecoveryAttentionStatuses = new Set([
@@ -16919,9 +16995,52 @@ const openMediaRecoveryDialog = async () => {
   await readMediaRecoveryJobsForDialog();
 };
 
+installDreaminaQueuePanel({
+  elements,
+  toast: (message) => showToast(message),
+  changed: (job) => updateMediaJobTargetAfterAction(job),
+  act: async (job, action) => {
+    if (action === 'verify') {
+      const settings = mediaGenerationSettingsForJob(job);
+      if (!settings) throw new Error('原配置已不存在，不能切换其他账号核验');
+      elements.generationQueueDialog.close();
+      const provider = String(settings.provider || "").trim().toLowerCase();
+      const adapter = String(settings.adapter || "").trim().toLowerCase();
+      if (provider !== "即梦" || adapter !== "cli") throw new Error("该任务不是即梦 CLI 配置，无法从此处核验");
+      rememberDreaminaJobForReverification(job, settings);
+      const started = await startDreaminaProfileVerification(settings.dreaminaCliProfile, { channel: job.channel });
+      if (!started) throw new Error("即梦账号核验未能启动，请检查该配置绑定的浏览器");
+      return;
+    }
+    if (action === 'apply') {
+      const applied = job.target?.targetType === 'conversation-message' ? await applyCompletedConversationMediaJob(job)
+        : job.target?.targetType === 'document-artifact' ? await applyCompletedDocumentArtifactJob(job)
+          : await retryCompletedWhiteboardGenerationApply(job);
+      if (!applied) throw new Error('结果仍未安全回写，已保留原文件和任务记录');
+      showToast('已使用原结果回填，不会重复生成或扣费');
+      return;
+    }
+    const resumed = await controlMediaGenerationJob(job.id, action === 'recover'
+      ? (job.providerTaskId ? 'resume' : 'reconcile') : action === 'retry' ? 'resume' : action, { allowNewSubmission: action === 'retry' });
+    if (resumed && action !== 'dismiss') {
+      if (resumed.target?.targetType === 'conversation-message') monitorConversationMediaJob(resumed);
+      else if (resumed.target?.targetType === 'document-artifact') monitorDocumentArtifactJob(resumed);
+      else showInterruptedWhiteboardGenerationJob(resumed);
+    }
+  },
+});
+
 let mediaRecoveryFullScanKey = "";
 const mediaRecoveryPromptedJobSignatures = new Map();
 const mediaRecoveryBaselinedScanKeys = new Set();
+
+const promptDreaminaQueueRecovery = (job) => {
+  if (job?.dreaminaQueuePolicy !== "command-lease-v1") return false;
+  const queueButton = elements.generationQueueButton;
+  if (queueButton && !elements.generationQueueDialog?.open) queueButton.click();
+  showToast("即梦任务需要处理，请在“生成任务队列”中查看红色任务");
+  return true;
+};
 
 const promptLiveMediaJobRecovery = (job) => {
   // Only jobs explicitly submitted/resumed in this renderer session can
@@ -16935,6 +17054,13 @@ const promptLiveMediaJobRecovery = (job) => {
   const signature = mediaRecoveryPromptSignature(job);
   if (mediaRecoveryPromptedJobSignatures.get(job.id) === signature) return;
   mediaRecoveryPromptedJobSignatures.set(job.id, signature);
+  // Keep this branch self-contained: the live prompt is also exercised in
+  // isolation by the occupancy regression test.
+  if (job.dreaminaQueuePolicy === "command-lease-v1") {
+    if (elements.generationQueueButton && !elements.generationQueueDialog?.open) elements.generationQueueButton.click();
+    showToast("即梦任务需要处理，请在“生成任务队列”中查看红色任务");
+    return;
+  }
   void openMediaRecoveryDialog();
 };
 
@@ -16972,8 +17098,13 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
     // modal is reserved for a manual check or a live generation that has just
     // become blocked; opening the app must never look like an unexplained
     // Dreamina-lock check.
-    if ((manual || allowAttentionPrompt) && freshBlockingJobs.length && document.visibilityState !== "hidden" && !elements.mediaRecoveryDialog?.open) {
-      void openMediaRecoveryDialog();
+    if ((manual || allowAttentionPrompt) && freshBlockingJobs.length && document.visibilityState !== "hidden") {
+      const dreaminaJobs = freshBlockingJobs.filter((job) => job.dreaminaQueuePolicy === "command-lease-v1");
+      if (dreaminaJobs.length) {
+        promptDreaminaQueueRecovery(dreaminaJobs[0]);
+      } else if (!elements.mediaRecoveryDialog?.open) {
+        void openMediaRecoveryDialog();
+      }
     }
     let recovered = 0;
     const recoveryIssues = [];
@@ -17086,7 +17217,14 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
     }
     if (recovered && activeWhiteboardDocument()) renderWhiteboard(activeWhiteboardDocument());
     if (recoveryIssues.length) {
-      showMediaRecoveryBanner(`当前有 ${recoveryIssues.length} 项待处理问题：${recoveryIssues[0]}${recoveryIssues.length > 1 ? `；其余 ${recoveryIssues.length - 1} 项可在“查看待处理”中处理` : ""}`);
+      const dreaminaIssue = jobs.find((job) => job.dreaminaQueuePolicy === "command-lease-v1"
+        && mediaRecoveryJobBlocksOperation(job)
+        && mediaRecoveryJobIsActionable(job));
+      if (dreaminaIssue) {
+        showMediaRecoveryBanner("即梦任务需要处理，请打开“生成任务队列”查看红色任务。", { checking: false, route: "queue" });
+      } else {
+        showMediaRecoveryBanner(`当前有 ${recoveryIssues.length} 项待处理问题：${recoveryIssues[0]}${recoveryIssues.length > 1 ? `；其余 ${recoveryIssues.length - 1} 项可在“查看待处理”中处理` : ""}`);
+      }
     } else if (!smokeResponse.ok || !smokePayload.ok) {
       showMediaRecoveryBanner(smokePayload.message || "常规媒体任务已恢复，但收费能力验证任务暂时无法读取；请重新检查。");
     } else {
@@ -17125,6 +17263,10 @@ elements.retryMediaRecovery.addEventListener("click", () => {
 });
 
 elements.openMediaRecovery?.addEventListener("click", () => {
+  if (elements.mediaRecoveryBanner?.dataset.route === "queue") {
+    elements.generationQueueButton?.click();
+    return;
+  }
   void openMediaRecoveryDialog();
 });
 
@@ -17159,7 +17301,12 @@ elements.mediaRecoveryDialog?.addEventListener("click", async (event) => {
       const job = await fetchWhiteboardGenerationJob(verify.dataset.mediaJobId);
       const settings = mediaGenerationSettingsForJob(job);
       if (!settings) throw new Error("该任务原配置已不存在，无法自动核验");
-      openDreaminaReverifyDialog({ settings, account: dreaminaAccountForSettings(settings), jobId: job.id });
+      const provider = String(settings.provider || "").trim().toLowerCase();
+      const adapter = String(settings.adapter || "").trim().toLowerCase();
+      if (provider !== "即梦" || adapter !== "cli") throw new Error("该任务不是即梦 CLI 配置，无法从此处核验");
+      rememberDreaminaJobForReverification(job, settings);
+      const started = await startDreaminaProfileVerification(settings.dreaminaCliProfile, { channel: job.channel });
+      if (!started) throw new Error("即梦账号核验未能启动，请检查该配置绑定的浏览器");
     } catch (error) {
       showToast(error.message || "账号核验未能开始");
     } finally {
@@ -21651,7 +21798,20 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
     elements.chatFeed.innerHTML = `<div class="chat-empty-state"><strong>${escapeHtml(copy.prompt)}</strong><span>${escapeHtml(copy.chat)}</span></div>`;
     return;
   }
-  const displayWindow = conversationDisplayWindow(state.messages, { limit: visibleLimit });
+  const chronologicalMessages = state.messages.map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftAt = Number(left.message?.createdAt || 0);
+      const rightAt = Number(right.message?.createdAt || 0);
+      // Keep legacy messages (without event timestamps) in their stable
+      // prefix, then order timestamped events by actual emission time. A
+      // mixed raw-index/timestamp comparator is non-transitive and can place
+      // a finished answer above the choice that produced it.
+      if ((leftAt > 0) !== (rightAt > 0)) return leftAt > 0 ? 1 : -1;
+      if (leftAt > 0 && rightAt > 0 && leftAt !== rightAt) return leftAt - rightAt;
+      return left.index - right.index;
+    })
+    .map(({ message }) => message);
+  const displayWindow = conversationDisplayWindow(chronologicalMessages, { limit: visibleLimit });
   const visibleMessages = displayWindow.messages;
   ui.expandedMessageIds = trimSetToRecent(
     ui.expandedMessageIds,
@@ -21666,6 +21826,7 @@ const renderMessages = ({ forceScrollToBottom = false } = {}) => {
     ? `<button class="chat-history-window-button" type="button" data-load-older-messages="${displayWindow.nextLimit}">加载更早对话（尚有 ${displayWindow.omittedCount} 条）</button>`
     : "";
   elements.chatFeed.innerHTML = olderMessagesControl + visibleMessages.map((message) => {
+    if (message.hideForChoice === true && message.execution?.status === "waiting_input") return "";
     if (message.role === "user") {
       const editing = ui.editingMessageId === message.id;
       const preparing = ui.preparingConversationMessageIds.has(message.id);
@@ -21853,13 +22014,7 @@ const renderProjectMenu = () => {
     && entries.some((entry) => String(entry.workspacePath || "").toLowerCase() === currentPath);
   const activeEntry = hasActiveEntry ? entries.find((entry) => String(entry.workspacePath || "").toLowerCase() === currentPath) : null;
   elements.projectMenu.innerHTML = `
-    <header><div class="workspace-kind-picker">
-      <button class="workspace-kind-button" id="workspaceKindButton" type="button" aria-expanded="${ui.workspaceKindMenuOpen}"><strong>${kindLabel}</strong>${icon("\uE70D", "切换工作区类型")}</button>
-      <div class="workspace-kind-menu" ${ui.workspaceKindMenuOpen ? "" : "hidden"}>
-        <button class="${notebookList ? "" : "active"}" type="button" data-workspace-kind="project">作品</button>
-        <button class="${notebookList ? "active" : ""}" type="button" data-workspace-kind="notebook">笔记</button>
-      </div>
-    </div><div class="panel-header-actions">
+    <header><div class="workspace-kind-picker"><button class="workspace-kind-button" id="workspaceKindButton" type="button" aria-expanded="${ui.workspaceKindMenuOpen}"><strong>${kindLabel}</strong>${icon("\uE70D", "切换工作区类型")}</button><div class="workspace-kind-menu" ${ui.workspaceKindMenuOpen ? "" : "hidden"}><button class="${notebookList ? "" : "active"}" type="button" data-workspace-kind="project">作品</button><button class="${notebookList ? "active" : ""}" type="button" data-workspace-kind="notebook">笔记</button></div></div><div class="panel-header-actions">
       <button class="icon-button bare small" id="openWorkspaceFolderButton" type="button" title="打开当前${entryLabel}文件夹" ${hasActiveEntry && !activeEntry?.temporary ? "" : "disabled"}>${icon("\uE8B7", `打开当前${entryLabel}文件夹`)}</button>
       <button class="icon-button bare small" id="newWorkspaceButton" type="button" title="新建${entryLabel}">${icon("\uE710", `新建${entryLabel}`)}</button>
     </div></header>
@@ -21874,6 +22029,21 @@ const renderProjectMenu = () => {
         <button class="more-button project-more-button" type="button" data-project-more title="更多" aria-label="${escapeHtml(entry.name)}的更多操作" ${ui.workspaceSwitching.active ? "disabled" : ""}>•••</button>
   </div>`;
     }).join("") || `<p class="panel-empty">尚无已建立${entryLabel}</p>`}</div>`;
+};
+
+const renderWorkspaceKindSwitcher = () => {
+  const button = elements.workspaceKindExternalButton;
+  const menu = elements.workspaceKindExternalMenu;
+  if (!button || !menu) return;
+  const activeKind = (ui.panel === "projects" ? ui.workspaceMenuKind : state.workspaceKind) === "notebook" ? "notebook" : "project";
+  const label = activeKind === "notebook" ? "笔记" : "作品";
+  const strong = button.querySelector("strong");
+  if (strong) strong.textContent = label;
+  button.setAttribute("aria-expanded", ui.workspaceKindMenuOpen ? "true" : "false");
+  menu.hidden = !ui.workspaceKindMenuOpen;
+  menu.querySelectorAll("[data-workspace-kind]").forEach((option) => {
+    option.classList.toggle("active", option.dataset.workspaceKind === activeKind);
+  });
 };
 
 const activityTargetLabel = (activity) => {
@@ -24552,6 +24722,7 @@ const renderUtilityPanelState = () => {
   // Utility surfaces are mutually exclusive. Refresh all five lightweight
   // containers together so switching triggers cannot leave an old invisible
   // overlay intercepting the next click. Never rebuild workspace content here.
+  renderWorkspaceKindSwitcher();
   renderProjectMenu();
   renderActivityPanel();
   renderTaskPanel();
@@ -24929,7 +25100,17 @@ const memoryReviewFunnelHtml = ({ review, summary }) => {
 };
 
 const renderMemoryReviewEntry = () => {
-  const available = state.workspaceKind === "project" && !workspaceHasNoActiveEntry();
+  const activeDocument = state.documents?.[state.activeDocument] || null;
+  const blankDocumentTab = !activeDocument && Boolean(state.activeDocumentTabId);
+  // Memory review applies to substantive project documents only. A whiteboard
+  // has its own canvas controls, and a blank/new tab has no manuscript text to
+  // inspect; showing the entry in either place is misleading.
+  const available = state.workspaceKind === "project"
+    && !workspaceHasNoActiveEntry()
+    && Boolean(activeDocument)
+    && activeDocument.documentKind !== "whiteboard"
+    && !blankDocumentTab
+    && manuscriptDocumentHasSubstantiveContent(state.activeDocument);
   elements.memoryReviewButton.hidden = !available;
   if (!available) return;
   const health = ui.memoryReview.plan?.health;
@@ -26361,7 +26542,9 @@ const agentModelsForProfile = (profile = null) => {
   if (engine === "opencode") {
     const catalog = profile.credentialSource === "shensi"
       ? candidates.map((item) => ({ ...item, slug: qualifiedOpenCodeModel(item.slug, profile.provider) }))
-      : ui.genericOpenCode?.models || [];
+      : profile.credentialSource === "opencode_free"
+        ? (ui.genericOpenCode?.models || []).filter((item) => isOpenCodeFreeModel(item))
+        : ui.genericOpenCode?.models || [];
     return finalize(agentModelsForEngine(engine, { openCodeModels: catalog, effectiveModel: profile.agentModelId || profile.model }));
   }
   if (engine === "deepseek_opencode") {
@@ -26385,10 +26568,19 @@ const usableWorkBuddyModelId = (profile = null) => {
   const requested = String(profile.agentModelId || profile.model || "").trim();
   const capability = agentRunnerCapability("workbuddy");
   const models = Array.isArray(capability?.models) ? capability.models.map((model) => String(model || "").trim()).filter(Boolean) : [];
-  // A stale saved ID (for example the retired `hy3` entry) must never be sent
-  // to the real CLI.  Leave the user's saved profile untouched; at runtime an
-  // empty value deliberately follows the CLI's own current default model.
-  if (requested && models.length && !models.includes(requested)) return "";
+  // WorkBuddy can rotate the internal ID behind a stable user-facing label.
+  // Keep the saved profile untouched, but resolve the runtime ID from the
+  // current authenticated catalogue so an old `hy3` profile uses the current
+  // Hy3 entry instead of being mistaken for a login failure.
+  if (requested && models.length && !models.includes(requested)) {
+    const normalize = (value) => String(value || "").trim().toLocaleLowerCase().replace(/[\s._-]+/gu, "");
+    const aliases = { hy3: "hy3", hy3c: "hy3", hy3x: "hy3" };
+    const wanted = aliases[normalize(requested)] || normalize(requested);
+    const labels = capability?.modelLabels && typeof capability.modelLabels === "object" ? capability.modelLabels : {};
+    const match = models.find((model) => normalize(labels[model]) === wanted);
+    if (match) return match;
+    return "";
+  }
   return requested;
 };
 
@@ -27115,6 +27307,7 @@ const renderAll = () => {
   renderMessages();
   renderContextChips();
   renderHistory();
+  renderWorkspaceKindSwitcher();
   renderProjectMenu();
   renderActivityPanel();
   renderTaskPanel();
@@ -38506,9 +38699,12 @@ const monitorNativeConversation = (runtime, pending) => {
         if (pending.execution?.userStoppedAt) return;
         pending.execution.nativeAgentCursor = event.sequence;
         if (event.type === "question") {
+          // The task card is an execution placeholder, not a second answer.
+          // Hide it while the Agent waits for the author's decision.
+          pending.hideForChoice = true;
           const id = `question-${event.payload.id}`;
           if (!messages.some((message) => message.id === id)) messages.push({
-            id, role: "assistant", content: event.payload.question, time: nowTime(), conversationChoiceQuestion: true,
+            id, role: "assistant", content: event.payload.question, time: nowTime(), createdAt: Date.now(), conversationChoiceQuestion: true,
           });
           conversation.agentQuestion = { ...event.payload, decisionKind: event.payload?.kind || "conversation_choice", kind: "native_agent", runId,
             conversationId: conversation.id, workspacePath: runtime.workspaceScope.workspacePath, sourceMessageId: id };
@@ -38571,7 +38767,9 @@ const monitorNativeConversation = (runtime, pending) => {
           if (conversation.id === state.activeConversationId && workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) openLatestCandidateComparison();
         } else if (event.type === "answer" || event.type === "answer_accepted") {
           const id = `answer-${event.payload.decisionId}`;
-          if (!messages.some((message) => message.id === id)) messages.push({ id, role: "user", content: event.payload.answer, time: nowTime(), conversationChoiceInstruction: true });
+          if (!messages.some((message) => message.id === id)) messages.push({ id, role: "user", content: event.payload.answer, time: nowTime(), createdAt: Date.now(), conversationChoiceInstruction: true });
+          pending.hideForChoice = false;
+          pending.createdAt = Date.now();
           if (conversation.agentQuestion?.id === event.payload.decisionId) conversation.agentQuestion = null;
           pending.execution.status = "running";
           pending.execution.result = "Agent 正在继续处理";
@@ -38636,7 +38834,7 @@ const monitorNativeConversation = (runtime, pending) => {
           if (event.type === "media_saved") {
             const id = event.payload.messageId || `media-${event.payload.jobId}`;
             if (!messages.some((message) => message.id === id)) messages.push({ id, role: "assistant", content: "已生成并备份到全部资产。",
-              time: nowTime(), [event.payload.channel === "video" ? "videos" : "images"]: [event.payload.attachment] });
+              time: nowTime(), createdAt: Date.now(), [event.payload.channel === "video" ? "videos" : "images"]: [event.payload.attachment] });
           }
           await persistNativeConversation(runtime);
         } else if (event.type === "completed") {
@@ -38674,9 +38872,10 @@ const monitorNativeConversation = (runtime, pending) => {
             && !nativeConversationQuestionRequiresLiveRun(conversation.agentQuestion);
           if (durableQuestionWaiting) {
             clearAgentDisplayRawText(pending);
-            pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+            pending.content ||= "";
             pending.execution.error = "";
-            pending.execution.result = "等待你的选择；选项不会因等待时间而过期";
+            pending.execution.result = "";
+            pending.hideForChoice = true;
           } else {
             const terminal = nativeAgentTerminalPresentation({
               status: event.type,
@@ -38703,11 +38902,12 @@ const monitorNativeConversation = (runtime, pending) => {
         && !nativeConversationQuestionRequiresLiveRun(conversation.agentQuestion);
       if (durableQuestion) {
         pending.pending = false;
-        pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+        pending.content ||= "";
+        pending.hideForChoice = true;
         Object.assign(pending.execution, {
           status: "waiting_input",
           error: "",
-          result: "等待你的选择；选项不会因任务结束而过期",
+          result: "",
           nativeAgentTerminal: true,
           progressPercent: 100,
           endedAt: pending.execution.endedAt || Date.now(),
@@ -38845,9 +39045,11 @@ const answerLiveNativeConversationQuestion = async (question, answer) => {
   if (runtime?.messages) {
     const pendingIndex = pending ? runtime.messages.indexOf(pending) : -1;
     if (pendingIndex >= 0) runtime.messages.splice(pendingIndex, 1);
-    if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: normalizedAnswer, time: nowTime(), conversationChoiceInstruction: true });
+    if (!runtime.messages.some((message) => message.id === id)) runtime.messages.push({ id, role: "user", content: normalizedAnswer, time: nowTime(), createdAt: Date.now(), conversationChoiceInstruction: true });
     if (pending && !runtime.messages.includes(pending)) {
       const answerIndex = runtime.messages.findIndex((message) => message.id === id);
+      pending.hideForChoice = false;
+      pending.createdAt = Date.now();
       runtime.messages.splice(answerIndex >= 0 ? answerIndex + 1 : runtime.messages.length, 0, pending);
     }
   }
@@ -38906,7 +39108,8 @@ const answerNativeConversationQuestion = async (question, answer) => {
   const endedAt = Date.now();
   if (pending && !pending.execution?.nativeAgentTerminal) {
     pending.pending = false;
-    pending.content ||= "Agent 已提出一个问题，等待你的选择。";
+    pending.content ||= "";
+    pending.hideForChoice = true;
     Object.assign(pending.execution, {
       status: "waiting_input",
       error: "",
@@ -38992,13 +39195,13 @@ const executeConversationAgentMessage = async (content, options) => {
   // document-manifest compilation.  The user must see that the instruction
   // was accepted even when a large workspace makes preflight take a moment.
   const userMessage = { id: sourceMessageId, role: "user", content: String(options.displayContent || content),
-    time: nowTime(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
+    time: nowTime(), createdAt: Date.now(), attachments: clone(refs.attachments || []), references: clone(refs.references || []),
     ...(options.conversationChoiceInstruction ? { conversationChoiceInstruction: true } : {}),
     taskId: String(taskContextSnapshot.taskId || sourceMessageId),
     turnContextSnapshot: clone({ ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) }) };
   removeImmediateConversationInstruction(options.immediateInstructionId);
   if (!taskMessages.some((message) => message.id === sourceMessageId)) taskMessages.push(userMessage);
-  const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(),
+  const pending = { id: uid("pending"), role: "assistant", content: "", pending: true, time: nowTime(), createdAt: Date.now(),
     target: targetDocumentId ? {
       documentId: targetDocumentId,
       title: workspaceState.documents[targetDocumentId]?.title || targetDocumentId,
@@ -39015,12 +39218,33 @@ const executeConversationAgentMessage = async (content, options) => {
   renderNativeConversationImmediately(runtime, true);
   await yieldAfterImmediateInstructionRender();
 
+  const frontendRoute = options.frontendRoute || buildFrontendTaskRoute({
+    text: String(content || ""),
+    workspaceKind: taskContextSnapshot.workspaceKind,
+    routeRevision: Number(ui.skillCatalog?.routeRevision) || 0,
+    hasAttachments: Boolean(refs.attachments?.length),
+    hasReferences: Boolean(refs.references?.length || refs.workspaceReferences?.length || refs.skillReferences?.length),
+    hasSelection: Boolean(options.inlineEdit),
+  });
+  pending.execution.frontendRoute = clone(frontendRoute);
   let nativeTaskRoute = null;
   let nativeDocumentReadManifest = null;
   let textTaskExecutionContext = null;
   try {
     const initialTaskRoute = agentTaskRouteFromMediaDispatch(mediaDispatch);
-    nativeTaskRoute = initialTaskRoute || (() => {
+    nativeTaskRoute = initialTaskRoute || (frontendRouteCanUseGeneralLane(frontendRoute) ? {
+      dispatchProtocol: "shensi_agent_dispatch_v1",
+      executionSurface: "agent",
+      mode: "general",
+      recommendedMode: "general",
+      taskKind: "general_qa",
+      reason: frontendRoute.reason || "前端轻量路由判定为通用对话",
+      shensiLed: false,
+      writeMode: "conversation_only",
+      deliveryMode: "conversation",
+      taskType: "general_qa",
+      routeSource: "frontend_light_route",
+    } : (() => {
     const compiled = buildAdaptiveTaskRoute({
       text: String(content || ""),
       authorizationInstruction: String(content || ""),
@@ -39058,8 +39282,8 @@ const executeConversationAgentMessage = async (content, options) => {
       relationType: compiled.relationType || "",
       relationRole: compiled.relationRole || "",
     };
-    })();
-    nativeDocumentReadManifest = compileNativeAgentDocumentReadManifest({
+    })());
+    nativeDocumentReadManifest = frontendRouteCanUseGeneralLane(frontendRoute) ? null : compileNativeAgentDocumentReadManifest({
     documents: Object.fromEntries(Object.entries(workspaceState.documents || {}).map(([documentId, document]) => [documentId, {
       ...document,
       displayCharacterCount: stripHtml(document.html || "").length,
@@ -39072,7 +39296,7 @@ const executeConversationAgentMessage = async (content, options) => {
     contextDomain: workspaceState.documents?.[targetDocumentId]?.contextDomain
       || withSynchronousWorkspaceState(workspaceState, () => documentContextDomain(targetDocumentId)),
     });
-    textTaskExecutionContext = compileTextTaskExecutionContext({
+    textTaskExecutionContext = frontendRouteCanUseGeneralLane(frontendRoute) ? null : compileTextTaskExecutionContext({
     taskContextSnapshot: { ...taskContextSnapshot, taskId: String(taskContextSnapshot.taskId || sourceMessageId) },
     sourceMessageId,
     taskRoute: nativeTaskRoute,
@@ -39151,6 +39375,7 @@ const executeConversationAgentMessage = async (content, options) => {
       settings: profileSettings, references: refs.references || [], selectedSkills: refs.skillReferences || [], attachments: refs.attachments || [], mediaProfiles,
       mediaDispatch,
       routingText: String(content || ""),
+      frontendRoute: clone(frontendRoute),
       taskRoute: clone(nativeTaskRoute),
       deliverableType: nativeTaskRoute.deliverableType || "",
       targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
@@ -39959,6 +40184,7 @@ const appendConversationChoiceMessage = ({
     id: uid("message"),
     role,
     time: nowTime(),
+    createdAt: Date.now(),
     content: text,
     contextEligible: true,
     requestMode: "creative",
@@ -42533,12 +42759,19 @@ const activateWorkspaceKind = async (workspaceKind, { activatePreferred = true }
     // Patch the tiny visible picker synchronously. Rebuilding the complete
     // workspace list can coincide with startup cache work on slower disks and
     // must not delay the visual acknowledgement of this click.
-    const picker = elements.projectMenu.querySelector("#workspaceKindButton strong");
-    if (picker) picker.textContent = nextKind === "notebook" ? "笔记" : "作品";
-    elements.projectMenu.querySelectorAll(".workspace-kind-menu [data-workspace-kind]").forEach((button) => {
+    const pickerLabel = nextKind === "notebook" ? "笔记" : "作品";
+    // Update both the visible toolbar picker and the legacy picker kept in the
+    // project panel for compatibility with existing keyboard/UI integrations.
+    // Both labels must acknowledge the click before the asynchronous list
+    // refresh starts; otherwise the old control briefly reports the previous
+    // workspace kind and makes the switch look stalled.
+    const picker = elements.workspaceKindExternalButton?.querySelector("strong");
+    if (picker) picker.textContent = pickerLabel;
+    document.querySelector("#workspaceKindButton strong")?.replaceChildren(pickerLabel);
+    elements.workspaceKindExternalMenu?.querySelectorAll("[data-workspace-kind]").forEach((button) => {
       button.classList.toggle("active", button.dataset.workspaceKind === nextKind);
     });
-    const kindMenu = elements.projectMenu.querySelector(".workspace-kind-menu");
+    const kindMenu = elements.workspaceKindExternalMenu;
     if (kindMenu) kindMenu.hidden = true;
     // Let Chromium paint the collection switch before any directory scan or
     // JSON parsing starts. The list refresh is background work and must never
@@ -46452,6 +46685,10 @@ elements.documentTabs?.addEventListener("drop", (event) => {
   applyDocumentTabState(next);
   persistNavigationState();
   renderDocumentTabs();
+  // A tab reorder is navigation state, but it must be durable before a page
+  // reload or window restart. Flush this small state-only save immediately;
+  // the normal debounced path remains in place for ordinary tab switches.
+  void flushWorkspaceSave({ recoverConflict: true }).catch(() => {});
 });
 
 elements.documentTabs?.addEventListener("dragend", () => {
@@ -48361,6 +48598,28 @@ elements.softwareHistoryDialog.addEventListener("click", async (event) => {
 document.querySelector("#manualUpdateButton").addEventListener("click", runUpdateAction);
 document.querySelector("#saveVersionButton").addEventListener("click", openVersionSaveConfirmation);
 
+elements.workspaceKindExternalButton?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  ui.workspaceKindMenuOpen = !ui.workspaceKindMenuOpen;
+  renderWorkspaceKindSwitcher();
+});
+elements.workspaceKindExternalButton?.addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  const workspaceKind = state.workspaceKind === "notebook" ? "notebook" : "project";
+  ui.projectMenuTarget = activeWorkspaceMenuTarget(workspaceKind) ?? { workspaceKind, createOnly: true, headerRoot: true };
+  configureProjectContextMenu(ui.projectMenuTarget);
+  positionContextMenu(elements.projectContextMenu, { x: event.clientX, y: event.clientY });
+});
+
+elements.workspaceKindExternalMenu?.addEventListener("click", async (event) => {
+  const option = event.target.closest("[data-workspace-kind]");
+  if (!option) return;
+  event.stopPropagation();
+  await activateWorkspaceKind(option.dataset.workspaceKind, { activatePreferred: false });
+  renderWorkspaceKindSwitcher();
+});
+
 document.querySelector("#projectButton").addEventListener("click", async () => {
   ui.panel = ui.panel === "projects" ? null : "projects";
   if (ui.panel === "projects") {
@@ -48385,10 +48644,13 @@ document.querySelector("#projectButton").addEventListener("click", async () => {
 });
 
 const dismissWorkspaceMenuOnOutsidePointer = (event) => {
-  if (event.button !== 0 || ui.panel !== "projects") return;
+  if (event.button !== 0) return;
+  if (event.target.closest("#workspaceKindSwitcher")) return;
+  if (ui.panel !== "projects") return;
   if (event.target.closest("#projectMenu, #projectButton")) return;
   ui.panel = null;
   ui.workspaceKindMenuOpen = false;
+  renderWorkspaceKindSwitcher();
   renderProjectMenu();
 };
 
@@ -50952,6 +51214,7 @@ const addWhiteboardCard = ({ x, y, text = "", kind = "text", color = "default", 
   if (sourceNode) nextCanvas = addCanvasEdge(nextCanvas, { fromNode: sourceNode.id, toNode: nodeId });
   if (targetNode) nextCanvas = addCanvasEdge(nextCanvas, { fromNode: nodeId, toNode: targetNode.id });
   if (targetNode && !checkWhiteboardReferenceCapacity(nextCanvas, [targetNode.id]).ok) return "";
+  if (targetNode) warnWhiteboardAudioReferenceDuration(nextCanvas, [targetNode.id]);
   documentState.canvas = nextCanvas;
   if (assetOrigin === "upload") {
     documentState.canvas = appendCanvasAsset(documentState.canvas, {
@@ -52327,6 +52590,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     closeWhiteboardNodeCreateMenu();
     return false;
   }
+  warnWhiteboardAudioReferenceDuration(nextCanvas, connections.map((connection) => connection.toNode));
   closeWhiteboardNodeCreateMenu();
   documentState.canvas = nextCanvas;
   documentState.updatedAt = nowTime();
@@ -52774,6 +53038,7 @@ document.addEventListener("pointerup", (event) => {
         });
         if (capacity.ok) {
           documentState.canvas = nextCanvas;
+          warnWhiteboardAudioReferenceDuration(nextCanvas, connections.map((connection) => connection.toNode));
         }
         else edgeChanged = false;
       }
@@ -53045,6 +53310,7 @@ const createWhiteboardSelectionGenerationTarget = (nodeIds = [], channel = "text
   nextCanvas = ids.reduce((canvas, sourceNodeId) => addCanvasEdge(canvas, { fromNode: sourceNodeId, toNode: targetNodeId }), nextCanvas);
   const capacity = checkWhiteboardReferenceCapacity(nextCanvas, [targetNodeId], { channel, operation: "generate", bulk: true });
   if (!capacity.ok) return "";
+  warnWhiteboardAudioReferenceDuration(nextCanvas, [targetNodeId]);
   documentState.canvas = nextCanvas;
   documentState.updatedAt = nowTime();
   pushWhiteboardHistory(beforeCanvas, { label: `为 ${ids.length} 张卡片创建${whiteboardGenerationSessionTitle(channel)}下游` });
@@ -53812,8 +54078,19 @@ const restoreInterruptedWhiteboardGenerationDraft = (job) => {
     ...(settings.model ? { model: String(settings.model) } : {}),
     ...(job.request?.generationMode ? { generationMode: String(job.request.generationMode) } : {}),
     ...(job.request?.aspectRatio ? { aspectRatio: String(job.request.aspectRatio) } : {}),
+    ...(job.request?.quality ? { quality: String(job.request.quality) } : {}),
     ...(job.request?.duration ? { duration: String(job.request.duration) } : {}),
     ...(job.request?.resolution ? { resolution: String(job.request.resolution) } : {}),
+    ...(job.request?.background ? { background: String(job.request.background) } : {}),
+    ...(job.request?.imageCount ? { imageCount: String(job.request.imageCount) } : {}),
+    ...(job.request?.videoCount ? { videoCount: String(job.request.videoCount) } : {}),
+    ...(job.request?.generateAudio !== undefined ? { generateAudio: String(job.request.generateAudio) } : {}),
+    ...(job.request?.audioType ? { audioType: String(job.request.audioType) } : {}),
+    ...(job.request?.voiceId ? { voiceId: String(job.request.voiceId) } : {}),
+    ...(job.request?.language ? { language: String(job.request.language) } : {}),
+    ...(job.request?.speed ? { speed: String(job.request.speed) } : {}),
+    ...(job.request?.format ? { format: String(job.request.format) } : {}),
+    ...(job.request?.sampleRate ? { sampleRate: String(job.request.sampleRate) } : {}),
   };
   writeWhiteboardGenerationDraftCache(updateWhiteboardGenerationDraftCache(cache, scope, values, {
     active: false,
@@ -53938,6 +54215,48 @@ const checkWhiteboardReferenceCapacity = (canvas, targetNodeIds, {
   return { ok: true };
 };
 
+// Link-time advisory only: Seedance 2.5 (including its long-video mode)
+// accepts at most 30 seconds of audio references.  The connection itself is
+// still valid and must be persisted; strict validation remains at submit time
+// where the final model/reference selection is known.
+const warnWhiteboardAudioReferenceDuration = (canvas, targetNodeIds = []) => {
+  const normalized = normalizeCanvas(canvas);
+  const warned = new Set();
+  for (const targetNodeId of [...new Set((targetNodeIds || []).map(String).filter(Boolean))]) {
+    const target = normalized.nodes.find((node) => node.id === targetNodeId);
+    const targetChannel = target?.generationIntent?.channel || target?.generation?.channel || (target?.kind === "video" ? "video" : "");
+    if (!target || targetChannel !== "video") continue;
+    const audioDurationMs = normalized.edges
+      .filter((edge) => edge.toNode === targetNodeId)
+      .map((edge) => normalized.nodes.find((node) => node.id === edge.fromNode))
+      .filter((node) => node?.kind === "audio")
+      .reduce((total, node) => {
+        const durationMs = Number(node.durationMs) > 0
+          ? Number(node.durationMs)
+          : Number(node.durationSeconds) > 0 ? Number(node.durationSeconds) * 1000 : 0;
+        return total + (Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0);
+      }, 0);
+    if (audioDurationMs <= 30_000) continue;
+    const openConfig = whiteboardGenerationConfigs().find((config) => config.dialog.open
+      && config.form.dataset.nodeId === targetNodeId
+      && config.dialog.dataset.anchorDocumentId === state.activeDocument);
+    const draftValues = openConfig
+      ? whiteboardGenerationFormValues(openConfig.form)
+      : whiteboardGenerationDraftValues("video", targetNodeId) || {};
+    const profile = target.generation?.profile || {};
+    const model = String(draftValues.model || profile.model || "").trim();
+    const generationMode = String(draftValues.generationMode || profile.generationMode || "").trim().toLowerCase();
+    const seedance25 = seedanceModelFamily(model) === "seedance2.5";
+    const longVideo = generationMode === "long_video" || generationMode === "composite_long_video";
+    if (!seedance25 && !longVideo) continue;
+    const targetLabel = String(target.name || target.text || "视频卡片").replace(/\s+/gu, " ").trim().slice(0, 32) || "视频卡片";
+    const warningKey = `${targetNodeId}:${Math.round(audioDurationMs)}`;
+    if (warned.has(warningKey)) continue;
+    warned.add(warningKey);
+    showToast(`“${targetLabel}”的音频参考总时长约 ${(audioDurationMs / 1000).toFixed(1)} 秒，超过 Seedance 2.5/超长视频的 30 秒限制；已保留连线，正式生成前请裁剪或减少音频参考`);
+  }
+};
+
 const whiteboardGenerationDialogDraftScope = (dialog) => {
   const config = whiteboardGenerationConfigFor(dialog);
   const nodeId = config?.form.dataset.nodeId;
@@ -53949,10 +54268,12 @@ const whiteboardGenerationDialogDraftScope = (dialog) => {
 };
 
 const whiteboardGenerationDraftValuesEqual = (left = {}, right = {}) => {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length
-    && leftKeys.every((key) => left[key] === right[key]);
+  const stable = (value) => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
+    return value;
+  };
+  return JSON.stringify(stable(left)) === JSON.stringify(stable(right));
 };
 
 const saveWhiteboardGenerationDraft = (dialog, {
@@ -53963,6 +54284,10 @@ const saveWhiteboardGenerationDraft = (dialog, {
   const config = whiteboardGenerationConfigFor(dialog);
   const scope = whiteboardGenerationDialogDraftScope(dialog);
   if (!config || !scope) return;
+  // The visible rich editor is authoritative. Flush it into the hidden
+  // textarea before reading form values so the newest keystrokes survive a
+  // crash/recovery even when the input event has not reached the next frame.
+  if (whiteboardGenerationRichPrompt(config.form)) syncWhiteboardRichPromptValue(config.form);
   const previous = readWhiteboardGenerationDraftCache();
   const key = whiteboardGenerationDraftKey(scope);
   const values = whiteboardGenerationFormValues(config.form);
@@ -54969,6 +55294,46 @@ const toggleWhiteboardGenerationAudioPreview = async (button) => {
 };
 
 const whiteboardGenerationReferenceRenderCache = new WeakMap();
+// Rendering the reference tray replaces its children after a prompt/reference
+// edit. Keep the user's horizontal position across that replacement; otherwise
+// every insertion makes a long tray jump back to its first card.
+const whiteboardGenerationReferenceScrollCache = new WeakMap();
+
+const captureWhiteboardGenerationReferenceScroll = (container) => {
+  const list = container?.querySelector?.(".whiteboard-generation-reference-list");
+  const cached = whiteboardGenerationReferenceScrollCache.get(container);
+  // A redraw can replace the list before the next render pass observes it. In
+  // that short window the new list reports scrollLeft=0; keep the last user
+  // position until the replacement has been restored instead of overwriting
+  // it with that transient zero.
+  if (!list) return cached || null;
+  if (cached?.list && cached.list !== list) return cached;
+  const snapshot = {
+    scrollLeft: Number(list.scrollLeft) || 0,
+    anchorId: list.querySelector("[data-generation-reference]")?.dataset?.generationReference || "",
+    list,
+  };
+  whiteboardGenerationReferenceScrollCache.set(container, snapshot);
+  return snapshot;
+};
+
+const restoreWhiteboardGenerationReferenceScroll = (container, snapshot = null) => {
+  const saved = snapshot || whiteboardGenerationReferenceScrollCache.get(container);
+  const list = container?.querySelector?.(".whiteboard-generation-reference-list");
+  if (!list || !saved) return;
+  const scrollLeft = Math.max(0, Number(saved.scrollLeft) || 0);
+  const restore = () => {
+    if (!list.isConnected || !container.contains(list)) return;
+    const current = whiteboardGenerationReferenceScrollCache.get(container);
+    // Do not let a stale rAF from an earlier render undo a newer user scroll
+    // or a newer list replacement.
+    if (current?.list === list && current.scrollLeft !== scrollLeft) return;
+    list.scrollLeft = scrollLeft;
+    whiteboardGenerationReferenceScrollCache.set(container, { ...saved, list, scrollLeft });
+  };
+  restore();
+  requestAnimationFrame(restore);
+};
 
 const whiteboardVideoFrameLabel = (index, mode) => {
   const english = globalUiPreferences.uiLanguage === "en-US";
@@ -55058,6 +55423,7 @@ const whiteboardVideoReferenceListMarkup = ({ form, nodes, explicitIds, aliases,
 
 function renderWhiteboardGenerationReferences(container, nodeId) {
   if (!container) return;
+  const previousReferenceScroll = captureWhiteboardGenerationReferenceScroll(container);
   const form = container.closest("form");
   const { target, upstream: sourceUpstream } = whiteboardGenerationSources(activeWhiteboardDocument()?.canvas, nodeId);
   const rawUpstream = whiteboardGenerationNodesForForm(form, sourceUpstream);
@@ -55105,6 +55471,7 @@ function renderWhiteboardGenerationReferences(container, nodeId) {
     container.innerHTML = markup;
     whiteboardGenerationReferenceRenderCache.set(container, markup);
   }
+  restoreWhiteboardGenerationReferenceScroll(container, previousReferenceScroll);
   renderWhiteboardGenerationInlineMentions(form);
   const dialog = container.closest("dialog");
   if (dialog?.open) requestAnimationFrame(() => positionWhiteboardGenerationDialog(dialog));
@@ -56441,6 +56808,8 @@ const syncWhiteboardImageCapabilityOptions = ({ preferGptImage25Defaults = false
   if (!profile) return;
   const model = String(form.elements.model.value || profile.model || "").trim();
   const gptImage25 = isGptImage25Model(model);
+  const libTvImage25 = String(profile.provider || "").trim().toLowerCase() === "libtv"
+    && ["lib-image-2.5-s", "lib-image-2.5-f"].includes(model.toLowerCase());
   const capabilities = imageModelCapabilities(profile.provider, model, dynamicModelsForChannel(profile.provider, profile.adapter));
   const previousRatio = form.elements.aspectRatio.value || "auto";
   const previousQuality = form.elements.quality.value || DEFAULT_IMAGE_GENERATION_QUALITY;
@@ -56456,10 +56825,10 @@ const syncWhiteboardImageCapabilityOptions = ({ preferGptImage25Defaults = false
   if (form.elements.resolution) form.elements.resolution.innerHTML = (resolutionOptions.length ? resolutionOptions : ["1k"]).map((value) => `<option value="${value}">${value.toUpperCase()}</option>`).join("");
   if (form.elements.background) form.elements.background.innerHTML = (capabilities.backgrounds?.length ? capabilities.backgrounds : ["auto"]).map((value) => `<option value="${value}">${value === "auto" ? "自动" : value === "opaque" ? "保留背景" : "透明背景"}</option>`).join("");
   form.elements.aspectRatio.value = aspectRatios.includes(previousRatio) ? previousRatio : "auto";
-  const defaultGptImage25Quality = gptImage25 && qualityOptions.includes("standard") ? "standard" : "";
-  const defaultGptImage25Resolution = gptImage25 && resolutionOptions.includes("2k") ? "2k" : "";
-  form.elements.quality.value = preferGptImage25Defaults && defaultGptImage25Quality
-    ? defaultGptImage25Quality
+  const defaultStandard2kQuality = (gptImage25 || libTvImage25) && qualityOptions.includes("standard") ? "standard" : "";
+  const defaultStandard2kResolution = (gptImage25 || libTvImage25) && resolutionOptions.includes("2k") ? "2k" : "";
+  form.elements.quality.value = preferGptImage25Defaults && defaultStandard2kQuality
+    ? defaultStandard2kQuality
     : capabilities.resolutions.includes(previousQuality)
       ? previousQuality
       : qualityOptions.includes(previousQuality)
@@ -56467,8 +56836,8 @@ const syncWhiteboardImageCapabilityOptions = ({ preferGptImage25Defaults = false
         : qualityOptions.includes(DEFAULT_IMAGE_GENERATION_QUALITY)
           ? DEFAULT_IMAGE_GENERATION_QUALITY
           : qualityOptions[0] || "standard";
-  if (form.elements.resolution) form.elements.resolution.value = preferGptImage25Defaults && defaultGptImage25Resolution
-    ? defaultGptImage25Resolution
+  if (form.elements.resolution) form.elements.resolution.value = preferGptImage25Defaults && defaultStandard2kResolution
+    ? defaultStandard2kResolution
     : resolutionOptions.includes(previousResolution) ? previousResolution : resolutionOptions[0] || "1k";
   if (form.elements.background) form.elements.background.value = (capabilities.backgrounds || ["auto"]).includes(previousBackground) ? previousBackground : "auto";
   if (elements.whiteboardImageQualityField) {
@@ -57745,6 +58114,7 @@ const addWhiteboardImageCard = ({ attachment, aspectRatio = 16 / 9, generation =
     documentState.canvas = beforeCanvas;
     return "";
   }
+  if (targetNode) warnWhiteboardAudioReferenceDuration(documentState.canvas, [targetNode.id]);
   const assetKind = attachment.mimeType?.startsWith("audio/") ? "audio" : attachment.mimeType?.startsWith("video/") ? "video" : attachment.mimeType?.startsWith("image/") ? "image" : "";
   if (assetOrigin === "upload" && assetKind) {
     const uploadedAt = attachment.uploadedAt || new Date().toISOString();
@@ -58675,6 +59045,7 @@ const addHistoricalAssetAsWhiteboardReference = (asset, targetNodeId) => {
       return false;
     }
     if (!checkWhiteboardReferenceCapacity(nextCanvas, [targetNodeId]).ok) return false;
+    warnWhiteboardAudioReferenceDuration(nextCanvas, [targetNodeId]);
     documentState.canvas = nextCanvas;
     documentState.updatedAt = nowTime();
     pushWhiteboardHistory(beforeCanvas, { label: "添加资产参考" });
@@ -60405,6 +60776,16 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
   let cardApplyConfirmed = false;
   try {
     const effectivePrompt = await buildWhiteboardMediaProviderPrompt({ prompt, channel: "image", generationContext, referencePlan });
+    // Keep the complete card-level generation profile with the job/result so
+    // duplicating a generated card can restore every visible option, not only
+    // its connection and model.
+    Object.assign(imageSettings, {
+      aspectRatio,
+      quality: String(formData.get("quality") || ""),
+      resolution: String(formData.get("resolution") || ""),
+      background: String(formData.get("background") || ""),
+      imageCount,
+    });
     updateWhiteboardGenerationCandidate(candidateKey, { progressPercent: 28 });
     durableJob = await createWhiteboardMediaGenerationJob({
       channel: "image",
@@ -60435,6 +60816,7 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
       jobId: durableJob.id,
       status: durableJob.status,
       providerStatus: durableJob.providerStatus,
+      ...dreaminaQueueCandidateState(durableJob),
       provider: String(durableJob.request?.settings?.provider || durableJob.settings?.provider || imageSettings?.provider || ""),
       model: String(durableJob.request?.settings?.model || durableJob.settings?.model || imageSettings?.model || ""),
       providerTaskId: durableJob.providerTaskId,
@@ -60477,7 +60859,7 @@ elements.whiteboardImageForm.addEventListener("submit", async (event) => {
       const failure = dreaminaFailureDiagnosis(dreaminaFailureInput({ error, job: durableJob }));
       openDreaminaReverifyDialog({ settings: imageSettings });
       showToast(`即梦图片账号需要核验。${failure.resolution}`);
-    } else if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_SWITCH_BLOCKED") {
+    } else if (["DREAMINA_PROFILE_SWITCH_BLOCKED", "DREAMINA_PROFILE_BROKER_BUSY"].includes(String(error?.code || "").toUpperCase())) {
       openDreaminaProfileLockDialog(error.details || {});
     } else showToast(`图片生成失败：${error.message}`);
   } finally {
@@ -61155,6 +61537,14 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
   setWhiteboardVideoSettingsPanelOpen(false);
   updateWhiteboardGenerationCandidate(initialCandidateKey, { prompt });
   try {
+    Object.assign(videoSettings, {
+      aspectRatio,
+      generationMode,
+      duration: Number(formData.get("duration")) || 0,
+      resolution: String(formData.get("resolution") || ""),
+      generateAudio,
+      videoCount,
+    });
     const effectivePrompt = await buildWhiteboardMediaProviderPrompt({ prompt, channel: "video", generationContext, referencePlan });
     if (generationMode === "long_video") {
       const duration = Number(formData.get("duration"));
@@ -61250,6 +61640,7 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
         });
         updateWhiteboardGenerationCandidate(candidateKey, {
           jobId: durableJob.id,
+          ...dreaminaQueueCandidateState(durableJob),
           status: durableJob.status,
           providerStatus: durableJob.providerStatus,
           provider: String(durableJob.request?.settings?.provider || durableJob.settings?.provider || videoSettings?.provider || ""),
@@ -61326,7 +61717,7 @@ elements.whiteboardVideoForm.addEventListener("submit", async (event) => {
       showToast(`即梦视频账号需要核验。${failure.resolution}`);
       return;
     }
-    if (String(error?.code || "").toUpperCase() === "DREAMINA_PROFILE_SWITCH_BLOCKED") {
+    if (["DREAMINA_PROFILE_SWITCH_BLOCKED", "DREAMINA_PROFILE_BROKER_BUSY"].includes(String(error?.code || "").toUpperCase())) {
       openDreaminaProfileLockDialog(error.details || {});
     } else showToast(`视频生成失败：${error.message}`);
   } finally {
@@ -61441,6 +61832,15 @@ elements.whiteboardAudioForm.addEventListener("submit", async (event) => {
       || whiteboardNodeById(nodeId)?.generation?.jobId || "");
     const beforeCanvas = whiteboardCanvasSnapshot(state.documents[sourceDocumentId]?.canvas);
     const effectivePrompt = await buildWhiteboardMediaProviderPrompt({ prompt, channel: "audio", generationContext, referencePlan });
+    Object.assign(audioSettings, {
+      audioType: String(formData.get("audioType") || "auto"),
+      scene: String(formData.get("audioType") || "auto") === "speech" ? "Text-to-Speech" : "",
+      voiceId: String(formData.get("voiceId") || "female-shaonv"),
+      language: String(formData.get("language") || "zh"),
+      speed: Number(formData.get("speed")) || 1,
+      format: String(formData.get("format") || "wav"),
+      sampleRate: Number(formData.get("sampleRate")) || 24000,
+    });
     durableJob = await createWhiteboardMediaGenerationJob({
       channel: "audio",
       target: whiteboardGenerationJobTarget({ workspaceKind: sourceWorkspaceKind, workspacePath: sourceWorkspacePath, documentId: sourceDocumentId, nodeId }),
@@ -61911,6 +62311,19 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
 });
 
 [elements.whiteboardTextReferences, elements.whiteboardImageReferences, elements.whiteboardVideoReferences, elements.whiteboardAudioReferences].forEach((container) => {
+  // Scroll events do not bubble from the horizontal tray. Capture them at
+  // the stable outer container so the last position survives list replacement
+  // caused by asynchronous reference insertion or provider refreshes.
+  container.addEventListener("scroll", (event) => {
+    const list = event.target?.closest?.(".whiteboard-generation-reference-list");
+    if (!list || !container.contains(list)) return;
+    const scrollLeft = Number(list.scrollLeft) || 0;
+    whiteboardGenerationReferenceScrollCache.set(container, {
+      scrollLeft,
+      anchorId: list.querySelector("[data-generation-reference]")?.dataset?.generationReference || "",
+      list,
+    });
+  }, true);
   container.addEventListener("dragstart", (event) => {
     const reference = event.target.closest('[data-generation-reference-role="upstream"]');
     if (!reference || event.target.closest("button, audio, video")) {
@@ -62267,6 +62680,7 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
   syncWhiteboardGenerationPromptReferenceSequenceFromEditor(form);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   if (connectedCopiedReference) {
+    warnWhiteboardAudioReferenceDuration(documentState.canvas, [target.id]);
     documentState.updatedAt = nowTime();
     pushWhiteboardHistory(beforeCanvas, { label: "粘贴生成提示词与图片参考" });
     persist();
@@ -68789,7 +69203,7 @@ elements.accountLoginDialog.addEventListener("click", (event) => {
   ui.account.loginMode = mode;
   renderAccountLoginMode();
   setAccountLoginStatus();
-  const focusName = mode === "register" ? "registerAccount" : mode === "recover" ? "recoverAccount" : "account";
+  const focusName = mode === "email" ? "loginEmail" : mode === "register" ? "registerAccount" : mode === "recover" ? "recoverAccount" : "account";
   elements.accountLoginForm.elements[focusName]?.focus();
 });
 document.querySelector("#closeAccountLogin").addEventListener("click", () => elements.accountLoginDialog.close());
@@ -68797,11 +69211,12 @@ document.querySelector("#cancelAccountLogin").addEventListener("click", () => el
 const accountApi = async (path, { method = "GET", body } = {}) => {
   const response = await fetch(path, {
     method,
+    signal: AbortSignal.timeout(20_000),
     headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...(ui.account.token ? { Authorization: `Bearer ${ui.account.token}` } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload.ok === false) throw new Error(payload.message || "账户服务请求失败");
+  if (!response.ok || payload.ok === false) throw Object.assign(new Error(payload.message || "账户服务请求失败"), { status: response.status, code: payload.code, retryAfterSeconds: Number(payload.retryAfterSeconds) || 0 });
   return payload;
 };
 
@@ -68809,11 +69224,18 @@ const syncAccountProfile = (user, token = ui.account.token) => {
   const profile = user || {};
   ui.account.authenticated = Boolean(user);
   ui.account.token = token || "";
-  ui.account.profile = { nickname: profile.displayName || "神思用户", accountId: profile.account || profile.email || "--", account: profile.account || profile.email || "" };
+  ui.account.profile = { nickname: profile.displayName || "神思用户", accountId: profile.account || profile.email || "--", account: profile.account || profile.email || "", id: profile.id || "", avatar: profile.avatar || "", email: profile.email || "", emailVerifiedAt: Number(profile.emailVerifiedAt) || 0 };
+  const verifiedEmail = profile.emailVerifiedAt > 0;
+  document.querySelector('[data-account-email-state]').textContent = verifiedEmail ? profile.email : '验证绑定后可以使用邮箱验证码登录。';
+  document.querySelector('[data-account-email-verified]').textContent = verifiedEmail ? '已验证' : '未验证';
+  document.querySelector('#accountBindEmail').hidden = verifiedEmail;
   renderAccountSettings();
+  void accountPlatformUI.refresh();
   const membershipState = document.querySelector("#membershipAccountState");
   if (membershipState) membershipState.textContent = user ? `已登录：${ui.account.profile.accountId}` : "尚未登录";
 };
+
+const accountPlatformUI = installAccountPlatformUI({ accountApi, getAccount: () => ui.account, syncAccountProfile, showToast });
 
 const rememberAccountSession = ({ account = "", token = "", remember = false } = {}) => {
   const storage = remember ? localStorage : sessionStorage;
@@ -68829,17 +69251,36 @@ const clearRememberedAccountSession = () => {
   sessionStorage.removeItem("shensi-account-token");
 };
 
+const accountEmailUI = installAccountEmailUI({ dialog: elements.accountLoginDialog, form: elements.accountLoginForm, accountApi, getAccount: () => ui.account,
+  setStatus: (message) => setAccountLoginStatus(message),
+  onLogin: (payload) => {
+    syncAccountProfile(payload.user, payload.token);
+    rememberAccountSession({ account: payload.user.account, token: payload.token, remember: false });
+    showToast('神思账号已通过邮箱验证登录');
+  },
+  onBound: (user, token) => { syncAccountProfile(user, token); showToast('邮箱已验证绑定，可用于验证码登录'); },
+});
+document.querySelector('#accountBindEmail').addEventListener('click', () => accountEmailUI.openBinding());
+
 const restoreRememberedAccountSession = async () => {
   const token = localStorage.getItem("shensi-account-token") || sessionStorage.getItem("shensi-account-token") || "";
   if (!token) return false;
   ui.account.token = token;
   try {
     const payload = await accountApi("/api/account/me");
+    if (ui.account.token !== token) return false;
     syncAccountProfile(payload.user, token);
     return true;
-  } catch {
-    clearRememberedAccountSession();
-    syncAccountProfile(null, "");
+  } catch (error) {
+    if (ui.account.token !== token) return false;
+    if (error.status === 401) {
+      clearRememberedAccountSession();
+      syncAccountProfile(null, "");
+    } else {
+      syncAccountProfile(null, token);
+      const status = document.querySelector("[data-account-service-status]");
+      if (status) status.textContent = "账户服务暂不可用，已保留登录凭据；重新打开账户设置可重试。";
+    }
     return false;
   }
 };
@@ -68872,6 +69313,7 @@ document.querySelectorAll("[data-account-password-reveal]").forEach((button) => 
 elements.accountLoginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const mode = ui.account.loginMode;
+  if (mode === 'email') { await accountEmailUI.login(); return; }
   const form = elements.accountLoginForm.elements;
   const submit = elements.accountLoginForm.querySelector('button[type="submit"]');
   submit.disabled = true;
@@ -69813,7 +70255,7 @@ const renderSettingsSection = () => {
 };
 
 const renderAccountLoginMode = () => {
-  const mode = ["password", "register", "recover"].includes(ui.account.loginMode)
+  const mode = ["password", "email", "register", "recover"].includes(ui.account.loginMode)
     ? ui.account.loginMode
     : "password";
   document.querySelectorAll("[data-account-login-mode]").forEach((button) => {
@@ -69823,12 +70265,14 @@ const renderAccountLoginMode = () => {
   });
   document.querySelectorAll("[data-account-login-panel]").forEach((panel) => {
     panel.hidden = panel.dataset.accountLoginPanel !== mode;
+    panel.querySelectorAll('input, select, textarea').forEach((field) => { field.disabled = panel.hidden; });
   });
+  accountEmailUI.setActive(mode === 'email');
   const submit = elements.accountLoginForm.querySelector('button[type="submit"]');
-  if (submit) submit.textContent = mode === "register" ? "注册" : mode === "recover" ? "重置密码" : "登录";
+  if (submit) submit.textContent = mode === "email" ? "验证并登录" : mode === "register" ? "注册" : mode === "recover" ? "重置密码" : "登录";
 };
 
-const setAccountLoginStatus = (message = "可使用神思账号登录、注册或通过密保问题找回密码。") => {
+const setAccountLoginStatus = (message = "可使用密码或邮箱验证码登录；原账号请先登录后验证绑定邮箱。") => {
   elements.accountLoginStatus.textContent = uiText(message);
 };
 
@@ -69836,7 +70280,7 @@ const ACCOUNT_LOGIN_AVAILABLE = true;
 const MEMBERSHIP_SERVICE_AVAILABLE = false;
 
 const openAccountLogin = (mode = "password") => {
-  ui.account.loginMode = ["password", "register", "recover"].includes(mode) ? mode : "password";
+  ui.account.loginMode = ["password", "email", "register", "recover"].includes(mode) ? mode : "password";
   elements.accountLoginForm.reset();
   document.querySelector("#accountRecoveryQuestion").hidden = true;
   document.querySelector("#accountRecoveryQuestionText").textContent = "";
@@ -69849,7 +70293,7 @@ const openAccountLogin = (mode = "password") => {
   setAccountLoginStatus();
   translateStaticUi();
   if (!elements.accountLoginDialog.open) elements.accountLoginDialog.showModal();
-  const focusName = ui.account.loginMode === "register" ? "registerAccount" : ui.account.loginMode === "recover" ? "recoverAccount" : "account";
+  const focusName = ui.account.loginMode === "email" ? "loginEmail" : ui.account.loginMode === "register" ? "registerAccount" : ui.account.loginMode === "recover" ? "recoverAccount" : "account";
   requestAnimationFrame(() => elements.accountLoginForm.elements[focusName]?.focus());
 };
 
@@ -73002,7 +73446,7 @@ elements.skillHistoryDialog.addEventListener("click", async (event) => {
     try {
       const response = await fetch("/api/skill-marketplace/install", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(ui.account.token ? { Authorization: "Bearer " + ui.account.token } : {}) },
         body: JSON.stringify({ id: marketplaceInstall.dataset.marketplaceVersionInstall, replaceLocalVersions: true }),
       });
       const payload = await response.json();
@@ -73166,6 +73610,7 @@ document.querySelector("#skillDetailReviewText").addEventListener("input", (even
 document.querySelector("#publishSkillReview").addEventListener("click", async (event) => {
   if (!ui.skillDetail.ratingId) return;
   const publishButton = event.currentTarget;
+  if (String(ui.skillDetail.ratingId).startsWith("remote:") && !ui.account.authenticated) return requestAccountLogin();
   const rating = Number(ui.skillDetail.ratingDraft);
   const comment = document.querySelector("#skillDetailReviewText").value.trim();
   if (!rating) return showToast("请先选择 1 至 5 星评分");
@@ -73174,7 +73619,7 @@ document.querySelector("#publishSkillReview").addEventListener("click", async (e
   try {
     const response = await fetch("/api/skill-marketplace/rating", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(ui.account.token ? { Authorization: "Bearer " + ui.account.token } : {}) },
       body: JSON.stringify({ id: ui.skillDetail.ratingId, rating, comment, profile: ui.account.profile }),
     });
     const payload = await response.json();
@@ -73189,7 +73634,7 @@ document.querySelector("#publishSkillReview").addEventListener("click", async (e
     document.querySelector("#skillDetailRatingCount").textContent = `${Number(payload.skill?.ratingCount) || ui.skillDetail.reviews.length} 条点评`;
     renderSkillDetailReviews(ui.skillDetail.reviews);
     await refreshSkillCatalog({ force: true });
-    showToast("评分与点评已发表");
+    showToast(payload.message || "评分与点评已发表");
   } catch (error) {
     showToast(error.message || "评分与点评发表失败");
   } finally {
@@ -73902,7 +74347,7 @@ elements.skillSettingsContent.addEventListener("click", async (event) => {
     try {
       const response = await fetch("/api/skill-marketplace/install", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(ui.account.token ? { Authorization: "Bearer " + ui.account.token } : {}) },
         body: JSON.stringify({ id: marketplaceInstall.dataset.marketplaceInstall }),
       });
       const payload = await response.json();
@@ -74338,7 +74783,8 @@ document.querySelector("#accountSettingsMembership").addEventListener("click", (
 document.querySelectorAll("[data-account-requires-login]").forEach((button) => button.addEventListener("click", () => {
   if (!ACCOUNT_LOGIN_AVAILABLE) showToast(uiText("登录功能暂未上线"));
   else if (!ui.account.authenticated) openAccountLogin();
-  else showToast("账户资料 API 尚未连接，当前不会修改账户信息");
+  else if (button.dataset.accountRequiresLogin === "profile") accountPlatformUI.open();
+  else showToast("此项账户安全服务尚未开放");
 }));
 document.querySelector("#accountSignOut").addEventListener("click", async () => {
   if (!ui.account.authenticated) return;
@@ -74350,6 +74796,8 @@ document.querySelector("#accountSignOut").addEventListener("click", async () => 
 let settingsOpenPromise = null;
 
 const openSettingsDialog = async () => {
+  if (!ui.account.authenticated && ui.account.token) void restoreRememberedAccountSession();
+  else if (ui.account.authenticated) void accountPlatformUI.refresh();
   if (elements.settingsDialog.open) {
     elements.settingsDialog.focus();
     return;
@@ -74937,7 +75385,7 @@ const renderWhiteboardGenerationCredit = (channel) => {
   const roundedEstimate = Number.isInteger(estimatedCredit) ? estimatedCredit : Number(estimatedCredit.toFixed(1));
   const lead = estimatedCredit > 0 ? `本次预计消耗：约 ${roundedEstimate} 积分` : "本次消耗：待首次生成校准";
   output.replaceChildren(document.createTextNode(lead));
-  output.title = `${account.remarkName || account.profileId} · 当前余额 ${dreaminaAccountCredit(account) ?? "未取得"} 积分${account.creditRefreshPending === true ? "（待刷新）" : ""}；生成后以实际扣除为准`;
+  output.title = `${account.remarkName || account.profileId} · 当前余额 ${dreaminaAccountCredit(account) ?? "未取得"} 积分${account.creditRefreshPending === true ? "（待刷新）" : ""}；生成后以实际扣除为准；同参数最近一次实际消耗会在成功回写后显示`;
   renderWhiteboardCreditBalance();
 };
 
@@ -75715,9 +76163,13 @@ const renderDreaminaAccountStatus = (profile = null, preferredChannel = "", erro
   const currentStatus = profile?.profileId === id
     ? profile
     : (ui.dreaminaAccountStatuses || []).find((item) => item.profileId === id) || null;
+  const account = currentStatus || profile || null;
   const remarkName = currentStatus?.remarkName || fallback?.remarkName || id;
   title.textContent = `即梦账号 · ${remarkName}`;
-  if (errorMessage) {
+  if (account?.statusReadUnavailable && dreaminaAccountHasDurableIdentity(account)) {
+    status.textContent = "账号状态暂时无法读取；已保存的核验身份保持有效，生成时会用真实命令再次确认";
+    if (metrics) metrics.hidden = true;
+  } else if (errorMessage) {
     status.textContent = `账号状态读取失败：${errorMessage}`;
     if (metrics) metrics.hidden = true;
   } else if (!currentStatus) {
@@ -76247,11 +76699,14 @@ const syncProviderSpecificCliButtons = async () => {
         const current = (ui.dreaminaAccountStatuses || []).find(
           (item) => item.profileId === currentDreaminaProfileId(dreaminaChannel),
         ) || null;
+        const statusReadError = error.message || "状态接口不可用";
+        const account = current || null;
         // Temporary control-plane failures cannot erase a durable verified
         // identity. Keep the saved account visible and let a later refresh
         // update only the live balance fields.
         if (current?.state === "verified") renderDreaminaAccountStatus(current, dreaminaChannel);
-        else renderDreaminaAccountStatus(current, dreaminaChannel, error.message || "状态接口不可用");
+        else if (statusReadError && !account) renderDreaminaAccountStatus(null, dreaminaChannel, `${statusReadError}；这不能证明账号失效`);
+        else renderDreaminaAccountStatus(current, dreaminaChannel, statusReadError);
         return null;
       })
     : null;
@@ -76274,7 +76729,11 @@ const syncProviderSpecificCliButtons = async () => {
       }
     }
   } catch (error) {
-    if (dreaminaChannel && !accountRefresh) renderDreaminaAccountStatus(null, dreaminaChannel, error.message || "状态接口不可用");
+    const statusReadError = error.message || "状态接口不可用";
+    const account = null;
+    if (dreaminaChannel && !accountRefresh && statusReadError && !account) {
+      renderDreaminaAccountStatus(null, dreaminaChannel, `${statusReadError}；这不能证明账号失效`);
+    }
   }
   // Account status refresh is observational. Opening Settings, switching a
   // profile, or starting the app must never open an OAuth dialog; generation
@@ -76329,7 +76788,8 @@ const startDreaminaProfileVerification = async (profileId, { trigger = null, cha
     }
     return reopened;
   }
-  const profile = (ui.dreaminaAccountStatuses || []).find((item) => item.profileId === profileId) || null;
+  const profile = (ui.dreaminaAccountStatuses || []).find((item) => item.profileId === profileId)
+    || await refreshDreaminaAccountStatus({ profileId, channel }).catch(() => null);
   const browserId = chooseDreaminaAuthorizationBrowser(profile);
   if (!browserId && !profile?.browser?.id) {
     if (status && !status.closest("[hidden]")) status.textContent = "已取消账号核验；原账号凭据保持不变";
@@ -76547,53 +77007,15 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
     showToast("当前连接未指定即梦账号，请重新选择配置");
     return false;
   }
-  let account = dreaminaAccountForSettings(settings);
-  let statusReadError = null;
-  const hadReusableEvidence = dreaminaAccountHasDurableIdentity(account);
-  // An empty startup cache means "not read yet", not "authorization expired".
-  // Read the durable verdict before opening the authorization dialog. The
-  // existing task card already displays preparation while this read runs.
-  const statusCacheKey = `${channel}:${profileId}`;
-  const statusReadAt = Number(ui.dreaminaStatusReadAt.get(statusCacheKey) || 0);
-  const statusCacheFresh = hadReusableEvidence && Date.now() - statusReadAt < 5_000;
-  if (!statusCacheFresh) {
-    try {
-      // Re-read the persisted identity and credential fingerprint when the
-      // short evidence window expires. This catches local credential
-      // replacement without making every rapid submit wait on the control
-      // plane again.
-      const refreshed = await refreshDreaminaAccountStatus({ verifyLive: false, profileId, channel });
-      // A read-only refresh must not downgrade a cached verified identity on a
-      // transient/incomplete control-plane response. Explicit invalid,
-      // mismatch and duplicate states still replace it and remain hard gates.
-      if (refreshed?.state === "verified" || !hadReusableEvidence
-        || ["invalid", "mismatch", "duplicate", "unbound"].includes(refreshed?.state)) account = refreshed;
-    } catch (error) {
-      // A transient status transport failure must not invalidate an already
-      // verified account. The charge gate still uses the last known credit.
-      if (!hadReusableEvidence) statusReadError = error;
-    }
+  const account = dreaminaAccountForSettings(settings);
+  if (String(account?.runtimeState || "") === "auth_required") {
+    openDreaminaReverifyDialog({ settings, account, channel });
+    return false;
   }
-  if (account?.state !== "verified" && !hadReusableEvidence) {
-    try {
-      const refreshed = await refreshDreaminaAccountStatus({ verifyLive: true, profileId, channel });
-      if (refreshed) account = refreshed;
-    } catch (error) {
-      statusReadError = error;
-    }
-  }
-  // A renderer may still hold the pre-failure `state=verified` snapshot while
-  // the server has already persisted explicit auth_required evidence. Never
-  // let that stale view bypass the credential gate.
   if (String(account?.runtimeState || "") !== "auth_required"
     && (account?.state === "verified" || dreaminaAccountHasDurableIdentity(account))) {
-    if (elements.dreaminaReverifyDialog?.open
-      && elements.dreaminaReverifyDialog.dataset.profileId === profileId
-      && elements.dreaminaReverifyDialog.dataset.channel === channel) {
-      elements.dreaminaReverifyDialog.close();
-    }
     if (account.cliGenerationEligible === false) {
-      showToast(`即梦配置“${account.remarkName || account.profileId}”实时积分为 ${dreaminaAccountCredit(account) ?? "未取得"}，但厂商未给当前账号开通 Dreamina CLI 生成权限；本次未创建任务、未扣积分。请开通会员后刷新，或切换其他配置。`);
+      showToast(`即梦配置“${account.remarkName || profileId}”当前没有可用的生成权限`);
       return false;
     }
     const form = channel === "image" ? elements.whiteboardImageForm : channel === "video" ? elements.whiteboardVideoForm : null;
@@ -76601,32 +77023,14 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
     const required = Math.max(0, Number(estimate?.estimatedCredit) || 0);
     const available = dreaminaAccountCredit(account);
     if (required > 0 && available !== null && available < required) {
-      showToast(`当前配置“${account.remarkName || account.profileId}”剩余 ${available} 积分；同参数最近一次实际消耗 ${required} 积分，请切换配置或降低参数后再生成。`);
+      showToast(`当前配置“${account.remarkName || profileId}”积分不足，已阻止提交`);
       return false;
     }
-    return true;
   }
-  if (account?.statusReadUnavailable) {
-    if (elements.dreaminaReverifyDialog?.open
-      && elements.dreaminaReverifyDialog.dataset.profileId === profileId
-      && elements.dreaminaReverifyDialog.dataset.channel === channel) {
-      elements.dreaminaReverifyDialog.close();
-    }
-    showToast(`即梦配置“${account.remarkName || profileId}”的账号状态暂时无法读取：${account.error || "未知故障"}；已保存的核验身份保持有效，本次未提交`);
-    return false;
-  }
-  if (statusReadError && !account) {
-    const label = String(settings.remarkName || profileId).trim() || profileId;
-    if (elements.dreaminaReverifyDialog?.open
-      && elements.dreaminaReverifyDialog.dataset.profileId === profileId
-      && elements.dreaminaReverifyDialog.dataset.channel === channel) {
-      elements.dreaminaReverifyDialog.close();
-    }
-    showToast(`即梦配置“${label}”的账号状态无法读取：${statusReadError.message || "未知错误"}；这不能证明账号失效，本次未提交`);
-    return false;
-  }
-  if (dreaminaAccountRequiresVerification(account)) openDreaminaReverifyDialog({ settings, account });
-  return false;
+  // Persist first. The worker validates the original profile when it gets its
+  // queue turn; renderer probes must not race another account's CLI command.
+  // Auth, credit and model errors become explicit red tasks, never success.
+  return true;
 };
 
 document.querySelector("#bindDreaminaAccount")?.addEventListener("click", async (event) => {
@@ -77078,8 +77482,8 @@ const refreshAvailableModels = async () => {
       return;
     }
     if (settings.textAgentEngine === "opencode") {
-      const credentialSource = settings.textCredentialSource === "shensi" ? "shensi" : "opencode";
-      result.textContent = credentialSource === "shensi" ? `正在读取 ${settings.provider || "服务商"} 的真实模型目录…` : "正在读取当前 OpenCode 模型目录…";
+      const credentialSource = normalizeOpenCodeCredentialSource(settings.textCredentialSource);
+      result.textContent = credentialSource === "shensi" ? `正在读取 ${settings.provider || "服务商"} 的真实模型目录…` : credentialSource === "opencode_free" ? "正在读取 OpenCode 免费模型目录…" : "正在读取当前 OpenCode 模型目录…";
       const openCodeCapability = await hydrateGenericOpenCodeCatalog({ force: true });
       if (!requestStillCurrent()) return;
       if (credentialSource === "shensi") {
@@ -77124,8 +77528,11 @@ const refreshAvailableModels = async () => {
         }
       } else {
         renderModelOptions(settings.provider, { allowBlank: true });
+        const visibleModels = credentialSource === "opencode_free"
+          ? (openCodeCapability?.models || []).filter((item) => isOpenCodeFreeModel(item))
+          : (openCodeCapability?.models || []);
         result.textContent = openCodeCapability?.available
-          ? `已从 ${openCodeCapability.version} 读取 ${openCodeCapability.models.length} 个模型，保留完整 provider/model ID`
+          ? `已从 ${openCodeCapability.version} 读取 ${visibleModels.length} 个${credentialSource === "opencode_free" ? "免费" : ""}模型，保留完整 provider/model ID`
           : `OpenCode 模型目录读取失败：${openCodeCapability?.message || "未知错误"}`;
       }
       return;
@@ -77333,7 +77740,7 @@ elements.startAgentRunnerInstall?.addEventListener("click", async () => {
     const response = await fetch("/api/agent-runners/install", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runnerId }),
+      body: JSON.stringify({ runnerId, forceLatest: true }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok || !payload.job?.id) throw new Error(payload.message || "运行器装配任务启动失败");
@@ -77511,7 +77918,7 @@ elements.settingsForm.elements.namedItem("textAgentEngine")?.addEventListener("c
     control("cliPath").value = runner.cliPath;
     control("cliArgs").value = runner.cliArgs;
     control("model").value = "";
-    if (control("textCredentialSource").value === "shensi" && control("provider").value) {
+    if (["shensi", "opencode_free"].includes(control("textCredentialSource").value) && (control("provider").value || control("textCredentialSource").value === "opencode_free")) {
       const preset = getProviderPreset(control("provider").value);
       control("protocol").value = preset.custom ? (control("protocol").value || "chat_completions") : preset.api.protocol;
       control("baseUrl").value = preset.custom ? control("baseUrl").value : preset.api.baseUrl;
@@ -77573,7 +77980,7 @@ elements.settingsForm.elements.namedItem("textCredentialSource")?.addEventListen
   const control = (name) => form.namedItem(name);
   const selectedExecutionMode = control("textExecutionMode").value || "chat";
   control("model").value = "";
-  if (["opencode", "claude"].includes(event.target.value)) {
+  if (["opencode", "opencode_free", "claude"].includes(event.target.value)) {
     control("apiKey").value = "";
     control("baseUrl").value = "";
     control("protocol").value = "";
@@ -78567,7 +78974,7 @@ document.addEventListener("click", (event) => {
   }
   const insidePanel = event.target.closest("#projectMenu, #activityPanel, #taskPanel, #referencePanel, #searchResults");
   const insideReferenceChildDialog = ui.whiteboardAssetConversationReferenceMode && event.target.closest("#whiteboardAssetDialog");
-  const panelTrigger = event.target.closest("#projectButton, #activityButton, #conversationHistoryButton, #conversationSwitcherButton, #referenceButton, [data-switch-chat], .global-search");
+  const panelTrigger = event.target.closest("#projectButton, #workspaceKindSwitcher, #activityButton, #conversationHistoryButton, #conversationSwitcherButton, #referenceButton, [data-switch-chat], .global-search");
   if (!insidePanel && !insideReferenceChildDialog && !panelTrigger && ui.panel) {
     ui.panel = null;
     ui.moduleViewMenu = null;

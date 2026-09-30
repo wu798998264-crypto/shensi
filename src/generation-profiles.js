@@ -5,6 +5,45 @@ import { SHENSI_AGENT_API_PROTOCOLS } from "./agent-engine-registry.js";
 
 const EXTERNAL_CLI_AGENT_ENGINES = new Set(["opencode", "claude_code", "workbuddy", "custom"]);
 
+// OpenCode keeps the credential boundary separate from the model namespace.
+// These values are persisted in the text profile so a free model can never
+// silently inherit the current OpenCode login or a Shensi API key.
+export const OPEN_CODE_CREDENTIAL_SOURCES = Object.freeze(["shensi", "opencode", "opencode_free"]);
+export const OPEN_CODE_FREE_MODEL_IDS = Object.freeze([
+  "big-pickle",
+  "space-bunny-free",
+  "longcat-2.5-preview-free",
+  "mimo-v2.6-flash-free",
+  "mimo-v2.5-free",
+  "ling-3.0-flash-fin-free",
+  "nemotron-3-ultra-free",
+  "nemotron-3.5-lightning-free",
+  "muse-spark-1.3-contributor-free",
+  "jev-1.13-free",
+]);
+
+export const normalizeOpenCodeCredentialSource = (value = "") => {
+  const source = String(value || "").trim().toLowerCase();
+  return OPEN_CODE_CREDENTIAL_SOURCES.includes(source) ? source : "opencode";
+};
+
+export const isOpenCodeFreeModel = (model = {}) => {
+  const item = model && typeof model === "object" ? model : { id: model };
+  const rawId = String(item.id || item.slug || item.model || item.modelId || "").trim();
+  const shortId = rawId.includes("/") ? rawId.slice(rawId.indexOf("/") + 1) : rawId;
+  const normalizedId = shortId.toLowerCase();
+  if (!normalizedId) return false;
+  if (item.free === true || item.isFree === true || item.requiresLogin === false || item.requiresAuth === false) return true;
+  if (OPEN_CODE_FREE_MODEL_IDS.includes(normalizedId) || /(?:^|[-:])free$/iu.test(normalizedId)) return true;
+  const pricing = item.cost ?? item.pricing ?? item.price;
+  if (pricing && typeof pricing === "object") {
+    const values = [pricing.input, pricing.output, pricing.cacheRead, pricing.cacheWrite, pricing.prompt, pricing.completion]
+      .map((value) => Number(value)).filter((value) => Number.isFinite(value));
+    if (values.length >= 2 && values.every((value) => value === 0)) return true;
+  }
+  return false;
+};
+
 const CHANNELS = ["text", "image", "video", "audio"];
 const GENERATION_RUNTIME_FIELDS = Object.freeze(["baseUrl", "cliPath", "cliArgs"]);
 const LEGACY_GENERATION_RUNTIME_FIELDS = Object.freeze([
@@ -234,6 +273,33 @@ const BUILT_IN_WORKBUDDY_AGENT_PROFILE = {
   systemManaged: false,
 };
 
+// Keep one explicit OpenCode free-model connection available after upgrade.
+// The model is an official OpenCode Zen free entry; the live catalog remains
+// authoritative and can replace it when the user chooses another free model.
+const BUILT_IN_OPENCODE_FREE_AGENT_PROFILE = {
+  id: "text-opencode-free",
+  name: "OpenCode 免费模型",
+  remarkName: "OpenCode 免费模型",
+  systemManaged: true,
+  adapter: "cli",
+  provider: "OpenCode",
+  protocol: "",
+  baseUrl: "",
+  model: "opencode/big-pickle",
+  agentModelId: "opencode/big-pickle",
+  chatModelId: "",
+  reasoningEffort: "",
+  speedMode: "default",
+  timeoutMs: "600000",
+  apiKey: "",
+  cliPath: "opencode",
+  cliArgs: "",
+  executionMode: "agent",
+  executionModes: ["agent"],
+  agentEngine: "opencode",
+  credentialSource: "opencode_free",
+};
+
 const PUBLIC_TEXT_PROVIDER_PRESET = getProviderPreset("免费模型");
 const BUILT_IN_PUBLIC_TEXT_PROFILE = {
   id: "text-public-kilo",
@@ -296,7 +362,7 @@ const BUILT_IN_LIBTV_IMAGE = {
   provider: "LibTV",
   protocol: "media",
   baseUrl: "",
-  model: "nebula-ultra",
+  model: "lib-image-2.5-s",
   timeoutMs: "900000",
   apiKey: "",
   cliPath: LIBTV_CLI_ALIAS,
@@ -781,6 +847,43 @@ const ensureBuiltInWorkBuddyAgentProfile = (profiles) => {
   ];
 };
 
+const ensureBuiltInOpenCodeFreeAgentProfile = (profiles) => {
+  const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_OPENCODE_FREE_AGENT_PROFILE.id);
+  if (existingIndex >= 0) {
+    const existing = profiles[existingIndex];
+    const selectedModel = isOpenCodeFreeModel(existing.model || existing.agentModelId)
+      ? String(existing.model || existing.agentModelId)
+      : BUILT_IN_OPENCODE_FREE_AGENT_PROFILE.model;
+    const managed = normalizedProfile("text", {
+      ...BUILT_IN_OPENCODE_FREE_AGENT_PROFILE,
+      ...existing,
+      id: BUILT_IN_OPENCODE_FREE_AGENT_PROFILE.id,
+      name: BUILT_IN_OPENCODE_FREE_AGENT_PROFILE.name,
+      remarkName: existing.remarkName || BUILT_IN_OPENCODE_FREE_AGENT_PROFILE.remarkName,
+      systemManaged: true,
+      adapter: "cli",
+      provider: "OpenCode",
+      model: selectedModel,
+      agentModelId: selectedModel,
+      chatModelId: "",
+      apiKey: "",
+      baseUrl: "",
+      protocol: "",
+      cliPath: "opencode",
+      cliArgs: "",
+      agentEngine: "opencode",
+      credentialSource: "opencode_free",
+      executionMode: "agent",
+      executionModes: ["agent"],
+    }, existingIndex, {});
+    return profiles.map((profile, index) => index === existingIndex ? managed : profile);
+  }
+  return [
+    ...profiles,
+    normalizedProfile("text", BUILT_IN_OPENCODE_FREE_AGENT_PROFILE, profiles.length, {}),
+  ];
+};
+
 const ensureBuiltInPublicTextProfile = (profiles) => {
   const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_PUBLIC_TEXT_PROFILE.id);
   if (existingIndex >= 0) {
@@ -927,7 +1030,7 @@ const normalizeTextRuntimeModelFields = (profile = {}) => {
     const qualified = profile.provider === "DeepSeek"
       ? `deepseek/${deepSeekModel}`
       : qualifiedOpenCodeModel(requested, profile.provider);
-    const source = profile.credentialSource === "shensi" ? "shensi" : "opencode";
+    const source = normalizeOpenCodeCredentialSource(profile.credentialSource);
     return {
       ...profile,
       model: qualified,
@@ -1178,7 +1281,7 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
       // cannot turn a valid built-in profile into an unavailable placeholder.
       const existing = next[existingIndex];
       const legacyImageModel = channel === "image"
-        && ["lib-image-2", "lib-image-2.5-s", "lib-image-2.5-f"].includes(String(existing.model || "").trim());
+        && ["lib-image-2", "nebula-ultra"].includes(String(existing.model || "").trim());
       next[existingIndex] = normalizedProfile(channel, {
         ...next[existingIndex],
         adapter: builtIn.adapter,
@@ -1381,6 +1484,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
         disabledBuiltInTextProfileIds,
       );
       profiles = ensureBuiltInWorkBuddyAgentProfile(profiles);
+      profiles = ensureBuiltInOpenCodeFreeAgentProfile(profiles);
       const openCodeCollapse = collapseLegacyDeepSeekOpenCodeProfiles(profiles);
       profiles = openCodeCollapse.profiles;
       const remapOpenCodeId = (value) => openCodeCollapse.aliases.get(String(value || "").trim()) || value;
@@ -1722,7 +1826,7 @@ export const genericOpenCodeManualProfile = ({
   baseUrl = "",
   protocol = "",
 } = {}) => {
-  const source = credentialSource === "shensi" ? "shensi" : "opencode";
+  const source = normalizeOpenCodeCredentialSource(credentialSource);
   const modelId = qualifiedOpenCodeModel(model, provider);
   const modelFamily = openCodeRemarkFamily(modelId);
   const selectedProvider = String(provider || openCodeProviderForModel(modelId)).trim();
@@ -1767,7 +1871,7 @@ export const unifiedOpenCodeProfile = (profile = {}) => {
   const legacy = String(profile.agentEngine || "").trim() === "deepseek_opencode";
   if (!legacy) return {
     ...profile,
-    credentialSource: profile.credentialSource === "shensi" ? "shensi" : "opencode",
+    credentialSource: normalizeOpenCodeCredentialSource(profile.credentialSource),
     model: qualifiedOpenCodeModel(profile.model || profile.agentModelId, profile.provider),
     agentModelId: qualifiedOpenCodeModel(profile.agentModelId || profile.model, profile.provider),
   };
@@ -1801,7 +1905,7 @@ export const validateGenericOpenCodeConnection = ({ profile = {}, capability = {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:+-]{0,159}$/.test(model)) {
     return { ok: false, stage: "model", message: "请从 OpenCode 当前模型目录选择完整 provider/model ID" };
   }
-  const credentialSource = profile.credentialSource === "shensi" ? "shensi" : "opencode";
+  const credentialSource = normalizeOpenCodeCredentialSource(profile.credentialSource);
   if (credentialSource === "shensi") {
     if (!String(profile.provider || "").trim()) return { ok: false, stage: "provider", message: "请选择模型服务商" };
     if (!String(profile.apiKey || "").trim()) return { ok: false, stage: "credential", message: `${profile.provider} 凭据不可用` };
@@ -1811,8 +1915,14 @@ export const validateGenericOpenCodeConnection = ({ profile = {}, capability = {
       return { ok: false, stage: "model", message: `模型 ID 必须使用 ${namespace}/model 格式` };
     }
   }
+  if (credentialSource === "opencode_free" && !isOpenCodeFreeModel(
+    (Array.isArray(capability.models) ? capability.models : []).find((item) => String(item?.slug || item?.id || item) === model)
+      || model,
+  )) {
+    return { ok: false, stage: "free_catalog", message: "当前模型不是 OpenCode 官方免费模型；请选择标记为免费的模型" };
+  }
   const reportedModels = (Array.isArray(capability.models) ? capability.models : [])
-    .map((item) => String(item?.slug || item?.id || "").trim())
+    .map((item) => String(item?.slug || item?.id || item || "").trim())
     .filter(Boolean);
   if (capability.modelsVerified === true && reportedModels.length && !reportedModels.includes(model)) {
     return { ok: false, stage: "catalog", message: `OpenCode 当前没有报告模型 ${model}` };

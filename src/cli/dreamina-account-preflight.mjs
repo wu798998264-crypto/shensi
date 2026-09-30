@@ -127,6 +127,25 @@ export const cachedDreaminaAccountIdentity = () => {
   };
 };
 
+// A profile that was explicitly verified (or completed a real generation)
+// already has isolated identity and credential evidence in the environment.
+// Re-reading user_credit before every paid command added a 45s control-plane
+// timeout to otherwise healthy submissions.  Let the provider submission be
+// the authoritative live check for this durable state; explicit auth failure
+// from that command still transitions the profile to auth_required.
+const cachedVerifiedDreaminaAccount = () => {
+  if (clean(process.env.SHENSI_DREAMINA_RUNTIME_STATE).toLowerCase() !== "verified") return null;
+  const identity = cachedDreaminaAccountIdentity();
+  if (!identity) return null;
+  return {
+    credit: {},
+    identity: { ...identity, verificationSource: "cached_verified_profile" },
+    controlPlaneDeferred: true,
+    preSubmitControlPlaneSkipped: true,
+    controlPlaneWarning: "已复用当前配置已保存的核验身份；由本次真实提交确认账号状态",
+  };
+};
+
 export const verifiedDreaminaAccountWithControlPlaneFallback = async (readCredit) => {
   try {
     const credit = await readCredit();
@@ -174,6 +193,8 @@ export const verifiedDreaminaAccountForPaidSubmission = async (readCredit, {
   retryDelayMs = 800,
   wait = (milliseconds) => new Promise((resolveWait) => setTimeout(resolveWait, milliseconds)),
 } = {}) => {
+  const cached = cachedVerifiedDreaminaAccount();
+  if (cached) return cached;
   const boundedRetries = Math.max(0, Math.min(3, Number(retries) || 0));
   let account = await verifiedDreaminaAccountWithControlPlaneFallback(readCredit);
   let savedEvidence = liveZeroConflictsWithSavedPositive(account);

@@ -23,6 +23,22 @@ const workspaceValueHash = (value) => {
   return `${contentRevision(serialized)}:${serialized.length}`;
 };
 
+// Agent/index projections update bookkeeping fields while a user operation is
+// in flight. Those fields are not document content and must not turn a
+// harmless projection heartbeat into a same-document conflict. Keep title,
+// body/canvas and structural metadata in the hash so real concurrent edits
+// remain protected.
+const DOCUMENT_VOLATILE_CONFLICT_KEYS = new Set([
+  "updatedAt", "lastEditedAt", "savedAt", "revision", "contentRevision",
+  "managedFormat", "projectionHash", "memoryStoreProjectionHashVersion",
+]);
+
+const documentConflictValue = (documentState) => {
+  if (!documentState || typeof documentState !== "object" || Array.isArray(documentState)) return documentState;
+  return Object.fromEntries(Object.entries(documentState)
+    .filter(([key]) => !DOCUMENT_VOLATILE_CONFLICT_KEYS.has(key)));
+};
+
 const changedKeys = (baseline, current) => {
   const keys = new Set([...baseline.keys(), ...current.keys()]);
   return new Set([...keys].filter((key) => baseline.get(key) !== current.get(key)));
@@ -33,7 +49,7 @@ const conflictingKeys = ({ localChanged, remoteChanged, localHashes, remoteHashe
 );
 
 export const workspaceDocumentHashes = (documents = {}) => new Map(
-  Object.entries(documents ?? {}).map(([id, documentState]) => [id, workspaceValueHash(documentState)]),
+  Object.entries(documents ?? {}).map(([id, documentState]) => [id, workspaceValueHash(documentConflictValue(documentState))]),
 );
 
 export const workspaceStateHashes = (workspaceState = {}) => new Map(

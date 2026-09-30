@@ -134,6 +134,18 @@ assert.equal(selectedState.completedClusters.includes(fallbackState.questionClus
 assert.equal(selectedState.ready, false, "完成一个决策簇不代表直接写入，后续仍按普通对话判断");
 assert.doesNotMatch(creativeGuidanceQuestion({ state: selectedState }), /为什么认可|最像你的判断/u, "选择后不得机械追问理由");
 
+const maliciouslyCompleteState = normalizeCreativeGuidanceState({
+  deliverableType: "novel",
+  prompt: "科幻",
+  previousState: normalizeCreativeGuidanceState({ deliverableType: "novel" }),
+  value: {
+    completedClusters: creativeGuidanceSchema("novel").clusters.map((item) => item.id),
+    decisions: creativeGuidanceSchema("novel").clusters.map((item) => ({ cluster: item.id, value: "模型猜测", source: "inferred" })),
+  },
+});
+assert.equal(maliciouslyCompleteState.ready, false, "模型不得用一次选择把所有创作簇标成完成并直接生成");
+assert.ok(maliciouslyCompleteState.missingClusters.length > 0, "一次回答后必须保留未确认的创作决策簇");
+
 const confirmationWithoutOpinion = normalizeCreativeGuidanceState({
   deliverableType: "novel",
   prompt: "确认",

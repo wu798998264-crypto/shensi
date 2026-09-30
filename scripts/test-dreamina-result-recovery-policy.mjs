@@ -53,8 +53,9 @@ assert.match(app, /provider_complete_retrieving[\s\S]{0,240}mediaGenerationError
   "结果取回期间必须显示真实错误原因，不能只显示正在生成");
 assert.match(app, /promptDreaminaReverificationForJob[\s\S]{0,1400}errorMessage: mediaGenerationErrorText\(job\)/u,
   "核验弹窗必须显示任务保存的结构化错误原因");
-assert.match(app, /refreshDreaminaAccountStatus\(\{ verifyLive: true, profileId, channel \}\)/u,
-  "每次收费提交前必须执行当前即梦配置的在线状态核对，不能只相信旧缓存");
+const admission = app.slice(app.indexOf("const ensureDreaminaGenerationAccountAvailable ="), app.indexOf("document.querySelector(\"#bindDreaminaAccount\")"));
+assert.doesNotMatch(admission, /refreshDreaminaAccountStatus/u,
+  "本地队列入场不抢凭证锁；排到任务时才由原配置 worker 执行一次权威检查");
 assert.match(app, /if \(!current\.providerTaskId[\s\S]{0,260}controlMediaGenerationJob\(jobId, "resume"\)/u,
   "核验成功后只能自动续接已有厂商任务 ID 的原任务");
 assert.match(app, /await resumeDreaminaJobsAfterVerification\(profileId\)/u,

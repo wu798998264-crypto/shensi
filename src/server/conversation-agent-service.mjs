@@ -5,6 +5,7 @@ import { createConversationAgentTools, conversationAgentInstructions } from "./c
 import { normalizeAgentPermissionMode, permissionContractFor } from "../agent-permission-policy.js";
 import { normalizeTextTaskExecutionContext } from "../text-task-execution-context.js";
 import { hasInternalConversationMarker, hasWorkBuddyInternalConversationMarker, sanitizeConversationOutput, sanitizeUserFacingError, sanitizeWorkBuddyConversationOutput } from "../conversation-output-guard.js";
+import { buildFrontendTaskRoute, frontendRouteCanUseGeneralLane } from "../frontend-task-route.js";
 
 const keyFor = (request) => createHash("sha256").update(JSON.stringify([resolve(request.workspacePath || ".").toLowerCase(), request.conversationId, request.branchId || "main"])).digest("hex");
 const laneFor = (request) => keyFor({ ...request, branchId: "conversation-lane" });
@@ -435,9 +436,32 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (!textTimer) textTimer = setTimeout(() => { void flushText().catch(() => {}); }, 160);
     };
     try {
-      const catalogSource = await skillCatalog(request);
+      const serverRouteHint = buildFrontendTaskRoute({
+        text: String(request.messages?.at(-1)?.content || ""),
+        workspaceKind: request.workspaceKind,
+        routeRevision: Number(request.frontendRoute?.routeRevision) || 0,
+        hasAttachments: Boolean(request.attachments?.length),
+        hasReferences: Boolean(request.references?.length || request.selectedSkills?.length),
+        hasSelection: Boolean(request.contentOnly),
+      });
+      const useLightGeneralLane = frontendRouteCanUseGeneralLane(request.frontendRoute || serverRouteHint)
+        && frontendRouteCanUseGeneralLane(serverRouteHint)
+        && request.workspaceKind !== "notebook"
+        && !(Array.isArray(request.selectedSkills) && request.selectedSkills.length)
+        && !(Array.isArray(request.attachments) && request.attachments.length)
+        && !(Array.isArray(request.references) && request.references.length);
+      const catalogSource = useLightGeneralLane
+        ? { skills: [], routeBundle: null, skipped: true }
+        : await skillCatalog(request);
       const catalog = Array.isArray(catalogSource) ? catalogSource : catalogSource?.skills || [];
-      const routeSource = await readRoute({ ...request, routeBundle: catalogSource?.routeBundle || null });
+      const routeSource = useLightGeneralLane
+        ? {
+            text: "本轮由前端轻量路由判定为通用对话，未加载完整面板路由。若任务实际需要作品、笔记、面板或 Skill 能力，应转入完整面板路由后再执行。",
+            sources: [],
+            skipped: true,
+          }
+        : await readRoute({ ...request, routeBundle: catalogSource?.routeBundle || null });
+      if (useLightGeneralLane) await event(entry, "route_hint", { kind: "general_chat", route: request.frontendRoute || serverRouteHint, serverRoute: serverRouteHint, panelRouteSkipped: true, userVisible: false });
       const routeBundle = routeSource?.routeBundle || catalogSource?.routeBundle || null;
       const route = typeof routeSource === "string" ? routeSource : routeSource?.text || "";
       for (const source of routeSource?.sources || []) {

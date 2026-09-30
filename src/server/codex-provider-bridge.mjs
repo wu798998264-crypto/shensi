@@ -249,7 +249,13 @@ export const startCodexProviderBridge = async ({ settings, tools, permissionCont
       const request = JSON.parse(buffer.toString("utf8"));
       const fullInput = request.previous_response_id ? [...(known.get(request.previous_response_id) || []), ...(request.input || [])] : request.input || [];
       if (request.previous_response_id && !known.has(request.previous_response_id)) throw new Error("缺少连续任务上下文，拒绝无上下文重试");
-      const chat = settings.protocol === "chat_completions";
+       // Cockpit's local Responses relay is SSE-only upstream. Under load it
+       // can close before response.completed even when the request asked for
+       // stream:false. Its chat-completions endpoint is the same model/account
+       // pool but a complete HTTP response, so use that wire format locally;
+       // the bridge still returns a Responses-compatible result to Codex.
+       const localResponsesRelay = /^https?:\/\/(?:127\.0\.0\.1|localhost):(?:5317|9879)\/v1$/iu.test(String(settings.baseUrl || "").replace(/\/+$/u, ""));
+       const chat = settings.protocol === "chat_completions" || localResponsesRelay;
       const anthropic = ["anthropic_messages", "messages"].includes(settings.protocol);
       const providerTools = forwardNativeTools ? providerToolsFor(request.tools, functionTools) : functionTools;
       const chatProjection = chatToolProjection(providerTools);
@@ -264,7 +270,7 @@ export const startCodexProviderBridge = async ({ settings, tools, permissionCont
         max_tokens: Number(settings.maxOutputTokens) || 12000,
       } : chat ? {
         model: settings.model, messages: responsesInputToChat(fullInput, request.instructions), tools: chatProjection.tools, tool_choice: "auto", stream: false, max_tokens: Number(settings.maxOutputTokens) || 12000,
-      } : { ...request, model: settings.model, input, previous_response_id: undefined, tools: providerTools, store: false, stream: false, max_output_tokens: Number(settings.maxOutputTokens) || 12000 };
+       } : { ...request, model: settings.model, input, previous_response_id: undefined, tools: providerTools, store: false, stream: false, max_output_tokens: Number(settings.maxOutputTokens) || 12000 };
       onRequest({
         model: settings.model,
         protocol: settings.protocol,

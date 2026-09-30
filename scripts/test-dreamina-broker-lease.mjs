@@ -45,13 +45,9 @@ try {
     command: "text2image",
     acquiredAt: new Date().toISOString(),
   });
-  await assert.rejects(
-    jobs.createMediaGenerationJob({ channel: "image", target: target("blocked-b"), request: request("account-b") }),
-    (error) => error?.code === "DREAMINA_PROFILE_SWITCH_BLOCKED"
-      && error?.details?.activeProfileId === "account-a"
-      && error?.details?.reason === "physical_credential_slot_busy",
-    "其他真实账号占用物理凭证槽时必须在创建任务前明确失败",
-  );
+  const blocked = await jobs.createMediaGenerationJob({ channel: "image", target: target("blocked-b"), request: request("account-b") });
+  assert.equal(blocked.status, "queued", "其他真实账号占用物理凭证槽时必须进入本地队列");
+  assert.equal(blocked.dreaminaQueuePolicy, "command-lease-v1");
 
   const alias = await jobs.createMediaGenerationJob({
     channel: "image",
@@ -87,11 +83,11 @@ try {
   assert.equal(await leaseStore.readDreaminaBrokerLease(), null, "死亡进程留下的物理租约必须自动清除");
 
   const jobFiles = await readdir(join(root, "generation-jobs"));
-  assert.equal(jobFiles.filter((name) => name.endsWith(".json")).length, 2, "被物理锁拒绝的请求不得创建本地排队任务");
+  assert.equal(jobFiles.filter((name) => name.endsWith(".json")).length, 3, "物理锁占用只影响提交时机，不能阻止本地任务落盘");
   const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
-  assert.match(app, /providerErrorCode \|\| ""\)\.toUpperCase\(\) === "DREAMINA_PROFILE_SWITCH_BLOCKED"[\s\S]{0,1400}openDreaminaProfileLockDialog/u, "worker 提交前发生物理锁竞态时也必须弹出占用窗口");
-  assert.match(app, /const promptDreaminaSubmissionBlockForJob = \(job, \{ allowLockDialog = true \} = \{\}\)/u, "实时锁冲突必须默认允许弹出占用窗口");
-  assert.match(app, /if \(!allowLockDialog\) return false;[\s\S]{0,700}openDreaminaProfileLockDialog/u, "启动恢复必须能仅恢复任务状态而不重放历史锁弹窗");
+  assert.match(app, /maybeNotifyDreaminaQueueOccupancy\(job\)/u, "锁竞态必须进入队列并只显示轻量占用提示");
+  assert.match(app, /DREAMINA_PROFILE_BROKER_BUSY/u, "运行时锁占用必须保留明确错误分类");
+  assert.match(app, /if \(!allowLockDialog\) return false;/u, "启动恢复必须能静默恢复任务状态");
   assert.match(app, /showInterruptedConversationMediaJob\(job, \{ allowLockDialog: false \}\)/u, "启动恢复对话媒体任务时不得重放历史锁弹窗");
   assert.match(app, /showInterruptedDocumentArtifactJob\(job, \{ allowLockDialog: false \}\)/u, "启动恢复文档媒体任务时不得重放历史锁弹窗");
   assert.match(app, /showInterruptedWhiteboardGenerationJob\(job, \{ allowLockDialog: false \}\)/u, "启动恢复白板媒体任务时不得重放历史锁弹窗");

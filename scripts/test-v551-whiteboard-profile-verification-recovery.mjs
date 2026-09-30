@@ -64,8 +64,12 @@ assert.match(app, /syncWhiteboardVideoModelOptions\([\s\S]{0,220}draftValues\?\.
 assert.match(app, /generationProfile: whiteboardGenerationProfileFromSettings\(imageSettings, "chat"\)/u, "图片任务必须携带当前卡片的脱敏配置元数据");
 assert.match(app, /generationProfile: whiteboardGenerationProfileFromSettings\(videoSettings, "chat"\)/u, "视频任务必须携带当前卡片的脱敏配置元数据");
 assert.match(await readFile(new URL("../src/server/generation-job-store.mjs", import.meta.url), "utf8"), /generationProfile: publicGenerationProfile\(request\.generationProfile\)/u, "服务端任务记录必须保留脱敏配置元数据");
-assert.match(app, /refreshDreaminaAccountStatus\(\{ verifyLive: false, profileId, channel \}\)/u, "已核验账号提交前只应读取持久身份与凭据指纹");
-assert.match(app, /if \(account\?\.state !== "verified" && !hadReusableEvidence\)/u, "只有账号身份未核验且没有持久核验证据时才在线核验");
+const accountGateStart = app.indexOf("const ensureDreaminaGenerationAccountAvailable = ");
+const accountGateEnd = app.indexOf("\n};", accountGateStart);
+const accountGate = app.slice(accountGateStart, accountGateEnd + 3);
+assert.match(accountGate, /const account = dreaminaAccountForSettings\(settings\)/u, "提交前应读取目标配置的持久身份");
+assert.match(accountGate, /runtimeState \|\| ""\) === "auth_required"/u, "只有明确鉴权失败才阻止提交并要求核验");
+assert.doesNotMatch(accountGate, /refreshDreaminaAccountStatus/u, "提交前不得为已保存配置重复发起探测，实际生成链负责给出明确鉴权证据");
 assert.match(app, /credentialChanged: false/u, "OAuth 完成必须立即清除旧的凭据变化标记");
 assert.match(oauth, /A changed file hash is therefore not proof/u, "CLI 刷新 auth.reg 不得直接判定账号失效");
 assert.match(app, /filter\(mediaRecoveryJobIsActionable\)/u, "待处理列表必须隐藏不可操作历史任务");

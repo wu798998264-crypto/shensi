@@ -7,6 +7,16 @@ const workspaceValueHash = (value) => {
   return `${contentRevision(serialized)}:${serialized.length}`;
 };
 
+const DOCUMENT_VOLATILE_CONFLICT_KEYS = new Set([
+  "updatedAt", "lastEditedAt", "savedAt", "revision", "contentRevision",
+  "managedFormat", "projectionHash", "memoryStoreProjectionHashVersion",
+]);
+const documentConflictValue = (value) => (
+  value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).filter(([key]) => !DOCUMENT_VOLATILE_CONFLICT_KEYS.has(key)))
+    : value
+);
+
 self.addEventListener("message", async (event) => {
   const { type, target, key, value, workspacePath, stateStamp, sessionToken } = event.data ?? {};
   if (type === "load-metadata") {
@@ -39,5 +49,5 @@ self.addEventListener("message", async (event) => {
     return;
   }
   if (!key || target !== "document") return;
-  self.postMessage({ type: "hash", target, key, hash: workspaceValueHash(value) });
+  self.postMessage({ type: "hash", target, key, hash: workspaceValueHash(documentConflictValue(value)) });
 });

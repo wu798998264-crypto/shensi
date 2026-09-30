@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS,
   mediaSubmissionOutcomeIsUncertain,
   recoverUnknownMediaSubmission,
 } from "../src/media-generation-coordination.js";
@@ -63,6 +64,15 @@ try {
   assert.equal(recovered.reused, true, "服务端必须把同一提交编号识别为幂等重试");
   assert.equal(uncertainEvents.length, 1);
   assert.equal(recoveredEvent?.uncertainFailures, 1);
+
+  assert.equal(DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS, 3);
+  let defaultAttempts = 0;
+  await assert.rejects(() => recoverUnknownMediaSubmission(async () => {
+    defaultAttempts += 1;
+    throw new TypeError("网络持续中断");
+  }, { wait: async () => {} }), /网络持续中断/);
+  assert.equal(defaultAttempts, DEFAULT_MEDIA_SUBMISSION_RECOVERY_ATTEMPTS,
+    "未显式配置上限时，响应不确定恢复也必须在有限次数后交给持久任务核对");
 
   let definitiveAttempts = 0;
   await assert.rejects(() => recoverUnknownMediaSubmission(async () => {

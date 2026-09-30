@@ -47,6 +47,38 @@ try {
   assert.equal(runCalls.length, 1, "不得为超时命令盲目重复提交节点");
   assert.ok(runCalls[0].options.timeoutMs <= 90_000, "LibTV 初始 --run 阻塞必须在 90 秒内交给持久任务轮询");
 
+  const transportCalls = [];
+  driver.invoke = async (args, options = {}) => {
+    transportCalls.push({ args, options });
+    if (args.at(-1) === "--run") {
+      throw Object.assign(new Error("fetch failed"), { providerErrorCode: "DRIVER_EXIT_FAILED" });
+    }
+    throw new Error(`unexpected LibTV recovery command: ${args.join(" ")}`);
+  };
+  const recovered = await driver.submit({
+    job: {
+      id: "generation-libtv-1-recovery",
+      channel: "image",
+      request: {
+        prompt: "恢复测试图片",
+        aspectRatio: "1:1",
+        quality: "standard",
+        imageCount: 1,
+        settings: { model: "gpt-image-1" },
+      },
+    },
+    references: [],
+    workRoot: root,
+  });
+  assert.deepEqual(recovered, {
+    providerTaskId: "node-1",
+    providerStatus: "running",
+    rawStatus: "run_transport_recovery",
+    error: "LibTV 已创建任务，正在读取厂商状态",
+    errorCode: "",
+  }, "节点已创建后仅网络失败必须切换到只读状态恢复");
+  assert.equal(transportCalls.filter(({ args }) => args.at(-1) === "--run").length, 1, "网络失败恢复不得重复提交节点");
+
   const statusDriver = new LibTvMediaDriver();
   statusDriver.invoke = async () => ({ data: { taskInfo: { status: 3, failedReason: "厂商额度不足" } } });
   const failed = await statusDriver.getStatus({

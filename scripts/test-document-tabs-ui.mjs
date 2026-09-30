@@ -119,10 +119,33 @@ try {
   const documentIds = [];
   documentIds.push(await createDocument("标签页文档 1"));
   assert.equal(await evaluate("document.querySelectorAll('.document-tab').length"), 1, "默认新建文档只占用一个标签");
+  assert.equal(await evaluate("document.querySelector('#memoryReviewButton').hidden"), true, "正文空白时不得显示记忆检查入口");
+  const normalTaskControls = await evaluate(`(() => {
+    const avatar=document.querySelector('#accountEntryButton');
+    const controls=document.querySelector('#globalTaskControls');
+    const queue=document.querySelector('#generationQueueButton');
+    const autosave=document.querySelector('.autosave-control');
+    const version=document.querySelector('#saveVersionButton');
+    return {
+      host:controls.parentElement.className,
+      order:[avatar,queue,autosave,version].every((item,index,items)=>index===0||(items[index-1].compareDocumentPosition(item)&Node.DOCUMENT_POSITION_FOLLOWING)!==0),
+    };
+  })()`);
+  assert.equal(normalTaskControls.host, "top-actions", "普通模式三个工具应处于头像右侧的顶部栏");
+  assert.equal(normalTaskControls.order, true, "普通模式应按头像、队列、自动保存、历史版本排列");
+  await evaluate("document.querySelector('#whiteboardFullscreenButton').click(); true");
+  await waitFor("document.querySelector('.workspace').classList.contains('editor-fullscreen-active')", "进入编辑区全屏");
+  assert.equal(await evaluate("document.querySelector('#globalTaskControls').parentElement.classList.contains('editor-header-actions')"), true,
+    "全屏模式队列、自动保存和历史版本必须移入文档签页栏");
+  await evaluate("document.querySelector('#whiteboardFullscreenButton').click(); true");
+  await waitFor("!document.querySelector('.workspace').classList.contains('editor-fullscreen-active')", "退出编辑区全屏");
+  assert.equal(await evaluate("document.querySelector('#globalTaskControls').parentElement.classList.contains('top-actions')"), true,
+    "退出全屏后三个工具必须返回头像后的顶部栏");
 
   for (let index = 2; index <= 8; index += 1) {
     await evaluate("document.querySelector('[data-document-tab-add]').click(); true");
     await waitFor("document.querySelector('[data-blank-tab-create]')", `打开空白标签 ${index}`);
+    assert.equal(await evaluate("document.querySelector('#memoryReviewButton').hidden"), true, "新建空白签页不得显示记忆检查入口");
     documentIds.push(await createDocument(`标签页文档 ${index}`, { fromBlank: true }));
   }
   assert.equal(await evaluate("document.querySelectorAll('.document-tab').length"), 8, "最多保留八个标签");

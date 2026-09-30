@@ -106,8 +106,8 @@ assert.match(oauth, /runtimeState: "verified"[\s\S]{0,420}lastAuthFailureAt: ""/
   "OAuth 成功必须清除同一配置旧的 auth_required 标记");
 assert.match(app, /String\(account\.runtimeState \|\| ""\) === "auth_required"/u,
   "生成前置检查必须阻止复用明确失效的即梦配置");
-assert.match(app, /String\(account\?\.runtimeState \|\| ""\) !== "auth_required"[\s\S]{0,180}account\?\.state === "verified"/u,
-  "生成前置检查不得让旧的 state=verified 快照绕过明确 auth_required 状态");
+const queueAdmission = app.slice(app.indexOf('const ensureDreaminaGenerationAccountAvailable ='), app.indexOf('document.querySelector("#bindDreaminaAccount")'));
+assert.doesNotMatch(queueAdmission, /refreshDreaminaAccountStatus/u, '排队入场不抢凭证槽；核验由排到的原配置 worker 执行');
 assert.match(app, /String\(account\.runtimeState \|\| ""\) !== "auth_required"/u,
   "持久身份判断不得把明确失效配置当作可用");
 assert.match(identityStore, /runtimeState: "verified"[\s\S]{0,500}lastAuthFailureCode: ""/u,

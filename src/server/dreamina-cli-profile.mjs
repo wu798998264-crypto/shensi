@@ -60,6 +60,8 @@ export const dreaminaCliEnvironment = (settings = {}, base = {}) => {
     ...base,
     SHENSI_DREAMINA_PROFILE_ID: runtime.profileId,
     SHENSI_DREAMINA_EXPECTED_USER_ID: identity.expectedUserId || "",
+    SHENSI_DREAMINA_RUNTIME_STATE: String(identity.runtimeState || "unknown"),
+    SHENSI_DREAMINA_VERIFIED_AT: String(identity.verifiedAt || ""),
     SHENSI_DREAMINA_SAVED_CREDIT: Number.isFinite(Number(identity.lastCredit))
       ? String(Number(identity.lastCredit))
       : "",

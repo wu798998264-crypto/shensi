@@ -21,54 +21,69 @@ const {
 const appRoot = dataRoot;
 const workspacePath = join(dataRoot, "作品", "live-conflict-heartbeat");
 const initial = createBlankProjectState({ name: "实时冲突心跳验收", workspacePath });
-// This fixture represents an existing authored guidance record, not a startup document.
-initial.moduleItems.index.push(["index-creative-guidance", "创作引导"]);
-initial.documents["index-creative-guidance"] = { title: "创作引导", moduleId: "index", html: "", markdown: "" };
+// Use a real authored startup document so the test exercises the production
+// persistence path rather than a synthetic document that normalization may
+// legitimately discard.
+const conflictDocumentId = "library-memo";
 const firstCommit = await saveWorkspaceState({ appRoot, requestedPath: workspacePath, state: initial });
 const snapshotA = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
 const snapshotB = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
 assert.equal(snapshotA.stateStamp, snapshotB.stateStamp, "A/B 必须从同一状态戳开始");
 
 const aState = structuredClone(snapshotA.state);
-aState.documents["index-creative-guidance"].markdown = "# A 修改\n\n来自实例 A";
-aState.documents["index-creative-guidance"].html = "<h1>A 修改</h1><p>来自实例 A</p>";
+aState.documents[conflictDocumentId].markdown = "# A 修改\n\n来自实例 A";
+aState.documents[conflictDocumentId].html = "<h1>A 修改</h1><p>来自实例 A</p>";
 const aCommit = await saveWorkspaceState({
   appRoot,
   requestedPath: workspacePath,
   state: aState,
   expectedStateStamp: snapshotA.stateStamp,
-  operationDocumentIds: ["index-creative-guidance"],
+  operationDocumentIds: [conflictDocumentId],
 });
 assert.equal(aCommit.verificationStatus, "passed");
 
+// A background task may refresh savedAt without changing the stamped
+// workspace content.  With the caller's matching stamp this must not be
+// reported as a false cross-window conflict.
+const backgroundStampSave = structuredClone(aState);
+backgroundStampSave.savedAt = new Date(Date.now() + 10_000).toISOString();
+const stampStableCommit = await saveWorkspaceState({
+  appRoot,
+  requestedPath: workspacePath,
+  state: backgroundStampSave,
+  expectedStateStamp: aCommit.stateStamp,
+  operationDocumentIds: [conflictDocumentId],
+});
+assert.equal(stampStableCommit.verificationStatus, "passed", "匹配 state stamp 时 savedAt 差异不得误报冲突");
+
 const bState = structuredClone(snapshotB.state);
-bState.documents["index-creative-guidance"].markdown = "# B 修改\n\n来自实例 B";
-bState.documents["index-creative-guidance"].html = "<h1>B 修改</h1><p>来自实例 B</p>";
+bState.documents[conflictDocumentId].markdown = "# B 修改\n\n来自实例 B";
+bState.documents[conflictDocumentId].html = "<h1>B 修改</h1><p>来自实例 B</p>";
 await assert.rejects(
   () => saveWorkspaceState({
     appRoot,
     requestedPath: workspacePath,
     state: bState,
     expectedStateStamp: snapshotB.stateStamp,
-    operationDocumentIds: ["index-creative-guidance"],
+    operationDocumentIds: [conflictDocumentId],
   }),
   (error) => error?.code === "WORKSPACE_STATE_CONFLICT",
 );
 
 const latest = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
 const bRetry = structuredClone(latest.state);
-bRetry.documents["index-creative-guidance"].markdown = "# B 重试\n\n冲突处理后保留 B";
-bRetry.documents["index-creative-guidance"].html = "<h1>B 重试</h1><p>冲突处理后保留 B</p>";
+bRetry.documents[conflictDocumentId].markdown = "# B 重试\n\n冲突处理后保留 B";
+bRetry.documents[conflictDocumentId].html = "<h1>B 重试</h1><p>冲突处理后保留 B</p>";
 const bCommit = await saveWorkspaceState({
   appRoot,
   requestedPath: workspacePath,
   state: bRetry,
   expectedStateStamp: latest.stateStamp,
-  operationDocumentIds: ["index-creative-guidance"],
+  operationDocumentIds: [conflictDocumentId],
 });
 assert.equal(bCommit.verificationStatus, "passed");
 const recoveredWorkspace = await loadWorkspaceState({ appRoot, requestedPath: workspacePath });
-assert.match(recoveredWorkspace.state.documents["index-creative-guidance"].markdown, /B 重试/u);
+assert.match(recoveredWorkspace.state.documents[conflictDocumentId].markdown, /B 重试/u);
 
 const requestId = "live-heartbeat-001";
 const started = await beginGenerationAttempt({

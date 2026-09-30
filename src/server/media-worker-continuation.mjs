@@ -21,7 +21,7 @@ export const dreaminaWorkerObservationStalled = (job = {}, { nowMs = Date.now(),
     && !isProcessAlive(Number(job.workerPid));
 };
 
-export const createMediaWorkerContinuation = ({ readJob, isRunning, launch, now = Date.now,
+export const createMediaWorkerContinuation = ({ readJob, isRunning, launch, canLaunch = async () => true, now = Date.now,
   schedule = setTimeout, unschedule = clearTimeout, fallbackDelayMs = 20_000 } = {}) => {
   const jobs = new Map();
   const forget = (id) => {
@@ -42,8 +42,16 @@ export const createMediaWorkerContinuation = ({ readJob, isRunning, launch, now 
       const job = await readJob(id);
       if (jobs.get(id) !== entry) return;
       if (!dreaminaWorkerNeedsContinuation(job)) return forget(id);
+      if (!(await canLaunch(job))) {
+        // Wait in this existing server, not a new Node/CLI process per queue item.
+        if (jobs.get(id) !== entry) return;
+        entry.timer = schedule(() => { entry.timer = null; void continueJob(id); }, 1_500);
+        entry.timer?.unref?.();
+        return;
+      }
       const next = Date.parse(job.nextPollAt || '');
-      const delay = Number.isFinite(next) ? Math.max(100, next - now()) : fallbackDelayMs;
+      const delay = Number.isFinite(next) ? Math.max(100, next - now())
+        : job.dreaminaQueuePolicy === 'command-lease-v1' && job.status === 'queued' ? 100 : fallbackDelayMs;
       entry.timer = schedule(() => {
         entry.timer = null;
         if (jobs.get(id) !== entry || isRunning(id)) return;
@@ -58,5 +66,5 @@ export const createMediaWorkerContinuation = ({ readJob, isRunning, launch, now 
       entry.checking = false;
     }
   };
-  return { track, forget, continueJob, sweep: () => Promise.all([...jobs.keys()].map(continueJob)) };
+  return { track, forget, continueJob, has: (id) => jobs.has(id), sweep: () => Promise.all([...jobs.keys()].map(continueJob)) };
 };

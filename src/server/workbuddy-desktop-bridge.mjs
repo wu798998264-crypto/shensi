@@ -12,6 +12,10 @@ const DEFAULT_TIMEOUT_MS = 1_800_000;
 const BRIDGE_READINESS_WINDOW_MS = 12_000;
 const BRIDGE_POLL_INTERVAL_MS = 500;
 const ACP_HEADERS = { "x-codebuddy-request": "1", "content-type": "application/json", accept: "application/json, text/event-stream" };
+const workBuddyAuthError = (message, statusCode = 0) => Object.assign(new Error(message), {
+  code: "WORKBUDDY_AUTH_REQUIRED",
+  statusCode: Number(statusCode) || 0,
+});
 
 const configRoot = (environment = process.env) => clean(environment.WORKBUDDY_CONFIG_DIR || environment.CODEBUDDY_CONFIG_DIR)
   || join(homedir(), ".workbuddy");
@@ -47,6 +51,23 @@ const resolvedProductConfigPath = async (environment = process.env) => {
   return valid[0]?.path || "";
 };
 
+const resolvedProductModels = async (environment = process.env) => {
+  const path = await resolvedProductConfigPath(environment);
+  if (!path) return [];
+  let payload;
+  try { payload = JSON.parse(await readFile(path, "utf8")); } catch { return []; }
+  const definitions = new Map((Array.isArray(payload?.models) ? payload.models : [])
+    .map((item) => [clean(item?.id || item?.model || item?.slug), clean(item?.name || item?.displayName || item?.label)])
+    .filter(([id]) => id));
+  const cliAgent = Array.isArray(payload?.agents)
+    ? payload.agents.find((agent) => clean(agent?.name).toLocaleLowerCase() === "cli")
+    : null;
+  return (Array.isArray(cliAgent?.models) ? cliAgent.models : [])
+    .map((item) => clean(typeof item === "string" ? item : item?.id || item?.model || item?.slug))
+    .filter(Boolean)
+    .map((id) => ({ id, name: definitions.get(id) || id }));
+};
+
 const controlPipePath = (root, uuid) => `\\\\.\\pipe\\workbuddy-${createHash("sha1").update(resolve(root)).digest("hex").slice(0, 12)}-sidecar-control-${uuid}`;
 
 const powershell = async (command, timeoutMs = 5_000) => {
@@ -73,7 +94,9 @@ const listSidecars = async ({ environment = process.env } = {}) => {
   return rows.map((row) => {
     const commandLine = clean(row?.CommandLine);
     const uuid = commandLine.match(/--control-pipe-uuid\s+([0-9a-f-]{8,})/iu)?.[1] || "";
-    const executable = commandLine.match(/(?:^|\s)([A-Za-z]:\\[^"]*?WorkBuddy\.exe)(?:\s|$)/iu)?.[1] || "";
+    const executable = commandLine.match(/"([A-Za-z]:\\[^"]*?WorkBuddy\.exe)"/iu)?.[1]
+      || commandLine.match(/(?:^|\s)([A-Za-z]:\\[^"]*?WorkBuddy\.exe)(?:\s|$)/iu)?.[1]
+      || "";
     return uuid ? { uuid, pid: Number(row?.ProcessId) || 0, executable, commandLine, controlPipe: controlPipePath(root, uuid) } : null;
   }).filter(Boolean);
 };
@@ -144,7 +167,7 @@ const toMcpServers = (nativeHost) => nativeHost?.url ? [{
   headers: asHeaders(nativeHost.headers),
 }] : [];
 
-const createHeadlessSession = async ({ sidecar, cwd, nativeHost, environment = process.env, sessionId = randomUUID(), timeoutMs = 90_000 } = {}) => {
+const createHeadlessSession = async ({ sidecar, cwd, nativeHost, model = "", environment = process.env, sessionId = randomUUID(), timeoutMs = 90_000 } = {}) => {
   const executable = sidecar.executable || join(dirname(dirname(sidecar.commandLine || "")), "WorkBuddy.exe");
   const root = executable ? dirname(executable) : "";
   const codebuddy = root ? join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy") : "";
@@ -161,7 +184,7 @@ const createHeadlessSession = async ({ sidecar, cwd, nativeHost, environment = p
       port: 0,
       cols: 120,
       rows: 40,
-      args: [codebuddy, "--serve"],
+      args: [codebuddy, "--serve", ...(clean(model) ? ["--model", clean(model)] : [])],
       env: {
         ELECTRON_RUN_AS_NODE: "1",
         CODEBUDDY_FORCE_HEADLESS_BUNDLE: "1",
@@ -201,7 +224,11 @@ const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120
   try {
     const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(message), signal: controller.signal });
     const body = await response.text();
-    if (!response.ok) throw new Error(`WorkBuddy ACP 请求失败（${response.status}）：${body.slice(-400)}`);
+    if (!response.ok) {
+      const message = `WorkBuddy ACP 请求失败（${response.status}）：${body.slice(-400)}`;
+      if ([401, 403].includes(Number(response.status))) throw workBuddyAuthError(message, response.status);
+      throw Object.assign(new Error(message), { code: "WORKBUDDY_ACP_REQUEST_FAILED", statusCode: Number(response.status) || 0 });
+    }
     const messages = response.headers.get("content-type")?.includes("text/event-stream") ? parseSse(body) : [JSON.parse(body)];
     for (const event of messages) if (event?.method === "session/update") onUpdate?.(event.params || {});
     return messages.find((event) => event?.id === message.id) || messages.at(-1) || {};
@@ -223,7 +250,10 @@ const updateText = (params = {}) => {
 const connectAcp = async (endpoint, options = {}) => {
   const connectEndpoint = `${String(endpoint).replace(/\/$/u, "")}/connect`;
   const response = await fetch(connectEndpoint, { method: "POST", headers: { "x-codebuddy-request": "1" }, signal: options.signal });
-  if (!response.ok) throw new Error(`WorkBuddy ACP 连接失败（${response.status}）`);
+  if (!response.ok) {
+    if ([401, 403].includes(Number(response.status))) throw workBuddyAuthError(`WorkBuddy ACP 连接失败（${response.status}）`, response.status);
+    throw Object.assign(new Error(`WorkBuddy ACP 连接失败（${response.status}）`), { code: "WORKBUDDY_ACP_CONNECT_FAILED", statusCode: Number(response.status) || 0 });
+  }
   const credentials = await response.json();
   if (!credentials?.connectionId) throw new Error("WorkBuddy ACP 未返回会话凭据");
   return credentials;
@@ -254,7 +284,37 @@ const sessionModels = (result = {}) => (Array.isArray(result?.models?.availableM
   .map((item) => ({ id: clean(item?.modelId || item?.id), name: clean(item?.name || item?.modelId || item?.id) }))
   .filter((item) => item.id);
 
-const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, environment = process.env, signal = null, timeoutMs = 120_000 } = {}) => {
+const normalizedModelLabel = (value = "") => clean(value).toLocaleLowerCase().replace(/[\s._-]+/gu, "");
+
+/**
+ * Resolve a persisted WorkBuddy model against the current desktop catalogue.
+ * WorkBuddy has changed the stable ID behind the user-facing Hy3 label more
+ * than once (the old Shensi profile used `hy3`, while the current desktop
+ * catalogue exposes `hy3-c`/`hy3-x`). Never turn that catalogue drift into an
+ * authentication error: use an exact ID first, then a label/legacy alias,
+ * and only report unavailable when there is no safe match.
+ */
+export const resolveWorkBuddyModelId = (requested = "", available = [], labels = {}) => {
+  const value = clean(requested);
+  const models = (Array.isArray(available) ? available : [])
+    .map((item) => typeof item === "string" ? { id: clean(item), name: clean(labels?.[item]) } : { id: clean(item?.id || item?.modelId), name: clean(item?.name || labels?.[item?.id || item?.modelId]) })
+    .filter((item) => item.id);
+  if (!value) return "";
+  const exact = models.find((item) => item.id === value);
+  if (exact) return exact.id;
+  const normalized = normalizedModelLabel(value);
+  const legacyAliases = new Map([
+    ["hy3", "hy3"],
+    ["hy3c", "hy3"],
+    ["hy3x", "hy3"],
+  ]);
+  const labelNeedle = legacyAliases.get(normalized) || normalized;
+  const labelMatch = models.find((item) => normalizedModelLabel(item.name) === labelNeedle);
+  if (labelMatch) return labelMatch.id;
+  return "";
+};
+
+const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, model = "", environment = process.env, signal = null, timeoutMs = 120_000 } = {}) => {
   // Never reuse an arbitrary sidecar session.  It may have been created by an
   // older Shensi build (or by WorkBuddy itself) with a stale model catalogue
   // and a different environment.  A fresh, explicitly owned session keeps the
@@ -262,7 +322,7 @@ const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, environment = proc
   let session = null;
   let credentials = null;
   const prepare = async () => {
-    if (!session) session = await createHeadlessSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
+    if (!session) session = await createHeadlessSession({ sidecar, cwd, nativeHost, model, environment, timeoutMs });
     credentials = await connectAcp(session.acpEndpoint, { signal });
     await acpPost(session.acpEndpoint, credentials, {
       jsonrpc: "2.0", id: 5, method: "initialize",
@@ -284,7 +344,7 @@ const openAcpTaskSession = async ({ sidecar, cwd, nativeHost, environment = proc
     // Recreate exactly once, bounded to the lifecycle handshake; never retry
     // the provider prompt itself and never create a second user task.
     await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
-    session = await createHeadlessSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
+    session = await createHeadlessSession({ sidecar, cwd, nativeHost, model, environment, timeoutMs });
     credentials = null;
     try {
       return await prepare();
@@ -304,19 +364,32 @@ export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativ
     const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, environment, timeoutMs });
     ({ session, credentials } = opened);
     const result = opened.result || {};
+    const sessionCatalog = sessionModels(result);
+    const resolvedCatalog = await resolvedProductModels(environment);
+    const catalog = resolvedCatalog.length > sessionCatalog.length ? resolvedCatalog : sessionCatalog;
     return {
       connected: true,
       authenticated: true,
       state: "ready",
       ready: true,
-      models: sessionModels(result).map((item) => item.id),
-      modelLabels: Object.fromEntries(sessionModels(result).map((item) => [item.id, item.name])),
+      models: catalog.map((item) => item.id),
+      modelLabels: Object.fromEntries(catalog.map((item) => [item.id, item.name])),
       catalogSource: "workbuddy_acp_session",
       session,
-      message: `WorkBuddy 桌面会话有效，已读取 ${sessionModels(result).length} 个真实模型`,
+      message: `WorkBuddy 桌面会话有效，已读取 ${catalog.length} 个真实模型`,
     };
   } catch (error) {
-    return { connected: false, authenticated: null, state: "bridge_error", models: [], message: clean(error?.message || error).slice(0, 500), errorCode: "WORKBUDDY_DESKTOP_BRIDGE_ERROR" };
+    const authRequired = error?.code === "WORKBUDDY_AUTH_REQUIRED" || [401, 403].includes(Number(error?.statusCode));
+    return {
+      connected: false,
+      authenticated: authRequired ? false : null,
+      state: authRequired ? "auth_required" : "bridge_error",
+      models: [],
+      message: authRequired
+        ? "WorkBuddy 桌面会话明确返回未登录，请在 WorkBuddy 中完成登录后重新检查"
+        : clean(error?.message || error).slice(0, 500),
+      errorCode: authRequired ? "WORKBUDDY_AUTH_REQUIRED" : "WORKBUDDY_DESKTOP_BRIDGE_ERROR",
+    };
   } finally {
     await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
   }
@@ -332,23 +405,32 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
   let session;
   let credentials;
   try {
-    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, environment, signal, timeoutMs: Math.min(timeoutMs, 120_000) });
+    const opened = await openAcpTaskSession({ sidecar, cwd, nativeHost, model, environment, signal, timeoutMs: Math.min(timeoutMs, 120_000) });
     ({ session, credentials } = opened);
     const sessionResult = opened.result || {};
     const sessionId = clean(sessionResult.sessionId);
-    const available = sessionModels(sessionResult);
-    const selectedModel = clean(model) && (available.length === 0 || available.some((item) => item.id === clean(model))) ? clean(model) : "auto";
-    if (clean(model) && selectedModel === "auto" && available.length && !available.some((item) => item.id === clean(model))) {
+    const sessionCatalog = sessionModels(sessionResult);
+    const resolvedCatalog = await resolvedProductModels(environment);
+    // The desktop session may expose the special `auto` selector while the
+    // resolved product catalogue exposes the newer full model set. Keep that
+    // selector for login probes, but use the resolved catalogue for real
+    // model IDs so stale nine-model sessions cannot hide current models.
+    const available = resolvedCatalog.length > sessionCatalog.length
+      ? [...resolvedCatalog, ...sessionCatalog.filter((item) => item.id === "auto")]
+      : sessionCatalog;
+    const selectedModel = /^auto$/iu.test(clean(model)) ? "" : resolveWorkBuddyModelId(model, available);
+    const effectiveModel = clean(model) && !/^auto$/iu.test(clean(model)) ? (selectedModel || "") : "";
+    if (clean(model) && !/^auto$/iu.test(clean(model)) && !effectiveModel && available.length) {
       const error = new Error(`WorkBuddy 当前真实目录没有模型“${clean(model)}”；可选模型：${available.map((item) => item.id).join("、")}`);
       error.code = "WORKBUDDY_MODEL_UNAVAILABLE";
       throw error;
     }
-    if (selectedModel && selectedModel !== "auto") {
+    if (effectiveModel) {
       const switched = await acpPost(session.acpEndpoint, credentials, {
         jsonrpc: "2.0",
         id: 8,
         method: "session/set_model",
-        params: { sessionId, modelId: selectedModel },
+        params: { sessionId, modelId: effectiveModel },
       }, { signal, timeoutMs: Math.min(timeoutMs, 120_000) });
       if (switched?.error) throw Object.assign(new Error(switched.error.message || "WorkBuddy 模型切换失败"), { code: "WORKBUDDY_MODEL_SWITCH_FAILED" });
     }
@@ -362,7 +444,7 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
     const promptResult = await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 7, method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: String(prompt || "") }] } }, { signal, timeoutMs, onUpdate: update });
     const finalText = text || updateText(promptResult?.params || {}) || clean(promptResult?.result?.text || "");
     if (!finalText) throw new Error("WorkBuddy ACP 已结束，但没有返回可用文本");
-    return { text: finalText.trim(), sessionId, actualProvider: "WorkBuddy", actualModel: selectedModel, executionRuntime: "workbuddy_desktop_acp", permissionMode: "shensi_only" };
+    return { text: finalText.trim(), sessionId, actualProvider: "WorkBuddy", actualModel: effectiveModel || "auto", executionRuntime: "workbuddy_desktop_acp", permissionMode: "shensi_only" };
   } finally {
     await closeAcp(session?.acpEndpoint, credentials, { sidecar, sessionId: session?.sessionId });
   }

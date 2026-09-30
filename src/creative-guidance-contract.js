@@ -253,20 +253,33 @@ export const normalizeCreativeGuidanceState = ({
     || (currentPrompt.length >= 12 && !CONFIRM_PATTERN.test(currentPrompt) && answerDisposition.kind === "answered");
   const candidateOpinionMissing = false;
   const acceptsProposedProgress = !currentPrompt || answerDisposition.substantive || selectionOnly;
-  const completed = new Set([
-    ...list(previous.completedClusters, valid),
-    ...(acceptsProposedProgress ? list(proposed.completedClusters, valid) : []),
-  ]);
-  const delegated = new Set([
-    ...list(previous.delegatedClusters, valid),
-    ...(acceptsProposedProgress ? list(proposed.delegatedClusters, valid) : []),
-  ]);
+  const previousQuestion = text(previous.questionCluster, 80);
+  const completed = new Set(list(previous.completedClusters, valid));
+  const delegated = new Set(list(previous.delegatedClusters, valid));
+  // A model can occasionally return a fully populated contract after one
+  // short user answer.  Accepting that payload wholesale skips the interview
+  // and turns a choice click into long-form production.  The contract is an
+  // interview: at most one foundation cluster may advance per turn.  Prefer
+  // the cluster the previous turn asked about, then the model's explicit
+  // question cluster, then the first still-missing cluster.
+  const proposedQuestionForTurn = valid.has(previousQuestion)
+    ? previousQuestion
+    : valid.has(text(proposed.questionCluster, 80))
+      ? text(proposed.questionCluster, 80)
+      : contractSchema.clusters.find((item) => !completed.has(item.id))?.id || "";
+  if (acceptsProposedProgress && proposedQuestionForTurn) {
+    const proposedCompleted = list(proposed.completedClusters, valid);
+    const proposedDelegated = list(proposed.delegatedClusters, valid);
+    if (proposedDelegated.includes(proposedQuestionForTurn)) delegated.add(proposedQuestionForTurn);
+    else if (proposedCompleted.includes(proposedQuestionForTurn)) completed.add(proposedQuestionForTurn);
+  }
   let decisions = mergeDecisions(
     normalizeDecisions(previous.decisions, valid),
-    ...(acceptsProposedProgress ? [normalizeDecisions(proposed.decisions, valid)] : []),
+    ...(acceptsProposedProgress
+      ? [normalizeDecisions(proposed.decisions, valid).filter((item) => item.cluster === proposedQuestionForTurn)]
+      : []),
   );
 
-  const previousQuestion = text(previous.questionCluster, 80);
   let enhancementDiscussed = previous.enhancementDiscussed === true;
   let finalConfirmation = previous.finalConfirmation === true;
   let selectedEnhancement = text(proposed.selectedEnhancement || previous.selectedEnhancement, 1200);

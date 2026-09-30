@@ -568,38 +568,83 @@ export const verifyKnownAgentRunnerLogin = async ({
   machineRoot = "",
   resolveLaunch = resolveKnownAgentRunnerLaunch,
   runProcess = runAgentRunnerInstallerProcess,
+  inspectBridge = inspectWorkBuddyDesktopBridge,
+  runDesktopBridge = runWorkBuddyDesktopBridge,
 } = {}) => {
   const id = clean(runnerId);
   if (id !== "workbuddy") return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: "当前运行器不支持登录验证" };
+  const desktopLaunch = (launch) => launch?.installSource === "workbuddy_desktop"
+    || launch?.prefixArgs?.some((value) => /[\\/]resources[\\/]app\.asar(?:\.unpacked)?[\\/]cli[\\/]bin[\\/]codebuddy(?:\.js)?$/iu.test(String(value || "")));
+  const bridgeStatus = (bridge, fallbackState = "bridge_error") => {
+    const state = clean(bridge?.state) || fallbackState;
+    const message = clean(bridge?.message) || "WorkBuddy 桌面桥接暂时不可用；登录状态未被判定为失效，请保持 WorkBuddy 运行后重试";
+    return { authenticated: null, authState: "unknown", state, ready: false, models: bridge?.models || [], modelLabels: bridge?.modelLabels || {}, message };
+  };
+  let launch;
   try {
-    const bridge = await inspectWorkBuddyDesktopBridge({ cwd, environment });
+    launch = await resolveLaunch({ runnerId: id, environment, machineRoot });
+  } catch (error) {
+    return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: clean(error?.message || error).slice(0, 500) };
+  }
+  if (desktopLaunch(launch)) {
+    let bridge;
+    try {
+      bridge = await inspectBridge({ cwd, environment });
+    } catch (error) {
+      return bridgeStatus(null, error?.code === "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE" ? "bridge_unavailable" : "bridge_error");
+    }
+    if (bridge?.authenticated === false || bridge?.state === "auth_required") {
+      return { authenticated: false, authState: "login_required", state: "login_required", ready: false, message: bridge.message || "WorkBuddy 桌面会话明确返回未登录，请完成登录后重新检查" };
+    }
     if (bridge?.authenticated === true) {
-      const probe = await runWorkBuddyDesktopBridge({
+      try {
+        const probe = await runDesktopBridge({
+          prompt: "Connection test. Reply with exactly SHENSI_LOGIN_PROBE_OK.",
+          model: "auto",
+          cwd,
+          environment,
+          timeoutMs: 120_000,
+        });
+        if (/SHENSI_LOGIN_PROBE_OK/iu.test(String(probe.text || ""))) {
+          return {
+            authenticated: true,
+            authState: "authenticated",
+            state: "ready",
+            ready: true,
+            models: bridge.models || [],
+            modelLabels: bridge.modelLabels || {},
+            catalogSource: bridge.catalogSource || "workbuddy_acp_session",
+            message: "WorkBuddy 桌面登录会话有效，神思 ACP 真实连接成功",
+          };
+        }
+        return bridgeStatus({ ...bridge, state: "bridge_error", message: "WorkBuddy 桌面桥接已连接，但登录验证未返回明确结果" });
+      } catch (error) {
+        const authFailure = error?.code === "WORKBUDDY_AUTH_REQUIRED" || [401, 403].includes(Number(error?.statusCode));
+        if (authFailure) return { authenticated: false, authState: "login_required", state: "login_required", ready: false, message: "WorkBuddy 桌面会话明确返回未登录，请完成登录后重新检查" };
+        return bridgeStatus({ ...bridge, state: error?.code === "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE" ? "bridge_unavailable" : "bridge_error", message: clean(error?.message || error) });
+      }
+    }
+    // A desktop bridge that is missing or inconclusive is not evidence that
+    // the account is logged out.  Do not fall through to the bundled CLI:
+    // it may use a different credential bootstrap and produce a false login
+    // failure that would clear a valid desktop-session cache.
+    return bridgeStatus(bridge, bridge?.state === "bridge_unavailable" ? "bridge_unavailable" : "bridge_error");
+  }
+  try {
+    const bridge = await inspectBridge({ cwd, environment });
+    if (bridge?.authenticated === true) {
+      const probe = await runDesktopBridge({
         prompt: "Connection test. Reply with exactly SHENSI_LOGIN_PROBE_OK.",
         model: "auto",
         cwd,
         environment,
         timeoutMs: 120_000,
       });
-      if (/SHENSI_LOGIN_PROBE_OK/iu.test(String(probe.text || ""))) {
-        return {
-          authenticated: true,
-          authState: "authenticated",
-          state: "ready",
-          ready: true,
-          models: bridge.models || [],
-          modelLabels: bridge.modelLabels || {},
-          catalogSource: bridge.catalogSource || "workbuddy_acp_session",
-          message: "WorkBuddy 桌面登录会话有效，神思 ACP 真实连接成功",
-        };
-      }
+      if (/SHENSI_LOGIN_PROBE_OK/iu.test(String(probe.text || ""))) return { authenticated: true, authState: "authenticated", state: "ready", ready: true, models: bridge.models || [], modelLabels: bridge.modelLabels || {}, catalogSource: bridge.catalogSource || "workbuddy_acp_session", message: "WorkBuddy 桌面登录会话有效，神思 ACP 真实连接成功" };
     }
   } catch (error) {
-    if (error?.code !== "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE") {
-      return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: clean(error?.message || error).slice(0, 500) };
-    }
+    if (error?.code !== "WORKBUDDY_DESKTOP_BRIDGE_UNAVAILABLE") return { authenticated: null, authState: "unknown", state: "unknown", ready: false, message: clean(error?.message || error).slice(0, 500) };
   }
-  const launch = await resolveLaunch({ runnerId: id, environment, machineRoot });
   const args = [...(Array.isArray(launch.prefixArgs) ? launch.prefixArgs : []), "-p", "--input-format", "text", "--output-format", "text", "--model", "auto", "--no-session-persistence"];
   let result;
   try {
@@ -1040,7 +1085,7 @@ export const createAgentRunnerInstallManager = ({
       capability,
     };
   };
-  const start = async (runnerId) => {
+  const start = async (runnerId, { forceLatest = false } = {}) => {
     cleanup();
     const spec = AGENT_RUNNER_INSTALL_SPECS[clean(runnerId)];
     if (!spec) {
@@ -1062,7 +1107,7 @@ export const createAgentRunnerInstallManager = ({
     void (async () => {
       try {
         const before = await detectRunner(spec.id, { force: true });
-        if (before?.available === true || before?.installed === true) {
+        if (!forceLatest && (before?.available === true || before?.installed === true)) {
           update(job, completedPatch(spec, before, `${spec.label} 已安装并通过版本复检，无需重复装配`));
           return;
         }

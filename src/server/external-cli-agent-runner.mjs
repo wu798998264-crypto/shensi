@@ -332,7 +332,16 @@ const workBuddyTerminalFailure = (...values) => {
       retryable: true,
     };
   }
-  const authRequired = /(?:^|\n)\s*(?:(?:error\s*[:：]\s*)?(?:401|403)\b[^\n]*)?(?:[^\n:：]{0,80}\s*)?(?:未登录|登录状态(?:已)?(?:失效|无效)|登录无效|请先登录|需要登录)|(?:^|\n)\s*(?:[^\n:：]{0,80}\s*)?(?:not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)\b/iu.test(raw);
+  // Only classify an external diagnostic as authentication failure when the
+  // provider gives an explicit 401/403 or the short diagnostic is clearly
+  // branded as WorkBuddy/CodeBuddy. A normal answer may mention logging in or
+  // HTTP status codes; that must remain ordinary text.
+  const explicitAuthStatus = /(?:^|\n)\s*(?:error\s*[:：]\s*)?(?:401|403)\b/iu.test(raw)
+    && /(?:workbuddy|codebuddy|acp|auth|登录|login|unauthori)/iu.test(raw);
+  const brandedAuth = /(?:workbuddy|codebuddy|acp)\b[^\n]{0,180}(?:未登录|登录状态(?:已)?(?:失效|无效)|登录无效|请先登录|需要登录|not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)/iu.test(raw)
+    || /(?:未登录|登录状态(?:已)?(?:失效|无效)|登录无效|请先登录|需要登录|not\s+logged\s+in|login\s+required|authentication\s+required|authorization\s+required)[^\n]{0,120}(?:workbuddy|codebuddy|acp)\b/iu.test(raw);
+  const conciseAuth = /^(?:workbuddy|codebuddy)\s*(?:登录状态(?:已)?(?:失效|无效)|登录无效|请先登录|需要登录)[。.!！\s]*(?:后重试)?$/iu.test(raw);
+  const authRequired = explicitAuthStatus || brandedAuth || conciseAuth;
   if (authRequired) {
     return {
       code: "WORKBUDDY_AUTH_REQUIRED",

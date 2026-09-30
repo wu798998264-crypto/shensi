@@ -29,7 +29,10 @@ export const reserveQuota = ({ state, userId, amount, idempotencyKey, reason = "
   const key = String(idempotencyKey || "").trim();
   if (!Number.isSafeInteger(units) || units <= 0 || units > 10_000_000 || !key || key.length > 160) throw new Error("额度预留参数无效");
   const existing = state.quotaLedger.find((entry) => entry.type === "reserve" && entry.referenceId === key && entry.userId === userId);
-  if (existing) return { account: ensureQuotaAccount(state, userId), reservationId: existing.reservationId, idempotent: true };
+  if (existing) {
+    if (existing.reservedUnits !== units) throw new Error('同一请求不能更改预留额度');
+    return { account: ensureQuotaAccount(state, userId), reservationId: existing.reservationId, idempotent: true };
+  }
   const account = ensureQuotaAccount(state, userId);
   if (account.available < units) throw new Error("可用文字 AI 额度不足");
   account.available -= units;
@@ -42,9 +45,13 @@ export const reserveQuota = ({ state, userId, amount, idempotencyKey, reason = "
 
 export const settleQuota = ({ state, userId, reservationId, usedAmount }) => {
   const reservation = state.quotaLedger.find((entry) => entry.type === "reserve" && entry.reservationId === reservationId && entry.userId === userId);
-  if (!reservation || reservation.settledAt) throw new Error("额度预留不存在或已结算");
+  if (!reservation) throw new Error('额度预留不存在');
   const used = Number(usedAmount);
   if (!Number.isSafeInteger(used) || used < 0 || used > reservation.reservedUnits) throw new Error("实际用量无效");
+  if (reservation.settledAt) {
+    if (reservation.usedAmount !== used) throw new Error('该预留已经按其他用量结算');
+    return ensureQuotaAccount(state, userId);
+  }
   const refund = reservation.reservedUnits - used;
   const account = ensureQuotaAccount(state, userId);
   account.reserved -= reservation.reservedUnits;
@@ -52,6 +59,8 @@ export const settleQuota = ({ state, userId, reservationId, usedAmount }) => {
   account.updatedAt = Date.now();
   reservation.settledAt = Date.now();
   reservation.usedAmount = used;
+  // Reserve/refund already express the balance movement; settlement only records consumption.
+  state.quotaLedger.push({ ...ledgerEntry({ userId, type: 'settle', amount: 0, balance: account.available, reason: '服务端用量结算', referenceId: reservationId }), usedUnits: used });
   if (refund) state.quotaLedger.push(ledgerEntry({ userId, type: "refund", amount: refund, balance: account.available, reason: "文字 AI 请求未使用额度退回", referenceId: reservationId }));
   return account;
 };
