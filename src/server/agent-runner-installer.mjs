@@ -186,10 +186,23 @@ export const parseWorkBuddyProductCatalog = (output = "") => {
     .map((model) => clean(typeof model === "string" ? model : model?.id || model?.model || model?.slug))
     .filter((model) => /^[a-z0-9][a-z0-9._:+/-]*$/iu.test(model)))];
   const definitions = new Map((Array.isArray(payload?.models) ? payload.models : [])
-    .map((model) => [clean(model?.id || model?.model || model?.slug), clean(model?.name || model?.displayName || model?.label)])
-    .filter(([id, label]) => id && label));
+    .map((model) => [clean(model?.id || model?.model || model?.slug), {
+      label: clean(model?.name || model?.displayName || model?.label),
+      credits: clean(model?.credits || model?.creditMultiplier || model?.倍率),
+    }])
+    .filter(([id, item]) => id && item.label));
+  const duplicateLabels = new Map();
+  for (const model of models) {
+    const item = definitions.get(model);
+    const label = item?.label || model;
+    duplicateLabels.set(label, (duplicateLabels.get(label) || 0) + 1);
+  }
   const labels = Object.fromEntries(models
-    .map((model) => [model, definitions.get(model) || ""])
+    .map((model) => {
+      const item = definitions.get(model);
+      const label = item?.label || "";
+      return [model, duplicateLabels.get(label) > 1 ? `${label}（${item?.credits ? `积分倍率 ${item.credits}` : model}）` : label];
+    })
     .filter(([, label]) => label));
   return { models, labels };
 };

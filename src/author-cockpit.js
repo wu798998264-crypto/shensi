@@ -234,7 +234,6 @@ export const authorCockpitDocumentLabel = (documentId, fallback = "") => COCKPIT
 
 export const authorCockpitSections = ({ moduleItems = {}, documents = {}, reportOrder = [] } = {}) => {
   const compileReports = [
-    cockpitItem(moduleItems, documents, "index", "index-pending"),
     ...(moduleItems.reports ?? [])
       .filter(([id]) => id !== "report-compile")
       .map(([id]) => cockpitItem(moduleItems, documents, "reports", id)),
@@ -245,6 +244,7 @@ export const authorCockpitSections = ({ moduleItems = {}, documents = {}, report
       id: "project-control",
       label: "项目管理",
       items: [
+        cockpitItem(moduleItems, documents, "index", "index-pending"),
         cockpitItem(moduleItems, documents, "reports", "report-compile"),
         cockpitItem(moduleItems, documents, "index", "index-language-blacklist"),
       ].filter(Boolean),

@@ -27,5 +27,6 @@ const app = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 assert.match(app, /channel === "video" && profile.provider === "本地 H3"\) return Boolean\(profile.baseUrl && profile.model\)/u, "本地 H3 不需要 API Key，也不能在恢复选择器中被过滤掉");
 assert.match(app, /button.disabled = busy \|\| form.dataset.runtimeUnavailable === "true"/u);
 assert.doesNotMatch(app, /cachedRuntime\?\.ready === true \|\| mediaCapabilityProbeFor/u);
-assert.match(app, /button\.hidden = !local \|\| cachedRuntime\?\.unknown === true \|\| installed/u);
+assert.doesNotMatch(app, /whiteboardLocalH3Install|installLocalH3|一键装配本地 H3/u, "本地 H3 默认不再提供一键装配入口");
+assert.match(app, /本地 H3 尚未配置完整，请先在本机准备运行环境/u);
 console.log("local H3 UI: stale probes, isolated endpoints, pending start/stop, no-key picker and disabled generation passed");

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LIBTV_IMAGE_MODEL_OPTIONS, getProviderImageModelOptions } from "../src/model-presets.js";
-import { normalizeGenerationProfiles, visibleGenerationPickerProfiles } from "../src/generation-profiles.js";
+import { normalizeGenerationProfiles } from "../src/generation-profiles.js";
 import { classifyMediaSubmissionFailure } from "../src/server/media-submission-recovery.mjs";
 import { LibTvMediaDriver } from "../src/server/media-provider-drivers.mjs";
 
@@ -32,12 +32,23 @@ assert.equal(normalizeWithModel("lib-image-2.5-s").model, "lib-image-2.5-s");
 assert.equal(normalizeWithModel("lib-image-2.5-f").model, "lib-image-2.5-f");
 
 const normalizedVideo = normalizeGenerationProfiles({}).videoConnections;
-const localH3 = normalizedVideo.find((profile) => profile.id === "video-local-h3");
-assert.ok(localH3, "安装前也必须保留本地 H3 视频配置入口");
-assert.equal(localH3.provider, "本地 H3");
-assert.equal(localH3.protocol, "comfyui");
-assert.equal(localH3.model, "minimax-h3-reference-video");
-assert.ok(visibleGenerationPickerProfiles(normalizeGenerationProfiles({}), "video").some((profile) => profile.id === "video-local-h3"), "本地 H3 必须在视频配置选择器中可见");
+assert.equal(normalizedVideo.some((profile) => profile.id === "video-local-h3"), false, "默认配置不应自动注入本地 H3");
+const explicitH3 = normalizeGenerationProfiles({
+  videoConnections: [{
+    id: "video-local-h3",
+    name: "本地 H3（ComfyUI）",
+    provider: "本地 H3",
+    adapter: "api",
+    protocol: "comfyui",
+    baseUrl: "http://127.0.0.1:8188",
+    model: "minimax-h3-reference-video",
+  }],
+  activeVideoConnectionId: "video-local-h3",
+}).videoConnections.find((profile) => profile.id === "video-local-h3");
+assert.ok(explicitH3, "用户显式配置的本地 H3 必须保留");
+assert.equal(explicitH3.provider, "本地 H3");
+assert.equal(explicitH3.protocol, "comfyui");
+assert.equal(explicitH3.model, "minimax-h3-reference-video");
 
 const libTvColdStartRetry = classifyMediaSubmissionFailure({
   job: {

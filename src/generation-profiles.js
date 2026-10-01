@@ -1304,28 +1304,29 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
   return next;
 };
 
-const ensureBuiltInLocalH3Profile = (profiles, secrets = {}) => {
+// Local H3 is intentionally user-configured.  Keep an existing profile
+// healthy across normalization/restarts, but never inject a new H3 entry into
+// the default profile catalogue.  The runtime and start/stop controls remain
+// available when a user explicitly adds this profile themselves.
+const normalizeExistingLocalH3Profile = (profiles, secrets = {}) => {
   const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_LOCAL_H3_VIDEO.id);
-  if (existingIndex >= 0) {
-    const existing = profiles[existingIndex];
-    profiles = profiles.map((profile, index) => index === existingIndex
-      ? normalizedProfile("video", {
-          ...BUILT_IN_LOCAL_H3_VIDEO,
-          ...existing,
-          id: BUILT_IN_LOCAL_H3_VIDEO.id,
-          name: BUILT_IN_LOCAL_H3_VIDEO.name,
-          remarkName: BUILT_IN_LOCAL_H3_VIDEO.remarkName,
-          systemManaged: true,
-          adapter: BUILT_IN_LOCAL_H3_VIDEO.adapter,
-          provider: BUILT_IN_LOCAL_H3_VIDEO.provider,
-          protocol: BUILT_IN_LOCAL_H3_VIDEO.protocol,
-          baseUrl: existing.baseUrl || BUILT_IN_LOCAL_H3_VIDEO.baseUrl,
-          model: existing.model || BUILT_IN_LOCAL_H3_VIDEO.model,
-        }, index, secrets)
-      : profile);
-    return profiles;
-  }
-  return [...profiles, normalizedProfile("video", BUILT_IN_LOCAL_H3_VIDEO, profiles.length, secrets)];
+  if (existingIndex < 0) return profiles;
+  const existing = profiles[existingIndex];
+  return profiles.map((profile, index) => index === existingIndex
+    ? normalizedProfile("video", {
+        ...BUILT_IN_LOCAL_H3_VIDEO,
+        ...existing,
+        id: BUILT_IN_LOCAL_H3_VIDEO.id,
+        name: BUILT_IN_LOCAL_H3_VIDEO.name,
+        remarkName: BUILT_IN_LOCAL_H3_VIDEO.remarkName,
+        systemManaged: true,
+        adapter: BUILT_IN_LOCAL_H3_VIDEO.adapter,
+        provider: BUILT_IN_LOCAL_H3_VIDEO.provider,
+        protocol: BUILT_IN_LOCAL_H3_VIDEO.protocol,
+        baseUrl: existing.baseUrl || BUILT_IN_LOCAL_H3_VIDEO.baseUrl,
+        model: existing.model || BUILT_IN_LOCAL_H3_VIDEO.model,
+      }, index, secrets)
+    : profile);
 };
 
 const migratePreferredDreaminaVideoModel = (profile) => profile.adapter === "cli"
@@ -1564,7 +1565,7 @@ export const normalizeGenerationProfiles = (settings = {}, secrets = {}) => {
       next.videoCliDefaultVersion = VIDEO_CLI_DEFAULT_VERSION;
       next.videoProfileCleanupVersion = VIDEO_PROFILE_CLEANUP_VERSION;
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.video ?? {});
-      profiles = ensureBuiltInLocalH3Profile(profiles, secrets.video ?? {});
+      profiles = normalizeExistingLocalH3Profile(profiles, secrets.video ?? {});
     }
     if (channel === "audio") {
       profiles = ensureBuiltInLibTvProfile(profiles, channel, secrets.audio ?? {});

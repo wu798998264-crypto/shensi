@@ -3508,6 +3508,7 @@ const handleApiRequest = async (request, response, pathname) => {
     };
     const durableProfileSignature = canonicalMediaProfileSignature(channel, settings);
     const checkedAt = new Date().toISOString();
+    const forceFresh = body.forceFresh === true;
     const driver = resolveMediaProviderDriver({ channel, settings: { ...settings, channel, [`${channel}Channel`]: true } });
     if (!driver && channel === "image" && settings.adapter === "cli") {
       try {
@@ -3569,7 +3570,7 @@ const handleApiRequest = async (request, response, pathname) => {
         models: [],
       });
     }
-    const capability = await driver.probeCapabilities({ settings: { ...settings, channel, [`${channel}Channel`]: true }, paid: false });
+    const capability = await driver.probeCapabilities({ settings: { ...settings, channel, [`${channel}Channel`]: true }, paid: false, forceFresh });
     const dreaminaTaskResourceReady = !String(driver.id || "").startsWith("dreamina-")
       || capability.taskResourceChecked === true;
     return sendJson(response, 200, {

@@ -325,13 +325,22 @@ textarea:focus-visible,
 .topbar {
   position: relative;
   display: grid;
-  grid-template-columns: auto 1px auto minmax(120px, 300px) minmax(96px, 1fr) auto auto auto;
+  grid-template-columns: auto 1px minmax(120px, 300px) minmax(96px, 1fr) auto auto auto;
   align-items: center;
   width: calc(100vw - 8px);
   height: 60px;
   padding: 0 22px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+}
+
+/* 8.0.4 desktop header geometry.  Keep the workspace directory trigger in a
+   stable left slot and the search box centred in the header itself; pane sizes
+   and the number of right-side utility buttons must not re-anchor either one. */
+.topbar.v804-fixed-layout {
+  --v804-project-slot: 300px;
+  --v804-search-width: 720px;
+  grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
 }
 
 .brand-lockup {
@@ -430,27 +439,6 @@ textarea:focus-visible,
   font-size: 15px;
 }
 
-.workspace-kind-switcher {
-  position: relative;
-  z-index: 7;
-  margin-left: 10px;
-}
-
-.workspace-kind-switcher .workspace-kind-button {
-  white-space: nowrap;
-}
-
-.workspace-kind-switcher .workspace-kind-menu {
-  left: 0;
-  top: 38px;
-}
-
-/* The mode picker belongs inside the expanded work/notebook list. The
-   toolbar name opens that list; it is not a second, external mode picker. */
-.workspace-kind-compatibility {
-  display: block;
-}
-
 .project-switcher:hover {
   background: var(--surface-hover);
 }
@@ -490,16 +478,18 @@ textarea:focus-visible,
   display: none;
 }
 
+.topbar.v804-fixed-layout .global-search,
 .topbar.editor-search-anchored .global-search {
   position: absolute;
   top: 50%;
-  left: var(--editor-search-center-x);
+  left: 50%;
   justify-self: auto;
-  width: var(--editor-search-width);
-  max-width: 720px;
+  width: var(--v804-search-width, 720px);
+  max-width: var(--v804-search-width, 720px);
   transform: translate(-50%, -50%);
 }
 
+.topbar.v804-fixed-layout .search-spacer,
 .topbar.editor-search-anchored .search-spacer {
   display: block;
   min-width: 0;
@@ -1000,12 +990,17 @@ textarea:focus-visible,
 
 /* 收起状态下隐藏左侧目录栏内容，但保留 grid 占位以避免列错位 */
 .workspace.left-sidebar-collapsed > .left-sidebar {
-  visibility: hidden;
+  visibility: visible;
   width: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   padding: 0;
+  pointer-events: none;
+}
+
+.workspace.left-sidebar-collapsed > .left-sidebar > :not(.sidebar-tools) {
+  visibility: hidden;
   pointer-events: none;
 }
 
@@ -1039,18 +1034,33 @@ textarea:focus-visible,
    the whiteboard while leaving the expanded sidebar layout unchanged. */
 .workspace.left-sidebar-collapsed .sidebar-tools {
   position: fixed;
-  z-index: 20;
-  left: 12px;
+  z-index: 40;
+  left: 14px;
   right: auto;
-  bottom: 8px;
+  /* Keep the controls below the sidebar divider while preserving a small
+     bottom and left safety margin for pointer access. */
+  bottom: 6px;
   width: auto;
-  height: 40px;
+  height: 38px;
   padding: 0;
-  gap: 8px;
+  gap: 10px;
   border: 0;
   background: transparent;
   visibility: visible;
   pointer-events: auto;
+}
+
+.workspace.left-sidebar-collapsed .sidebar-tools > button {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+/* In editor fullscreen the status strip occupies the last 44px of the
+   viewport, so move the fixed utility cluster down into the strip below the
+   divider. Normal mode keeps a larger bottom safety margin for pointer access. */
+.app-shell.editor-fullscreen-active .workspace.left-sidebar-collapsed .sidebar-tools {
+  bottom: 1px;
 }
 
 .workspace.left-sidebar-collapsed .sidebar-tools .update-button {
@@ -10197,25 +10207,26 @@ textarea.whiteboard-find-textarea-source::selection {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--accent);
-  transition: width 180ms ease;
+  /* --accent is not part of the base theme contract; --review is. */
+  background: var(--review);
+  transition: width 360ms cubic-bezier(.22,.8,.32,1);
+  will-change: width;
 }
 
 .whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track {
   background: linear-gradient(90deg,
     color-mix(in srgb, var(--text) 12%, var(--surface)) 0%,
-    color-mix(in srgb, var(--surface) 96%, var(--accent)) 45%,
+    color-mix(in srgb, var(--surface) 96%, var(--review)) 45%,
     color-mix(in srgb, var(--text) 12%, var(--surface)) 100%);
   background-size: 220% 100%;
   animation: whiteboard-depth-loading 1.15s linear infinite;
 }
 
 .whiteboard-depth-node-bar[data-whiteboard-depth-loading="true"] .whiteboard-depth-progress-track span {
-  min-width: 18%;
   background: linear-gradient(90deg,
-    color-mix(in srgb, var(--accent) 52%, var(--surface)) 0%,
-    color-mix(in srgb, var(--accent) 20%, var(--surface)) 50%,
-    color-mix(in srgb, var(--accent) 52%, var(--surface)) 100%);
+    color-mix(in srgb, var(--review) 52%, var(--surface)) 0%,
+    color-mix(in srgb, var(--review) 20%, var(--surface)) 50%,
+    color-mix(in srgb, var(--review) 52%, var(--surface)) 100%);
   background-size: 220% 100%;
   animation: whiteboard-depth-loading 1.15s linear infinite;
 }
@@ -24390,8 +24401,14 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 1280px) {
   .topbar {
-    grid-template-columns: auto 1px auto minmax(110px, 220px) minmax(80px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px minmax(110px, 220px) minmax(80px, 1fr) auto auto auto;
     padding-inline: 16px;
+  }
+
+  .topbar.v804-fixed-layout {
+    --v804-project-slot: 220px;
+    --v804-search-width: 560px;
+    grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
   }
 
   .project-switcher {
@@ -24405,10 +24422,24 @@ button.trash-entry-main:focus-visible {
 
 }
 
+@media (max-width: 1100px) {
+  .topbar.v804-fixed-layout {
+    --v804-project-slot: 180px;
+    --v804-search-width: 260px;
+    grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
+  }
+}
+
 @media (max-width: 900px) {
   .topbar {
-    grid-template-columns: auto 1px auto minmax(72px, 150px) minmax(56px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px minmax(72px, 150px) minmax(56px, 1fr) auto auto auto;
     padding-inline: 10px;
+  }
+
+  .topbar.v804-fixed-layout {
+    --v804-project-slot: 150px;
+    --v804-search-width: 360px;
+    grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
   }
 
   .brand-lockup {
@@ -24434,8 +24465,14 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 700px) {
   .topbar {
-    grid-template-columns: auto 1px auto minmax(52px, 100px) minmax(44px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px minmax(52px, 100px) minmax(44px, 1fr) auto auto auto;
     padding-inline: 6px;
+  }
+
+  .topbar.v804-fixed-layout {
+    --v804-project-slot: 100px;
+    --v804-search-width: 320px;
+    grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
   }
 
   .brand-lockup {
@@ -24463,7 +24500,13 @@ button.trash-entry-main:focus-visible {
 
 @media (max-width: 560px) {
   .topbar {
-    grid-template-columns: auto 1px auto minmax(44px, 72px) minmax(36px, 1fr) auto auto auto;
+    grid-template-columns: auto 1px minmax(44px, 72px) minmax(36px, 1fr) auto auto auto;
+  }
+
+  .topbar.v804-fixed-layout {
+    --v804-project-slot: 72px;
+    --v804-search-width: 280px;
+    grid-template-columns: auto 1px var(--v804-project-slot) minmax(0, 1fr) auto auto;
   }
 
   .autosave-state {

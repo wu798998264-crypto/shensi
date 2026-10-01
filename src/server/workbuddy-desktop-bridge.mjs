@@ -57,15 +57,38 @@ const resolvedProductModels = async (environment = process.env) => {
   let payload;
   try { payload = JSON.parse(await readFile(path, "utf8")); } catch { return []; }
   const definitions = new Map((Array.isArray(payload?.models) ? payload.models : [])
-    .map((item) => [clean(item?.id || item?.model || item?.slug), clean(item?.name || item?.displayName || item?.label)])
+    .map((item) => [clean(item?.id || item?.model || item?.slug), {
+      label: clean(item?.name || item?.displayName || item?.label),
+      credits: clean(item?.credits || item?.creditMultiplier || item?.倍率),
+    }])
     .filter(([id]) => id));
   const cliAgent = Array.isArray(payload?.agents)
     ? payload.agents.find((agent) => clean(agent?.name).toLocaleLowerCase() === "cli")
     : null;
-  return (Array.isArray(cliAgent?.models) ? cliAgent.models : [])
+  const models = (Array.isArray(cliAgent?.models) ? cliAgent.models : [])
     .map((item) => clean(typeof item === "string" ? item : item?.id || item?.model || item?.slug))
     .filter(Boolean)
-    .map((id) => ({ id, name: definitions.get(id) || id }));
+    .map((id) => ({ id, ...(definitions.get(id) || {}), name: definitions.get(id)?.label || id }));
+  const duplicateLabels = new Map();
+  for (const item of models) duplicateLabels.set(item.name, (duplicateLabels.get(item.name) || 0) + 1);
+  return models.map((item) => ({
+    ...item,
+    name: duplicateLabels.get(item.name) > 1
+      ? `${item.name}（${item.credits ? `积分倍率 ${item.credits}` : item.id}）`
+      : item.name,
+  }));
+};
+
+const disambiguateWorkBuddyModelNames = (models = [], metadata = []) => {
+  const metadataById = new Map(metadata.map((item) => [item.id, item]));
+  const counts = new Map();
+  for (const item of models) counts.set(item.name, (counts.get(item.name) || 0) + 1);
+  return models.map((item) => ({
+    ...item,
+    name: counts.get(item.name) > 1
+      ? `${item.name}（${metadataById.get(item.id)?.credits || item.credits ? `积分倍率 ${metadataById.get(item.id)?.credits || item.credits}` : item.id}）`
+      : item.name,
+  }));
 };
 
 const controlPipePath = (root, uuid) => `\\\\.\\pipe\\workbuddy-${createHash("sha1").update(resolve(root)).digest("hex").slice(0, 12)}-sidecar-control-${uuid}`;
@@ -85,7 +108,10 @@ const listSidecars = async ({ environment = process.env } = {}) => {
   // developer's real WorkBuddy process in that mode, otherwise a fixture
   // intended to represent a logged-out runner would be contaminated by the
   // current desktop session.
-  if (environment !== process.env && environment?.SHENSI_ALLOW_WORKBUDDY_BRIDGE_TEST !== "1") return [];
+  const synthetic = environment !== process.env
+    && environment?.SHENSI_WORKBUDDY_BRIDGE_RUNTIME !== "1"
+    && environment?.SHENSI_ALLOW_WORKBUDDY_BRIDGE_TEST !== "1";
+  if (synthetic) return [];
   const raw = await powershell("Get-CimInstance Win32_Process -Filter \"Name='WorkBuddy.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress").catch(() => "");
   let rows;
   try { rows = JSON.parse(raw || "[]"); } catch { rows = []; }
@@ -142,7 +168,9 @@ const waitForSidecar = async ({ environment = process.env, signal = null, timeou
   // Synthetic environments used by contract tests intentionally do not touch
   // the desktop process table. Keep those calls immediate; the bounded wait
   // is only for the real first-use WorkBuddy startup race.
-  const synthetic = environment !== process.env && environment?.SHENSI_ALLOW_WORKBUDDY_BRIDGE_TEST !== "1";
+  const synthetic = environment !== process.env
+    && environment?.SHENSI_WORKBUDDY_BRIDGE_RUNTIME !== "1"
+    && environment?.SHENSI_ALLOW_WORKBUDDY_BRIDGE_TEST !== "1";
   const windowMs = synthetic ? 0 : Math.min(BRIDGE_READINESS_WINDOW_MS, Math.max(0, Number(timeoutMs) || BRIDGE_READINESS_WINDOW_MS));
   const deadline = Date.now() + windowMs;
   let sidecar = await discoverSidecar({ environment });
@@ -366,7 +394,7 @@ export const inspectWorkBuddyDesktopBridge = async ({ cwd = process.cwd(), nativ
     const result = opened.result || {};
     const sessionCatalog = sessionModels(result);
     const resolvedCatalog = await resolvedProductModels(environment);
-    const catalog = resolvedCatalog.length > sessionCatalog.length ? resolvedCatalog : sessionCatalog;
+    const catalog = disambiguateWorkBuddyModelNames(resolvedCatalog.length > sessionCatalog.length ? resolvedCatalog : sessionCatalog, resolvedCatalog);
     return {
       connected: true,
       authenticated: true,
@@ -415,9 +443,9 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
     // resolved product catalogue exposes the newer full model set. Keep that
     // selector for login probes, but use the resolved catalogue for real
     // model IDs so stale nine-model sessions cannot hide current models.
-    const available = resolvedCatalog.length > sessionCatalog.length
+    const available = disambiguateWorkBuddyModelNames(resolvedCatalog.length > sessionCatalog.length
       ? [...resolvedCatalog, ...sessionCatalog.filter((item) => item.id === "auto")]
-      : sessionCatalog;
+      : sessionCatalog, resolvedCatalog);
     const selectedModel = /^auto$/iu.test(clean(model)) ? "" : resolveWorkBuddyModelId(model, available);
     const effectiveModel = clean(model) && !/^auto$/iu.test(clean(model)) ? (selectedModel || "") : "";
     if (clean(model) && !/^auto$/iu.test(clean(model)) && !effectiveModel && available.length) {

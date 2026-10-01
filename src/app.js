@@ -7392,7 +7392,11 @@ const agentRunnerCapability = (runnerId = "") => ui.agentRunners?.[runnerId] || 
 
 const markWorkBuddyAuthRequired = (message = "") => {
   const source = String(message || "");
-  if (!/(?:authentication required|login required|not logged in|请先登录|未登录|登录状态(?:已)?(?:失效|无效)|(?:workbuddy|codebuddy)[^\n]{0,120}(?:login|登录|auth|认证))/iu.test(source)) return;
+  // Only an explicit authentication response may change a durable session to
+  // login_required. Generic bridge/model messages often contain the words
+  // “login” or “auth” in their recovery advice and must not erase a good
+  // WorkBuddy session.
+  if (!/(?:authentication required|login required|not logged in|unauthenticated|未登录|登录状态(?:已)?(?:失效|无效)|明确鉴权失败|(?:HTTP|status)\s*(?:401|403)\b)/iu.test(source)) return;
   const current = agentRunnerCapability("workbuddy") || {};
   ui.agentRunners = {
     ...(ui.agentRunners || {}),
@@ -8042,7 +8046,7 @@ const noteColorPickerMarkup = (command, label, iconCode) => `
 
 root.innerHTML = `
   <div class="app-shell${DESKTOP_RUNTIME ? " desktop-runtime" : ""}" data-theme="${state.theme}" data-runtime="${DESKTOP_RUNTIME ? "desktop" : "browser-preview"}">
-    <header class="topbar">
+    <header class="topbar v804-fixed-layout">
       <div class="brand-lockup" aria-label="神思">
         <span class="brand-mark"><img src="/assets/shensi-logo.png?v=20260714b" alt="" /></span>
         <span class="brand-name" aria-hidden="true">
@@ -8970,7 +8974,7 @@ root.innerHTML = `
                 <label class="wide">${modelFieldHelpButton("image", "cliPath", "图片 CLI 程序路径")}<input name="imageCliPath" type="text" placeholder="图片生成 CLI 的程序名或绝对路径" /></label>
                 <label class="wide">${modelFieldHelpButton("image", "cliArgs", "图片 CLI 参数模板")}<input name="imageCliArgs" type="text" placeholder="支持 {promptFile} {model} {aspectRatio} {quality} {outputFile}" /></label>
                 <p class="wide model-channel-note">原生接口并非 OpenAI 兼容格式的厂商，需要填写该厂商或中转服务提供的兼容 Base URL，并以连接测试结果为准。</p>
-                <div class="wide image-adapter-row"><div class="adapter-result" id="imageAdapterResult">尚未测试图片连接</div><button class="secondary-button" id="installDreaminaCli" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="useOpenAiImageCli" type="button" hidden>${icon("\uE945")}<span>使用 GPT Image CLI</span></button><button class="secondary-button" id="testImageAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestImageAdapter" type="button">生成最小测试图</button></div>
+                <div class="wide image-adapter-row"><div class="adapter-result" id="imageAdapterResult">尚未测试图片连接</div><button class="secondary-button" id="installDreaminaCli" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="useOpenAiImageCli" type="button" hidden>${icon("\uE945")}<span>使用 GPT Image CLI</span></button><button class="secondary-button" id="verifyLibTvImage" type="button" hidden>核验 LibTV</button><button class="secondary-button" id="testImageAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestImageAdapter" type="button">生成最小测试图</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="image">${icon("\uE710")}<span>新增图片厂商连接</span></button>
               </div>
             </div>
@@ -8987,7 +8991,7 @@ root.innerHTML = `
                 <label class="wide">${modelFieldHelpButton("video", "cliPath", "视频 CLI 程序路径")}<input name="videoCliPath" type="text" placeholder="视频生成 CLI 的程序名或绝对路径" /></label>
                 <label class="wide">${modelFieldHelpButton("video", "cliArgs", "视频 CLI 参数模板")}<input name="videoCliArgs" type="text" placeholder="支持 {promptFile} {referenceImagesFile} {model} {aspectRatio} {duration} {resolution} {mode} {outputFile}" /></label>
                 <p class="wide model-channel-note">视频任务会在后台持续运行。即梦 CLI、OpenAI、火山方舟、可灵和阿里云百炼均按各自原生协议提交、查询、取消与下载；未通过能力检测的型号不能提交。</p>
-                <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="installLocalH3" type="button" hidden>${icon("\uE9D9")}<span>一键装配本地 H3</span></button><button class="secondary-button" id="startLocalH3" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="stopLocalH3" type="button" hidden>停止本地 H3</button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
+      <div class="wide image-adapter-row"><div class="adapter-result" id="videoAdapterResult">尚未测试视频连接</div><button class="secondary-button" id="installDreaminaCliVideo" type="button" hidden>${icon("\uE9D9")}<span>一键安装即梦 CLI</span></button><button class="secondary-button" id="startLocalH3" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="stopLocalH3" type="button" hidden>停止本地 H3</button><button class="secondary-button" id="verifyLibTvVideo" type="button" hidden>核验 LibTV</button><button class="secondary-button" id="testVideoAdapter" type="button">非计费连接检查</button><button class="secondary-button" id="smokeTestVideoAdapter" type="button">生成最短测试片</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="video">${icon("\uE710")}<span>新增视频配置</span></button>
               </div>
             </div>
@@ -9004,6 +9008,7 @@ root.innerHTML = `
                 <label class="wide">${modelFieldHelpButton("audio", "cliPath", "音频 CLI 程序路径")}<input name="audioCliPath" type="text" placeholder="音频生成 CLI 的程序名或绝对路径" /></label>
                 <label class="wide">${modelFieldHelpButton("audio", "cliArgs", "音频 CLI 参数模板")}<input name="audioCliArgs" type="text" placeholder="支持 {promptFile} {model} {outputFile}" /></label>
                 <p class="wide model-channel-note">LibTV 提供图片、视频和音频生成；音频配置可选择即梦 Seed Audio 1.0 或海螺 Minimax-speech-2.8-hd。未通过真实驱动探测前，不会提交生成任务。</p>
+                <div class="wide image-adapter-row"><div class="adapter-result" id="audioAdapterResult">尚未核验音频连接</div><button class="secondary-button" id="verifyLibTvAudio" type="button" hidden>核验 LibTV</button></div>
                 <button class="wide add-generation-configuration" type="button" data-add-generation-connection="audio">${icon("\uE710")}<span>新增音频配置</span></button>
               </div>
             </div>
@@ -9732,7 +9737,7 @@ root.innerHTML = `
           </section>
         </div>
       </div>
-      <div class="whiteboard-local-h3-notice" id="whiteboardLocalH3Notice" hidden><span>本地 H3 使用本机 GPU/CPU 运行，首次启动可能需要数分钟。</span><button class="secondary-button" id="whiteboardLocalH3Install" type="button">一键装配本地 H3</button><button class="secondary-button" id="whiteboardLocalH3Start" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="whiteboardLocalH3Stop" type="button" hidden>停止本地 H3</button></div>
+      <div class="whiteboard-local-h3-notice" id="whiteboardLocalH3Notice" hidden><span>本地 H3 使用本机 GPU/CPU 运行，首次启动可能需要数分钟。</span><button class="secondary-button" id="whiteboardLocalH3Start" type="button" hidden>启动本地 H3</button><button class="secondary-button" id="whiteboardLocalH3Stop" type="button" hidden>停止本地 H3</button></div>
       <footer class="whiteboard-generation-footer"><output class="whiteboard-generation-credit" id="whiteboardVideoCreditEstimate" hidden aria-live="polite"></output><span class="whiteboard-generation-footer-actions"><button class="secondary-button whiteboard-generation-cancel" type="button" data-close-whiteboard-dialog>${icon("\uE711", "关闭")}<span class="whiteboard-generation-button-label">关闭</span></button><button class="primary-button whiteboard-generation-submit" type="submit" aria-label="生成视频"><span class="whiteboard-generation-button-label">生成视频</span><span class="whiteboard-generation-submit-glyph" aria-hidden="true">${icon("\uE74A")}</span></button></span></footer>
     </form>
   </dialog>
@@ -9959,6 +9964,7 @@ const elements = {
   moduleSwitcher: document.querySelector("#moduleSwitcher"),
   sidebarDivider: document.querySelector(".sidebar-divider"),
   moduleContent: document.querySelector(".module-content"),
+  sidebarTools: document.querySelector(".sidebar-tools"),
   listTitle: document.querySelector("#listTitle"),
   addDocument: document.querySelector("#addDocument"),
   documentList: document.querySelector("#documentList"),
@@ -11115,6 +11121,14 @@ const syncNoteFullscreenState = () => {
   }
   syncNoteToolbarLayout();
   if (elements.whiteboardFullscreenButton) {
+    // Keep the exit-fullscreen control available in the editor header whenever
+    // a real document/whiteboard is open. Empty workspaces intentionally keep
+    // the entry hidden, but entering fullscreen must never hide the control.
+    const documentState = state.documents?.[state.activeDocument];
+    const fullscreenAvailable = !workspaceHasNoActiveEntry()
+      && Boolean(documentState)
+      && state.activeDocument !== "library-trash";
+    elements.whiteboardFullscreenButton.hidden = !fullscreenAvailable;
     const preview = elements.editorCanvas?.classList.contains("document-preview-mode");
     const modeLabel = preview ? "阅读" : "编辑";
     const label = active ? `退出全屏${modeLabel}（F11）` : `全屏${modeLabel}（F11）`;
@@ -11159,10 +11173,15 @@ const applyChatPanelState = () => {
 const applyLeftSidebarState = () => {
   elements.workspace.classList.toggle("left-sidebar-collapsed", leftSidebarCollapsed);
   if (elements.leftSidebar) {
-    elements.leftSidebar.setAttribute("aria-hidden", String(leftSidebarCollapsed));
-    // 只对侧栏内容子元素设置 inert，保留收起/展开按钮可交互
+    // The tools stay visible in the collapsed bottom-left cluster. Do not make
+    // that cluster inert just because the directory content is collapsed.
+    elements.leftSidebar.setAttribute("aria-hidden", "false");
     Array.from(elements.leftSidebar.children).forEach((child) => {
-      child.inert = leftSidebarCollapsed;
+      const isTools = child === elements.sidebarTools;
+      child.inert = leftSidebarCollapsed && !isTools;
+      if (isTools) child.removeAttribute("aria-hidden");
+      else if (leftSidebarCollapsed) child.setAttribute("aria-hidden", "true");
+      else child.removeAttribute("aria-hidden");
     });
   }
   const label = leftSidebarCollapsed ? "展开左侧目录栏" : "收起左侧目录栏";
@@ -11259,34 +11278,17 @@ const renderWritingTimer = () => {
   refreshWritingTimerDisplay();
 };
 
-const EDITOR_SEARCH_MIN_WIDTH = 240;
-const EDITOR_SEARCH_MAX_WIDTH = 720;
-const EDITOR_SEARCH_EDGE_GAP = 16;
 let globalSearchLayoutFrame = 0;
 
 const syncGlobalSearchAnchor = () => {
   globalSearchLayoutFrame = 0;
-  const topbarRect = elements.topbar?.getBoundingClientRect();
-  const editorRect = elements.editorPane?.getBoundingClientRect();
-  const projectRect = elements.projectButton?.getBoundingClientRect();
-  const topActionsRect = elements.topActions?.getBoundingClientRect();
-  if (!topbarRect?.width || !editorRect?.width || !projectRect || !topActionsRect) return;
-
-  const editorCenter = ((editorRect.left + editorRect.right) / 2) - topbarRect.left;
-  const leftLimit = projectRect.right - topbarRect.left + EDITOR_SEARCH_EDGE_GAP;
-  const rightLimit = topActionsRect.left - topbarRect.left - EDITOR_SEARCH_EDGE_GAP;
-  const symmetricRoom = Math.floor(2 * Math.min(editorCenter - leftLimit, rightLimit - editorCenter));
-  const searchWidth = Math.min(EDITOR_SEARCH_MAX_WIDTH, symmetricRoom);
-  const anchored = searchWidth >= EDITOR_SEARCH_MIN_WIDTH;
-
-  elements.topbar.classList.toggle("editor-search-anchored", anchored);
-  if (!anchored) {
-    elements.topbar.style.removeProperty("--editor-search-center-x");
-    elements.topbar.style.removeProperty("--editor-search-width");
-    return;
-  }
-  elements.topbar.style.setProperty("--editor-search-center-x", `${editorCenter}px`);
-  elements.topbar.style.setProperty("--editor-search-width", `${searchWidth}px`);
+  if (!elements.topbar) return;
+  // The 8.0.4 desktop header is a stable frame: the workspace directory stays
+  // in the left slot and search stays centred at a breakpoint-defined width.
+  // Pane resizing and utility-button changes must not move either control.
+  elements.topbar.classList.add("editor-search-anchored");
+  elements.topbar.style.removeProperty("--editor-search-center-x");
+  elements.topbar.style.removeProperty("--editor-search-width");
 };
 
 const scheduleGlobalSearchAnchor = () => {
@@ -19575,11 +19577,16 @@ const isReadonlyAuthorCockpitDocument = ({ documentId = state.activeDocument, do
 
 const renderCompilationDecisionSummary = () => {
   const documentState = state.documents[state.activeDocument];
+  // The summary is a shared panel, not part of the editor DOM. Stamp every
+  // render with the active document so switching report documents cannot leave
+  // the previous report's projection visible while the editor is already on
+  // the new document.
+  elements.compilationDecisionSummary.dataset.documentId = String(state.activeDocument || "");
+  elements.compilationDecisionSummary.innerHTML = "";
   const contractDocument = isAuthorCockpitContractDocument();
   const visible = contractDocument || isReadonlyAuthorCockpitDocument({ documentState });
   elements.compilationDecisionSummary.hidden = !visible;
   if (!visible) {
-    elements.compilationDecisionSummary.innerHTML = "";
     return;
   }
   if (state.activeDocument === "report-compile") {
@@ -29644,7 +29651,7 @@ const openWorkspaceMediaFile = async (relativePath) => {
   }
 };
 
-const openMediaAssetContextMenu = (event, relativePath = "", { assetId = "", kind = "", downloadName = "", revealRelativePath = "", revealKind = "", workspacePath = state.settings.workspacePath, workspaceKind = state.workspaceKind, documentId = state.activeDocument, historyNodeId = "" } = {}) => {
+const openMediaAssetContextMenu = (event, relativePath = "", { assetId = "", kind = "", downloadName = "", revealRelativePath = "", revealKind = "", revealFolder = false, workspacePath = state.settings.workspacePath, workspaceKind = state.workspaceKind, documentId = state.activeDocument, historyNodeId = "" } = {}) => {
   const path = String(relativePath || "").trim();
   const normalizedAssetId = String(assetId || "").trim();
   if ((!path && !normalizedAssetId) || !elements.mediaAssetMenu) return false;
@@ -29659,7 +29666,7 @@ const openMediaAssetContextMenu = (event, relativePath = "", { assetId = "", kin
   const normalizedRevealKind = revealKind === "whiteboard" ? "whiteboard" : revealKind === "batch" ? "batch" : "";
   const libraryAsset = normalizedAssetId ? whiteboardAssetById(normalizedAssetId) : null;
   const assetTrashed = libraryAsset?.inAssetTrash === true;
-  ui.mediaAssetContext = { relativePath: path, revealRelativePath: normalizedRevealPath, revealKind: normalizedRevealKind, assetId: normalizedAssetId, kind: normalizedKind, downloadName: String(downloadName || ""), workspacePath, workspaceKind, documentId, historyNodeId: String(historyNodeId || "") };
+  ui.mediaAssetContext = { relativePath: path, revealRelativePath: normalizedRevealPath, revealKind: normalizedRevealKind, revealFolder: revealFolder === true, assetId: normalizedAssetId, kind: normalizedKind, downloadName: String(downloadName || ""), workspacePath, workspaceKind, documentId, historyNodeId: String(historyNodeId || "") };
   const revealLabel = normalizedRevealKind === "whiteboard"
     ? uiText("打开白板媒体文件夹")
     : normalizedRevealPath ? uiText("打开本批次文件夹") : uiText("打开所在文件夹");
@@ -38896,7 +38903,11 @@ const monitorNativeConversation = (runtime, pending) => {
           if (stream) stream.textContent = pending.streamText || "";
           else renderNativeConversation(runtime);
         } else renderNativeConversation(runtime);
-      }, onConnectionError: () => { pending.execution.result = "连接暂时断开；后台任务保留，正在重连"; renderNativeConversation(runtime); } });
+      }, onConnectionError: () => {
+        if (pending.execution?.userStoppedAt || pending.execution?.status === "cancelled") return;
+        pending.execution.result = "连接暂时断开；后台任务保留，正在重连";
+        renderNativeConversation(runtime);
+      } });
       if (pending.execution?.userStoppedAt) return Object.assign(pending, { dispatchAccepted: true, nativeAgent: true });
       const durableQuestion = conversation.agentQuestion?.runId === runId
         && !nativeConversationQuestionRequiresLiveRun(conversation.agentQuestion);
@@ -39350,6 +39361,11 @@ const executeConversationAgentMessage = async (content, options) => {
       || routeDeliveryMode === "conversation"
       || routeDeliveryMode === "media"
       || ["general_qa", "discussion"].includes(routeTaskKind);
+    // Persist the accepted user turn first, then commit any pending document
+    // draft. This keeps the task durable even if the workspace save reports a
+    // conflict, while still guaranteeing the canonical document is on disk
+    // before the Agent can read/write it.
+    await onPersist();
     if (workspaceState === state
       && workspaceTargetIsActive(taskContextSnapshot.workspaceKind, taskContextSnapshot.workspacePath)
       && hasUnsavedDocumentWork
@@ -39357,7 +39373,6 @@ const executeConversationAgentMessage = async (content, options) => {
       const saved = await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
       if (!saved) throw ui.workspaceSaveError ?? new Error("当前文档尚未安全保存，已停止启动 Agent");
     }
-    await onPersist();
     // Keep a second paint checkpoint after persistence for slow workspaces;
     // the first paint above is what makes the task card appear before routing.
     renderNativeConversation(runtime, true);
@@ -39933,24 +39948,44 @@ const cancelConversationRun = async (requestId) => {
     showToast("Agent 任务已停止；可立即继续发送其他指令");
     return;
   }
-  try {
-    const response = await fetch("/api/chat/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ requestId }),
-    });
-    const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.message || "终止任务失败");
-    if (!payload.cancelled) {
-      pendingMessage.execution.cancelling = false;
-      renderMessages();
-      showToast(job ? "将在当前阶段结束后暂停" : "任务已经结束");
-    }
-  } catch (error) {
-    pendingMessage.execution.cancelling = false;
-    renderMessages();
-    showToast(job ? "已记录暂停请求，将在当前阶段结束后生效" : error.message || "终止任务失败");
+  // Close the local card before contacting the server. A disconnected chat
+  // stream must never make the click wait for an HTTP/SSE timeout.
+  const stoppedAt = Date.now();
+  pendingMessage.pending = false;
+  pendingMessage.streamText = "";
+  pendingMessage.streamDisplayText = "";
+  pendingMessage.content = "当前任务已停止；停止前已经完成的内容会保留。";
+  pendingMessage.execution = {
+    ...pendingMessage.execution,
+    status: "cancelled",
+    result: "任务已停止",
+    error: "",
+    cancelling: false,
+    userStoppedAt: stoppedAt,
+    endedAt: stoppedAt,
+    nativeAgentTerminal: true,
+    progressPercent: 100,
+  };
+  clearAgentDisplayRawText(pendingMessage);
+  if (taskRuntime) {
+    await persistNativeConversation(taskRuntime).catch(() => {});
+    renderNativeConversation(taskRuntime, true);
+  } else {
+    persist();
+    renderConversationIfActive(currentConversationId);
   }
+  showToast("任务已停止");
+  void fetch("/api/chat/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId }),
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) throw new Error(payload.message || "后台终止确认失败");
+  }).catch((error) => {
+    // The card is already terminal locally; this is diagnostic only.
+    console.warn("chat cancellation confirmation failed", error);
+  });
 };
 
 const beginMessageEdit = (messageId) => {
@@ -57240,11 +57275,10 @@ const videoModelsForConnection = (profile, preferredModel = "") => {
 
 const syncLocalH3WhiteboardNotice = () => {
   const notice = document.querySelector("#whiteboardLocalH3Notice");
-  const button = document.querySelector("#whiteboardLocalH3Install");
   const startButton = document.querySelector("#whiteboardLocalH3Start");
   const stopButton = document.querySelector("#whiteboardLocalH3Stop");
   const form = elements.whiteboardVideoForm;
-  if (!notice || !button || !startButton || !stopButton || !form) return;
+  if (!notice || !startButton || !stopButton || !form) return;
   const profile = currentVideoGenerationSettings(form.elements.connectionId?.value, form.elements.model?.value);
   const local = String(profile?.provider || "") === "本地 H3";
   const runtimeState = localH3Status.peek(profile || {});
@@ -57253,9 +57287,6 @@ const syncLocalH3WhiteboardNotice = () => {
   const installed = local && cachedRuntime?.installed === true;
   const started = local && cachedRuntime?.started === true;
   notice.hidden = !local;
-  // Before the first probe the runtime may be completely absent; keep the
-  // one-click installer visible.  Only an actually complete runtime hides it.
-  button.hidden = !local || cachedRuntime?.unknown === true || installed;
   startButton.hidden = !local || !installed || started;
   stopButton.hidden = !local || (!started && !cachedRuntime?.uncertain);
   startButton.disabled = Boolean(runtimeState.action);
@@ -57267,7 +57298,7 @@ const syncLocalH3WhiteboardNotice = () => {
       ? (runtimeState.action === "start" ? "正在启动本地 H3…" : "正在停止本地 H3 并释放后台进程…")
       : runtimeState.error || (!cachedRuntime ? "正在读取本地 H3 运行状态…" : cachedRuntime.unknown ? "本地 H3 状态暂时不可读取，请重新检查"
       : !installed
-      ? (cachedRuntime?.reasons?.find((reason) => /适配器|不完整/u.test(String(reason))) || "本地 H3 尚未装配，可点击一键装配")
+      ? (cachedRuntime?.reasons?.find((reason) => /适配器|不完整/u.test(String(reason))) || "本地 H3 尚未配置完整，请先在本机准备运行环境")
       : ready
         ? "本地 H3 已启动，可以生成"
         : started
@@ -58671,7 +58702,13 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
   const progressTotal = Math.max(0, Number(runtime.total) || inputs.length || connectedInputs.length);
   const progressCompleted = Math.max(0, Math.min(progressTotal || Number.MAX_SAFE_INTEGER, Number(runtime.completed) || 0));
   const progressCurrent = Math.max(0, Math.min(100, Number(runtime.currentPercent) || 0));
-  const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) || (progressTotal ? (progressCompleted / progressTotal) * 100 : 0)));
+  // A worker reports `currentPercent` for the active item and `completed`
+  // for finished items. When the overall field is absent/zero, project the
+  // active item's progress into the total instead of leaving the bar at 0%.
+  const derivedProgressValue = progressTotal
+    ? ((progressCompleted + Math.min(100, progressCurrent) / 100) / progressTotal) * 100
+    : progressCurrent;
+  const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) > 0 ? Number(runtime.percent) : derivedProgressValue));
   const progressVisible = Boolean(loading || runtime.busy || runtime.total > 0 || runtime.completed > 0);
   const progressMarkup = progressVisible
     ? `<div class="whiteboard-depth-progress${loading ? " is-loading" : ""}" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length || connectedInputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : loading ? " · 程序正在加载" : ""}</small></div>`
@@ -60965,34 +61002,6 @@ elements.whiteboardVideoForm.elements.model.addEventListener("change", () => {
   syncLocalH3WhiteboardNotice();
   persistWhiteboardGenerationProfile("video", whiteboardGenerationFormValues(elements.whiteboardVideoForm));
   renderWhiteboardGenerationCredit("video");
-});
-document.querySelector("#whiteboardLocalH3Install")?.addEventListener("click", async (event) => {
-  const button = event.currentTarget;
-  const notice = document.querySelector("#whiteboardLocalH3Notice");
-  const profile = currentVideoGenerationSettings(elements.whiteboardVideoForm.elements.connectionId.value) || {};
-  localH3Status.peek(profile).error = "";
-  button.disabled = true;
-  button.textContent = "正在装配…";
-  try {
-    const response = await fetch("/api/local-h3/install", { method: "POST" });
-    let status = await response.json();
-    if (!status.ok) throw new Error(status.message || "装配启动失败");
-    while (status.stage && !["complete", "failed"].includes(status.stage)) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      status = await fetch(`/api/local-h3/install/status?jobId=${encodeURIComponent(status.jobId || "")}`).then((item) => item.json());
-      if (notice) notice.querySelector("span").textContent = status.message || "正在装配本地 H3…";
-    }
-    if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
-    await localH3RuntimeProbeFor(profile, { force: true });
-    if (notice) notice.querySelector("span").textContent = `${status.message || "本地 H3 已装配"}；点击启动后才会运行`;
-  } catch (error) {
-    localH3Status.peek(profile).error = `本地 H3 装配失败：${error.message}`;
-    if (notice) notice.querySelector("span").textContent = `本地 H3 装配失败：${error.message}`;
-  } finally {
-    button.disabled = false;
-    button.textContent = "一键装配本地 H3";
-    syncLocalH3WhiteboardNotice();
-  }
 });
 document.querySelector("#whiteboardLocalH3Start")?.addEventListener("click", async (event) => {
   const button = event.currentTarget;
@@ -67450,8 +67459,8 @@ elements.mediaAssetMenu.addEventListener("click", async (event) => {
   if (action === "reveal") {
     const revealPath = context.revealRelativePath || context.relativePath;
     await revealWorkspaceTarget(revealPath
-      ? { workspacePath: context.workspacePath, workspaceKind: context.workspaceKind, documentId: context.documentId, relativePath: revealPath }
-      : { workspacePath: context.workspacePath, workspaceKind: context.workspaceKind, documentId: context.documentId });
+      ? { workspacePath: context.workspacePath, workspaceKind: context.workspaceKind, documentId: context.documentId, relativePath: revealPath, revealFolder: context.revealFolder }
+      : { workspacePath: context.workspacePath, workspaceKind: context.workspaceKind, documentId: context.documentId, relativePath: context.relativePath, revealFolder: context.revealFolder });
     return;
   }
   if (!context.assetId && action === "copy" && context.kind === "image") {
@@ -68828,10 +68837,10 @@ elements.attachmentPreviewDialog.addEventListener("contextmenu", (event) => {
   const workspacePath = elements.attachmentPreviewDialog.dataset.attachmentWorkspacePath || state.settings.workspacePath;
   const workspaceKind = elements.attachmentPreviewDialog.dataset.attachmentWorkspaceKind || state.workspaceKind;
   const documentId = elements.attachmentPreviewDialog.dataset.attachmentDocumentId || state.activeDocument;
-  const revealRelativePath = elements.attachmentPreviewDialog.dataset.mediaBatchDirectory || "";
-  const revealKind = elements.attachmentPreviewDialog.dataset.mediaDirectoryKind || "";
+  const revealRelativePath = "";
+  const revealKind = "";
   if (!relativePath || !["image", "video", "audio"].includes(kind)) return;
-  openMediaAssetContextMenu(event, relativePath, { kind, downloadName, revealRelativePath, revealKind, workspacePath, workspaceKind, documentId });
+  openMediaAssetContextMenu(event, relativePath, { kind, downloadName, revealRelativePath, revealKind, revealFolder: true, workspacePath, workspaceKind, documentId });
 });
 window.addEventListener("resize", () => {
   if (!elements.attachmentPreviewDialog.open) return;
@@ -76650,13 +76659,14 @@ const syncProviderSpecificCliButtons = async () => {
   const isOpenAiImageCli = form.imageAdapter.value === "cli" && form.imageProvider.value === "OpenAI";
   const imageButton = document.querySelector("#installDreaminaCli");
   const videoButton = document.querySelector("#installDreaminaCliVideo");
-  const localH3Button = document.querySelector("#installLocalH3");
   const localH3StartButton = document.querySelector("#startLocalH3");
   const localH3StopButton = document.querySelector("#stopLocalH3");
   const openAiImageCliButton = document.querySelector("#useOpenAiImageCli");
+  const libTvImageVerifyButton = document.querySelector("#verifyLibTvImage");
+  const libTvVideoVerifyButton = document.querySelector("#verifyLibTvVideo");
+  const libTvAudioVerifyButton = document.querySelector("#verifyLibTvAudio");
   if (imageButton) imageButton.hidden = !isImageDreaminaCli;
   if (videoButton) videoButton.hidden = !isVideoDreaminaCli;
-  if (localH3Button) localH3Button.hidden = form.videoProvider.value !== "本地 H3";
   if (localH3StartButton) localH3StartButton.hidden = true;
   if (localH3StopButton) localH3StopButton.hidden = true;
   if (form.videoProvider.value === "本地 H3") {
@@ -76667,9 +76677,8 @@ const syncProviderSpecificCliButtons = async () => {
       baseUrl: form.videoBaseUrl.value,
     };
     void localH3RuntimeProbeFor(h3Profile).then((probe) => {
-      if (!localH3Button || !probe || form.videoProvider.value !== "本地 H3") return;
+      if (!probe || form.videoProvider.value !== "本地 H3") return;
       const runtimeState = localH3Status.peek(h3Profile);
-      localH3Button.hidden = probe.installed === true || probe.unknown === true;
       if (localH3StartButton) localH3StartButton.hidden = probe.installed !== true || probe.started === true;
       if (localH3StopButton) localH3StopButton.hidden = probe.started !== true && probe.uncertain !== true;
       if (localH3StartButton) localH3StartButton.disabled = Boolean(runtimeState.action);
@@ -76686,6 +76695,9 @@ const syncProviderSpecificCliButtons = async () => {
     });
   }
   if (openAiImageCliButton) openAiImageCliButton.hidden = !isOpenAiImageCli;
+  if (libTvImageVerifyButton) libTvImageVerifyButton.hidden = !(form.imageAdapter.value === "cli" && String(form.imageProvider.value || "").toLowerCase() === "libtv");
+  if (libTvVideoVerifyButton) libTvVideoVerifyButton.hidden = !(form.videoAdapter.value === "cli" && String(form.videoProvider.value || "").toLowerCase() === "libtv");
+  if (libTvAudioVerifyButton) libTvAudioVerifyButton.hidden = !(form.audioAdapter.value === "cli" && String(form.audioProvider.value || "").toLowerCase() === "libtv");
   // Preserve the last durable account state while the asynchronous status
   // refresh runs. Clearing the panel here made every settings re-render flash
   // through "正在读取" and allowed a late probe error to look like logout.
@@ -77151,34 +77163,6 @@ for (const { button, resultId, channel } of dreaminaCliInstallButtons) {
     }
   });
 }
-
-document.querySelector("#installLocalH3")?.addEventListener("click", async (event) => {
-  const button = event.currentTarget;
-  const result = document.querySelector("#videoAdapterResult");
-  button.disabled = true;
-  result.textContent = "正在读取固定版本清单并装配本地 H3，请稍候…";
-  try {
-    const response = await fetch("/api/local-h3/install", { method: "POST" });
-    const payload = await response.json();
-    if (!payload.ok) throw new Error(payload.message || "本地 H3 装配启动失败");
-    let status = payload;
-    while (status.stage && !["complete", "failed"].includes(status.stage)) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      const current = await fetch(`/api/local-h3/install/status?jobId=${encodeURIComponent(status.jobId || "")}`);
-      status = await current.json();
-      result.textContent = status.message || "正在装配本地 H3…";
-    }
-    if (status.stage === "failed") throw new Error(status.message || "本地 H3 装配失败");
-    await localH3RuntimeProbeFor(localH3SettingsFor(), { force: true });
-    result.textContent = `${status.message || "本地 H3 已装配"}；点击启动后才会运行`;
-    renderVideoModelOptions("本地 H3");
-  } catch (error) {
-    result.textContent = `本地 H3 装配失败：${error.message}`;
-  } finally {
-    button.disabled = false;
-    syncProviderSpecificCliButtons();
-  }
-});
 
 const localH3SettingsFor = () => {
   const form = elements.settingsForm?.elements;
@@ -78354,7 +78338,7 @@ document.querySelector("#testImageAdapter").addEventListener("click", async () =
   try {
     const useMediaProbe = usesRegisteredMediaDriver("image", settings);
     const endpoint = useMediaProbe ? "/api/media/capabilities/probe" : settings.adapter === "api" ? "/api/models/list" : "/api/adapters/test";
-    const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(useMediaProbe ? { channel: "image", settings } : settings) });
+    const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(useMediaProbe ? { channel: "image", settings, forceFresh: String(settings.provider || "").toLowerCase() === "libtv" } : settings) });
     const payload = await response.json();
     const models = probeModelIds(payload.models).filter(isImageGenerationModel);
     const connected = response.ok && payload.ok !== false
@@ -78459,7 +78443,7 @@ document.querySelector("#testVideoAdapter").addEventListener("click", async () =
     const response = await fetch("/api/media/capabilities/probe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel: "video", settings }),
+      body: JSON.stringify({ channel: "video", settings, forceFresh: String(settings.provider || "").toLowerCase() === "libtv" }),
     });
     const payload = await response.json();
     const connected = response.ok && payload.ok !== false && payload.connected === true && payload.driverRegistered === true;
@@ -78514,6 +78498,40 @@ document.querySelector("#testVideoAdapter").addEventListener("click", async () =
   } finally {
     button.disabled = false;
     renderCustomApiCapabilityStatus();
+  }
+});
+
+// LibTV verification reuses the existing non-billing capability probes. It
+// only reads the registered CLI catalogue/driver; no generation is submitted
+// and no balance is fabricated when the CLI has no balance endpoint.
+document.querySelector("#verifyLibTvImage")?.addEventListener("click", () => {
+  document.querySelector("#testImageAdapter")?.click();
+});
+document.querySelector("#verifyLibTvVideo")?.addEventListener("click", () => {
+  document.querySelector("#testVideoAdapter")?.click();
+});
+document.querySelector("#verifyLibTvAudio")?.addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const result = document.querySelector("#audioAdapterResult");
+  captureGenerationFormProfile("audio");
+  const settings = { ...generationSettingsForChannel(generationWorkingSettings(), "audio"), audioChannel: true };
+  button.disabled = true;
+  result.textContent = "正在读取 LibTV 音频模型目录…";
+  try {
+    const response = await fetch("/api/media/capabilities/probe", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel: "audio", settings, forceFresh: true }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.connected !== true) throw new Error(payload.message || "LibTV 音频驱动不可用");
+    result.textContent = `LibTV 音频模型目录已确认：${payload.models?.length || 0} 个；未返回可核验积分，本次未执行收费生成`;
+    storeMediaCapabilityProbe("audio", settings, { ...payload, checkedAt: new Date().toISOString(), capabilityState: "available" });
+    persistCapabilityProbes();
+    renderAudioModelOptions(settings.provider);
+  } catch (error) {
+    result.textContent = `LibTV 音频核验失败：${error.message}`;
+  } finally {
+    button.disabled = false;
   }
 });
 

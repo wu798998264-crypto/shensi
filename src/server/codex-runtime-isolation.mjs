@@ -50,9 +50,16 @@ export const shensiCodexProfileRoot = (machineRoot) => resolve(
   "shensi-codex-profile-v1",
 );
 
-export const agentChildEnvironment = (environment = process.env) => Object.fromEntries(
-  Object.entries(environment).filter(([key]) => !/^SHENSI_BROWSER_BRIDGE_(?:URL|TOKEN)$/iu.test(key)),
-);
+export const agentChildEnvironment = (environment = process.env) => ({
+  ...Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !/^SHENSI_BROWSER_BRIDGE_(?:URL|TOKEN)$/iu.test(key)),
+  ),
+  // Preserve the distinction between a real child-process environment and
+  // synthetic environments used by bridge contract tests. The bridge needs
+  // to inspect the desktop sidecar for real Agent runs even though this
+  // helper necessarily creates a new object.
+  SHENSI_WORKBUDDY_BRIDGE_RUNTIME: "1",
+});
 
 export const shensiCodexEnvironment = ({ machineRoot, environment = process.env } = {}) => ({
   ...agentChildEnvironment(environment),
