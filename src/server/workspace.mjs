@@ -767,38 +767,104 @@ const enqueueWorkspaceWrite = (workspaceRoot, task) => {
   return tracked;
 };
 
+const WORKSPACE_FILE_LOCK_WAIT_MS = 120_000;
+const WORKSPACE_FILE_LOCK_POLL_MS = 100;
+const WORKSPACE_FILE_LOCK_STALE_PARTIAL_MS = 5_000;
+
+const workspaceWriteBusy = () => Object.assign(
+  new Error("当前作品正在被另一个神思任务写入，已进入等待；请稍后重试"),
+  { code: "WORKSPACE_BUSY", statusCode: 409 },
+);
+
+const readWorkspaceLockSnapshot = async (lockPath) => {
+  const info = await stat(lockPath).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!info) return null;
+  const raw = await readFile(lockPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (raw == null) return null;
+  let lock = null;
+  try {
+    lock = JSON.parse(raw);
+  } catch {
+    // A writer may have created the file but not finished publishing its
+    // metadata yet. Keep the file protected until the partial record is old.
+  }
+  return { lock, mtimeMs: Number(info.mtimeMs || 0), size: Number(info.size || 0) };
+};
+
+const sameWorkspaceLockSnapshot = (left, right) => Boolean(
+  left && right
+  && left.mtimeMs === right.mtimeMs
+  && left.size === right.size
+  && String(left.lock?.token || "") === String(right.lock?.token || "")
+  && Number(left.lock?.pid || 0) === Number(right.lock?.pid || 0)
+  && String(left.lock?.createdAt || "") === String(right.lock?.createdAt || ""),
+);
+
+const removeWorkspaceLockIfUnchanged = async (lockPath, snapshot) => {
+  const current = await readWorkspaceLockSnapshot(lockPath).catch(() => null);
+  if (sameWorkspaceLockSnapshot(snapshot, current)) await rm(lockPath, { force: true });
+};
+
 const withWorkspaceFileLock = async (workspaceRoot, task, { workspaceLockToken = "" } = {}) => {
   const internalRoot = resolveWorkspaceInternalRoot(workspaceRoot);
   const lockPath = join(internalRoot, "workspace.lock");
   await mkdir(internalRoot, { recursive: true });
   let handle;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const waitStartedAt = Date.now();
+  let ownerToken = "";
+  for (;;) {
     try {
       handle = await open(lockPath, "wx");
       break;
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      let lock = null;
-      try {
-        lock = JSON.parse(await readFile(lockPath, "utf8"));
-      } catch {}
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+      const snapshot = await readWorkspaceLockSnapshot(lockPath);
+      const lock = snapshot?.lock;
       if (lock?.mode === "migration") {
         if (workspaceLockToken && lock.token === workspaceLockToken) return task();
-        if (processIsAlive(Number(lock?.pid))) throw new Error("当前作品正在执行数据迁移，请等待迁移完成");
-        await rm(lockPath, { force: true });
+        if (!processIsAlive(Number(lock?.pid))) {
+          await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
+          continue;
+        }
+      } else if (lock && !processIsAlive(Number(lock?.pid))) {
+        await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
+        continue;
+      } else if (!lock && snapshot && Date.now() - snapshot.mtimeMs > WORKSPACE_FILE_LOCK_STALE_PARTIAL_MS) {
+        await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
         continue;
       }
-      if (processIsAlive(Number(lock?.pid))) throw new Error("当前作品正在被另一个神思任务写入，请等待该任务完成");
-      await rm(lockPath, { force: true });
+      if (Date.now() - waitStartedAt >= WORKSPACE_FILE_LOCK_WAIT_MS) throw workspaceWriteBusy();
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, WORKSPACE_FILE_LOCK_POLL_MS));
     }
   }
-  if (!handle) throw new Error("无法取得作品写入锁");
-  await handle.writeFile(JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }), "utf8");
+  ownerToken = randomUUID();
+  try {
+    await handle.writeFile(JSON.stringify({
+      pid: process.pid,
+      token: ownerToken,
+      mode: "write",
+      createdAt: new Date().toISOString(),
+    }), "utf8");
+  } catch (error) {
+    await handle.close().catch(() => {});
+    const snapshot = await readWorkspaceLockSnapshot(lockPath).catch(() => null);
+    if (snapshot?.lock?.token === ownerToken) await rm(lockPath, { force: true }).catch(() => {});
+    throw error;
+  }
   try {
     return await task();
   } finally {
     await handle.close().catch(() => {});
-    await rm(lockPath, { force: true });
+    const snapshot = await readWorkspaceLockSnapshot(lockPath).catch(() => null);
+    if (snapshot?.lock?.token === ownerToken) await rm(lockPath, { force: true });
   }
 };
 
@@ -813,21 +879,39 @@ export const acquireWorkspaceMigrationLocks = async ({ appRoot, requestedPaths =
       const lockPath = join(internalRoot, "workspace.lock");
       await mkdir(internalRoot, { recursive: true });
       let handle;
-      try {
-        handle = await open(lockPath, "wx");
-      } catch (error) {
-        if (error.code !== "EEXIST") throw error;
-        const lock = await readFile(lockPath, "utf8").then(JSON.parse).catch(() => null);
-        if (processIsAlive(Number(lock?.pid))) throw new Error("有工作区正在写入，无法开始迁移，请稍后重试");
-        await rm(lockPath, { force: true });
-        handle = await open(lockPath, "wx");
+      const waitStartedAt = Date.now();
+      for (;;) {
+        try {
+          handle = await open(lockPath, "wx");
+          break;
+        } catch (error) {
+          if (error.code !== "EEXIST") throw error;
+          const snapshot = await readWorkspaceLockSnapshot(lockPath);
+          const lock = snapshot?.lock;
+          const stalePartial = !lock && snapshot && Date.now() - snapshot.mtimeMs > WORKSPACE_FILE_LOCK_STALE_PARTIAL_MS;
+          if ((lock && !processIsAlive(Number(lock.pid))) || stalePartial) {
+            await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
+            continue;
+          }
+          if (Date.now() - waitStartedAt >= WORKSPACE_FILE_LOCK_WAIT_MS) {
+            throw new Error("有工作区正在写入，无法开始迁移，请稍后重试");
+          }
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, WORKSPACE_FILE_LOCK_POLL_MS));
+        }
       }
-      await handle.writeFile(JSON.stringify({
-        pid: process.pid,
-        token,
-        mode: "migration",
-        createdAt: new Date().toISOString(),
-      }), "utf8");
+      try {
+        await handle.writeFile(JSON.stringify({
+          pid: process.pid,
+          token,
+          mode: "migration",
+          createdAt: new Date().toISOString(),
+        }), "utf8");
+      } catch (error) {
+        await handle.close().catch(() => {});
+        const snapshot = await readWorkspaceLockSnapshot(lockPath).catch(() => null);
+        if (snapshot?.lock?.token === token) await rm(lockPath, { force: true }).catch(() => {});
+        throw error;
+      }
       await handle.close();
       acquired.push({ workspaceRoot, lockPath });
     }

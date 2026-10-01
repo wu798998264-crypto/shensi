@@ -1,6 +1,6 @@
 {
   "name": "shensi-creative-engine",
-  "version": "9.0.8",
+  "version": "9.0.9",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
@@ -71,6 +71,7 @@
     "test:document-edit-history": "node scripts/test-v103-regressions.mjs && node scripts/test-v113-completion-evidence.mjs",
     "test:desktop": "node --check packaging/windows/desktop-app/main.mjs && node scripts/test-v103-regressions.mjs",
     "test:desktop-lifecycle": "node scripts/test-desktop-process-lifecycle.mjs",
+    "test:workspace-write-lock": "node scripts/test-workspace-write-lock.mjs",
     "test:whiteboard-keyboard-focus": "node scripts/test-whiteboard-keyboard-focus.mjs && node scripts/test-document-delete-ui-contract.mjs && electron scripts/test-whiteboard-keyboard-focus-electron.cjs",
     "test:external-markdown": "node scripts/test-v106-full-optimization.mjs",
     "test:document-transfer": "node scripts/test-v109-execution-authority.mjs",
