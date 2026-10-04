@@ -391,7 +391,10 @@ const BUILT_IN_LIBTV_VIDEO = {
   provider: "LibTV",
   protocol: "media",
   baseUrl: "",
-  model: "MiniMax-Hailuo-H3",
+  // Keep the bundled profile pointed at a model that is present in the current
+  // LibTV catalog.  Hailuo H3 and wanx3.0 were historical aliases and now make
+  // the CLI fail before submission with MODEL_NOT_FOUND.
+  model: "star-video2",
   timeoutMs: "1800000",
   apiKey: "",
   cliPath: LIBTV_CLI_ALIAS,
@@ -1322,6 +1325,8 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
       const existing = next[existingIndex];
       const legacyImageModel = channel === "image"
         && ["lib-image-2", "nebula-ultra"].includes(String(existing.model || "").trim());
+      const legacyVideoModel = channel === "video"
+        && ["MiniMax-Hailuo-H3", "MiniMax-Hailuo-H3-Max", "wanx3.0", "wanx3.0-prime", "viduq3-pro"].includes(String(existing.model || "").trim());
       next[existingIndex] = normalizedProfile(channel, {
         ...next[existingIndex],
         adapter: builtIn.adapter,
@@ -1335,6 +1340,7 @@ const ensureBuiltInLibTvProfile = (profiles, channel, secrets = {}) => {
         // current LibTV CLI. Migrate only the built-in profile's stale
         // defaults; user-created LibTV profiles remain untouched.
         ...(legacyImageModel ? { model: BUILT_IN_LIBTV_IMAGE.model } : {}),
+        ...(legacyVideoModel ? { model: BUILT_IN_LIBTV_VIDEO.model } : {}),
         ...(channel === "audio" ? { reserved: false } : {}),
       }, existingIndex, secrets);
       continue;

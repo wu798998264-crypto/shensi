@@ -16,7 +16,19 @@ const brokerLeasePath = join(dirname(profileStorePath), "dreamina-broker-lease-v
 const jobTimeoutMs = Math.max(60_000, Number(process.env.SHENSI_ACCEPTANCE_JOB_TIMEOUT_MS) || 15 * 60_000);
 const pollMs = Math.max(500, Number(process.env.SHENSI_ACCEPTANCE_POLL_MS) || 2_500);
 const runId = `${new Date().toISOString().replace(/[-:.TZ]/gu, "").slice(0, 14)}-${randomUUID().slice(0, 6)}`;
-const terminalStatuses = new Set(["complete", "failed", "retry_required", "cancelled"]);
+// Provider/account prerequisites are terminal for this acceptance run: report the
+// real blocker and continue with independent profiles instead of hanging the
+// whole serial plan. The production worker still owns the normal retry/recovery
+// semantics for these states.
+const terminalStatuses = new Set([
+  "complete",
+  "failed",
+  "retry_required",
+  "cancelled",
+  "waiting_credentials",
+  "waiting_storage",
+  "reconciliation_required",
+]);
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const stored = JSON.parse(await readFile(profileStorePath, "utf8"));
@@ -146,6 +158,63 @@ const readCardReceipt = async ({ nodeId, jobId, attachment }) => {
   return { verified: false };
 };
 
+// The production UI binds the durable job to the target card before submitting
+// the provider request.  The HTTP acceptance harness creates the isolated card
+// itself, so perform that same bind and the normal result-landing acknowledgement
+// here after a provider terminal result.  This never resubmits a provider job.
+const applyCompletedCardReceipt = async ({ nodeId, jobId, attachment }) => {
+  const loaded = await api("/api/workspace/load", { body: { workspacePath } });
+  const documentState = loaded.state?.documents?.[documentId];
+  const canvas = documentState?.canvas;
+  const card = canvas?.nodes?.find((item) => item.id === nodeId);
+  if (!canvas || !card) throw new Error(`验收卡片不存在：${nodeId}`);
+  const assetId = `asset-${jobId}`;
+  const existing = canvas.assets?.find((item) => item.generationJobId === jobId);
+  if (!existing) {
+    canvas.assets = Array.isArray(canvas.assets) ? canvas.assets : [];
+    canvas.assets.push({
+      id: assetId,
+      name: attachment.name,
+      type: attachment.mimeType?.startsWith("video/") ? "video" : "image",
+      source: "generation",
+      relativePath: attachment.relativePath,
+      sha256: attachment.sha256,
+      generationJobId: jobId,
+    });
+  }
+  card.assetId = existing?.id || assetId;
+  card.generationJobId = jobId;
+  card.relativePath = attachment.relativePath;
+  card.file = attachment.relativePath;
+  card.name = attachment.name;
+  await api("/api/workspace/save", { body: { workspacePath, state: loaded.state, expectedStateStamp: loaded.stateStamp, operationDocumentIds: [documentId] } });
+  const reread = await api("/api/workspace/load", { body: { workspacePath } });
+  const persistedCanvas = reread.state?.documents?.[documentId]?.canvas;
+  const persistedCard = persistedCanvas?.nodes?.find((item) => item.id === nodeId);
+  const persistedAsset = persistedCanvas?.assets?.find((item) => item.generationJobId === jobId);
+  const verified = Boolean(
+    persistedCard?.generationJobId === jobId
+    && persistedCard?.assetId === (existing?.id || assetId)
+    && persistedAsset?.sha256 === attachment.sha256,
+  );
+  if (!verified) throw new Error(`验收卡片回读不一致：${jobId}`);
+  const applied = await api(`/api/generation/jobs/${encodeURIComponent(jobId)}/applied`, {
+    body: {
+      resultAssetId: existing?.id || assetId,
+      cardReadback: {
+        verified: true,
+        workspacePath,
+        documentId,
+        nodeId,
+        generationJobId: jobId,
+        resultAssetId: existing?.id || assetId,
+        verifiedAt: new Date().toISOString(),
+      },
+    },
+  });
+  return { verified: true, appliedJob: applied.job };
+};
+
 const publicSettings = (profile) => Object.fromEntries(Object.entries(profile).filter(([key]) => !/key|secret|token|authorization/iu.test(key)));
 const results = [];
 let stopReason = "";
@@ -215,7 +284,10 @@ for (let caseIndex = 0; caseIndex < cases.length && !stopReason; caseIndex += 1)
     const bytes = await readFile(absolutePath);
     const metadata = await stat(absolutePath);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const cardReceipt = await readCardReceipt({ nodeId: item.nodeId, jobId: job.id, attachment });
+    let cardReceipt = await readCardReceipt({ nodeId: item.nodeId, jobId: job.id, attachment });
+    if (!cardReceipt.verified && process.env.SHENSI_ACCEPTANCE_APPLY_CARD !== "0") {
+      cardReceipt = await applyCompletedCardReceipt({ nodeId: item.nodeId, jobId: job.id, attachment });
+    }
     results.push({
       ...base,
       bytes: metadata.size,

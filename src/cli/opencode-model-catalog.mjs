@@ -145,6 +145,24 @@ const fetchOfficialZenCatalog = async ({ timeoutMs = 20_000 } = {}) => {
   }
 };
 
+const mergeOpenCodeCatalogs = (primary = {}, secondary = {}) => {
+  const byId = new Map();
+  for (const item of [...(primary.models || []), ...(secondary.models || [])]) {
+    const id = modelId(item?.id || item?.slug || item?.model);
+    if (!id) continue;
+    byId.set(id, { ...(byId.get(id) || {}), ...item, id, slug: id });
+  }
+  const models = [...byId.values()];
+  const providers = [...new Set(models.map((item) => item.provider || idProvider(item.id)))];
+  return {
+    models,
+    groups: providers.map((provider) => ({ provider, models: models.filter((item) => (item.provider || idProvider(item.id)) === provider) })),
+    defaultModel: primary.defaultModel || secondary.defaultModel || "",
+  };
+};
+
+const idProvider = (id = "") => String(id).split("/", 1)[0] || "opencode";
+
 const probe = async ({ cwd, environment, credentialSource = "opencode", launchResolver, timeoutMs }) => {
   const freeProbe = String(credentialSource || "").trim().toLowerCase() === "opencode_free";
   let isolationRoot = "";
@@ -184,11 +202,13 @@ const probe = async ({ cwd, environment, credentialSource = "opencode", launchRe
       }
     }
     let parsed = parseOpenCodeModelCatalog(catalogOutput);
-    // OpenCode desktop v2 no longer prints the model list for a standalone
-    // CLI invocation. The public Zen catalogue is authoritative for the
-    // login-free pool, so use it only when the free probe is empty.
-    if (!parsed.models.length && freeProbe) {
-      parsed = parseOpenCodeModelCatalog(await fetchOfficialZenCatalog({ timeoutMs }));
+    // The isolated free CLI can return a non-empty but stale local catalog.
+    // Always merge the public, login-free Zen directory for this credential
+    // source instead of using it only as an empty-catalog fallback.  This keeps
+    // the desktop's newer free models visible while retaining CLI-only entries.
+    if (freeProbe) {
+      const official = parseOpenCodeModelCatalog(await fetchOfficialZenCatalog({ timeoutMs }));
+      if (official.models.length) parsed = mergeOpenCodeCatalogs(parsed, official);
     }
     if (!parsed.models.length) throw new Error("OpenCode 没有返回任何完整 provider/model 模型 ID");
     return {

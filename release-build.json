@@ -1,9 +1,9 @@
 {
-    "schemaVersion":  1,
-    "version":  "9.2.2",
-    "dataSchemaVersion":  1,
-    "buildId":  "20261004064322355",
-    "createdAt":  "2026-10-04T06:43:22.3556110Z",
-    "publishable":  true,
-    "commit":  "1d6ff77b48ab089201ef567d1d807c234d09aa8c"
+  "schemaVersion": 1,
+  "version": "9.2.3",
+  "dataSchemaVersion": 1,
+  "buildId": "pending",
+  "createdAt": "",
+  "publishable": true,
+  "commit": "pending"
 }

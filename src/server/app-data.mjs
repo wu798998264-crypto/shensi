@@ -55,23 +55,80 @@ const USER_DATA_MARKERS = [
   "updates",
 ];
 
-const hasUserData = async (dirPath) => {
+const AUTHORITATIVE_USER_MARKERS = [
+  "作品",
+  "笔记",
+  "Skill库",
+  "知识图谱",
+  "external-markdown",
+];
+const hasAuthoritativeUserData = async (dirPath) => {
   try {
     const entries = await readdir(dirPath);
-    return entries.some((entry) => USER_DATA_MARKERS.includes(entry));
+    return entries.some((entry) => AUTHORITATIVE_USER_MARKERS.includes(entry));
   } catch {
     return false;
   }
 };
 
-const migrateLegacyData = async (legacyRoot, targetRoot) => {
+// Legacy data used to be merged on every startup.  Because the legacy copy is
+// intentionally kept as a fallback, that made a file deleted from the active
+// E: root reappear after the next update/startup.  Migration is now a one-time
+// import per target root; after the target has any user content, never merge a
+// legacy tree implicitly again.
+const legacyMigrationMarkerPath = (targetRoot) => join(targetRoot, ".shensi-legacy-migration-v2.json");
+const readLegacyMigrationMarker = async (targetRoot) => {
+  try {
+    return JSON.parse(await readFile(legacyMigrationMarkerPath(targetRoot), "utf8"));
+  } catch {
+    return null;
+  }
+};
+const writeLegacyMigrationMarker = async (targetRoot, payload) => {
+  await mkdir(targetRoot, { recursive: true });
+  await writeFile(legacyMigrationMarkerPath(targetRoot), JSON.stringify({
+    schemaVersion: 2,
+    completedAt: new Date().toISOString(),
+    ...payload,
+  }, null, 2), "utf8");
+};
+
+export const migrateLegacyData = async (legacyRoot, targetRoot) => {
+  const marker = await readLegacyMigrationMarker(targetRoot);
+  if (marker?.completed === true) return false;
   if (!existsSync(legacyRoot)) return false;
-  const legacyHasData = await hasUserData(legacyRoot);
+  const legacyHasData = await hasAuthoritativeUserData(legacyRoot);
   if (!legacyHasData) return false;
   try {
     await mkdir(targetRoot, { recursive: true });
+    // A target with existing user content is already authoritative.  Mark the
+    // migration as intentionally skipped instead of merging the stale legacy
+    // copy and reviving files the user deleted in the active root.
+    if (await hasAuthoritativeUserData(targetRoot)) {
+      await writeLegacyMigrationMarker(targetRoot, {
+        completed: true,
+        mode: "target-already-populated",
+        sourceRoot: resolve(legacyRoot),
+      });
+      return false;
+    }
+    const completedMarkers = new Set(
+      marker?.sourceRoot === resolve(legacyRoot) && Array.isArray(marker.completedMarkers)
+        ? marker.completedMarkers
+        : [],
+    );
+    await writeLegacyMigrationMarker(targetRoot, {
+      completed: false,
+      mode: "copying",
+      sourceRoot: resolve(legacyRoot),
+      completedMarkers: [...completedMarkers],
+    });
     let migrated = false;
     for (const marker of USER_DATA_MARKERS) {
+      if (completedMarkers.has(marker)) {
+        migrated = true;
+        continue;
+      }
       const src = join(legacyRoot, marker);
       if (existsSync(src)) {
         const dest = join(targetRoot, marker);
@@ -81,10 +138,25 @@ const migrateLegacyData = async (legacyRoot, targetRoot) => {
         await cp(src, dest, { recursive: true, force: false, errorOnExist: false });
         migrated = true;
       }
+      completedMarkers.add(marker);
+      // Checkpoint every top-level marker so a crash during a first migration
+      // resumes missing markers without ever replaying a completed one.
+      await writeLegacyMigrationMarker(targetRoot, {
+        completed: false,
+        mode: "copying",
+        sourceRoot: resolve(legacyRoot),
+        completedMarkers: [...completedMarkers],
+      });
     }
     // Keep the legacy copy as a read-only compatibility fallback. The
     // bootstrap pointer moves all subsequent reads/writes to the unified E:
     // root, while failed/partial legacy data remains recoverable.
+    await writeLegacyMigrationMarker(targetRoot, {
+      completed: true,
+      mode: migrated ? "copied" : "empty-source",
+      sourceRoot: resolve(legacyRoot),
+      completedMarkers: [...completedMarkers],
+    });
     return migrated;
   } catch {
     return false;

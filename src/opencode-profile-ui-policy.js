@@ -42,6 +42,13 @@ export const openCodeFreeCatalogGroups = (groups = []) => (Array.isArray(groups)
       || item?.isFree === true
       || item?.requiresLogin === false
       || item?.requiresAuth === false
+      || (() => {
+        const pricing = item?.cost ?? item?.pricing ?? item?.price;
+        if (!pricing || typeof pricing !== "object") return false;
+        const values = [pricing.input, pricing.output, pricing.cacheRead, pricing.cacheWrite, pricing.prompt, pricing.completion]
+          .map((value) => Number(value)).filter((value) => Number.isFinite(value));
+        return values.length >= 2 && values.every((value) => value === 0);
+      })()
       || /(?:^|[-:])free$/iu.test(String(item?.slug || item?.id || ""))
       || String(item?.slug || item?.id || "").toLowerCase().endsWith("/big-pickle")
     )),

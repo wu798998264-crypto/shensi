@@ -21,6 +21,28 @@ const redactedErrorMessage = (error, apiKey = "") => String(error?.message || er
   .replace(/\b(?:sk|ds|sk-ant)[-_][A-Za-z0-9_-]{10,}\b/gu, "[REDACTED]");
 const choiceInteractionInstructions = `当且仅当你需要用户从两个或更多具体方向中作出选择时，必须调用 interaction.ask，并动态给出本轮真实问题与选项；不得只在回复正文里提出有限选项问题。问题仍显示在对话记录中，选择框只是便捷回答入口；用户也可以自由输入其他想法。interaction.ask 返回的 answer、instruction 和 userInstruction 是同一条最新用户指令；收到后必须在当前任务内继续推理、生成和交付，不能停在确认步骤或重新询问同一个问题。仅用于阅读的 1/2/3/4 步骤、规则、细则或方案罗列不是选择题，直接作为普通回复输出，不得调用 interaction.ask。不要用正文关键词、编号或固定模板推断选择框。`;
 
+// The lightweight/general lane intentionally skips the panel route and MCP
+// host, but it still has to preserve a normal conversation's short history.
+// Previously it forwarded only messages.at(-1), so every second turn looked
+// like a brand-new chat even when the caller reused conversationId. Keep a
+// bounded, plain-text transcript here: no tool contract, route document, or
+// internal metadata is introduced, and long chats cannot exhaust the runner's
+// small prompt budget.
+const lightweightConversationPrompt = (messages = []) => {
+  const normalized = (Array.isArray(messages) ? messages : [])
+    .filter((message) => message && ["user", "assistant"].includes(String(message.role || "")))
+    .map((message) => ({ role: String(message.role), content: String(message.content || "").trim() }))
+    .filter((message) => message.content);
+  const entries = normalized.length > 12 ? [normalized[0], ...normalized.slice(-11)] : normalized;
+  if (entries.length <= 1) return entries[0]?.content || "";
+  // Preserve the first exchange (which may establish a short-lived marker)
+  // together with the most recent turns, while keeping the whole prompt
+  // bounded for small external runners.
+  const selected = entries;
+  const transcript = selected.map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content.slice(0, 2_000)}`).join("\n\n");
+  return `这是同一通用对话的精简历史。不要输出历史标签或解释，只直接回答最后一条用户消息。\n\n${transcript}`;
+};
+
 export const bindStructuredTaskRoutePlacements = (taskRoute = null, routeBundle = null) => {
   if (!taskRoute || typeof taskRoute !== "object" || !routeBundle?.panel) return taskRoute;
   const obsoleteRouteIds = new Set(["group:novel-engineering", "module:novel-engineering", "builtin:structure-engineering"]);
@@ -648,7 +670,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         ? generalConversationContextBlocks
         : [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "本轮结构化任务路由", text: routeContractText }, ...(textTaskExecutionContext ? [{ name: "本轮统一文字任务执行合同", text: JSON.stringify(textTaskExecutionContext, null, 2) }] : []), ...preloadedDocuments.contextBlocks, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }];
       const structuredPrompt = JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null, taskRoute: structuredTaskRoute, textTaskExecutionContext, deliverableType: structuredTaskRoute?.deliverableType || request.deliverableType || "", targetModule: structuredTaskRoute?.targetModule || request.targetModule || request.activeModule || "", selectedModulePlacementId: structuredTaskRoute?.selectedModulePlacementId || "", selectedSkillPlacementIds: structuredTaskRoute?.selectedSkillPlacementIds || [], relationType: structuredTaskRoute?.relationType || "", relationRole: structuredTaskRoute?.relationRole || "", routeReason: structuredTaskRoute?.routeReason || structuredTaskRoute?.reason || "" });
-      let runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: useLightGeneralLane ? String(request.messages?.at(-1)?.content || "") : structuredPrompt, contextBlocks: runContextBlocks, signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, lightweightGeneral: useLightGeneralLane };
+      let runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: useLightGeneralLane ? lightweightConversationPrompt(request.messages) : structuredPrompt, contextBlocks: runContextBlocks, signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, lightweightGeneral: useLightGeneralLane };
       let result;
       for (;;) {
         try {

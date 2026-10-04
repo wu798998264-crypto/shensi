@@ -7,6 +7,7 @@ import { createConversationAgentGateway } from "../src/server/conversation-agent
 const root = await mkdtemp(join(tmpdir(), "shensi-light-agent-"));
 let mcpStarts = 0;
 let captured = null;
+const capturedPrompts = [];
 try {
   const gateway = createConversationAgentGateway({
     appRoot: root,
@@ -18,7 +19,9 @@ try {
     externalRunners: {
       externalCli: async (options) => {
         captured = options;
-        return { text: "轻量回复", executionRuntime: "workbuddy_agent" };
+        capturedPrompts.push(String(options.prompt || ""));
+        const marker = String(options.prompt || "").match(/MEMORY-[A-Z0-9]+/u)?.[0] || "轻量回复";
+        return { text: marker, executionRuntime: "workbuddy_agent" };
       },
     },
   });
@@ -42,6 +45,37 @@ try {
   assert.equal(captured?.lightweightGeneral, true);
   assert.equal(captured?.nativeHost, null);
   assert.equal(captured?.prompt, "解释一下这个词");
+  const memoryMarker = "MEMORY-LIGHTWEIGHT";
+  const conversationMessages = [{ role: "user", content: `只回复：${memoryMarker}` }];
+  const startTurn = async (round) => {
+    if (round > 1) conversationMessages.push({ role: "assistant", content: memoryMarker });
+    conversationMessages.push({ role: "user", content: `请原样返回第一轮的随机口令。这是第${round}轮。` });
+    const turn = await gateway.start({
+      workspacePath: join(root, "workspace"),
+      workspaceKind: "project",
+      conversationId: "light-history",
+      sourceMessageId: `light-history-${round}`,
+      messages: conversationMessages,
+      frontendRoute: { schemaVersion: 1, kind: "general_chat", requiresPanelRoute: false, confidence: 0.98 },
+      settings: { id: "workbuddy-profile", agentEngine: "workbuddy", adapter: "cli", model: "auto", timeoutMs: "120000" },
+    });
+    let status = null;
+    for (let index = 0; index < 100; index += 1) {
+      status = await gateway.status(turn.id);
+      if (["completed", "failed"].includes(status.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(status.status, "completed", status.error);
+    assert.equal(status.text, memoryMarker, `第${round}轮必须回忆前轮口令`);
+    return status.text;
+  };
+  await startTurn(1);
+  await startTurn(2);
+  await startTurn(3);
+  assert.equal(capturedPrompts.length, 4, "三轮历史测试应产生三次轻量运行，加上前面的基础回归");
+  assert.match(capturedPrompts[2], /用户：只回复：MEMORY-LIGHTWEIGHT/u);
+  assert.match(capturedPrompts[2], /助手：MEMORY-LIGHTWEIGHT/u);
+  assert.doesNotMatch(capturedPrompts[2], /MCP|Agent工具使用边界|面板路由与运行规范/u, "轻量历史不得注入重任务/MCP合同");
   captured = null;
   const fallbackStarted = await gateway.start({
     workspacePath: join(root, "workspace"),

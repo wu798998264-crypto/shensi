@@ -554,6 +554,70 @@ const resolveWorkspaceRenameAlias = (requestedPath) => {
   return current;
 };
 
+// A deleted workspace path must never be recreated by a delayed autosave from
+// an old renderer.  The archive itself is not sufficient: after rename the old
+// path is absent and resolveWorkspaceRoot historically allowed saveWorkspaceState
+// to create it again.  Keep a small, content-free persistent tombstone registry
+// in the data root so the protection survives restart and package updates.
+const workspaceTombstonesPath = () => join(appDataRoot(), "config", "workspace-tombstones-v1.json");
+let workspaceTombstonesLoadedPath = "";
+const workspaceTombstones = new Map();
+let workspaceTombstoneWriteQueue = Promise.resolve();
+const loadWorkspaceTombstones = () => {
+  const registryPath = workspaceTombstonesPath();
+  if (workspaceTombstonesLoadedPath === registryPath) return;
+  workspaceTombstonesLoadedPath = registryPath;
+  workspaceTombstones.clear();
+  try {
+    const payload = JSON.parse(readFileSync(registryPath, "utf8"));
+    for (const [path, value] of Object.entries(payload?.tombstones ?? {})) {
+      const canonical = normalizeForCompare(path);
+      if (canonical) workspaceTombstones.set(canonical, value);
+    }
+  } catch {
+    // A missing/corrupt registry must not prevent startup.  New deletions are
+    // written atomically and recreate a valid registry.
+  }
+};
+const persistWorkspaceTombstones = async () => {
+  const registryPath = workspaceTombstonesPath();
+  const payload = JSON.stringify({
+    schemaVersion: 1,
+    tombstones: Object.fromEntries(workspaceTombstones.entries()),
+    updatedAt: new Date().toISOString(),
+  }, null, 2);
+  const write = workspaceTombstoneWriteQueue.catch(() => {}).then(() => atomicWriteWithTransientRetry(
+    registryPath,
+    payload,
+  ));
+  workspaceTombstoneWriteQueue = write.catch(() => {});
+  await write;
+};
+const workspaceDeletedPathError = (workspaceRoot) => Object.assign(
+  new Error("该工作区路径已删除，已拒绝旧窗口或旧任务重新创建；请从作品/笔记本列表重新选择，或先从回收站恢复"),
+  { code: "WORKSPACE_DELETED_PATH", statusCode: 409, workspacePath: workspaceRoot },
+);
+const assertWorkspacePathNotDeleted = (workspaceRoot) => {
+  loadWorkspaceTombstones();
+  const canonical = normalizeForCompare(workspaceRoot);
+  if (workspaceTombstones.has(canonical)) throw workspaceDeletedPathError(workspaceRoot);
+};
+const addWorkspaceTombstone = async ({ workspaceRoot, workspaceKind, archivedPath = "", deletedAt = Date.now() }) => {
+  loadWorkspaceTombstones();
+  workspaceTombstones.set(normalizeForCompare(workspaceRoot), {
+    workspaceKind,
+    archivedPath: archivedPath ? resolve(archivedPath) : "",
+    deletedAt: new Date(deletedAt).toISOString(),
+  });
+  await persistWorkspaceTombstones();
+};
+const removeWorkspaceTombstone = async (workspaceRoot) => {
+  loadWorkspaceTombstones();
+  const deleted = workspaceTombstones.delete(normalizeForCompare(workspaceRoot));
+  if (deleted) await persistWorkspaceTombstones();
+  return deleted;
+};
+
 const registeredWorkspaceAliasesForTarget = (targetRoot) => {
   loadWorkspaceRenameAliases();
   return [...workspaceRenameAliases.keys()]
@@ -2083,6 +2147,8 @@ export const resolveWorkspaceRoot = ({ appRoot, requestedPath }) => {
     ? resolve(requestedPath)
     : resolve(persistentRoot, "未命名");
   const resolvedCandidate = resolveWorkspaceRenameAlias(candidate);
+  assertWorkspacePathNotDeleted(candidate);
+  assertWorkspacePathNotDeleted(resolvedCandidate);
   if (normalizeForCompare(candidate) !== normalizeForCompare(resolvedCandidate) && !existsSync(resolvedCandidate)) {
     const missingTarget = new Error("该工作区已完成重命名，但新目录当前不存在；已阻止旧路径重新创建，请从作品列表重新选择或恢复新目录");
     missingTarget.code = "WORKSPACE_RENAME_TARGET_MISSING";
@@ -2331,6 +2397,9 @@ const createWorkspaceDirectory = async ({ parent, name, fallbackName, operationI
           throw error;
         }
       }
+      // An explicit new workspace with the same name is a new identity.  It is
+      // the only normal operation that may clear the old-path tombstone.
+      await removeWorkspaceTombstone(workspacePath);
       return { name: folderName, workspacePath, creationOperationId: receiptId, resumed: false };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
@@ -2441,7 +2510,16 @@ export const deleteWorkspaceProject = async ({ appRoot, requestedPath }) => {
     await mkdir(archiveRoot, { recursive: true });
     const archiveName = `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`;
     const archivedPath = join(archiveRoot, archiveName);
-    await renameWithTransientRetry(workspaceRoot, archivedPath);
+    // Publish the tombstone before the move so a crash cannot leave a window in
+    // which an old autosave recreates the just-deleted path.  If the move fails,
+    // remove it and leave the original workspace untouched.
+    await addWorkspaceTombstone({ workspaceRoot, workspaceKind: "project", archivedPath, deletedAt });
+    try {
+      await renameWithTransientRetry(workspaceRoot, archivedPath);
+    } catch (error) {
+      await removeWorkspaceTombstone(workspaceRoot).catch(() => {});
+      throw error;
+    }
     return {
       name: basename(workspaceRoot),
       deletedAt: new Date(deletedAt).toISOString(),
@@ -2573,35 +2651,64 @@ export const restoreDeletedWorkspace = async ({ appRoot, trashId }) => {
   const entry = await deletedWorkspaceArchiveById({ appRoot, trashId });
   await mkdir(entry.parent, { recursive: true });
   const { name, target } = await uniqueRestoredWorkspacePath({ parent: entry.parent, originalName: entry.originalName });
-  await renameWithTransientRetry(entry.archivedPath, target);
-  try {
-    const restored = await loadWorkspaceState({ appRoot, requestedPath: target });
-    const currentState = restored.state;
-    if (currentState) {
-      currentState.projectName = name;
-      currentState.workspaceKind = entry.workspaceKind;
-      currentState.settings = portableGenerationSettings(currentState.settings ?? {});
-      delete currentState.settings.workspacePath;
-      // Restoring changes the workspace title, so it is a new publication.
-      // Writing only current-state.json would leave the old commit marker and
-      // history index pointing at a different version; the next load would
-      // either mix old shards or resurrect stale deleted content. Publish all
-      // shards and the marker atomically through the normal save path.
-      await saveWorkspaceState({ appRoot, requestedPath: target, state: currentState });
-    }
-  } catch (error) {
+  const originalPath = join(entry.parent, entry.originalName);
+  const restoringOriginalPath = normalizeForCompare(target) === normalizeForCompare(originalPath);
+  // Serialize the archive move and publication with normal workspace saves.
+  // Until this operation enters the queue the old path is still tombstoned, so
+  // stale saves are rejected; once it clears the tombstone they are queued
+  // behind the restore instead of racing a partially restored directory.
+  return enqueueWorkspaceWrite(target, async () => {
+    await renameWithTransientRetry(entry.archivedPath, target);
+    // The original path remains tombstoned while the archive is in the trash.
+    // Clear that tombstone before loading/publishing the restored workspace, or
+    // resolveWorkspaceRoot() would reject the restore itself.  If any later
+    // validation or publication fails, the catch block puts the tombstone back
+    // together with the archive so a stale autosave still cannot recreate it.
     try {
-      await renameWithTransientRetry(target, entry.archivedPath);
-    } catch (rollbackError) {
-      const partial = new Error(`“${name}”已恢复，但状态同步失败且无法自动回滚；请勿重复恢复并检查该工作区`);
-      partial.code = "WORKSPACE_RESTORE_PARTIAL";
-      partial.statusCode = 409;
-      partial.cause = rollbackError;
-      throw partial;
+      if (restoringOriginalPath) await removeWorkspaceTombstone(originalPath);
+      const restored = await loadWorkspaceState({ appRoot, requestedPath: target });
+      const currentState = restored.state;
+      if (currentState) {
+        currentState.projectName = name;
+        currentState.workspaceKind = entry.workspaceKind;
+        currentState.settings = portableGenerationSettings(currentState.settings ?? {});
+        delete currentState.settings.workspacePath;
+        // Restoring changes the workspace title, so it is a new publication.
+        // Writing only current-state.json would leave the old commit marker and
+        // history index pointing at a different version; the next load would
+        // either mix old shards or resurrect stale deleted content. Publish all
+        // shards and the marker atomically through the normal save path.
+        await saveWorkspaceStateCore({
+          appRoot,
+          requestedPath: target,
+          state: currentState,
+          workspaceCommitId: randomUUID(),
+        });
+      }
+    } catch (error) {
+      try {
+        await renameWithTransientRetry(target, entry.archivedPath);
+        if (restoringOriginalPath) {
+          await addWorkspaceTombstone({
+            workspaceRoot: originalPath,
+            workspaceKind: entry.workspaceKind,
+            archivedPath: entry.archivedPath,
+            deletedAt: Date.parse(entry.deletedAtIso) || Date.now(),
+          });
+        }
+      } catch (rollbackError) {
+        const partial = new Error(`“${name}”已恢复，但状态同步失败且无法自动回滚；请勿重复恢复并检查该工作区`);
+        partial.code = "WORKSPACE_RESTORE_PARTIAL";
+        partial.statusCode = 409;
+        partial.cause = rollbackError;
+        throw partial;
+      }
+      throw error;
     }
-    throw error;
-  }
-  return { kind: entry.kind, workspaceKind: entry.workspaceKind, name, workspacePath: target };
+    // Restoring to the original name explicitly revives that path; a suffixed
+    // restore leaves the original deletion tombstone in place.
+    return { kind: entry.kind, workspaceKind: entry.workspaceKind, name, workspacePath: target };
+  });
 };
 
 export const permanentlyDeleteDeletedWorkspace = async ({ appRoot, trashId }) => {
@@ -2717,7 +2824,13 @@ export const deleteWorkspaceNotebook = async ({ appRoot, requestedPath }) => {
     const archiveRoot = join(parent, ".shensi-deleted-notebooks");
     await mkdir(archiveRoot, { recursive: true });
     const archivedPath = join(archiveRoot, `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`);
-    await renameWithTransientRetry(workspaceRoot, archivedPath);
+    await addWorkspaceTombstone({ workspaceRoot, workspaceKind: "notebook", archivedPath, deletedAt });
+    try {
+      await renameWithTransientRetry(workspaceRoot, archivedPath);
+    } catch (error) {
+      await removeWorkspaceTombstone(workspaceRoot).catch(() => {});
+      throw error;
+    }
     return {
       name: basename(workspaceRoot),
       deletedAt: new Date(deletedAt).toISOString(),

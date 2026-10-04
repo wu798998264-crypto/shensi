@@ -32,7 +32,11 @@ state.documents[documentId] = { title: "LibTV 4秒视频验收", documentKind: "
 state.moduleItems.manuscript.push([documentId, state.documents[documentId].title, { workspaceView: "novel" }]);
 await api("/api/workspace/save", { workspacePath, state, operationDocumentIds: [documentId] });
 const settings = Object.fromEntries(Object.entries(profile).filter(([key]) => !/key|secret|token|authorization/iu.test(key)));
-settings.model = String(process.env.SHENSI_ACCEPTANCE_VIDEO_MODEL || "wanx3.0");
+// Use the configured LibTV model by default.  Operators may override this for
+// a capability check, but the acceptance harness must not silently request a
+// historical model name that the installed CLI no longer exposes.
+settings.model = String(process.env.SHENSI_ACCEPTANCE_VIDEO_MODEL || profile.model || "").trim();
+assert.ok(settings.model, "LibTV 视频配置缺少模型；请先在设置中选择当前 CLI 目录中的模型");
 const submissionId = `authorized-libtv-video-${randomUUID()}`;
 const submitted = await api("/api/generation/jobs/media", { channel: "video", submissionId, target: { workspaceKind: "project", workspacePath, documentId, nodeId, targetType: "whiteboard-node" }, request: { prompt: "白色摄影棚中的银色方块缓慢旋转，产品展示，稳定镜头，无文字无水印", executionPrompt: "白色摄影棚中的银色方块缓慢旋转，产品展示，稳定镜头，无文字无水印", aspectRatio: "16:9", resolution: "720p", duration: 4, generateAudio: false, settings } });
 let job = submitted.job;
