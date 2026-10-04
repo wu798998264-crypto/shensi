@@ -26,7 +26,19 @@ try {
   const marker = JSON.parse(await readFile(join(establishedTarget, ".shensi-legacy-migration-v2.json"), "utf8"));
   assert.equal(marker.mode, "target-already-populated");
   assert.equal(marker.completed, true);
-  console.log(JSON.stringify({ ok: true, checks: ["first-migration", "deleted-file-not-reimported", "authoritative-target-not-merged"] }));
+
+  const interruptedTarget = join(sandbox, "interrupted");
+  await mkdir(interruptedTarget, { recursive: true });
+  await writeFile(join(interruptedTarget, ".shensi-legacy-migration-v2.json"), JSON.stringify({
+    schemaVersion: 2,
+    completed: false,
+    mode: "copying",
+    sourceRoot: resolve(source),
+    completedMarkers: ["作品"],
+  }), "utf8");
+  await migrateLegacyData(source, interruptedTarget);
+  assert.equal(await readFile(join(interruptedTarget, "笔记", "我的笔记", "被删除的旧文档.md"), "utf8"), "旧文件不可在更新后复活", "中断迁移必须继续未完成的顶层目录");
+  console.log(JSON.stringify({ ok: true, checks: ["first-migration", "deleted-file-not-reimported", "authoritative-target-not-merged", "interrupted-migration-resume"] }));
 } finally {
   assert.ok(resolve(sandbox).toLowerCase().startsWith(`${resolve(tmpdir()).toLowerCase()}\\`));
   await rm(sandbox, { recursive: true, force: true });

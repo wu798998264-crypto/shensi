@@ -65,7 +65,12 @@ const AUTHORITATIVE_USER_MARKERS = [
 const hasAuthoritativeUserData = async (dirPath) => {
   try {
     const entries = await readdir(dirPath);
-    return entries.some((entry) => AUTHORITATIVE_USER_MARKERS.includes(entry));
+    for (const entry of entries) {
+      if (!AUTHORITATIVE_USER_MARKERS.includes(entry)) continue;
+      const markerEntries = await readdir(join(dirPath, entry)).catch(() => []);
+      if (markerEntries.length) return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -96,6 +101,7 @@ const writeLegacyMigrationMarker = async (targetRoot, payload) => {
 export const migrateLegacyData = async (legacyRoot, targetRoot) => {
   const marker = await readLegacyMigrationMarker(targetRoot);
   if (marker?.completed === true) return false;
+  if (marker?.completed === false && marker.sourceRoot && marker.sourceRoot !== resolve(legacyRoot)) return false;
   if (!existsSync(legacyRoot)) return false;
   const legacyHasData = await hasAuthoritativeUserData(legacyRoot);
   if (!legacyHasData) return false;
