@@ -445,8 +445,15 @@ export const runExternalCliAgent = async ({
     ].join("\n")
     : "";
   const resources = deepSeekAgentContextText(contextBlocks);
+  const lightweightGeneralInstruction = lightweightGeneral === true
+    ? [
+      "本轮是普通对话的短答通道，不是神思创作任务。",
+      "不要读取工作区、调用工具、检查文件、解释运行状态或讨论任务是否真实执行。",
+      "只回答用户最后一条指令要求的内容；如果用户要求只回复某句话或词语，只输出该内容，不添加前后说明。",
+    ].join("\n")
+    : "";
   const finalPrompt = runner === "workbuddy" && lightweightGeneral === true
-    ? [system, task].filter(Boolean).join("\n\n")
+    ? [lightweightGeneralInstruction, task].filter(Boolean).join("\n\n")
     : [system, workBuddyToolBridgeInstruction, task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(finalPrompt, "utf8") > MAX_INPUT_BYTES) {
     throw errorForRunner(runner, `${runnerLabel(runner)} 输入超过 8MB，已停止本次调用`, "EXTERNAL_CLI_INPUT_TOO_LARGE");

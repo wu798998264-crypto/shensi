@@ -1,9 +1,9 @@
 {
     "schemaVersion":  1,
-    "version": "9.2.1",
+    "version":  "9.2.2",
     "dataSchemaVersion":  1,
-    "buildId":  "20261004053359438",
-    "createdAt":  "2026-10-04T05:33:59.4381429Z",
+    "buildId":  "20261004064322355",
+    "createdAt":  "2026-10-04T06:43:22.3556110Z",
     "publishable":  true,
-    "commit":  "eb0176cc9913b75835f3f48151e398d0c19f9de7"
+    "commit":  "1d6ff77b48ab089201ef567d1d807c234d09aa8c"
 }
