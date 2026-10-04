@@ -14,5 +14,8 @@ assert.match(app, /ui\.pendingConfirm = \{ type: "delete-folder", folderId \}/u,
 assert.match(app, /ui\.pendingConfirm = \{ type: "delete-tree-folder", node: clone\(node\), moduleId, viewId \}/u, "树文件夹删除确认必须保存完整节点快照");
 assert.match(app, /const pendingConfirm = ui\.pendingConfirm;[\s\S]{0,260}const action = pendingConfirm \|\| ui\.confirmAction;/u, "确认提交必须优先使用打开确认框时的删除目标");
 assert.match(app, /action\?\.type === "delete-document"\) await deleteDocument\(action\.documentId\)/u, "确认提交必须按快照删除文档或白板");
+assert.match(app, /const deleteWhiteboardNode = async \(nodeId\) =>/u, "白板卡片删除必须等待持久化结果");
+assert.match(app, /const deleteWhiteboardNode = async \(nodeId\) =>[\s\S]{0,2600}await saveWorkspace\(\{ throwOnError: true, recoverConflict: true, forceFullState: true/u, "白板卡片删除必须强制保存并参与冲突重放");
+assert.match(app, /const deleteWhiteboardNodes = async \(nodeIds = \[\]\) =>/u, "批量白板卡片删除必须等待持久化结果");
 
 console.log("文档、白板、文件夹删除入口契约测试通过");

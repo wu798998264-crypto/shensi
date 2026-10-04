@@ -13,6 +13,8 @@ const ACTIVE_CONVERSATION_STATE_KEYS = Object.freeze([
   "currentCandidateMemoryUpdate",
 ]);
 
+const ROLLBACK_TOMBSTONE_LIMIT = 512;
+
 const cloneValue = (value) => {
   if (value === undefined || value === null) return value;
   if (typeof structuredClone === "function") return structuredClone(value);
@@ -20,6 +22,50 @@ const cloneValue = (value) => {
 };
 
 export const conversationRollbackSessionKeys = () => [...ROLLBACK_SESSION_KEYS];
+
+const normalizedIds = (values = []) => [...new Set((Array.isArray(values) ? values : [])
+  .map((value) => String(value || "").trim())
+  .filter(Boolean))];
+
+export const conversationRollbackRevision = (conversation = {}) => Math.max(0, Number(conversation?.rollbackRevision) || 0);
+
+export const conversationRollbackTombstones = (conversation = {}) => ({
+  messageIds: normalizedIds(conversation?.rollbackTombstones?.messageIds),
+  queueIds: normalizedIds(conversation?.rollbackTombstones?.queueIds),
+});
+
+// A rollback is a destructive timeline operation.  The revision and bounded
+// tombstones make that deletion durable across an in-flight save or a late
+// provider completion, instead of allowing the older writer to merge the
+// removed task back into the conversation.
+export const recordConversationRollback = (conversation = {}, {
+  messageIds = [],
+  queueIds = [],
+  at = Date.now(),
+} = {}) => {
+  const previous = conversationRollbackTombstones(conversation);
+  conversation.rollbackRevision = conversationRollbackRevision(conversation) + 1;
+  conversation.rollbackTombstones = {
+    messageIds: [...new Set([...previous.messageIds, ...normalizedIds(messageIds)])].slice(-ROLLBACK_TOMBSTONE_LIMIT),
+    queueIds: [...new Set([...previous.queueIds, ...normalizedIds(queueIds)])].slice(-ROLLBACK_TOMBSTONE_LIMIT),
+    recordedAt: Math.max(1, Number(at) || Date.now()),
+  };
+  return conversation.rollbackRevision;
+};
+
+export const rollbackTombstoneSet = (conversation = {}, key = "messageIds") => new Set(
+  conversationRollbackTombstones(conversation)[key === "queueIds" ? "queueIds" : "messageIds"],
+);
+
+export const filterConversationRollbackMessages = (messages = [], conversation = {}) => {
+  const tombstones = rollbackTombstoneSet(conversation, "messageIds");
+  return (Array.isArray(messages) ? messages : []).filter((message) => !tombstones.has(String(message?.id || "")));
+};
+
+export const filterConversationRollbackQueue = (queue = [], conversation = {}) => {
+  const tombstones = rollbackTombstoneSet(conversation, "queueIds");
+  return (Array.isArray(queue) ? queue : []).filter((item) => !tombstones.has(String(item?.id || "")));
+};
 
 export const captureEphemeralConversationRollbackBaseline = (conversation = {}) => cloneValue(conversation);
 

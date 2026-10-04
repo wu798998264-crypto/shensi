@@ -225,7 +225,11 @@ const chatCallAsResponsesItem = (call, projection = new Map()) => {
 
 export const startCodexProviderBridge = async ({ settings, tools, permissionContract = null, fetchImpl = globalThis.fetch, signal, onRequest = () => {} }) => {
   const token = randomBytes(32).toString("hex");
-  const catalog = new Map(tools.dynamicTools.flatMap((ns) => ns.tools.map((tool) => [`${ns.name}_${tool.name}`, { namespace: ns.name, name: tool.name, tool }])));
+  // The lightweight general lane intentionally has no workspace tool host.
+  // Keep the provider bridge usable for text-only API profiles instead of
+  // dereferencing a null runtime before the first model request.
+  const dynamicTools = Array.isArray(tools?.dynamicTools) ? tools.dynamicTools : [];
+  const catalog = new Map(dynamicTools.flatMap((ns) => (Array.isArray(ns?.tools) ? ns.tools : []).map((tool) => [`${ns.name}_${tool.name}`, { namespace: ns.name, name: tool.name, tool }])));
   const functionTools = [...catalog].map(([name, { tool }]) => ({ type: "function", name, description: tool.description, parameters: tool.inputSchema, strict: false }));
   const forwardNativeTools = normalizeAgentPermissionMode(permissionContract?.mode || settings.agentPermissionMode) !== "shensi_only";
   const known = new Map();

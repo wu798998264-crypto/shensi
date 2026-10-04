@@ -22,14 +22,24 @@ const safeJson = async (response) => {
   }
   if (!response.ok) {
     const rawDetail = text(payload?.error?.message || payload?.message || raw).slice(0, 600);
+    const toolContinuation = /(?:no tool output found|no tool call found|function_call_output[\s\S]{0,160}call_id|tool call[\s\S]{0,100}(?:not found|missing))/iu.test(rawDetail);
     const capacityLimited = /(?:selected model.*capacity|model.*at capacity|capacity.*(?:model|available)|模型.*容量|容量.*模型|当前模型.*繁忙)/iu.test(rawDetail);
-    const detail = capacityLimited
+    const detail = toolContinuation
+      ? "聚合 API 的工具续接状态已失效，神思正在使用完整上下文继续本轮，不会重复执行已完成工具。"
+      : capacityLimited
       ? "聚合 API 当前模型繁忙或容量不足，请切换模型后重试。"
-      : rawDetail;
-    const error = new Error(capacityLimited
+      : response.status === 401
+        ? "聚合 API 鉴权失败，请检查当前配置。"
+        : response.status === 403
+          ? "聚合 API 拒绝了当前请求，请检查账号权限。"
+          : response.status === 429
+            ? "聚合 API 当前请求过于频繁，请稍后重试。"
+            : "聚合 API 暂时不可用，请稍后重试。";
+    const error = new Error(toolContinuation || capacityLimited
       ? detail
       : `神思运行器 API 请求失败（${response.status}）${detail ? `：${detail}` : ""}`);
-    error.code = capacityLimited ? "CODEX_API_MODEL_CAPACITY"
+    error.providerDetail = rawDetail;
+    error.code = toolContinuation ? "CODEX_API_TOOL_CONTINUATION_STALE" : capacityLimited ? "CODEX_API_MODEL_CAPACITY"
       : response.status === 401 ? "CODEX_API_UNAUTHORIZED"
       : response.status === 403 ? "CODEX_API_FORBIDDEN"
         : response.status === 429 ? "CODEX_API_RATE_LIMITED" : "CODEX_API_REQUEST_FAILED";
@@ -40,8 +50,8 @@ const safeJson = async (response) => {
   return payload;
 };
 
-const missingToolContinuationContext = (error) => error?.statusCode === 400
-  && /(?:No tool call found for function call output|function_call_output[\s\S]{0,120}call_id|tool call[\s\S]{0,80}(?:not found|missing))/iu.test(String(error?.message || ""));
+const missingToolContinuationContext = (error) => [400, 409, 422, 500, 502, 503, 504].includes(Number(error?.statusCode))
+  && /(?:No tool output found|No tool call found for function call output|function_call_output[\s\S]{0,160}call_id|tool call[\s\S]{0,100}(?:not found|missing))/iu.test(String(error?.providerDetail || error?.message || ""));
 
 const responseContinuationItems = (payload) => (Array.isArray(payload?.output) ? payload.output : [])
   .filter((item) => item && typeof item === "object");

@@ -175,7 +175,7 @@ export const createConversationAgentTools = ({ appRoot, workspacePath, workspace
         mediaChannels: { type: "array", items: { type: "string", enum: ["image", "video"] } },
       }, ["mode", "documentIds"]),
       tool("open_candidates", "用户要求查看候选时打开当前对话已有候选对比，不生成新稿。", {}),
-      tool("ask", "先向用户显示问题文字，再显示动态选择框；支持自然语言补充。问题和选项作为对话记录持久保存，用户可以稍后回答；选中内容会作为下一轮普通用户指令继续，不依赖当前运行长期驻留。", { question: str("问题及必要解释"), options: { type: "array", items: str("一个完整可选回答") }, multiple: { type: "boolean" } }, ["question", "options"]),
+        tool("ask", "先向用户显示问题文字，再显示动态选择框；支持自然语言补充。问题和选项作为对话记录持久保存，用户可以稍后回答；选中内容会作为下一轮普通用户指令继续，不依赖当前运行长期驻留。若返回 waitingForUser=true，立即结束当前工具回合，不要重复询问、不要输出内部协议，等待用户回答后承接原任务。", { question: str("问题及必要解释"), options: { type: "array", items: str("一个完整可选回答") }, multiple: { type: "boolean" } }, ["question", "options"]),
       tool("candidates", "交付多个候选稿，不要求选择主笔，也不自动写入文档。", { variants: { type: "array", items: { type: "object", properties: { title: str("候选名及差异"), content: str("完整候选稿") }, required: ["title", "content"], additionalProperties: false } } }, ["variants"]),
     ]),
     namespace("media", [

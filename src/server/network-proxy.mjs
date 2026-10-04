@@ -44,6 +44,9 @@ const friendlyProviderNetworkError = (error, { proxyConfigured = false, directTr
     : "请检查网络、DNS、防火墙或 VPN 设置";
   return Object.assign(new Error(`模型接口网络连接失败（${code}）：${suffix}`), {
     code: "PROVIDER_NETWORK_FAILED",
+    networkCode: code,
+    retryableTransport: isTransportFailure(error),
+    transportRoute: directTried ? "direct" : proxyConfigured ? "proxy" : "direct",
     cause: error,
   });
 };

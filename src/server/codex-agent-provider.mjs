@@ -2850,6 +2850,7 @@ export class CodexAgentProvider {
       return runner({
         prompt: text,
         cwd: project.cwd,
+        sessionId: deepSeekSessionKey,
         ...(externalCli ? { engine } : {}),
         ...(claudeCode ? {
           provider: runtimeSettings?.provider,

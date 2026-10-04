@@ -6,6 +6,12 @@ export const mediaResultLifecycleStage = (job = {}) => {
   if (job.appliedAt && (job.target?.targetType !== "whiteboard-node" || job.cardReadbackVerified === true)) {
     return "card_complete";
   }
+  if (normalized(job.status) === "complete" && ["failed", "error"].includes(normalized(job.cardApplyState))) {
+    return "asset_saved_card_failed";
+  }
+  if (normalized(job.status) === "complete" && ["pending", "applying"].includes(normalized(job.cardApplyState))) {
+    return "asset_saved_card_pending";
+  }
   if (normalized(job.status) === "complete" && (job.landingReceipt?.sha256 || job.result?.attachment?.sha256)) {
     return "asset_saved_card_pending";
   }

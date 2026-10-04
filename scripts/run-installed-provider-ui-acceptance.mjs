@@ -1,18 +1,19 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const outputRoot = join(root, "output", "playwright");
+const expectedVersion = String(process.env.SHENSI_EXPECTED_VERSION || JSON.parse(await readFile(join(root, "package.json"), "utf8")).version).trim();
 const installedExecutable = String(process.env.SHENSI_TEST_INSTALLED_EXE || "C:\\Users\\Administrator\\AppData\\Local\\Programs\\Shensi\\Shensi.exe").trim();
 const debugPort = 9397;
 const coldWaitMs = Math.max(1_000, Number(process.env.SHENSI_UI_COLD_WAIT_MS || 45_000) || 45_000);
 const screenshots = {
-  coldStart: join(outputRoot, "installed-7.7.5-cold-start-no-dreamina-lock.png"),
-  workBuddyModels: join(outputRoot, "installed-7.7.5-workbuddy-models.png"),
-  dreaminaVerification: join(outputRoot, "installed-7.7.5-dreamina-single-verification.png"),
+  coldStart: join(outputRoot, `installed-${expectedVersion}-cold-start-no-dreamina-lock.png`),
+  workBuddyModels: join(outputRoot, `installed-${expectedVersion}-workbuddy-models.png`),
+  dreaminaVerification: join(outputRoot, `installed-${expectedVersion}-dreamina-single-verification.png`),
 };
 
 await mkdir(outputRoot, { recursive: true });
@@ -100,7 +101,7 @@ try {
     reverifyOpen: Boolean(document.querySelector('#dreaminaReverifyDialog')?.open),
     visibleDialogs: [...document.querySelectorAll('dialog[open]')].map((dialog) => dialog.id),
   }))()`);
-  assert.equal(coldStart.version, "7.7.5");
+  assert.equal(coldStart.version, expectedVersion);
   assert.equal(coldStart.profileLockOpen, false, "冷启动不得弹出即梦锁占用窗口");
   assert.equal(coldStart.occupantsOpen, false, "冷启动不得弹出即梦锁待处理窗口");
   assert.equal(coldStart.reverifyOpen, false, "冷启动不得主动弹出即梦账号核验窗口");

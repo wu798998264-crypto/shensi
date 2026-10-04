@@ -394,7 +394,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
     }
     const recoveredInterruptedRun = !terminal(record.status);
     if (recoveredInterruptedRun) { record.status = "interrupted"; record.error = "服务重启，任务已保留；请检查已完成结果后继续，未自动重提生成。"; }
-    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [] };
+    const entry = { record, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [], waitingForUser: null };
     runs.set(id, entry);
     if (recoveredInterruptedRun) await persist(entry);
     return entry;
@@ -444,9 +444,32 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         hasReferences: Boolean(request.references?.length || request.selectedSkills?.length),
         hasSelection: Boolean(request.contentOnly),
       });
-      const useLightGeneralLane = frontendRouteCanUseGeneralLane(request.frontendRoute || serverRouteHint)
-        && frontendRouteCanUseGeneralLane(serverRouteHint)
-        && request.workspaceKind !== "notebook"
+      // API callers and recovered tasks may not carry the browser's compiled
+      // route.  The server has already built the same semantic hint above;
+      // use it as the safe fallback so a one-line reply does not accidentally
+      // load the full panel/Skill contract and appear to hang on later turns.
+      // Persisted clients from before the lightweight-route schema may carry a
+      // partial `{ kind: "general_chat" }` hint. Validate it before trusting
+      // it; otherwise use the server-computed semantic hint for this exact
+      // message instead of accidentally loading the full panel route.
+      const clientRequiresPanelRoute = request.frontendRoute?.schemaVersion === 1
+        && request.frontendRoute?.requiresPanelRoute === true;
+      const clientGeneralRoute = !clientRequiresPanelRoute
+        && (frontendRouteCanUseGeneralLane(request.frontendRoute)
+          || frontendRouteCanUseGeneralLane(serverRouteHint));
+      const effectiveGeneralRoute = clientRequiresPanelRoute
+        ? request.frontendRoute
+        : frontendRouteCanUseGeneralLane(request.frontendRoute)
+          ? request.frontendRoute
+          : serverRouteHint;
+      const useLightGeneralLane = clientGeneralRoute
+        && frontendRouteCanUseGeneralLane(effectiveGeneralRoute)
+        // A content-only turn with no references is ordinary conversation even
+        // when it originated from a notebook.  Keeping the notebook guard for
+        // routed/document turns preserves panel capabilities while preventing
+        // external runners (especially WorkBuddy ACP) from receiving the full
+        // panel route and tool contract for a one-line reply.
+        && (request.workspaceKind !== "notebook" || request.contentOnly === true || clientGeneralRoute)
         && !(Array.isArray(request.selectedSkills) && request.selectedSkills.length)
         && !(Array.isArray(request.attachments) && request.attachments.length)
         && !(Array.isArray(request.references) && request.references.length);
@@ -461,7 +484,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
             skipped: true,
           }
         : await readRoute({ ...request, routeBundle: catalogSource?.routeBundle || null });
-      if (useLightGeneralLane) await event(entry, "route_hint", { kind: "general_chat", route: request.frontendRoute || serverRouteHint, serverRoute: serverRouteHint, panelRouteSkipped: true, userVisible: false });
+      if (useLightGeneralLane) await event(entry, "route_hint", { kind: "general_chat", route: effectiveGeneralRoute, serverRoute: serverRouteHint, panelRouteSkipped: true, userVisible: false });
       const routeBundle = routeSource?.routeBundle || catalogSource?.routeBundle || null;
       const route = typeof routeSource === "string" ? routeSource : routeSource?.text || "";
       for (const source of routeSource?.sources || []) {
@@ -469,6 +492,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       }
       if (routeBundle?.panel?.text) await event(entry, "route_read", { kind: "panel_route", placementId: routeBundle.panel.placementId, title: routeBundle.panel.name || "面板路由", characters: routeBundle.panel.text.length, userVisible: false });
       const trustedToolRuntime = toolsFactory === createConversationAgentTools;
+      const detachedUserInput = String(request.settings?.agentEngine || "").trim().toLowerCase() === "opencode";
       const requestUserInput = async ({ question, options = [], multiple = false, presentation = "", metadata = null, kind = "question", detail = null }) => {
         const decision = kind === "agent_permission"
           ? {
@@ -482,6 +506,19 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
             }
           : normalizedChoiceDecision({ id: randomUUID(), question, options, multiple, presentation, metadata });
         if (!decision.question) throw new Error("问题不能为空");
+        // OpenCode's MCP client cannot keep a tools/call request open while a
+        // human decides (its own request timeout is about five minutes).  The
+        // detached path therefore stores the decision in Shensi and resumes
+        // the same server task when the answer arrives.  Mark that contract
+        // explicitly so the renderer does not use the legacy cancel-and-send
+        // flow, which would cancel the waiting task and start a duplicate
+        // third-round request.
+        if (detachedUserInput) {
+          decision.metadata = {
+            ...(decision.metadata && typeof decision.metadata === "object" ? decision.metadata : {}),
+            detachedResume: true,
+          };
+        }
         const prior = kind === "agent_permission"
           ? null
           : (entry.choiceAnswers || []).find((item) => choiceQuestionSimilarity(item.decision, decision) >= 0.58);
@@ -499,10 +536,39 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
             continueOriginalTask: true,
           };
         }
+        // A runner can occasionally emit a second ask before it exits after
+        // the first detached marker. Keep one authoritative pending decision;
+        // overwriting the slot would leave the UI answering the first question
+        // while the loop waits forever on the second promise.
+        if (detachedUserInput && entry.waitingForUser) {
+          const existing = entry.waitingForUser.decision;
+          return {
+            waitingForUser: true,
+            decisionId: existing.id,
+            question: existing.question,
+            metadata: existing.metadata || null,
+            continueOriginalTask: false,
+          };
+        }
         const answer = new Promise((resolveAnswer, reject) => entry.pending.set(decision.id, { resolve: resolveAnswer, reject, decision }));
         void answer.catch(() => {});
         record.status = "waiting_input";
         await event(entry, "question", decision);
+        // OpenCode's MCP client has a hard-coded request timeout of roughly
+        // five minutes.  Keeping tools/call open until a human answers makes
+        // a valid third-round conversation look like an upstream timeout.
+        // Return a short durable marker to OpenCode instead; the service keeps
+        // the decision promise and resumes the same task after answer().
+        if (detachedUserInput) {
+          entry.waitingForUser = { decision, answer };
+          return {
+            waitingForUser: true,
+            decisionId: decision.id,
+            question: decision.question,
+            metadata: decision.metadata || null,
+            continueOriginalTask: false,
+          };
+        }
         const value = await answer;
         record.status = "running";
         if (kind !== "agent_permission") {
@@ -574,8 +640,61 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
               : "仍须读取面板路由、命中的模组路由、模块路由和实际 Skill 做解释与校验；读取结果不得覆盖上述结构化选择。",
           ].join("\n")
         : "本轮没有结构化任务路由；仅可在旧请求兼容模式下按面板路由和任务语义判断。";
-      const runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null, taskRoute: structuredTaskRoute, textTaskExecutionContext, deliverableType: structuredTaskRoute?.deliverableType || request.deliverableType || "", targetModule: structuredTaskRoute?.targetModule || request.targetModule || request.activeModule || "", selectedModulePlacementId: structuredTaskRoute?.selectedModulePlacementId || "", selectedSkillPlacementIds: structuredTaskRoute?.selectedSkillPlacementIds || [], relationType: structuredTaskRoute?.relationType || "", relationRole: structuredTaskRoute?.relationRole || "", routeReason: structuredTaskRoute?.routeReason || structuredTaskRoute?.reason || "" }), contextBlocks: [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "本轮结构化任务路由", text: routeContractText }, ...(textTaskExecutionContext ? [{ name: "本轮统一文字任务执行合同", text: JSON.stringify(textTaskExecutionContext, null, 2) }] : []), ...preloadedDocuments.contextBlocks, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }], signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, request  };
-      let result = await run(runOptions);
+      const generalConversationContextBlocks = [
+        { name: "普通对话边界", text: "本轮已由宿主判定为普通对话，不涉及作品、笔记、白板、媒体、Skill 或文档写入。请直接回答用户当前消息，不调用工具，不输出内部协议或思考过程。" },
+        { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) },
+      ];
+      const runContextBlocks = useLightGeneralLane
+        ? generalConversationContextBlocks
+        : [{ name: "Agent工具使用边界", text: conversationAgentInstructions }, { name: "动态选择交互", text: choiceInteractionInstructions }, { name: "本轮结构化任务路由", text: routeContractText }, ...(textTaskExecutionContext ? [{ name: "本轮统一文字任务执行合同", text: JSON.stringify(textTaskExecutionContext, null, 2) }] : []), ...preloadedDocuments.contextBlocks, { name: "面板路由与运行规范", text: route }, { name: "本轮权限快照", text: JSON.stringify(record.permissionContract) }];
+      const structuredPrompt = JSON.stringify({ messages: request.messages, currentDocumentId: request.currentDocument?.documentId || request.targetDocumentId || "", currentDocument: request.currentDocument || null, targetDocumentId: request.targetDocumentId || "", selection: request.selection || null, references: request.references || [], selectedSkills: request.selectedSkills || [], attachments: request.attachments || [], previousResults: request.previousResults || [], mediaDispatch: request.mediaDispatch || null, taskRoute: structuredTaskRoute, textTaskExecutionContext, deliverableType: structuredTaskRoute?.deliverableType || request.deliverableType || "", targetModule: structuredTaskRoute?.targetModule || request.targetModule || request.activeModule || "", selectedModulePlacementId: structuredTaskRoute?.selectedModulePlacementId || "", selectedSkillPlacementIds: structuredTaskRoute?.selectedSkillPlacementIds || [], relationType: structuredTaskRoute?.relationType || "", relationRole: structuredTaskRoute?.relationRole || "", routeReason: structuredTaskRoute?.routeReason || structuredTaskRoute?.reason || "" });
+      let runOptions = { settings: request.settings, stage: "conversation_agent", sessionId: profileKey, prompt: useLightGeneralLane ? String(request.messages?.at(-1)?.content || "") : structuredPrompt, contextBlocks: runContextBlocks, signal: controller.signal, workspaceToolRuntime: tools, drainSupplements: () => entry.supplements.splice(0), registerSteer: (handler) => { entry.steer = handler; }, isWaitingForUser: () => record.status === "waiting_input", onToolEvent: (data) => data.phase === "text_delta" ? bufferText(data.text) : event(entry, "tool", data), requestApproval: (details) => requestUserInput({ ...details, kind: "agent_permission" }), permissionContract: record.permissionContract, lightweightGeneral: useLightGeneralLane };
+      let result;
+      for (;;) {
+        try {
+          result = await run(runOptions);
+        } catch (error) {
+          // Some OpenCode builds exit immediately after receiving the short
+          // detached interaction marker, so the process has no final text and
+          // the runner reports an error.  The authoritative state is the
+          // durable question already recorded by requestUserInput; keep the
+          // task waiting and resume it after answer() instead of turning a
+          // valid third-round choice into a provider timeout/failure.
+          if (!entry.waitingForUser) throw error;
+          result = { text: "", runnerWarnings: [sanitizeUserFacingError(error?.message || error)] };
+        }
+        const waiting = entry.waitingForUser;
+        if (!waiting) break;
+        // The external runner has returned after the short MCP marker.  Keep
+        // the durable task waiting instead of completing it with a placeholder
+        // answer, then continue with a fresh runner invocation once the user
+        // answers.  This avoids the OpenCode 300s MCP timeout without changing
+        // Codex/WorkBuddy's existing long-lived interaction behavior.
+        record.status = "waiting_input";
+        await persist(entry);
+        let value;
+        try {
+          value = await waiting.answer;
+        } finally {
+          if (entry.waitingForUser === waiting) entry.waitingForUser = null;
+        }
+        record.status = "running";
+        if (waiting.decision?.kind !== "agent_permission"
+          && !entry.choiceAnswers.some((item) => item?.decision?.id === waiting.decision.id)) {
+          entry.choiceAnswers.push({ decision: waiting.decision, answer: value });
+        }
+        await event(entry, "progress", { message: "已收到选择，Agent 正在继续生成" });
+        const previousText = sanitizeAgentText(result?.text || "", { final: true });
+        runOptions = {
+          ...runOptions,
+          prompt: JSON.stringify({
+            originalTask: runOptions.prompt,
+            previousResponse: previousText,
+            userAnswer: String(value || ""),
+            instruction: "这是同一任务中用户刚刚提交的选择。承接原任务继续完成，不要重复询问同一个问题，不要输出内部协议或等待提示；直接完成原任务并交付最终结果。",
+          }),
+        };
+      }
       const deliveryReviewWarnings = [];
       const runnerWarnings = [];
       const collectRunnerWarnings = (value) => {
@@ -585,7 +704,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       collectRunnerWarnings(result);
       // Reconcile conversation-only delivery against the original user request,
       // not the writer's self-declared mode. This stays semantic, never keyword-routed.
-      if (tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
+      if (!useLightGeneralLane && tools.deliveryStatus?.().mode === "conversation" && !request.contentOnly) {
         await event(entry, "progress", { message: "正在核对成果归档" });
         const previousText = sanitizeAgentText(result.text || "");
         try {
@@ -603,7 +722,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       // pass can correct a missing declaration; the second can complete a
       // failed media/document tool call. A hard cap prevents silent infinite
       // retries while still allowing the normal correction loop to finish.
-      for (let attempt = 0; attempt < 2 && tools.deliveryStatus; attempt++) {
+      for (let attempt = 0; attempt < 2 && tools.deliveryStatus && !useLightGeneralLane; attempt++) {
         const delivery = tools.deliveryStatus();
         if (delivery.declared && !delivery.missing.length && !delivery.failed.length) break;
         await event(entry, "progress", { message: "Agent 正在核对并完成交付" });
@@ -624,7 +743,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       const deliveryWarnings = [...new Set([
         ...runnerWarnings,
         ...deliveryReviewWarnings,
-        ...(!finalDelivery?.declared ? ["本轮没有完成交付方式声明"] : []),
+        ...(!useLightGeneralLane && !finalDelivery?.declared ? ["本轮没有完成交付方式声明"] : []),
         ...(finalDelivery?.warnings || []),
         ...(finalDelivery?.missing || []).map((item) => `未完成：${item}`),
         ...(finalDelivery?.failed || []).map((item) => `执行失败：${item}`),
@@ -654,7 +773,12 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       if (!deferTextUntilTerminal) await flushText({ final: true });
       record.runtime = result.agentRuntime || result.executionRuntime || request.settings.agentEngine;
       if (controller.signal.aborted) throw new Error("任务已取消");
-      if (deliveryFailures.length) {
+      const substantiveReply = String(record.text || "").trim().length >= 2;
+      const conversationReplyWithDeliveryWarning = deliveryFailures.length
+        && finalDelivery?.mode === "conversation"
+        && substantiveReply
+        && !request.contentOnly;
+      if (deliveryFailures.length && !conversationReplyWithDeliveryWarning) {
         record.status = "failed";
         record.error = sanitizeUserFacingError(deliveryFailures.join("；"));
         await event(entry, "failed", {
@@ -664,6 +788,14 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
         });
       } else {
         record.status = "completed";
+        if (conversationReplyWithDeliveryWarning) {
+          record.error = "";
+          await event(entry, "delivery_warning", {
+            message: "正文已返回；附加交付核验提示不影响本轮对话结果。",
+            warnings: record.deliveryWarnings || [],
+            delivery: finalDelivery,
+          });
+        }
       }
       record.pendingSupplements = entry.supplements.splice(0);
       if (record.status === "completed") {
@@ -699,7 +831,7 @@ export const createConversationAgentService = ({ appRoot, storageRoot, run, skil
       try { existing = await get(id); } catch (error) { lanes.delete(key); throw error; }
       if (existing) { lanes.delete(key); return { id, status: existing.record.status, reused: true }; }
       const permissionContract = permissionContractFor(request.settings.agentPermissionMode, { runner: request.settings.agentEngine, taskId: id });
-      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", permissionContract, request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [] };
+      const entry = { record: { id, key, conversationId: request.conversationId, branchId: request.branchId || "main", workspacePath: request.workspacePath, status: "running", permissionContract, request: safeRequest(request), events: [], text: "", createdAt: new Date().toISOString() }, controller: new AbortController(), supplements: [], pending: new Map(), answerFlights: new Map(), choiceAnswers: [], waitingForUser: null };
       lanes.set(key, id); runs.set(id, entry);
       try { await persist(entry); } catch (error) { lanes.delete(key); runs.delete(id); throw error; }
       entry.task = execute(entry, request);

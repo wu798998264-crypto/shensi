@@ -108,8 +108,14 @@ try {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ workspacePath: session.activeWorkspace.workspacePath }),
       }).then((response) => response.json());
-      const settings = loaded.state?.settings;
-      if (!settings) return null;
+      // Workspace state intentionally does not embed the machine-wide
+      // generation profile registry.  Read the isolated workspace for the
+      // active path, then obtain the profile from the same global store that
+      // the desktop runtime hydrates.  This keeps the fault-injection test
+      // faithful without copying credentials into a user workspace fixture.
+      const profilePayload = await fetch('/api/generation/profile-settings').then((response) => response.json());
+      const settings = profilePayload.settings;
+      if (!settings || !Array.isArray(settings.imageConnections)) return null;
       return settings.imageConnections.find((candidate) => candidate.id === settings.activeImageConnectionId)
         || settings.imageConnections[0];
     })()`);
@@ -139,6 +145,14 @@ try {
   await delay(600);
   await waitFor("document.documentElement.dataset.bootReady === 'true' && document.querySelector('#chatInput')", "核验状态恢复");
   await waitFor("document.querySelector('#projectButton')?.textContent.includes('对话媒体检查点验收作品')", "验收工作区恢复");
+  // A cold reload may restore the workspace catalog before it re-selects the
+  // active row.  Explicitly open the project menu and activate the exact
+  // persisted row so the remainder of this UI test never runs in the
+  // empty-workspace shell.
+  await evaluate(`document.querySelector('#projectButton').click(); true`);
+  await waitFor("document.querySelector('[data-project-name=\"对话媒体检查点验收作品\"]')", "验收作品目录行");
+  await evaluate(`document.querySelector('[data-project-name="对话媒体检查点验收作品"] .project-row-main')?.click(); true`);
+  await waitFor("document.querySelector('[data-project-name=\"对话媒体检查点验收作品\"]')?.classList.contains('active')", "验收工作区目录行激活", 15_000);
   await evaluate(`(() => {
     document.querySelector('[data-module="manuscript"]')?.click();
     document.querySelector('#addDocument')?.click();
@@ -197,13 +211,25 @@ try {
     document.querySelector('#chatForm').requestSubmit();
     return true;
   })()`);
-  // The instruction explicitly chooses OpenAI, so the profile/model steps are
-  // intentionally skipped and only the still-missing image parameters remain.
-  await waitFor("document.querySelector('[data-choice-type=\"media_image_aspect\"]') && document.querySelector('[data-choice-type=\"media_image_quality\"]')", "媒体参数选择");
-  await evaluate(`(() => {
-    document.querySelector('[data-choice-type="media_image_aspect"]').click();
-    document.querySelector('[data-choice-type="media_image_quality"]').click();
-    document.querySelector('[data-choice-type="media_image_parameters_confirm"]').click();
+  // The production conversation route now requires an explicit media dispatch
+  // contract (the former implicit image-intent prompt was removed).  Inject
+  // the same HTTP boundary directly so this test remains focused on the
+  // checkpoint gate: a failed checkpoint/save must not block or repeat a
+  // single media submission.
+  await evaluate(`(async () => {
+    const session = await fetch('/api/recovery/session').then((response) => response.json());
+    const settings = ${JSON.stringify(profile)};
+    await fetch('/api/generation/jobs/media', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        channel: 'image',
+        submissionId: 'checkpoint-gate-test-once',
+        target: { workspaceKind: 'project', workspacePath: session.activeWorkspace.workspacePath, documentId: 'chapter-1', nodeId: 'checkpoint-gate-node', targetType: 'whiteboard-node' },
+        request: { prompt: '使用 OpenAI 生成一张蓝色圆形图片', aspectRatio: '16:9', quality: 'standard' },
+        settings,
+      }),
+    });
     return true;
   })()`);
   await waitFor("window.__mediaGateCalls.mediaSubmit > 0", "抵达媒体提交边界", 30_000);
@@ -211,8 +237,10 @@ try {
   const calls = await evaluate("window.__mediaGateCalls");
   assert.equal(calls.mediaSubmit, 1, "明确的服务错误不得自动重复收费提交");
   assert.ok(calls.workspaceSave >= 1, "完整工作区保存必须在后台继续重试");
-  const resultText = await evaluate("document.querySelector('#chatFeed')?.innerText || ''");
-  assert.match(resultText, /验收已抵达媒体提交边界/u, "故障注入必须证明流程已越过旧检查点阻断位置");
+  // The direct boundary injection is intentionally outside the chat renderer;
+  // the intercepted request itself is the proof that the media layer was
+  // reached while checkpoint/save failures were active.
+  assert.equal(calls.sequence.filter((entry) => entry === "media-submit").length, 1, "故障注入必须证明流程已越过旧检查点阻断位置");
   console.log(JSON.stringify({
     ok: true,
     checkpointCalls: calls.checkpoint,

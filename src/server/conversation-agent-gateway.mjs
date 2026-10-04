@@ -99,7 +99,18 @@ export const createConversationAgentGateway = ({
       ? permissionContractForExternalApproval(permissionContract, { runner: settings.agentEngine })
       : permissionContract;
     const shensiOnly = runtimePermissionContract?.mode === "shensi_only";
-    if (settings.agentEngine === "codex_api") return runBundledConversationAgent({ ...options, settings, permissionContract, appRoot, machineRoot });
+    if (settings.agentEngine === "codex_api") {
+      return runBundledConversationAgent({
+        ...options,
+        settings,
+        permissionContract,
+        appRoot,
+        machineRoot,
+        // The free/public general lane must not expose the full workspace
+        // tool contract merely because the request originated in a notebook.
+        workspaceToolRuntime: options.lightweightGeneral === true ? null : options.workspaceToolRuntime,
+      });
+    }
     const processEnvironment = conversationAgentProcessEnvironment();
     if (settings.agentEngine === "codex") {
       const runtimeMachineRoot = join(machineRoot, "conversation-agent-v1", "external", options.sessionId);
@@ -114,11 +125,20 @@ export const createConversationAgentGateway = ({
     }
     const externalCliEngine = ["workbuddy", "custom"].includes(settings.agentEngine);
     const runtimePermissionMode = runtimePermissionContract?.mode || settings.agentPermissionMode;
-    const mcpTools = ["shensi_only", "approval_required"].includes(runtimePermissionMode)
+    // A lightweight general turn is deliberately text-only. Starting an MCP
+    // server and wiring the complete workspace tool catalogue here used to
+    // add a second bridge handshake to every ordinary reply; WorkBuddy then
+    // often timed out while waiting for an unused ACP/MCP session. The
+    // conversation service still keeps its local tools for delivery auditing,
+    // but external runtimes receive no tool host on this lane.
+    const lightweightGeneral = options.lightweightGeneral === true;
+    const mcpTools = lightweightGeneral ? null : ["shensi_only", "approval_required"].includes(runtimePermissionMode)
       && (["opencode", "claude_code"].includes(settings.agentEngine) || externalCliEngine)
       ? toolsWithPermissionPrompt(options.workspaceToolRuntime, options.requestApproval, { runner: settings.agentEngine })
       : options.workspaceToolRuntime;
-    const nativeHost = await startMcp({ tools: mcpTools, onToolEvent: options.onToolEvent, signal: options.signal });
+    const nativeHost = lightweightGeneral
+      ? null
+      : await startMcp({ tools: mcpTools, onToolEvent: options.onToolEvent, signal: options.signal });
     const cwd = join(machineRoot, "conversation-agent-v1", "scratch", options.sessionId);
     await mkdir(cwd, { recursive: true });
     try {
@@ -132,8 +152,18 @@ export const createConversationAgentGateway = ({
               ? externalRunners.externalCli || runExternalCliAgent
             : null;
       if (!run) throw new Error("所选运行器未提供 Agent 接口，不会回退到 Chat");
-      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: Number(settings.timeoutMs) || 1_800_000, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract: runtimePermissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, isWaitingForUser: options.isWaitingForUser, environment: processEnvironment });
-    } finally { await nativeHost.close(); }
+      // Older persisted WorkBuddy profiles used the generic 120-second text
+      // timeout.  The unified Agent path includes route/context preparation
+      // before ACP starts, so that legacy budget aborts a valid desktop
+      // session even though the bridge itself is healthy.  Treat that value
+      // as a legacy default and give WorkBuddy the same 10-minute budget as
+      // the built-in profile; explicit longer values are preserved.
+      const configuredTimeoutMs = Number(settings.timeoutMs) || 0;
+      const effectiveTimeoutMs = settings.agentEngine === "workbuddy"
+        ? Math.max(configuredTimeoutMs, 600_000)
+        : (configuredTimeoutMs || 1_800_000);
+      return await run({ ...settings, engine: settings.agentEngine, prompt: options.prompt, contextBlocks: options.contextBlocks.map((block) => ({ ...block, type: "host_contract" })), cwd, nativeHost, signal: options.signal, maxTurns: 96, timeoutMs: effectiveTimeoutMs, allowEdits: settings.agentPermissionMode !== "shensi_only", allowNetwork: settings.agentPermissionMode !== "shensi_only", permissionContract: runtimePermissionContract, requestApproval: options.requestApproval, onEvent: options.onToolEvent, isWaitingForUser: options.isWaitingForUser, environment: processEnvironment, lightweightGeneral });
+    } finally { await nativeHost?.close?.(); }
   },
   mediaStatus: async (jobId, { request, archive = false, emit = async () => {} }) => {
     if (!/^generation-[a-z0-9-]+$/u.test(jobId)) throw new Error("无效媒体任务ID");

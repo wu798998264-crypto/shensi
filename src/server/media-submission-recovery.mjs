@@ -13,12 +13,26 @@ export const DEFAULT_AGGREGATE_IMAGE_RECOVERY_WINDOW_MS = 15 * 60_000;
 export const DEFAULT_AGGREGATE_IMAGE_RECOVERY_ATTEMPTS = 8;
 const AGGREGATE_IMAGE_REFERENCE_EDIT_RELEASED_AT = Date.parse("2026-08-30T09:40:39.981Z");
 const UPSTREAM_STREAM_OPEN_TIMEOUT_PATTERN = /(?:upstream[_ -]?first[_ -]?byte[_ -]?timeout|upstream[\s\S]{0,100}timed out[\s\S]{0,100}stream[_ -]?open)/iu;
+// Some aggregate gateways return a structured 5xx after they have already
+// handed the request to the upstream image service.  The response text is
+// easy to mistake for a definitive request failure, but the only safe
+// conclusion is that the outcome is unknown until the original idempotency
+// key is reconciled.  Keep this matcher narrow: generic stream errors and
+// explicit provider/business errors must retain their existing semantics.
+const UPSTREAM_STREAM_INTERRUPTED_BEFORE_COMPLETION_PATTERN = /stream\s+(?:error\s*:\s*)?(?:disconnected\s+before\s+(?:completion|response\.completed)|closed\s+before\s+response\.completed)/iu;
 
 export const isUpstreamStreamOpenTimeout = (value = {}) => {
   const source = typeof value === "string"
     ? value
     : `${value?.providerErrorCode || value?.code || ""} ${value?.message || value?.error || ""}`;
   return UPSTREAM_STREAM_OPEN_TIMEOUT_PATTERN.test(String(source || ""));
+};
+
+export const isUpstreamStreamInterruptedBeforeCompletion = (value = {}) => {
+  const source = typeof value === "string"
+    ? value
+    : `${value?.providerErrorCode || value?.code || ""} ${value?.message || value?.error || ""}`;
+  return UPSTREAM_STREAM_INTERRUPTED_BEFORE_COMPLETION_PATTERN.test(String(source || ""));
 };
 
 export const builtInAggregateImageRecoveryJob = (job = {}) => {
@@ -116,16 +130,18 @@ const libTvPreSubmitTransportFailure = (job = {}, code = "") => {
   const adapter = String(settings.adapter || "").trim().toLowerCase();
   if (provider !== "libtv" || adapter !== "cli") return false;
   if (job.status !== "submitting" || job.providerTaskId) return false;
-  return /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/.test(code);
+  return /^(?:LIBTV_NETWORK_UNREACHABLE|DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/.test(code);
 };
 
 export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutomaticRetries = 3 } = {}) => {
   const failureCount = Number(job.transientFailures || 0) + 1;
   const upstreamStreamOpenTimeout = isUpstreamStreamOpenTimeout(error);
-  const aggregateUpstreamStreamOpenTimeout = builtInAggregateImageRecoveryJob(job) && upstreamStreamOpenTimeout;
+  const upstreamStreamInterruptedBeforeCompletion = isUpstreamStreamInterruptedBeforeCompletion(error);
+  const aggregateUpstreamStreamOutcomeUnknown = builtInAggregateImageRecoveryJob(job)
+    && (upstreamStreamOpenTimeout || upstreamStreamInterruptedBeforeCompletion);
   const submissionUnknown = job.status === "submitting"
     && !job.providerTaskId
-    && (error.submissionOutcomeKnown !== true || aggregateUpstreamStreamOpenTimeout);
+    && (error.submissionOutcomeKnown !== true || aggregateUpstreamStreamOutcomeUnknown);
   const code = normalizedProviderCode(error);
   const brokerBusy = code === "DREAMINA_PROFILE_BROKER_BUSY";
   const safeAutomaticRetry = error.submissionOutcomeKnown === true
@@ -136,5 +152,12 @@ export const classifyMediaSubmissionFailure = ({ job = {}, error = {}, maxAutoma
   const retryDelayMs = safeAutomaticRetry
     ? Math.max(Number(error.retryAfterMs) || 0, Math.min(30_000, 1_000 * (2 ** Math.max(0, failureCount - 1))))
     : 0;
-  return { submissionUnknown, safeAutomaticRetry, retryDelayMs, failureCount, upstreamStreamOpenTimeout };
+  return {
+    submissionUnknown,
+    safeAutomaticRetry,
+    retryDelayMs,
+    failureCount,
+    upstreamStreamOpenTimeout,
+    upstreamStreamInterruptedBeforeCompletion,
+  };
 };

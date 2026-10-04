@@ -16,7 +16,10 @@ import { dreaminaCliEnvironment } from "./dreamina-cli-profile.mjs";
 import { testOpenCodeAgentConnection } from "./opencode-agent-runner.mjs";
 import { runClaudeCodeAgentTurn } from "./claude-code-agent-runner.mjs";
 import { fetchProvider, providerNetworkRoute } from "./network-proxy.mjs";
-import { isUpstreamStreamOpenTimeout } from "./media-submission-recovery.mjs";
+import {
+  isUpstreamStreamInterruptedBeforeCompletion,
+  isUpstreamStreamOpenTimeout,
+} from "./media-submission-recovery.mjs";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
 import { createCodexApiAgentRuntime } from "./codex-api-agent-runtime.mjs";
 
@@ -221,6 +224,54 @@ const modelRequestSignal = (signal, timeoutMs) => {
   return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
 };
 
+const waitForProviderRetry = (milliseconds, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) {
+    reject(cancellationError(signal));
+    return;
+  }
+  let timer;
+  const cleanup = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener?.("abort", onAbort);
+  };
+  const onAbort = () => {
+    cleanup();
+    reject(cancellationError(signal));
+  };
+  timer = setTimeout(() => {
+    cleanup();
+    resolve();
+  }, milliseconds);
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+});
+
+const publicTextProvider = (settings = {}) => settings.provider === "免费模型"
+  || getProviderPreset(settings.provider)?.public === true;
+
+const fetchTextProviderWithTransportRecovery = async (url, options, settings = {}) => {
+  const isPublic = publicTextProvider(settings);
+  const maxAttempts = isPublic ? 2 : 1;
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fetchProvider(url, options, {
+        // Only the public text lane may switch from the configured proxy to a
+        // direct route. Media and paid API lanes remain byte-for-byte on their
+        // existing transport path.
+        allowDirectFallback: isPublic,
+      });
+    } catch (error) {
+      lastError = error;
+      if (!isPublic
+        || attempt >= maxAttempts
+        || String(error?.code || "") !== "PROVIDER_NETWORK_FAILED"
+        || options?.signal?.aborted) throw error;
+      await waitForProviderRetry(350, options.signal);
+    }
+  }
+  throw lastError || new Error("模型网络请求失败");
+};
+
 const quoteCliTemplateArg = (value) => `"${String(value).replaceAll('"', '\\"')}"`;
 
 export const normalizeCodexModelCatalog = (payload = {}) => (payload.models ?? [])
@@ -332,7 +383,8 @@ const parseJsonResponse = async (response) => {
     const message = payload?.error?.message ?? payload?.message ?? `HTTP ${response.status}`;
     const providerErrorCode = payload?.error?.code ?? payload?.code ?? `HTTP_${response.status}`;
     const error = providerResponseError(`模型请求失败：${message}`, response, providerErrorCode);
-    if (isUpstreamStreamOpenTimeout({ providerErrorCode, message })) {
+    if (isUpstreamStreamOpenTimeout({ providerErrorCode, message })
+      || isUpstreamStreamInterruptedBeforeCompletion({ providerErrorCode, message })) {
       // The gateway may have accepted an idempotent request before timing out.
       // Let the durable worker reconcile the original key instead of retrying
       // as a fresh paid submission.
@@ -456,12 +508,12 @@ const runChatCompletionsApi = async ({ settings, messages, system, attachments =
   }
   const serviceTier = apiServiceTier(settings.speedMode);
   if (serviceTier) body.service_tier = serviceTier;
-  const response = await fetchProvider(`${baseUrl}/chat/completions`, {
+  const response = await fetchTextProviderWithTransportRecovery(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: providerHeaders(settings),
     body: JSON.stringify(body),
     signal: modelRequestSignal(signal, settings.timeoutMs),
-  });
+  }, settings);
   const payload = await parseJsonResponse(response);
   const choice = payload?.choices?.[0] ?? {};
   const message = choice?.message ?? {};
@@ -1872,13 +1924,19 @@ export const testModelAdapter = async ({ settings, cwd }) => {
         timeoutMs: 30_000,
       });
       const payload = JSON.parse(result.stdout);
-      const requestedProfileId = String(settings.dreaminaCliProfile || "").trim();
-      const profileId = String(payload.profileId || requestedProfileId).trim();
-      if (!profileId || !requestedProfileId) throw Object.assign(new Error("即梦图片 CLI 未返回明确配置 ID"), { code: "DREAMINA_PROFILE_REQUIRED" });
-      if (profileId !== requestedProfileId) throw Object.assign(new Error("即梦图片 CLI 回执与当前配置不一致，已阻止串号"), { code: "DREAMINA_PROFILE_ID_MISMATCH" });
+      // OpenAI CLI is not Dreamina and deliberately has no provider-account field.
+      // The old branch copied Dreamina identity checks here, which made every
+      // OpenAI image profile fail its non-billing capability probe before a
+      // generation could even be attempted.  Trust only the CLI's own check
+      // receipt; Dreamina identity isolation remains in its dedicated branch.
+      if (payload.ok === false) {
+        throw Object.assign(new Error(String(payload.message || "OpenAI 图片 CLI 能力探测失败")), {
+          code: String(payload.code || "OPENAI_IMAGE_CLI_CHECK_FAILED"),
+        });
+      }
       return {
-        ok: true,
-        connected: payload.executableChecked === true && payload.sessionChecked === true && payload.imageToolRegistered === true,
+        ok: payload.executableChecked === true && payload.sessionChecked === true && payload.imageToolRegistered === true,
+        connected: payload.executableChecked === true && payload.sessionChecked === true,
         available: true,
         verificationLevel: payload.verificationLevel || "cli_session_tool_registration",
         visibilityChecked: false,

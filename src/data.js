@@ -247,7 +247,7 @@ export const createInitialState = () => ({
     provider: "OpenAI",
     protocol: "responses",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-5.6-sol",
+    model: "gpt-6.1-sol",
     reasoningEffort: "medium",
     speedMode: "default",
     temperature: "0.7",

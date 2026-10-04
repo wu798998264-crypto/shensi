@@ -40,7 +40,7 @@ assert.match(markup(), /data-whiteboard-depth-action="generate">生成深度结�
 const readySignature = signature();
 Object.assign(runtime, { busy: true, message: "正在推理", currentPercent: 37, percent: 37 });
 assert.notEqual(signature(), readySignature);
-assert.match(markup(), /disabled[\s\S]{0,40}>处理中/u);
+assert.match(markup(), /data-whiteboard-depth-action="stop"[\s\S]{0,80}>停止/u);
 assert.match(markup(), /当前任务 37%/u);
 assert.match(markup(), /已完成 0/u);
 const busySignature = signature();

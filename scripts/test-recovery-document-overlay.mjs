@@ -149,6 +149,19 @@ try {
     },
   });
   assert.deepEqual(legacyFullState.conversations.map((conversation) => conversation.id), ["conversation-old", "conversation-new", "conversation-legacy"], "旧 full-v1 检查点也必须采用并集合并");
+  const deletedLegacyDocument = restoreRecoveryState({
+    canonicalState: { documents: { current: { title: "当前文档" } } },
+    checkpoint: {
+      stateMode: "full-v1",
+      deletedDocumentIds: ["deleted-before-restart"],
+      state: { documents: {
+        current: { title: "当前文档草稿" },
+        "deleted-before-restart": { title: "不应复活" },
+      } },
+    },
+  });
+  assert.equal(deletedLegacyDocument.documents["deleted-before-restart"], undefined, "旧 full-v1 检查点不得复活已删除文档");
+  assert.equal(deletedLegacyDocument.documents.current.title, "当前文档草稿", "未删除文档仍可从检查点恢复草稿");
 
   const committed = await commitWorkspaceRecoveryCheckpoint({ workspacePath, clientId, revision: 7 });
   assert.equal(committed.dirty, false);

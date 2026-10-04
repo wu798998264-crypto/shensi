@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readdir, stat } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { appDataRoot, persistentNotesRoot, persistentSkillsRoot, persistentWorksRoot } from "../src/server/app-data.mjs";
@@ -22,9 +22,40 @@ const rows = [];
 const missingContent = [];
 const orphanTreeItems = [];
 const missingAttachments = [];
+const recoverableMissingAttachments = [];
 const outsideBusinessReferences = [];
 
-const scanValue = async (value, { workspacePath, location = "state" } = {}) => {
+// A completed media task can retain a verified vendor task ID even when an
+// older migration removed only the materialized workspace copy. Keep this
+// distinct from a genuinely orphaned attachment: the former is recoverable
+// without resubmitting or charging a new generation, while the latter must
+// continue to fail the data-integrity audit.
+const generationJobs = new Map();
+for (const entry of await readdir(join(root, "generation-jobs"), { withFileTypes: true }).catch(() => [])) {
+  if (!entry.isFile() || !/^generation-[a-z0-9-]+\.json$/iu.test(entry.name)) continue;
+  try {
+    const job = JSON.parse(await readFile(join(root, "generation-jobs", entry.name), "utf8"));
+    if (job?.id) generationJobs.set(String(job.id), job);
+  } catch {
+    // A malformed historical job is not allowed to turn a missing user file
+    // into a false recoverable result; the attachment remains audit-failing.
+  }
+}
+
+const recoverableJobFor = ({ workspacePath, relativePath, generationJobId = "" } = {}) => {
+  const candidates = generationJobId && generationJobs.has(generationJobId)
+    ? [generationJobs.get(generationJobId)]
+    : [...generationJobs.values()];
+  return candidates.find((job) => {
+    if (job?.status !== "complete" || !String(job.providerTaskId || "").trim()) return false;
+    if (resolve(String(job.target?.workspacePath || "")).toLowerCase() !== resolve(workspacePath).toLowerCase()) return false;
+    const recorded = String(job.landingReceipt?.relativePath || job.result?.attachment?.relativePath || "").replaceAll("\\", "/");
+    return recorded === String(relativePath || "").replaceAll("\\", "/")
+      && Boolean(job.landingReceipt?.sha256 || job.result?.attachment?.sha256);
+  }) || null;
+};
+
+const scanValue = async (value, { workspacePath, location = "state", generationJobId = "" } = {}) => {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) await scanValue(value[index], { workspacePath, location: `${location}[${index}]` });
     return;
@@ -39,9 +70,30 @@ const scanValue = async (value, { workspacePath, location = "state" } = {}) => {
     const target = resolve(workspacePath, relativePath);
     const rel = relative(workspacePath, target);
     if ((rel.startsWith("..") || isAbsolute(rel)) || !await pathExists(target)) {
-      missingAttachments.push({ workspacePath, location, relativePath });
+      const recoverableJob = recoverableJobFor({
+        workspacePath,
+        relativePath,
+        generationJobId,
+      });
+      if (recoverableJob) {
+        recoverableMissingAttachments.push({
+          workspacePath,
+          location,
+          relativePath,
+          generationJobId: recoverableJob.id,
+          providerTaskId: recoverableJob.providerTaskId,
+        });
+      } else {
+        missingAttachments.push({ workspacePath, location, relativePath });
+      }
     }
   }
+  const nextGenerationJobId = String(
+    value.generationJobId
+      || value.generation?.jobId
+      || generationJobId
+      || "",
+  ).trim();
   for (const [key, child] of Object.entries(value)) {
     if (typeof child === "string" && isAbsolute(child) && /(content|attachment|asset|history|workspace|source).*path/i.test(key)) {
       const normalized = resolve(child).toLowerCase();
@@ -51,7 +103,7 @@ const scanValue = async (value, { workspacePath, location = "state" } = {}) => {
         outsideBusinessReferences.push({ workspacePath, location: `${location}.${key}`, path: child });
       }
     }
-    await scanValue(child, { workspacePath, location: `${location}.${key}` });
+    await scanValue(child, { workspacePath, location: `${location}.${key}`, generationJobId: nextGenerationJobId });
   }
 };
 
@@ -92,6 +144,8 @@ console.log(JSON.stringify({
   histories: rows.reduce((total, row) => total + row.histories, 0),
   missingContent: 0,
   missingAttachments: 0,
+  recoverableMissingAttachments: recoverableMissingAttachments.length,
+  recoverableMissingAttachmentSamples: recoverableMissingAttachments.slice(0, 10),
   outsideBusinessReferences: 0,
   orphanTreeItems: orphanTreeItems.length,
   orphanTreeItemSamples: orphanTreeItems.slice(0, 10),

@@ -121,7 +121,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.0.5-workbuddy-hy3";
+} from "./generation-profiles.js?v=9.2.1-integrity-ask-recovery";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -137,7 +137,7 @@ import {
 } from "./asset-history-policy.js";
 import { copyableMessageText, splitConversationAtMessage } from "./conversation-branch.js";
 import { ensureConversationDispatchDurability } from "./conversation-dispatch-durability.js?v=5.4.10-background-durability";
-import { conversationRollbackPatch, persistableStateWithoutEphemeralConversationRollbacks } from "./conversation-rollback.js";
+import { conversationRollbackPatch, persistableStateWithoutEphemeralConversationRollbacks, recordConversationRollback, conversationRollbackRevision, filterConversationRollbackMessages, filterConversationRollbackQueue } from "./conversation-rollback.js";
 import { ackConversationInstruction, conversationCanAcceptSupplement, conversationCompletionStatus, conversationImmediateInstructionBlocksDispatch, conversationPreparationCancelledError, conversationQueueItemOwnedByTask, conversationTaskIsRunning, conversationTaskMessageIsRunning, createConversationDispatchGate, createConversationPreparationRegistry, dequeueReadyConversationInstruction, enqueueCompositeConversationSteps, markConversationInstructionAccepted, nackConversationInstruction, recoverConversationTaskQueue, recoverConversationTaskQueueForStartup, repairConversationTaskMessages, requeueEditedConversationInstruction } from "./conversation-task-queue.js?v=5.4.11-reliable-queue-ownership";
 import { decideConversationMediaRoute } from "./conversation-media-routing.js?v=1.0.20-explicit-media-intent";
 import { createConversationMediaDispatchContract, normalizeConversationMediaDispatchContract } from "./conversation-media-dispatch.js?v=1.0.20-explicit-media-intent";
@@ -167,7 +167,7 @@ import { applyDocumentPatchPlan } from "./document-patch-engine.js";
 import { historyDiffIsFullReplacement, renderHistoryDiff, resolveHistoryDiffInput } from "./history-diff.js";
 import { collectRelatedDocumentHistory, prepareRelatedDocumentRestore } from "./related-history.js";
 import { landingReceiptPresentation, verifiedLandingDocumentLinksForManifest, verifiedLandingManifestReceipt, verifyLandingDelivery } from "./landing-document-links.js?v=2.89-derived-receipt";
-import { createConversationTrashEntry, createFileTrashEntry, createHistoryTrashEntry, createTreeTrashEntry, daysUntilTrashExpiry, pruneTrashEntries, purgeTrashPayloadsFromState, trashPreviewDocument } from "./trash.js";
+import { createConversationTrashEntry, createFileTrashEntry, createHistoryTrashEntry, createTreeTrashEntry, daysUntilTrashExpiry, pruneTrashEntries, purgeTrashPayloadsFromState, trashEntryDocumentIds, trashPreviewDocument } from "./trash.js";
 import { buildDeletedContentRecoveryContext, deletedContentSearchEntries } from "./deleted-content-access.js";
 import { directoryDeletionDocumentIds, orphanTreeReferenceTrashPayload } from "./orphan-tree-reference.js";
 import { directoryOrderWithPlacement, directoryRootDropIntent } from "./directory-drop.js";
@@ -474,7 +474,7 @@ import {
 import { STRUCTURE_WORKSPACE_VERSION, importedDocumentMatchesStructuredSlot, structuredGroupForDocument } from "./structure-schema.js?v=0.42.10-safe-slot-migration";
 import { planWhiteboardSkillRoute } from "./whiteboard-skill-route.js";
 import { inspectWhiteboardTaskClarity } from "./whiteboard-task-clarity.js?v=0.2.0-skill-aware";
-import { normalizeWhiteboardGenerationPreferences, rememberWhiteboardGenerationPreference } from "./whiteboard-generation-preference.js?v=5.2.5-legacy-image-retry";
+import { DEFAULT_WHITEBOARD_MEDIA_ASPECT_RATIO, WHITEBOARD_MEDIA_ASPECT_RATIOS, normalizeWhiteboardGenerationPreferences, rememberWhiteboardGenerationPreference } from "./whiteboard-generation-preference.js?v=5.2.5-legacy-image-retry";
 import { restoreWorkBuddyCapabilityCache, workBuddyCapabilityCacheEntry } from "./agent-runner-capability-cache.js";
 
 const STORAGE_KEY = "shensi-studio-state-v6";
@@ -861,6 +861,73 @@ const whiteboardRememberedGenerationProfile = (channel) => {
   return { ...(workspacePreferences[channel] ?? {}) };
 };
 
+const whiteboardLastMediaAspectRatio = () => {
+  const runtimeValue = String(whiteboardGenerationProfilePreferences.lastMediaAspectRatio || "").trim();
+  if (WHITEBOARD_MEDIA_ASPECT_RATIOS.includes(runtimeValue)) return runtimeValue;
+  const workspaceValue = String(state?.settings?.whiteboardGenerationProfilePreferences?.lastMediaAspectRatio || "").trim();
+  return WHITEBOARD_MEDIA_ASPECT_RATIOS.includes(workspaceValue) ? workspaceValue : DEFAULT_WHITEBOARD_MEDIA_ASPECT_RATIO;
+};
+
+const whiteboardAspectRatioNumber = (value = "") => {
+  const [width, height] = String(value || "").split(":").map(Number);
+  return width > 0 && height > 0 ? width / height : 16 / 9;
+};
+
+const whiteboardAspectRatioPresetForNode = (node = null) => {
+  const ratio = Number(node?.aspectRatio);
+  if (!(ratio > 0)) return "";
+  return WHITEBOARD_MEDIA_ASPECT_RATIOS
+    .map((value) => ({ value, distance: Math.abs(Math.log(whiteboardAspectRatioNumber(value) / ratio)) }))
+    .sort((left, right) => left.distance - right.distance)[0]?.value || "";
+};
+
+const rememberWhiteboardMediaAspectRatio = (value = "") => {
+  const ratio = String(value || "").trim();
+  if (!WHITEBOARD_MEDIA_ASPECT_RATIOS.includes(ratio)) return false;
+  // The preference module keeps this as one shared value, so the most recent
+  // image or video choice is inherited by the next media card regardless of
+  // which channel made the choice.
+  persistWhiteboardGenerationProfile("image", { aspectRatio: ratio });
+  persistWhiteboardGenerationProfile("video", { aspectRatio: ratio });
+  return true;
+};
+
+const updateWhiteboardMediaCardAspectRatio = (nodeId, ratio) => {
+  const numeric = whiteboardAspectRatioNumber(ratio);
+  if (!nodeId || !WHITEBOARD_MEDIA_ASPECT_RATIOS.includes(String(ratio || ""))) return false;
+  const documentState = activeWhiteboardDocument();
+  const node = documentState?.canvas?.nodes?.find((item) => item.id === String(nodeId));
+  const mediaIntent = ["image", "video"].includes(String(node?.generationIntent?.channel || node?.generation?.channel || ""));
+  if (!documentState || !node || (!mediaIntent && !["image", "video"].includes(String(node.kind || "")))) return false;
+  if (Math.abs(Number(node.aspectRatio || 0) - numeric) < 0.0001 && Math.abs(Number(node.height || 0) - Number(node.width || 0) / numeric) < 1) return false;
+  const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
+  documentState.canvas = updateCanvasNode(documentState.canvas, node.id, { aspectRatio: numeric });
+  documentState.updatedAt = nowTime();
+  pushWhiteboardHistory(beforeCanvas, { label: "修改生成卡片画幅比例" });
+  persist({ documentIds: [state.activeDocument] });
+  renderWhiteboard(documentState);
+  selectWhiteboardNode(node.id);
+  return true;
+};
+
+// Resolve the ratio for a newly-created image/video target.  A connected
+// upstream media card is the strongest signal (dragging an output handle is
+// an explicit inheritance action), followed by the last media card the user
+// clicked, and finally the persisted ratio picker preference.
+const whiteboardInheritedMediaAspectRatio = ({ channel = "", documentState = null, sourceIds = [] } = {}) => {
+  if (!["image", "video"].includes(String(channel))) return "";
+  const canvas = documentState?.canvas;
+  const sources = (Array.isArray(sourceIds) ? sourceIds : [])
+    .map((id) => canvas?.nodes?.find((node) => node.id === String(id)))
+    .filter(Boolean);
+  const source = sources.find((node) => Number(node.aspectRatio) > 0);
+  const sourcePreset = whiteboardAspectRatioPresetForNode(source);
+  if (sourcePreset) return sourcePreset;
+  const clicked = String(ui.whiteboardLastClickedMediaAspectRatio || "").trim();
+  if (WHITEBOARD_MEDIA_ASPECT_RATIOS.includes(clicked)) return clicked;
+  return whiteboardLastMediaAspectRatio();
+};
+
 // A generated card carries the last profile that actually produced its
 // content. Use it as a per-card fallback when an older draft is absent; the
 // metadata is limited to non-sensitive connection/model fields.
@@ -1122,6 +1189,35 @@ const hydrateDesktopGenerationSecrets = async () => {
   } else {
     clearLegacyGenerationSecretStorage();
   }
+};
+
+// The packaged main process normally hands the text vault to the core before
+// opening the renderer.  A renderer recovery, profile migration, or an
+// already-running local core can race that first handoff, though.  Re-read
+// only the non-media text channel after the global profile registry is loaded
+// and rebind it idempotently; this repairs the in-memory core state without
+// touching Dreamina locks, media bindings, or workspace data.
+const rebindDesktopTextGenerationRuntime = async () => {
+  const bridge = window.shensiDesktop?.credentials?.readGeneration;
+  if (typeof bridge !== "function") return false;
+  const result = await bridge();
+  if (!result?.ok) throw new Error(result.message || "桌面文字凭证读取失败");
+  const records = result.secrets?.text && typeof result.secrets.text === "object"
+    ? Object.fromEntries(Object.entries(result.secrets.text)
+      .map(([profileId, secret]) => [String(profileId || "").trim(), String(secret || "").trim()])
+      .filter(([profileId, secret]) => profileId && secret))
+    : {};
+  if (!Object.keys(records).length) return false;
+  runtimeGenerationSecrets = mergeGenerationSecrets(runtimeGenerationSecrets, { text: records });
+  state.settings = normalizeGenerationProfiles(state.settings ?? {}, runtimeGenerationSecrets);
+  const response = await fetch("/api/generation/runtime/text-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credentials: records }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.ok) throw new Error(payload.message || "桌面文字凭证重新绑定失败");
+  return true;
 };
 
 let machineGenerationRuntime = { schemaVersion: 1, revision: 0, bindings: [] };
@@ -1652,6 +1748,7 @@ let ui = {
   workspaceSaveIdleTask: null,
   workspaceSavePromise: null,
   workspaceSaveError: null,
+  rollbackPersistenceBlockedConversationId: "",
   workspaceDirty: false,
   workspaceRevision: 0,
   workspaceStateChangesPending: false,
@@ -1659,6 +1756,7 @@ let ui = {
   workspaceHydrationBlocked: false,
   workspaceDirtyDocumentIds: new Set(),
   workspaceDocumentChangesUnknown: false,
+  recoveryDeletedDocumentIds: new Set(),
   workspaceRecoveryRestored: false,
   recoveryCheckpointTimer: null,
   recoveryCheckpointIdleTask: null,
@@ -1857,6 +1955,11 @@ let ui = {
   whiteboardSelectedEdgeIds: new Set(),
   whiteboardSelectedEdgeDocumentId: null,
   whiteboardClipboard: null,
+  // Keep the last media card the user interacted with as a lightweight
+  // aspect-ratio hint for a subsequent blank generation card.  This is
+  // intentionally in-memory: the durable preference remains the explicit
+  // ratio choice persisted by rememberWhiteboardMediaAspectRatio().
+  whiteboardLastClickedMediaAspectRatio: "",
   whiteboardPointer: null,
   whiteboardModifierSelectionPointer: null,
   whiteboardSpacePressed: false,
@@ -3569,6 +3672,8 @@ const ensureStateSchema = () => {
       constraintIndex: [],
       intentTarget: null,
       queue: [],
+      rollbackRevision: 0,
+      rollbackTombstones: { messageIds: [], queueIds: [], recordedAt: 0 },
       references: [],
       workspaceReferences: [],
       skillReferences: [],
@@ -3632,6 +3737,16 @@ const ensureStateSchema = () => {
       : {};
     conversation.mediaGenerationDefaults = normalizeConversationMediaDefaults(conversation.mediaGenerationDefaults);
     conversation.queue ??= [];
+    conversation.rollbackRevision = Math.max(0, Number(conversation.rollbackRevision) || 0);
+    conversation.rollbackTombstones = {
+      messageIds: [...new Set((Array.isArray(conversation.rollbackTombstones?.messageIds)
+        ? conversation.rollbackTombstones.messageIds : []).map(String).filter(Boolean))].slice(-512),
+      queueIds: [...new Set((Array.isArray(conversation.rollbackTombstones?.queueIds)
+        ? conversation.rollbackTombstones.queueIds : []).map(String).filter(Boolean))].slice(-512),
+      recordedAt: Math.max(0, Number(conversation.rollbackTombstones?.recordedAt) || 0),
+    };
+    conversation.messages = filterConversationRollbackMessages(conversation.messages, conversation);
+    conversation.queue = filterConversationRollbackQueue(conversation.queue, conversation);
     recoverConversationTaskQueue(conversation);
     conversation.branchGroups ??= [];
     conversation.candidateBranchGroups ??= [];
@@ -4940,6 +5055,7 @@ const saveWorkspaceAfterConflict = async ({
       localState,
       remoteState: latest.state,
       stateConflictResolutions,
+      deletedDocumentIds: ui.recoveryDeletedDocumentIds,
     });
     if (!plan.ok) {
       throw createWorkspaceStateConflictError(
@@ -5225,6 +5341,11 @@ const saveWorkspace = async ({ throwOnError = false, recoverConflict = true, for
         ui.workspaceDirtyDocumentIds.clear();
         ui.workspaceDocumentChangesUnknown = false;
         ui.workspaceStateChangesPending = false;
+        // A successful canonical save is the durable source of truth.  Drop
+        // delete tombstones only after that save has committed; keeping them
+        // in later recovery checkpoints would unnecessarily hide a document
+        // that was intentionally restored or recreated afterwards.
+        ui.recoveryDeletedDocumentIds.clear();
         ui.documentTransferDirectoryCache = null;
         cacheWorkspaceState({
           workspaceKind: state.workspaceKind,
@@ -5416,7 +5537,16 @@ const recoveryCheckpointPayload = () => {
     clientId: recoveryClientId,
     revision: ui.workspaceRevision,
     baseSavedAt: state.savedAt ?? "",
+    baseStateStamp: ui.activeWorkspaceStamp || "",
+    baseWorkspaceCommitId: String(state.workspaceCommitId || ""),
     ...recoveryState,
+    // A recovery snapshot must never resurrect a document that the current
+    // workspace has already moved to trash. Keep explicit tombstones beside
+    // the snapshot; full/legacy overlays otherwise merge missing IDs back in.
+    deletedDocumentIds: [...new Set([
+      ...ui.recoveryDeletedDocumentIds,
+      ...(state.trash ?? []).flatMap((entry) => trashEntryDocumentIds(entry)),
+    ])],
     draftRevision: ui.whiteboardGenerationDraftRevision,
     whiteboardGenerationDrafts: readWhiteboardGenerationDraftCache(),
   };
@@ -5946,10 +6076,14 @@ const hydrateWorkspace = async () => {
     const payload = await fetchWorkspaceLoadWithRetry(state.settings.workspacePath);
     const checkpoint = await loadWorkspaceRecoveryForHydration(payload.workspaceRoot || state.settings.workspacePath);
     const canonicalBaselineState = payload.state ? workspaceStatePayload(payload.state) : null;
-    const checkpointCanRestore = Boolean(checkpoint?.dirty && checkpoint.state && (
-      !payload.state
-      || String(checkpoint.baseSavedAt || "") === String(payload.state.savedAt || "")
-    ));
+    const checkpointBaselineMatches = !payload.state
+      ? true
+      : Boolean(
+        checkpoint?.baseStateStamp
+        && payload.stateStamp
+        && String(checkpoint.baseStateStamp) === String(payload.stateStamp),
+      );
+    const checkpointCanRestore = Boolean(checkpoint?.dirty && checkpoint.state && checkpointBaselineMatches);
     const hydratedState = checkpointCanRestore
       ? restoreRecoveryState({ canonicalState: payload.state, checkpoint })
       : payload.state;
@@ -5979,6 +6113,7 @@ const hydrateWorkspace = async () => {
     ui.workspaceRecoveryRestored = checkpointCanRestore;
     ui.recoveryCheckpointRevision = checkpointCanRestore ? Math.max(0, Number(checkpoint.revision) || 0) : 0;
     ui.recoveryCheckpointDraftRevision = checkpointCanRestore ? Math.max(0, Number(checkpoint.draftRevision) || 0) : 0;
+    ui.recoveryDeletedDocumentIds = new Set((checkpointCanRestore ? checkpoint.deletedDocumentIds : []) || []);
     ui.whiteboardGenerationDraftRevision = ui.recoveryCheckpointDraftRevision;
     ui.workspaceRevision = ui.recoveryCheckpointRevision;
     ui.workspaceDirty = checkpointCanRestore;
@@ -7985,6 +8120,14 @@ const hydrateGenericOpenCodeCatalog = async ({ force = false } = {}) => {
     return payload;
   } catch (error) {
     if (error.name === "AbortError" || sequence !== request.sequence) return null;
+    // A transient desktop CLI probe must not erase the last known-good
+    // catalogue. Keeping it visible prevents profile switches from collapsing
+    // the picker back to the single saved fallback model.
+    const previous = ui.openCodeCatalogs.get(cacheKey);
+    if (previous?.available === true && Array.isArray(previous.models) && previous.models.length) {
+      ui.genericOpenCode = previous;
+      return previous;
+    }
     ui.genericOpenCode = { available: false, message: error.message, models: [], groups: [] };
     ui.openCodeCatalogs.set(cacheKey, ui.genericOpenCode);
     return ui.genericOpenCode;
@@ -9678,7 +9821,7 @@ root.innerHTML = `
         <div class="whiteboard-image-settings-shell whiteboard-media-settings-shell">
           <button class="whiteboard-image-settings-trigger whiteboard-media-settings-trigger" id="whiteboardImageSettingsTrigger" type="button" aria-haspopup="dialog" aria-expanded="false">${icon("\uE713", "图片参数")}<span id="whiteboardImageSettingsSummary">自适应 · 高清 · 1张</span>${icon("\uE70D")}</button>
           <section class="whiteboard-image-settings-panel whiteboard-media-settings-panel" id="whiteboardImageSettingsPanel" role="dialog" aria-label="图片生成参数" popover="manual" hidden>
-            <label class="sr-only">画幅比例<select name="aspectRatio" id="whiteboardImageAspect"><option value="auto" selected>自适应</option><option value="21:9">21:9 超宽屏</option><option value="16:9">16:9 横屏</option><option value="1:1">1:1 方形</option><option value="9:16">9:16 竖屏</option><option value="9:21">9:21 超长竖屏</option><option value="4:3">4:3 横向</option><option value="3:4">3:4 竖向</option></select></label>
+            <label class="sr-only">画幅比例<select name="aspectRatio" id="whiteboardImageAspect"><option value="auto">自适应</option><option value="21:9">21:9 超宽屏</option><option value="16:9" selected>16:9 横屏</option><option value="1:1">1:1 方形</option><option value="9:16">9:16 竖屏</option><option value="9:21">9:21 超长竖屏</option><option value="4:3">4:3 横向</option><option value="3:4">3:4 竖向</option></select></label>
             <fieldset><legend>比例</legend><div class="whiteboard-media-choice-grid aspect" id="whiteboardImageAspectChoices"></div></fieldset>
              <label class="sr-only">清晰度<select name="quality" id="whiteboardImageQuality"><option value="standard">标准</option><option value="high" selected>高清</option></select></label>
              <fieldset id="whiteboardImageQualityField"><legend>清晰度</legend><div class="whiteboard-media-choice-grid segmented" id="whiteboardImageQualityChoices"></div></fieldset>
@@ -14683,6 +14826,7 @@ const heartbeatWhiteboardGenerationJob = (jobId, progressPercent) => postGenerat
 const completeWhiteboardGenerationJob = (jobId, result) => postGenerationJobAction(`/api/generation/jobs/${encodeURIComponent(jobId)}/complete`, { result });
 const failWhiteboardGenerationJob = (jobId, message, retryRequired = true) => postGenerationJobAction(`/api/generation/jobs/${encodeURIComponent(jobId)}/fail`, { message, retryRequired });
 const markWhiteboardGenerationJobApplied = (jobId, resultAssetId = "", cardReadback = null) => postGenerationJobAction(`/api/generation/jobs/${encodeURIComponent(jobId)}/applied`, { resultAssetId, ...(cardReadback ? { cardReadback } : {}) });
+const markWhiteboardGenerationJobCardApplyPending = (jobId, state = "pending", error = "") => postGenerationJobAction(`/api/generation/jobs/${encodeURIComponent(jobId)}/card-apply-pending`, { state, error });
 
 const MEDIA_JOB_ACTIVE_STATUSES = new Set(["queued", "submitting", "running", "polling", "downloading", "cancel_requested"]);
 const MEDIA_JOB_ATTENTION_STATUSES = new Set(["waiting_credentials", "waiting_storage", "retry_required", "failed", "reconciliation_required"]);
@@ -14884,10 +15028,17 @@ const mediaGenerationPhaseText = (job = {}, { connectionInterrupted = false } = 
     return `${cancelLabel} · ${billingLabel}${taskLabel}`;
   }
   if (connectionInterrupted) return `${uiText("本地连接暂断，后台任务仍在运行")} · ${billingLabel}${taskLabel}`;
+  if (current.resultResourcePending === true || providerErrorCode === "LIBTV_RESULT_PENDING") {
+    return `${uiText("LibTV 已生成完成，结果资源暂未就绪，正在只读重试")} · ${billingLabel}${taskLabel}`;
+  }
   const lifecycleStage = mediaResultLifecycleStage(current);
   if (lifecycleStage === "provider_complete_retrieving") {
     const detail = mediaGenerationErrorText(current);
     return `${uiText("厂商已完成，正在取回结果")}${detail ? ` · ${detail}` : ""} · ${billingLabel}${taskLabel}`;
+  }
+  if (lifecycleStage === "asset_saved_card_failed") {
+    const detail = String(current.cardApplyError || current.error || "").trim();
+    return `${uiText("结果已生成，但卡片回写失败，请重试回填")}${detail ? ` · ${detail.slice(0, 160)}` : ""} · ${billingLabel}${taskLabel}`;
   }
   if (lifecycleStage === "asset_saved_card_pending") return `${uiText("结果已保存，正在回填卡片")} · ${billingLabel}${taskLabel}`;
   if (lifecycleStage === "card_complete") return `${uiText("卡片回读成功，任务完成")} · ${billingLabel}${taskLabel}`;
@@ -15289,6 +15440,28 @@ const controlMediaGenerationJob = async (jobId, action, { allowNewSubmission = f
   return operation;
 };
 
+// Deleting a card is an explicit local cancellation. Do not show the normal
+// confirmation dialog here: the card is already being removed, so leaving a
+// live worker behind would leak memory and (for Dreamina) keep the credential
+// lease occupied. The durable job remains for audit/reconciliation.
+const cancelMediaGenerationJobForCardDeletion = async (jobId) => {
+  const id = String(jobId || "").trim();
+  if (!id) return;
+  try {
+    const current = await fetchWhiteboardGenerationJob(id);
+    if (!current || !MEDIA_JOB_ACTIVE_STATUSES.has(String(current.status || "")) || current.status === "complete") return;
+    releaseWhiteboardMediaSubmissionLockForJob(current);
+    const settings = mediaGenerationSettingsForJob(current);
+    await fetch(`/api/generation/jobs/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings ? { settings } : {}),
+    });
+  } catch (error) {
+    console.warn("card deletion cancellation deferred", error);
+  }
+};
+
 const handleMediaGenerationActionElement = async (element) => {
   const jobId = String(element?.dataset?.mediaJobId || "");
   const action = String(element?.dataset?.mediaJobAction || "");
@@ -15571,7 +15744,13 @@ const waitForWhiteboardGenerationJob = (jobId, candidateKey) => waitForGeneratio
       connectionInterrupted: false,
       error: mediaGenerationErrorText(job),
       elapsedMs: Math.max(0, Date.now() - generationJobInteractionStartedAt(job)),
-      cardApplyStage: job.status === "complete" ? "saving" : "",
+      cardApplyStage: job.cardApplyState === "failed"
+        ? ""
+        : job.cardApplyState === "applying"
+          ? "saving"
+          : job.status === "complete" && job.cardApplyState !== "applied" ? "saving" : "",
+      cardApplyFailed: job.cardApplyState === "failed",
+      ...(job.cardApplyState === "failed" && job.cardApplyError ? { error: job.cardApplyError } : {}),
     });
   },
   onConnectionError: ({ error }) => {
@@ -16389,6 +16568,7 @@ const applyCompletedWhiteboardGenerationJobNow = async (job, { beforeCanvas = nu
     return false;
   }
   updateWhiteboardCompletedApplyStage(job, "saving");
+  await markWhiteboardGenerationJobCardApplyPending(job.id, "applying").catch(() => {});
   recordCustomGenerationJobCapability(job);
   if (usesDreaminaAccountCredits(job.request?.settings)) {
     void refreshDreaminaCreditAfterSuccessfulGeneration(job);
@@ -16473,6 +16653,10 @@ const applyCompletedWhiteboardGenerationJob = (job, options = {}) => {
   if (existing) return existing;
   const operation = Promise.resolve()
     .then(() => applyCompletedWhiteboardGenerationJobNow(job, options))
+    .catch(async (error) => {
+      await markWhiteboardGenerationJobCardApplyPending(job.id, "failed", error?.message || error).catch(() => {});
+      throw error;
+    })
     .finally(() => {
       if (whiteboardGenerationApplyFlights.get(String(job.id)) === operation) {
         whiteboardGenerationApplyFlights.delete(String(job.id));
@@ -17063,6 +17247,14 @@ const promptLiveMediaJobRecovery = (job) => {
     showToast("即梦任务需要处理，请在“生成任务队列”中查看红色任务");
     return;
   }
+  // All live media tasks now share the generation queue.  Keep the legacy
+  // recovery dialog available for an explicit user action, but never interrupt
+  // a running workspace with an automatic modal popup.
+  if (typeof elements !== "undefined" && elements.generationQueueButton) {
+    if (!elements.generationQueueDialog?.open) elements.generationQueueButton.click();
+    showToast("生成任务需要处理，请在“生成任务队列”中查看红色任务");
+    return;
+  }
   void openMediaRecoveryDialog();
 };
 
@@ -17105,7 +17297,12 @@ const recoverWhiteboardGenerationJobsOnce = async ({ reportEmptyWorkspace = fals
       if (dreaminaJobs.length) {
         promptDreaminaQueueRecovery(dreaminaJobs[0]);
       } else if (!elements.mediaRecoveryDialog?.open) {
-        void openMediaRecoveryDialog();
+        if (elements.generationQueueButton) {
+          if (!elements.generationQueueDialog?.open) elements.generationQueueButton.click();
+          showToast("生成任务需要处理，请在“生成任务队列”中查看红色任务");
+        } else {
+          void openMediaRecoveryDialog();
+        }
       }
     }
     let recovered = 0;
@@ -17922,8 +18119,18 @@ const savePinnedConversationCompletion = async ({
       if (!workspaceState) throw new Error("发起任务的原工作区已经不存在");
       const conversation = (workspaceState.conversations ?? []).find((item) => item.id === conversationId);
       if (!conversation) throw new Error("发起任务的原对话已经不存在");
-      const completionMessages = clone(messages);
-      const storedMessages = conversation.messages ?? [];
+      const loadedRollbackRevision = conversationRollbackRevision(conversation);
+      const runtimeRollbackRevision = conversationRollbackRevision(conversationState);
+      const rollbackReference = runtimeRollbackRevision >= loadedRollbackRevision ? conversationState : conversation;
+      const rollbackRevision = Math.max(runtimeRollbackRevision, loadedRollbackRevision);
+      // A completion that started before a manual rollback may still finish
+      // after the rollback save begins.  Once the conversation has a newer
+      // rollback revision, use its current live timeline instead of the
+      // stale runtime array captured before the split.
+      const completionMessages = rollbackRevision > 0
+        ? filterConversationRollbackMessages(rollbackReference?.messages ?? messages, rollbackReference || conversation)
+        : filterConversationRollbackMessages(messages, conversation);
+      const storedMessages = filterConversationRollbackMessages(conversation.messages ?? [], conversation);
       const storedById = new Map(storedMessages.map((message) => [message?.id, message]));
       const completionIds = new Set(completionMessages.map((message) => message?.id).filter(Boolean));
       conversation.messages = completionMessages.map((message) => ({
@@ -17936,13 +18143,16 @@ const savePinnedConversationCompletion = async ({
       // were created after this task started. Explicit queue acknowledgements
       // remove only the matching item/lease pair instead of resurrecting it.
       if (conversationState && Object.hasOwn(conversationState, "queue")) {
-        const liveQueue = Array.isArray(conversationState.queue) ? clone(conversationState.queue) : [];
+        const liveQueue = filterConversationRollbackQueue(
+          Array.isArray(conversationState.queue) ? clone(conversationState.queue) : [],
+          rollbackReference || conversation,
+        );
         const liveIds = new Set(liveQueue.map((item) => String(item?.id || "")).filter(Boolean));
         const acknowledgements = new Set(Array.isArray(conversationState.queueAcknowledgements)
           ? conversationState.queueAcknowledgements.map(String)
           : []);
         const storedQueue = Array.isArray(conversation.queue) ? conversation.queue : [];
-        const retainedRemoteQueue = storedQueue.filter((item) => {
+        const retainedRemoteQueue = filterConversationRollbackQueue(storedQueue, conversation).filter((item) => {
           const itemId = String(item?.id || "");
           if (!itemId || liveIds.has(itemId)) return false;
           const receiptKey = `${itemId}::${String(item?.leaseId || "")}`;
@@ -18035,6 +18245,13 @@ const savePinnedConversationCompletion = async ({
 
 const mergeAgentRuntimeConversationState = (workspaceState, runtime) => {
   if (!workspaceState || !runtime?.conversation?.id) return runtime ?? null;
+  // A manual conversation rollback starts a new context epoch.  Background
+  // monitors retain the old messages array and may finish after the rollback;
+  // merging that stale runtime would resurrect the messages the user just
+  // removed.  The runtime remains in memory long enough for its provider
+  // cancellation/finally handlers to settle, but it is never merged again.
+  if (runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation.agentContextEpoch || ""))) return runtime;
   workspaceState.conversations ??= [];
   const conversationId = runtime.conversation.id;
   const index = workspaceState.conversations.findIndex((item) => item.id === conversationId);
@@ -18050,15 +18267,18 @@ const mergeAgentRuntimeConversationState = (workspaceState, runtime) => {
         : storedConversation.messages ?? [])
     : [];
   const liveMessageIds = new Set(liveMessages.map((message) => message?.id).filter(Boolean));
-  const mergedMessages = [
+  const mergedMessages = filterConversationRollbackMessages([
     ...liveMessages,
     ...storedMessages.filter((message) => !message?.id || !liveMessageIds.has(message.id)),
-  ];
+  ], liveConversation);
   liveMessages.splice(0, liveMessages.length, ...mergedMessages);
 
   const liveQueue = Array.isArray(liveRecord.queue) ? liveRecord.queue : [];
   const liveQueueIds = new Set(liveQueue.map((item) => item?.id).filter(Boolean));
-  liveQueue.push(...(storedConversation?.queue ?? []).filter((item) => !liveQueueIds.has(item?.id)));
+  liveQueue.push(...filterConversationRollbackQueue(
+    (storedConversation?.queue ?? []).filter((item) => !liveQueueIds.has(item?.id)),
+    liveConversation,
+  ));
   liveQueue.sort((left, right) => Number(left?.queuedAt || 0) - Number(right?.queuedAt || 0));
   const candidateSnapshot = {
     currentCandidate: String(runtime.candidateState?.currentCandidate ?? liveRecord.currentCandidate ?? ""),
@@ -18117,6 +18337,8 @@ const agentTaskRuntimeNeedsRetention = (runtime) => Boolean(
 
 const persistAgentTaskRuntime = async (runtime, { finalize = false } = {}) => {
   if (!runtime?.conversation?.id || !runtime.workspaceScope?.workspacePath) return false;
+  if (runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation.agentContextEpoch || ""))) return false;
   const active = workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath);
   if (active) {
     mergeAgentRuntimeConversationState(state, runtime);
@@ -18126,6 +18348,7 @@ const persistAgentTaskRuntime = async (runtime, { finalize = false } = {}) => {
       ...runtime.workspaceScope,
       conversationId: runtime.conversation.id,
       messages: runtime.messages,
+      conversationState: runtime.conversation,
       candidateState: runtime.candidateState,
       force: true,
     });
@@ -18772,9 +18995,11 @@ const patchStableWhiteboardMediaCard = (card, replacement, mediaIdentity) => {
   if (card.dataset.whiteboardMediaIdentity !== mediaIdentity
     || replacement.dataset.whiteboardMediaIdentity !== mediaIdentity
     || card.dataset.cardKind !== replacement.dataset.cardKind
-    || !["image", "video"].includes(card.dataset.cardKind)) return false;
+    || !["image", "video", "audio"].includes(card.dataset.cardKind)) return false;
 
-  const mediaSelector = card.dataset.cardKind === "video" ? "video.whiteboard-card-video" : "img.whiteboard-card-image";
+  const mediaSelector = card.dataset.cardKind === "video"
+    ? "video.whiteboard-card-video"
+    : card.dataset.cardKind === "audio" ? "audio.whiteboard-card-audio" : "img.whiteboard-card-image";
   const currentMedia = card.querySelector(mediaSelector);
   const nextMedia = replacement.querySelector(mediaSelector);
   if (!currentMedia || !nextMedia || currentMedia.getAttribute("src") !== nextMedia.getAttribute("src")) return false;
@@ -18804,8 +19029,9 @@ const patchStableWhiteboardMediaCard = (card, replacement, mediaIdentity) => {
     if (replacement.hasAttribute(attribute)) card.setAttribute(attribute, replacement.getAttribute(attribute));
     else card.removeAttribute(attribute);
   }
-  syncWhiteboardMediaCardSection(card, replacement, ".whiteboard-card-node-title", ".whiteboard-card-kind, .whiteboard-card-image, .whiteboard-card-media-shell");
-  syncWhiteboardMediaCardSection(card, replacement, ".whiteboard-card-kind", ".whiteboard-card-image, .whiteboard-card-media-shell");
+  syncWhiteboardMediaCardSection(card, replacement, ".whiteboard-card-node-title", ".whiteboard-card-kind, .whiteboard-card-image, .whiteboard-card-media-shell, .whiteboard-card-audio-shell");
+  syncWhiteboardMediaCardSection(card, replacement, ".whiteboard-card-kind", ".whiteboard-card-image, .whiteboard-card-media-shell, .whiteboard-card-audio-shell");
+  syncWhiteboardMediaCardSection(card, replacement, ".whiteboard-card-audio-shell", ".whiteboard-card-kind, .whiteboard-card-image, .whiteboard-card-media-shell");
   syncWhiteboardMediaCardSection(card, replacement, ".media-generation-actions", ".whiteboard-node-handle");
   for (const selector of [".whiteboard-node-handle", ".whiteboard-resize-handle"]) {
     card.querySelectorAll(`:scope > ${selector}`).forEach((element) => element.remove());
@@ -19159,7 +19385,7 @@ const renderWhiteboard = (documentState) => {
     const candidateInterrupted = Boolean(candidate && !candidateResultReady && (durableMediaCandidate
       ? !candidateConnecting && !MEDIA_JOB_ACTIVE_STATUSES.has(candidate.status) && candidate.status !== "complete" && !candidateAutomaticRecovery
         : ["retry_required", "failed"].includes(candidate.status)));
-    const candidateApplyFailed = candidate?.cardApplyFailed === true;
+    const candidateApplyFailed = candidate?.cardApplyFailed === true || candidate?.cardApplyState === "failed";
     const candidateActive = Boolean(candidate && !candidateApplyFailed
       && (durableMediaCandidate ? candidateConnecting || MEDIA_JOB_ACTIVE_STATUSES.has(candidate.status) || candidateAutomaticRecovery : !candidateInterrupted));
     const candidateApplying = Boolean(candidate && ["saving", "verifying"].includes(candidate.cardApplyStage)
@@ -19251,7 +19477,7 @@ const renderWhiteboard = (documentState) => {
     const generatedNodeTitle = !lowDetail && hasGeneratedContent && generatedDisplayName
       ? `<div class="whiteboard-card-node-title" title="${escapeHtml(generatedDisplayName)}">${escapeHtml(uiText(generatedDisplayName))}</div>`
       : "";
-    const visibleMediaUrl = ["image", "video"].includes(visibleNode.kind)
+    const visibleMediaUrl = ["image", "video", "audio"].includes(visibleNode.kind)
       ? whiteboardAttachmentUrl({ ...visibleNode, generation: { ...(visibleNode.generation || {}), prompt: candidate?.prompt || visibleNode.generation?.prompt } })
       : "";
     const visibleVideoUrl = visibleNode.kind === "video" && visibleMediaUrl ? `${visibleMediaUrl}#t=0.001` : visibleMediaUrl;
@@ -19260,7 +19486,7 @@ const renderWhiteboard = (documentState) => {
       ? workspaceAttachmentUrl(visibleNode.thumbnailRelativePath, state.activeDocument)
       : "";
     const visiblePosterAttribute = visiblePosterUrl ? ` poster="${escapeHtml(visiblePosterUrl)}"` : "";
-    const visibleMediaIdentity = ["image", "video"].includes(visibleNode.kind) && visibleMediaUrl
+    const visibleMediaIdentity = ["image", "video", "audio"].includes(visibleNode.kind) && visibleMediaUrl
       ? whiteboardCardRenderSignature({ kind: visibleNode.kind, source: visibleNode.kind === "video" ? visibleVideoUrl : visibleMediaUrl, poster: visiblePosterUrl })
       : "";
     const completedGenerationElapsedMs = whiteboardGenerationCompletedElapsedMs(node);
@@ -19356,7 +19582,7 @@ const renderWhiteboard = (documentState) => {
           ? `<div class="whiteboard-card-media-shell"><video class="whiteboard-card-video" src="${escapeHtml(visibleVideoUrl)}"${visiblePosterAttribute} controls preload="none" aria-label="${escapeHtml(visibleMediaDownloadName || visibleNode.name || "白板视频")}" data-attachment-preview="video" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="拖拽移动；双击预览视频"></video><span class="whiteboard-card-video-drag-surface" data-whiteboard-video-drag-surface title="拖拽移动；双击预览视频" aria-hidden="true"></span></div>`
           : `<div class="whiteboard-card-media-shell dormant whiteboard-card-video-poster" data-attachment-preview="video" data-attachment-src="${escapeHtml(visibleVideoUrl)}" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"${mediaBatchAttribute} title="点击播放；拖拽移动；双击预览视频">${visiblePosterUrl ? `<img class="whiteboard-card-overview-image" data-whiteboard-deferred-src="${escapeHtml(visiblePosterUrl)}" alt="${escapeHtml(visibleNode.name || "白板视频")}" decoding="async" fetchpriority="low" draggable="false" />` : `<span class="whiteboard-card-overview-placeholder">${icon("\uE714", "视频")}</span>`}<span class="attachment-video-play" data-whiteboard-video-activate aria-hidden="true">${icon("\uE768", "播放视频")}</span></div>`
         : visibleNode.kind === "audio"
-          ? `<div class="whiteboard-card-audio-shell"><strong title="${escapeHtml(visibleNode.name || "白板音频")}">${escapeHtml(visibleNode.name || "白板音频")}</strong><audio class="whiteboard-card-audio" src="${escapeHtml(whiteboardAttachmentUrl(visibleNode))}" controls preload="none" aria-label="${escapeHtml(visibleNode.name || "白板音频")}"></audio></div>`
+          ? `<div class="whiteboard-card-audio-shell"><strong title="${escapeHtml(visibleNode.name || "白板音频")}">${escapeHtml(visibleNode.name || "白板音频")}</strong><audio class="whiteboard-card-audio" src="${escapeHtml(visibleMediaUrl)}" controls preload="none" aria-label="${escapeHtml(visibleNode.name || "白板音频")}" data-attachment-preview="audio" data-attachment-path="${escapeHtml(visibleNode.file || "")}" data-attachment-download-name="${escapeHtml(visibleMediaDownloadName)}"></audio></div>`
       : visibleNode.kind === "web" && !editing
         ? `<div class="whiteboard-web-card" title="已读取网页正文；拖拽移动，双击或右键可修改链接"><span class="whiteboard-web-icon">${icon("\uE774")}</span><strong>${escapeHtml(whiteboardWebTitle(visibleNode))}</strong><small>${escapeHtml(visibleNode.webSnapshot ? `${visibleNode.webSnapshot.pages?.length || 1} 页 · ${visibleNode.webSnapshot.contentCharacters || visibleNode.webSnapshot.text?.length || 0} 字` : visibleNode.url)}</small><a class="whiteboard-web-open" href="${escapeHtml(visibleNode.url)}" target="_blank" rel="noopener noreferrer" title="打开网页" aria-label="打开 ${escapeHtml(whiteboardWebTitle(visibleNode))}">${icon("\uE8A7")}</a></div>`
         : textEditor;
@@ -26611,6 +26837,10 @@ const hydrateAgentProfileModelCatalog = async (profile, { force = false } = {}) 
     if (capability?.state === "login_required" || capability?.authState === "login_required") {
       throw new Error("WorkBuddy 已安装但尚未登录；请先完成 WorkBuddy 登录");
     }
+    return Array.isArray(capability?.models) ? capability.models : [];
+  }
+  if (engine === "opencode") {
+    const capability = await hydrateGenericOpenCodeCatalog({ force });
     return Array.isArray(capability?.models) ? capability.models : [];
   }
   if (profile.adapter !== "api") return [];
@@ -38650,6 +38880,8 @@ const contextDependencyNotice = ({ blockingIds = [], explicitReferenceIds = [], 
 const nativeConversationMonitors = new Map();
 
 const persistNativeConversation = async (runtime) => {
+  if (!runtime || runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation?.agentContextEpoch || ""))) return false;
   const { conversation, messages, workspaceScope, candidateState } = runtime;
   conversation.messages = messages;
   if (workspaceTargetIsActive(workspaceScope.workspaceKind, workspaceScope.workspacePath)) {
@@ -38666,6 +38898,8 @@ const persistNativeConversation = async (runtime) => {
 };
 
 const renderNativeConversation = (runtime, forceScrollToBottom = false) => {
+  if (!runtime || runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation?.agentContextEpoch || ""))) return;
   if (!workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) return;
   if (runtime.conversation.id !== state.activeConversationId) return;
   runtime.forceScroll = runtime.forceScroll || forceScrollToBottom;
@@ -38684,6 +38918,8 @@ const renderNativeConversation = (runtime, forceScrollToBottom = false) => {
 // route compiler can occupy the renderer before Chromium gets a chance to
 // display "正在路由".
 const renderNativeConversationImmediately = (runtime, forceScrollToBottom = false) => {
+  if (!runtime || runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation?.agentContextEpoch || ""))) return;
   if (!runtime || !workspaceTargetIsActive(runtime.workspaceScope.workspaceKind, runtime.workspaceScope.workspacePath)) return;
   if (runtime.conversation.id !== state.activeConversationId) return;
   mergeAgentRuntimeConversationState(state, runtime);
@@ -38694,7 +38930,19 @@ const nativeConversationQuestionRequiresLiveRun = (question = null) => Boolean(
   question?.decisionKind === "agent_permission"
   || question?.allowFreeText === false
   || question?.presentation === "browser_login"
+  // OpenCode interaction.ask returns a short MCP marker and keeps the actual
+  // task waiting in Shensi.  Its answer must resume that same task; treating
+  // it as a legacy durable choice would cancel the waiting process and submit
+  // a duplicate instruction, which is especially visible on round three.
+  || question?.metadata?.detachedResume === true
 );
+
+const waitForConversationDispatchRelease = async (conversationId, timeoutMs = 10_000) => {
+  const startedAt = Date.now();
+  while (ui.conversationDispatchGate.has(String(conversationId || "")) && Date.now() - startedAt < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+};
 
 const monitorNativeConversation = (runtime, pending) => {
   const runId = pending.execution.nativeAgentRunId;
@@ -39145,6 +39393,9 @@ const answerNativeConversationQuestion = async (question, answer) => {
   }
   if (runId) {
     await conversationAgentRequest(`/api/conversation-agent/${runId}/cancel`, {}).catch(() => null);
+    // Cancellation is asynchronous; wait for the old dispatch gate before
+    // turning this answer into the next durable user instruction.
+    await waitForConversationDispatchRelease(conversationId);
   }
   dispatchComposerContent(normalizedAnswer, {
     conversationId,
@@ -39481,6 +39732,15 @@ const sendMessage = async (content, options = {}) => {
       ? (options.conversationId ? conversationById(options.conversationId) : activeConversation())
       : null);
   if (!conversation) return null;
+  if (ui.rollbackPersistenceBlockedConversationId === conversation.id) {
+    try {
+      await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+      ui.rollbackPersistenceBlockedConversationId = "";
+    } catch (error) {
+      showToast(`退回内容尚未安全保存，暂不能发布新任务：${error.message || "请稍后重试"}`);
+      return null;
+    }
+  }
   const taskMessages = conversationMessagesForTaskState(conversation, taskWorkspaceStateForSend);
   const persistTaskConversation = async () => {
     const workspace = options.taskContextSnapshot || {};
@@ -42075,10 +42335,28 @@ const rollbackToMessage = async (messageId) => {
   const snapshot = state.snapshots[messageId];
   const split = splitConversationAtMessage(state.messages, messageId);
   if (!split) return false;
-  saveActiveConversation();
   const conversation = activeConversation();
-  if (conversation) ui.ephemeralConversationRollbackBaselines.delete(conversation.id);
   const removedMessageIds = new Set(split.isolatedBranch.map((message) => String(message?.id || "")).filter(Boolean));
+  // Stop every task/preparation represented by the removed suffix before the
+  // visible message list is replaced. Stopping only the clicked user turn
+  // leaves later queued/preparing work alive and able to return after resend.
+  for (const removedId of removedMessageIds) {
+    await stopConversationTaskForSourceMessage(removedId).catch(() => {});
+    if (ui.conversationPreparations.get(removedId)) {
+      await cancelConversationPreparation(removedId, { notify: false }).catch(() => {});
+    }
+  }
+  saveActiveConversation();
+  if (conversation) ui.ephemeralConversationRollbackBaselines.delete(conversation.id);
+  // Optimistic routing previews live outside state.messages.  If a rollback
+  // races the preparation finally-block, those previews otherwise survive the
+  // split and the next instruction is rendered beside the old command.
+  for (const [instructionId, instruction] of ui.immediateConversationInstructions) {
+    if (instruction?.conversationId === state.activeConversationId) {
+      ui.immediateConversationInstructions.delete(instructionId);
+    }
+  }
+  for (const id of removedMessageIds) ui.preparingConversationMessageIds.delete(id);
   const snapshots = { ...(state.snapshots ?? {}) };
   removedMessageIds.forEach((id) => delete snapshots[id]);
   // Older conversations may not have persisted a rollback snapshot. Conversation
@@ -42096,16 +42374,117 @@ const rollbackToMessage = async (messageId) => {
       cleared: !lastActiveReferenceMessage,
     });
     rebuildConversationDerivedContext(conversation, state.messages);
-    conversation.queue = (conversation.queue ?? []).filter((item) => !removedMessageIds.has(String(item?.sourceMessageId || item?.messageId || "")));
+    const removedMessageTimes = split.isolatedBranch
+      .map((message) => Number(message?.createdAt) || 0)
+      .filter((value) => value > 0);
+    const rollbackBoundary = removedMessageTimes.length ? Math.min(...removedMessageTimes) : 0;
+    const removedQueueItemIds = [];
+    const queueItemIdentity = (item = {}) => [
+      item.id,
+      item.sourceMessageId,
+      item.messageId,
+      item.sourceMessageIdForRun,
+      item.requestId,
+      item.agentTurnId,
+      item.supplementTargetSourceMessageId,
+    ].map((value) => String(value || "")).filter(Boolean);
+    conversation.queue = (conversation.queue ?? []).filter((item) => {
+      if (queueItemIdentity(item).some((value) => removedMessageIds.has(value))) {
+        if (item?.id) removedQueueItemIds.push(String(item.id));
+        return false;
+      }
+      // Older queue entries may not carry a source id. Their enqueue time is
+      // the only safe timeline anchor for deciding whether they belong to the
+      // removed suffix.
+      if (rollbackBoundary && Number(item?.queuedAt || 0) >= rollbackBoundary) {
+        if (item?.id) removedQueueItemIds.push(String(item.id));
+        return false;
+      }
+      if (split.index === 0) {
+        if (item?.id) removedQueueItemIds.push(String(item.id));
+        return false;
+      }
+      // Legacy queue entries may lack timestamps and source IDs.  They cannot
+      // be proven to belong to the retained prefix, so a destructive rollback
+      // must remove them instead of allowing a later startup recovery to
+      // resurrect an unknown task.
+      const linkedIds = queueItemIdentity(item).filter((value) => value !== String(item?.id || ""));
+      const retainedMessageIds = new Set((state.messages ?? []).map((message) => String(message?.id || "")).filter(Boolean));
+      if (!linkedIds.length || !linkedIds.some((value) => retainedMessageIds.has(value))) {
+        if (item?.id) removedQueueItemIds.push(String(item.id));
+        return false;
+      }
+      return true;
+    });
+    if (split.index === 0) {
+      for (const item of conversation.queue ?? []) if (item?.id) removedQueueItemIds.push(String(item.id));
+      conversation.queue = [];
+    }
+    recordConversationRollback(conversation, {
+      messageIds: [...removedMessageIds],
+      queueIds: removedQueueItemIds,
+    });
+    conversation.agentQuestion = null;
+    conversation.nativeAgentRun = null;
+    conversation.agentOperationProposal = null;
+    const staleRuntime = ui.agentTaskRuntimes.get(conversation.id);
+    if (staleRuntime) {
+      staleRuntime.invalidatedByRollback = true;
+      staleRuntime.rollbackMessageIds = [...removedMessageIds];
+      // Late provider events still settle in the background, but no longer
+      // have a discoverable runtime that can merge removed messages.
+      if (ui.agentTaskRuntimes.get(conversation.id) === staleRuntime) ui.agentTaskRuntimes.delete(conversation.id);
+    }
+    closeConversationChoicePanel({ focus: false });
     conversation.intentTarget = clone([...state.messages].reverse().find((message) => message?.role === "user")?.target ?? null);
     conversation.nativeAgentSession = null;
     conversation.agentContextEpoch = uid("rollback-context");
+    // Keep the live conversation object and the active state on the same
+    // arrays before any save/rebase can observe them.  This is important for
+    // a rollback racing an older background writer.
+    conversation.messages = state.messages;
+    conversation.snapshots = state.snapshots;
+    conversation.isolatedBranches = state.isolatedBranches;
   }
   if (conversation && !state.messages.length) {
     conversation.title = "新对话";
     conversation.updatedAt = "尚未开始";
   }
   saveActiveConversation();
+  // Rollback is destructive and must be durable before the next instruction
+  // can be accepted.  Without this barrier the UI cleared immediately while
+  // the older workspace save still contained the removed task; republishing
+  // then reloaded that stale task from disk.
+  persistWorkspaceStateOnly({ saveDelay: 0 });
+  try {
+    await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
+    if (conversation && state.settings?.workspacePath && !workspaceHasNoActiveEntry()) {
+      const persisted = await fetchWorkspacePayload(state.settings.workspacePath, "/api/workspace/load", { fresh: true });
+      const persistedConversation = (persisted?.state?.conversations ?? []).find((item) => item.id === conversation.id);
+      const expectedRollbackRevision = conversationRollbackRevision(conversation);
+      const persistedMessages = persistedConversation?.messages ?? [];
+      const persistedQueue = persistedConversation?.queue ?? [];
+      const messageTombstones = new Set(conversation.rollbackTombstones?.messageIds ?? []);
+      const queueTombstones = new Set(conversation.rollbackTombstones?.queueIds ?? []);
+      if (!persistedConversation
+        || conversationRollbackRevision(persistedConversation) < expectedRollbackRevision
+        || persistedMessages.some((message) => messageTombstones.has(String(message?.id || "")))
+        || persistedQueue.some((item) => queueTombstones.has(String(item?.id || "")))) {
+        throw new Error("服务端回读仍包含已退回的对话或任务");
+      }
+    }
+  } catch (error) {
+    ui.rollbackPersistenceBlockedConversationId = conversation?.id || state.activeConversationId || "";
+    showToast(`退回未能安全落盘：${error.message || "请稍后重试"}`);
+    renderAll();
+    elements.editor.dataset.document = "";
+    elements.chatInput.value = split.draft;
+    syncComposerDraftFromInput();
+    elements.chatInput.focus();
+    elements.chatInput.setSelectionRange(split.draft.length, split.draft.length);
+    return false;
+  }
+  ui.rollbackPersistenceBlockedConversationId = "";
   elements.editor.dataset.document = "";
   renderAll();
   elements.chatInput.value = split.draft;
@@ -42614,6 +42993,7 @@ const enterEmptyWorkspaceMode = (workspaceKind, { render = true } = {}) => {
   ui.workspaceDirty = false;
   ui.workspaceDirtyDocumentIds.clear();
   ui.workspaceDocumentChangesUnknown = false;
+  ui.recoveryDeletedDocumentIds = new Set();
   ui.workspaceStateChangesPending = false;
   ui.workspaceSaveError = null;
   ui.ephemeralConversationRollbackBaselines.clear();
@@ -42992,6 +43372,7 @@ const activateProjectState = (nextState, { name, workspacePath, apiKey, workspac
   ui.workspaceDirty = false;
   ui.workspaceDirtyDocumentIds.clear();
   ui.workspaceDocumentChangesUnknown = false;
+  ui.recoveryDeletedDocumentIds = new Set();
   ui.workspaceStateChangesPending = false;
   ui.authorCockpitIntegrityScan = { running: false, error: "", issues: 0, resolutions: 0, checkedDocuments: 0, completedAt: "" };
   ui.workspaceRevision = 0;
@@ -43664,6 +44045,10 @@ const deleteProject = async ({ workspacePath, name }) => {
     const isCurrent = !workspaceHasNoActiveEntry() && state.workspaceKind === "project" && normalizedTarget === String(state.settings.workspacePath || "").toLowerCase();
     let enterEmptyAfterDelete = false;
     if (isCurrent) {
+      // The menu can outlive a rename or an external restore. Refresh the
+      // authoritative list before choosing a replacement so deletion never
+      // tries to switch into a stale path.
+      await refreshProjects({ force: true, render: false });
       const replacement = ui.projects.find((project) => String(project.workspacePath).toLowerCase() !== normalizedTarget);
       if (replacement) {
         const switched = await switchProject(replacement);
@@ -43701,7 +44086,9 @@ const deleteNotebook = async ({ workspacePath, name }) => {
     const isCurrent = !workspaceHasNoActiveEntry() && state.workspaceKind === "notebook" && normalizedTarget === String(state.settings.workspacePath || "").toLowerCase();
     let enterEmptyAfterDelete = false;
     if (isCurrent) {
-      const replacement = ui.notebooks.find((notebook) => String(notebook.workspacePath).toLowerCase() !== normalizedTarget);
+      await refreshNotebooks({ force: true, render: false });
+      const replacement = ui.notebooks.find((notebook) => notebook?.temporary !== true
+        && String(notebook.workspacePath).toLowerCase() !== normalizedTarget);
       if (replacement) {
         const switched = await switchNotebook(replacement);
         if (!switched) throw new Error("无法切换到其他笔记本，删除已取消");
@@ -44612,7 +44999,7 @@ const deleteDocument = async (documentId) => {
     persist();
     renderAll();
     try {
-      await saveWorkspace({ throwOnError: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
+      await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
       showToast(`“${orphan.title}”已移入回收站`);
       return true;
     } catch (error) {
@@ -44649,7 +45036,7 @@ const deleteDocument = async (documentId) => {
   persist();
   renderAll();
   try {
-    await saveWorkspace({ throwOnError: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
+    await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
     showToast(`“${documentState.title}”已移入回收站`);
     return true;
   } catch (error) {
@@ -45001,6 +45388,7 @@ const createDocumentFromOperation = (operation) => {
 };
 
 const removeDocumentFromWorkspaceState = (documentId) => {
+  if (documentId && !state.temporaryNotebook && !state.readOnly) ui.recoveryDeletedDocumentIds.add(String(documentId));
   delete state.documents[documentId];
   delete state.histories[documentId];
   if (state.documentConversationBindings) delete state.documentConversationBindings[documentId];
@@ -46038,6 +46426,8 @@ const newConversationRecord = (overrides = {}) => ({
   contextCompressionStatus: null,
   intentTarget: null,
   queue: [],
+  rollbackRevision: 0,
+  rollbackTombstones: { messageIds: [], queueIds: [], recordedAt: 0 },
   references: [],
   workspaceReferences: [],
   skillReferences: [],
@@ -50866,23 +51256,27 @@ const pushWhiteboardHistory = (beforeCanvas, { documentId = state.activeDocument
   return true;
 };
 
-const deleteWhiteboardNode = (nodeId) => {
+const deleteWhiteboardNode = async (nodeId) => {
   const documentState = activeWhiteboardDocument();
   if (!documentState || !nodeId) {
     showToast("未找到可删除的白板卡片");
     return false;
   }
+  const rollbackState = clone(state);
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   const removed = removeCanvasNodeWithRecord(documentState.canvas, nodeId);
   if (!removed.record) {
     showToast("白板卡片已不存在或无法删除");
     return false;
   }
+  const depthRuntime = whiteboardDepthExplorerRuntimeState(nodeId);
+  if (depthRuntime.busy && depthRuntime.jobId) void stopWhiteboardDepthExplorerNode(nodeId);
   removeWhiteboardGenerationReferencesForEdges(documentState.canvas, removed.record.edges?.map((edge) => edge.id), removed.canvas);
   closeWhiteboardGenerationSessionsForNodes([nodeId], { documentId: state.activeDocument });
   finishWhiteboardEditing();
   const candidateKey = whiteboardCandidateKey(nodeId, { workspacePath: state.settings.workspacePath, documentId: state.activeDocument });
   const generationJobId = String(removed.record.node?.generation?.jobId || ui.whiteboardCandidates.get(candidateKey)?.jobId || "");
+  void cancelMediaGenerationJobForCardDeletion(generationJobId);
   documentState.canvas = addCanvasGenerationRecoveryTombstone(removed.canvas, { nodeId, generationJobId });
   if (ui.whiteboardFocusedNodeId === nodeId) ui.whiteboardFocusedNodeId = null;
   if (ui.whiteboardSelectedNodeIds.has(nodeId)) selectWhiteboardNode(null);
@@ -50890,17 +51284,28 @@ const deleteWhiteboardNode = (nodeId) => {
   pushWhiteboardHistory(beforeCanvas, { label: "删除卡片" });
   persist();
   renderWhiteboard(documentState);
+  try {
+    await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
+  } catch (error) {
+    state = rollbackState;
+    ensureStateSchema();
+    persist();
+    renderWhiteboard(activeWhiteboardDocument());
+    showToast(`删除白板卡片失败：${error.message}`);
+    return false;
+  }
   showToast("已删除卡片，按 Ctrl+Z 可恢复");
   return true;
 };
 
-const deleteWhiteboardNodes = (nodeIds = []) => {
+const deleteWhiteboardNodes = async (nodeIds = []) => {
   const documentState = activeWhiteboardDocument();
   const ids = [...new Set(nodeIds.map(String).filter(Boolean))];
   if (!documentState || !ids.length) {
     showToast("未找到可删除的白板卡片");
     return false;
   }
+  const rollbackState = clone(state);
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   let canvas = documentState.canvas;
   let deleted = 0;
@@ -50909,8 +51314,11 @@ const deleteWhiteboardNodes = (nodeIds = []) => {
   for (const nodeId of ids) {
     const removal = removeCanvasNodeWithRecord(canvas, nodeId);
     if (!removal.record) continue;
+    const depthRuntime = whiteboardDepthExplorerRuntimeState(nodeId);
+    if (depthRuntime.busy && depthRuntime.jobId) void stopWhiteboardDepthExplorerNode(nodeId);
     const candidateKey = whiteboardCandidateKey(nodeId, { workspacePath: state.settings.workspacePath, documentId: state.activeDocument });
     const generationJobId = String(removal.record.node?.generation?.jobId || ui.whiteboardCandidates.get(candidateKey)?.jobId || "");
+    void cancelMediaGenerationJobForCardDeletion(generationJobId);
     canvas = addCanvasGenerationRecoveryTombstone(removal.canvas, { nodeId, generationJobId });
     deleted += 1;
     deletedIds.push(nodeId);
@@ -50930,6 +51338,16 @@ const deleteWhiteboardNodes = (nodeIds = []) => {
   pushWhiteboardHistory(beforeCanvas, { label: `删除 ${deleted} 张卡片` });
   persist();
   renderWhiteboard(documentState);
+  try {
+    await saveWorkspace({ throwOnError: true, recoverConflict: true, forceFullState: true, preserveStateKeys: CONVERSATION_SAVE_KEYS });
+  } catch (error) {
+    state = rollbackState;
+    ensureStateSchema();
+    persist();
+    renderWhiteboard(activeWhiteboardDocument());
+    showToast(`删除白板卡片失败：${error.message}`);
+    return false;
+  }
   showToast(`已删除 ${deleted} 张卡片，按 Ctrl+Z 可恢复`);
   return true;
 };
@@ -51332,9 +51750,30 @@ const setWhiteboardClipboard = ({ records = [], bounds = null, mode = "copy" } =
 
 const copyWhiteboardCard = (nodeId) => {
   const documentState = activeWhiteboardDocument();
-  const record = documentState ? copyCanvasNode(documentState.canvas, nodeId) : null;
-  if (!record) return false;
-  return setWhiteboardClipboard({ records: [record], mode: "copy" });
+  if (!documentState) return false;
+  const canvas = normalizeCanvas(documentState.canvas);
+  const root = canvas.nodes.find((node) => node.id === String(nodeId));
+  if (!root) return false;
+  // A copied generation card must remain usable when pasted elsewhere.  Keep
+  // its complete upstream chain in the internal clipboard so paste can remap
+  // the connected inputs into fresh node IDs instead of leaving dangling
+  // references to the old canvas.
+  const ids = new Set([root.id]);
+  const pending = [root.id];
+  while (pending.length) {
+    const targetId = pending.shift();
+    for (const edge of canvas.edges.filter((candidate) => candidate.toNode === targetId)) {
+      if (ids.has(edge.fromNode)) continue;
+      ids.add(edge.fromNode);
+      pending.push(edge.fromNode);
+    }
+  }
+  const records = [...ids]
+    .map((id) => copyCanvasNode(canvas, id))
+    .filter(Boolean);
+  if (!records.length) return false;
+  const bounds = canvasSelectionBounds(canvas, [...ids]);
+  return setWhiteboardClipboard({ records, bounds, mode: "copy" });
 };
 
 const copyWhiteboardCards = (nodeIds = []) => {
@@ -52186,6 +52625,7 @@ elements.whiteboardEditor.addEventListener("change", (event) => {
   if (!control || !card) return;
   const field = control.dataset.whiteboardDepthField;
   const value = control instanceof HTMLInputElement && control.type === "checkbox" ? control.checked : control.value;
+  event.stopPropagation();
   updateWhiteboardDepthExplorerSetting(card.dataset.canvasNode, field, value);
 });
 
@@ -52203,6 +52643,7 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     const card = depthControl.closest("[data-canvas-node]");
     const nodeId = card?.dataset.canvasNode || "";
     if (!nodeId) return;
+    if (depthControl.matches("[data-whiteboard-depth-field]")) return;
     selectWhiteboardNode(nodeId);
     const action = depthControl.dataset.whiteboardDepthAction || "";
     if (action === "focus") {
@@ -52217,6 +52658,9 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     } else if (action === "reconnect-progress") {
       event.preventDefault();
       await whiteboardDepthExplorerRuntimeState(nodeId).reconnect?.();
+    } else if (action === "stop") {
+      event.preventDefault();
+      await stopWhiteboardDepthExplorerNode(nodeId);
     } else if (action === "generate") {
       event.preventDefault();
       await runWhiteboardDepthExplorerNode(nodeId);
@@ -52272,6 +52716,13 @@ elements.whiteboardEditor.addEventListener("click", async (event) => {
     return;
   }
   if (card) dismissWhiteboardGenerationElapsed(card);
+  if (card) {
+    const clickedNode = whiteboardNodeById(card.dataset.canvasNode);
+    if (["image", "video"].includes(String(clickedNode?.kind || ""))) {
+      const clickedRatio = whiteboardAspectRatioPresetForNode(clickedNode);
+      if (clickedRatio) rememberWhiteboardMediaAspectRatio(clickedRatio);
+    }
+  }
   const dormantVideoTrigger = event.target.closest("[data-whiteboard-video-activate]");
   if (dormantVideoTrigger && card) {
     event.preventDefault();
@@ -52554,7 +53005,14 @@ const openWhiteboardNodeCreateMenu = (intent) => {
     const kind = button.dataset.whiteboardNodeCreate;
     const available = whiteboardNodeCreateChannelAvailable(kind);
     const sourceNodes = whiteboardNodeCreateIntent.sourceIds.map((nodeId) => whiteboardNodeById(nodeId)).filter(Boolean);
-    const validDepthSources = !sourceNodes.length || (sourceNodes.length <= 10 && sourceNodes.every((node) => ["image", "video"].includes(node.kind) && node.file));
+    // Media cards can keep their durable file in the generation candidate
+    // rather than on the canvas node itself. Use the same resolver as the
+    // depth worker so the right-side connector is deterministic for both
+    // freshly generated and restored cards.
+    const validDepthSources = !sourceNodes.length || (
+      sourceNodes.length <= 10
+      && sourceNodes.every((node) => Boolean(whiteboardDepthExplorerMediaSource(node)))
+    );
     const runtimeAvailable = kind === "depth" ? whiteboardDepthExplorerPreflight?.available === true : available;
     const depthInstallOnly = kind === "depth" && !runtimeAvailable && !sourceNodes.length;
     const depthDropUnavailable = kind === "depth" && sourceNodes.length > 0 && (!runtimeAvailable || !validDepthSources);
@@ -52587,7 +53045,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   if (kind === "depth") {
     const sourceNodes = sourceIds.map((nodeId) => whiteboardNodeById(nodeId, documentState));
-    if (sourceNodes.length > 10 || sourceNodes.some((node) => !["image", "video"].includes(node?.kind) || !node.file)) {
+    if (sourceNodes.length > 10 || sourceNodes.some((node) => !whiteboardDepthExplorerMediaSource(node))) {
       closeWhiteboardNodeCreateMenu();
       showToast(sourceNodes.length > 10 ? "深度摸索一次最多连接 10 个媒体" : "深度摸索只接受图片和视频上游");
       return false;
@@ -52595,7 +53053,12 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
   }
   const nodeId = uid("canvas-node");
   const width = kind === "depth" ? WHITEBOARD_DEPTH_NODE_WIDTH : 260;
-  const height = kind === "depth" ? WHITEBOARD_DEPTH_NODE_HEIGHT : 160;
+  const inheritedAspectRatio = ["image", "video"].includes(kind)
+    ? whiteboardInheritedMediaAspectRatio({ channel: kind, documentState, sourceIds })
+    : "";
+  const height = kind === "depth"
+    ? WHITEBOARD_DEPTH_NODE_HEIGHT
+    : inheritedAspectRatio ? Math.max(100, width / whiteboardAspectRatioNumber(inheritedAspectRatio)) : 160;
   let nextCanvas = addCanvasTextNode(documentState.canvas, {
     id: nodeId,
     text: "",
@@ -52608,6 +53071,7 @@ const commitWhiteboardNodeCreateIntent = (kind) => {
     } : null,
     width,
     height,
+    ...(inheritedAspectRatio ? { aspectRatio: whiteboardAspectRatioNumber(inheritedAspectRatio) } : {}),
     x: snapCanvasValue(intent.point.x - width / 2, documentState.canvas),
     y: snapCanvasValue(intent.point.y - height / 2, documentState.canvas),
   });
@@ -52827,6 +53291,13 @@ elements.whiteboardEditor.addEventListener("pointerdown", (event) => {
   }
   if (cardTextarea && ui.whiteboardEditingNodeId !== card?.dataset.canvasNode && whiteboardTextareaScrollbarHit(event, cardTextarea)) return;
   if (card && !selectedWhiteboardNodeIds().includes(card.dataset.canvasNode)) selectWhiteboardNode(card.dataset.canvasNode);
+  if (card) {
+    const clickedNode = whiteboardNodeById(card.dataset.canvasNode, documentState);
+    if (["image", "video", "audio"].includes(String(clickedNode?.kind || ""))) {
+      const clickedRatio = whiteboardAspectRatioPresetForNode(clickedNode);
+      if (clickedRatio) ui.whiteboardLastClickedMediaAspectRatio = clickedRatio;
+    }
+  }
   if (cardTextarea && ui.whiteboardEditingNodeId !== card?.dataset.canvasNode) {
     event.preventDefault();
   }
@@ -53330,13 +53801,19 @@ const createWhiteboardSelectionGenerationTarget = (nodeIds = [], channel = "text
   if (!bounds) return "";
   const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
   const targetNodeId = uid("canvas-node");
+  const inheritedAspectRatio = ["image", "video"].includes(channel)
+    ? whiteboardInheritedMediaAspectRatio({ channel, documentState, sourceIds: ids })
+    : "";
   const width = 260;
-  const height = 160;
+  const height = inheritedAspectRatio
+    ? Math.max(100, width / whiteboardAspectRatioNumber(inheritedAspectRatio))
+    : 160;
   let nextCanvas = addCanvasTextNode(documentState.canvas, {
     id: targetNodeId,
     text: "",
     kind: "text",
     generationIntent: { channel },
+    ...(inheritedAspectRatio ? { aspectRatio: whiteboardAspectRatioNumber(inheritedAspectRatio) } : {}),
     width,
     height,
     x: snapCanvasValue(bounds.right + 120, documentState.canvas),
@@ -53963,9 +54440,90 @@ const clearWhiteboardGenerationMentionReplacement = (form) => {
   if (menu) menu.setAttribute("aria-label", "选择上游引用");
 };
 
+let whiteboardGenerationReferenceHoverPreview = null;
+
+const closeWhiteboardGenerationReferenceHoverPreview = () => {
+  whiteboardGenerationReferenceHoverPreview?.remove();
+  whiteboardGenerationReferenceHoverPreview = null;
+};
+
+const positionWhiteboardGenerationReferenceHoverPreview = (preview, anchor) => {
+  if (!preview || !anchor?.isConnected) return;
+  const anchorRect = anchor.getBoundingClientRect();
+  const margin = 12;
+  const gap = 10;
+  const previewRect = preview.getBoundingClientRect();
+  const width = previewRect.width || 320;
+  const height = previewRect.height || 220;
+  const rightSpace = window.innerWidth - anchorRect.right - margin;
+  const leftSpace = anchorRect.left - margin;
+  let left = rightSpace >= width + gap
+    ? anchorRect.right + gap
+    : anchorRect.left - width - gap;
+  if (leftSpace < width + gap && rightSpace < width + gap) {
+    left = Math.max(margin, Math.min(anchorRect.right + gap, window.innerWidth - width - margin));
+  }
+  const preferredTop = anchorRect.top + (anchorRect.height - height) / 2;
+  const top = Math.max(margin, Math.min(preferredTop, window.innerHeight - height - margin));
+  preview.style.left = `${Math.round(left)}px`;
+  preview.style.top = `${Math.round(top)}px`;
+};
+
+const openWhiteboardGenerationReferenceHoverPreview = (thumbnail) => {
+  const media = thumbnail?.querySelector?.("img, video");
+  if (!media) return;
+  const source = String(media.currentSrc || media.src || "").trim();
+  if (!source) return;
+  closeWhiteboardGenerationReferenceHoverPreview();
+  const preview = document.createElement("div");
+  preview.className = "whiteboard-generation-reference-hover-preview";
+  preview.setAttribute("role", "img");
+  preview.setAttribute("aria-label", media.alt || "参考媒体预览");
+  const enlarged = media.tagName === "VIDEO"
+    ? document.createElement("video")
+    : document.createElement("img");
+  enlarged.src = source;
+  if (enlarged.tagName === "VIDEO") {
+    enlarged.muted = true;
+    enlarged.autoplay = true;
+    enlarged.loop = true;
+    enlarged.playsInline = true;
+    enlarged.preload = "metadata";
+  } else {
+    enlarged.alt = media.alt || "参考媒体预览";
+    enlarged.loading = "eager";
+    enlarged.decoding = "async";
+  }
+  const reposition = () => positionWhiteboardGenerationReferenceHoverPreview(preview, thumbnail);
+  enlarged.addEventListener("load", reposition, { once: true });
+  enlarged.addEventListener("loadedmetadata", reposition, { once: true });
+  preview.append(enlarged);
+  document.body.append(preview);
+  whiteboardGenerationReferenceHoverPreview = preview;
+  positionWhiteboardGenerationReferenceHoverPreview(preview, thumbnail);
+};
+
+document.addEventListener("pointerover", (event) => {
+  const thumbnail = event.target?.closest?.(".whiteboard-generation-mention-preview");
+  if (!thumbnail || !thumbnail.closest(".whiteboard-generation-mention-menu")) return;
+  if (event.relatedTarget && thumbnail.contains(event.relatedTarget)) return;
+  openWhiteboardGenerationReferenceHoverPreview(thumbnail);
+}, true);
+
+document.addEventListener("pointerout", (event) => {
+  const thumbnail = event.target?.closest?.(".whiteboard-generation-mention-preview");
+  if (!thumbnail || !thumbnail.closest(".whiteboard-generation-mention-menu")) return;
+  if (event.relatedTarget && thumbnail.contains(event.relatedTarget)) return;
+  closeWhiteboardGenerationReferenceHoverPreview();
+}, true);
+
+window.addEventListener("resize", closeWhiteboardGenerationReferenceHoverPreview, { passive: true });
+window.addEventListener("scroll", closeWhiteboardGenerationReferenceHoverPreview, { capture: true, passive: true });
+
 const closeWhiteboardGenerationMentionMenu = (form) => {
   const menu = whiteboardGenerationMentionMenuFor(form);
   if (menu) menu.hidden = true;
+  closeWhiteboardGenerationReferenceHoverPreview();
   clearWhiteboardGenerationMentionReplacement(form);
 };
 
@@ -56831,6 +57389,10 @@ const setWhiteboardImageSetting = (name, value) => {
   const field = elements.whiteboardImageForm?.elements?.[name];
   if (!field || ![...field.options].some((option) => option.value === String(value))) return false;
   field.value = String(value);
+  if (name === "aspectRatio") {
+    rememberWhiteboardMediaAspectRatio(value);
+    updateWhiteboardMediaCardAspectRatio(elements.whiteboardImageForm.dataset.nodeId, value);
+  }
   field.dispatchEvent(new Event("input", { bubbles: true }));
   field.dispatchEvent(new Event("change", { bubbles: true }));
   syncWhiteboardImageSettingsControls();
@@ -56859,7 +57421,9 @@ const syncWhiteboardImageCapabilityOptions = ({ preferGptImage25Defaults = false
   const resolutionOptions = capabilities.outputResolutions || [];
   if (form.elements.resolution) form.elements.resolution.innerHTML = (resolutionOptions.length ? resolutionOptions : ["1k"]).map((value) => `<option value="${value}">${value.toUpperCase()}</option>`).join("");
   if (form.elements.background) form.elements.background.innerHTML = (capabilities.backgrounds?.length ? capabilities.backgrounds : ["auto"]).map((value) => `<option value="${value}">${value === "auto" ? "自动" : value === "opaque" ? "保留背景" : "透明背景"}</option>`).join("");
-  form.elements.aspectRatio.value = aspectRatios.includes(previousRatio) ? previousRatio : "auto";
+  form.elements.aspectRatio.value = aspectRatios.includes(previousRatio)
+    ? previousRatio
+    : aspectRatios.includes(whiteboardLastMediaAspectRatio()) ? whiteboardLastMediaAspectRatio() : aspectRatios[0] || DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
   const defaultStandard2kQuality = (gptImage25 || libTvImage25) && qualityOptions.includes("standard") ? "standard" : "";
   const defaultStandard2kResolution = (gptImage25 || libTvImage25) && resolutionOptions.includes("2k") ? "2k" : "";
   form.elements.quality.value = preferGptImage25Defaults && defaultStandard2kQuality
@@ -57210,7 +57774,11 @@ const openWhiteboardImageDialog = (nodeId, aspectRatio = "auto", { allowUnavaila
     elements.whiteboardImageForm.elements.promptReferenceSequence.value = "";
     elements.whiteboardImageForm.elements.includeTargetReference.value = "";
     elements.whiteboardImageForm.elements.prompt.value = whiteboardGenerationPromptFor(node, "image");
-    elements.whiteboardImageForm.elements.aspectRatio.value = aspectRatio || DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
+    const nodeAspectRatio = whiteboardAspectRatioPresetForNode(node);
+    const initialAspectRatio = String(aspectRatio || "").trim() && aspectRatio !== "auto"
+      ? String(aspectRatio)
+      : nodeAspectRatio || whiteboardLastMediaAspectRatio() || DEFAULT_IMAGE_GENERATION_ASPECT_RATIO;
+    elements.whiteboardImageForm.elements.aspectRatio.value = initialAspectRatio;
     elements.whiteboardImageForm.elements.quality.value = DEFAULT_IMAGE_GENERATION_QUALITY;
     if (elements.whiteboardImageForm.elements.resolution) elements.whiteboardImageForm.elements.resolution.value = "1k";
     if (elements.whiteboardImageForm.elements.background) elements.whiteboardImageForm.elements.background.value = "auto";
@@ -57305,7 +57873,7 @@ const syncLocalH3WhiteboardNotice = () => {
           ? (cachedRuntime?.reasons?.find((reason) => /未就绪|不存在|缺少|失败/u.test(String(reason))) || "本地 H3 已启动，正在等待运行时就绪")
           : "本地 H3 已装配但未启动；点击启动后才会占用本机资源并可生成");
     const textNode = notice.querySelector("span");
-    if (textNode) textNode.textContent = `${message}。不需要 API Key。`;
+    if (textNode) textNode.textContent = message;
     const probeExpired = !cachedRuntime || Date.now() - Number(runtimeState.checkedAt || 0) >= 20_000;
     if (probeExpired && !runtimeState.pending) void localH3RuntimeProbeFor(profile).then(() => syncLocalH3WhiteboardNotice());
   }
@@ -57368,6 +57936,10 @@ const setWhiteboardVideoSetting = (name, value) => {
   const field = elements.whiteboardVideoForm?.elements?.[name];
   if (!field || ![...field.options].some((option) => option.value === String(value))) return false;
   field.value = String(value);
+  if (name === "aspectRatio") {
+    rememberWhiteboardMediaAspectRatio(value);
+    updateWhiteboardMediaCardAspectRatio(elements.whiteboardVideoForm.dataset.nodeId, value);
+  }
   field.dispatchEvent(new Event("input", { bubbles: true }));
   field.dispatchEvent(new Event("change", { bubbles: true }));
   syncWhiteboardVideoSettingsControls();
@@ -57548,7 +58120,9 @@ const syncWhiteboardVideoCapabilityOptions = ({ preferredMode = "", preferDefaul
   form.dataset.videoDurationDerived = String(capabilities.durationDerivedFromReference === true);
   const aspectRatios = [...new Set(["auto", ...capabilities.aspectRatios])];
   form.elements.aspectRatio.innerHTML = aspectRatios.map((value) => `<option value="${value}">${ratioLabels[value] || value}</option>`).join("");
-  form.elements.aspectRatio.value = aspectRatios.includes(previousRatio) ? previousRatio : "auto";
+  form.elements.aspectRatio.value = aspectRatios.includes(previousRatio)
+    ? previousRatio
+    : aspectRatios.includes(whiteboardLastMediaAspectRatio()) ? whiteboardLastMediaAspectRatio() : aspectRatios[0] || DEFAULT_WHITEBOARD_MEDIA_ASPECT_RATIO;
   form.elements.duration.innerHTML = durationOptions.map((value) => `<option value="${value}">${Number(value) > 0 ? `${value} 秒` : capabilities.durationDerivedFromReference ? "跟随参考" : "自动"}</option>`).join("");
   form.elements.resolution.innerHTML = resolutions.map((value) => `<option value="${value}">${value.toUpperCase()}</option>`).join("");
   form.elements.generationMode.innerHTML = [
@@ -57635,7 +58209,8 @@ const openWhiteboardVideoDialog = (nodeId, { allowUnavailable = false, centered 
       elements.whiteboardVideoForm.elements.connectionId.value = draftConnectionId;
     }
     syncWhiteboardVideoModelOptions(defaultWhiteboardVideoModel(draftValues?.model || cardValues.model || rememberedValues.model), draftValues?.generationMode);
-    elements.whiteboardVideoForm.elements.aspectRatio.value = "auto";
+    const nodeAspectRatio = whiteboardAspectRatioPresetForNode(node);
+    elements.whiteboardVideoForm.elements.aspectRatio.value = nodeAspectRatio || whiteboardLastMediaAspectRatio();
     applyWhiteboardGenerationFormValues(elements.whiteboardVideoForm, draftValues);
     // A restored draft may carry a connection different from the global last
     // choice. Rebuild the model catalogue after applying it to keep model and
@@ -58609,14 +59184,14 @@ const whiteboardDepthExplorerRuntimeKey = (nodeId, documentId = state.activeDocu
 
 const whiteboardDepthExplorerRuntimeState = (nodeId, documentId = state.activeDocument) => {
   const key = whiteboardDepthExplorerRuntimeKey(nodeId, documentId);
-  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "", completed: 0, total: 0, currentPercent: 0, percent: 0, message: "", createdOutputs: 0 };
+  const current = whiteboardDepthExplorerRuntime.get(key) || { busy: false, checking: false, error: "", completed: 0, total: 0, currentPercent: 0, percent: 0, message: "", createdOutputs: 0, jobId: "", cancelling: false };
   whiteboardDepthExplorerRuntime.set(key, current);
   return current;
 };
 
 const whiteboardDepthExplorerRuntimeSignature = (nodeId, documentId = state.activeDocument) => {
   const runtime = whiteboardDepthExplorerRuntimeState(nodeId, documentId);
-  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, runtime.progressInterrupted, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads, whiteboardDepthExplorerPreflight?.installable, whiteboardDepthExplorerPreflight?.reasons]);
+  return JSON.stringify([runtime.busy, runtime.checking, runtime.error, runtime.completed, runtime.total, runtime.currentPercent, runtime.percent, runtime.message, runtime.createdOutputs, runtime.progressInterrupted, runtime.jobId, runtime.cancelling, whiteboardDepthExplorerPreflight?.available, whiteboardDepthExplorerPreflight?.cpuThreads, whiteboardDepthExplorerPreflight?.installable, whiteboardDepthExplorerPreflight?.reasons]);
 };
 
 const whiteboardDepthExplorerNodeMediaKind = (node) => {
@@ -58710,8 +59285,9 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     : progressCurrent;
   const progressValue = Math.max(0, Math.min(100, Number(runtime.percent) > 0 ? Number(runtime.percent) : derivedProgressValue));
   const progressVisible = Boolean(loading || runtime.busy || runtime.total > 0 || runtime.completed > 0);
+  const indeterminate = progressVisible && progressValue <= 0 && (loading || runtime.busy);
   const progressMarkup = progressVisible
-    ? `<div class="whiteboard-depth-progress${loading ? " is-loading" : ""}" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length || connectedInputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : loading ? " · 程序正在加载" : ""}</small></div>`
+    ? `<div class="whiteboard-depth-progress${loading ? " is-loading" : ""}${indeterminate ? " is-indeterminate" : ""}" aria-label="深度摸索进度" role="status"><div class="whiteboard-depth-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progressValue)}" aria-label="总体进度"><span style="width:${progressValue}%"></span></div><small><strong>任务总数 ${progressTotal || inputs.length || connectedInputs.length} · 已完成 ${progressCompleted}</strong> · 当前任务 ${Math.round(progressCurrent)}%${runtime.message ? ` · ${escapeHtml(runtime.message)}` : loading ? " · 程序正在加载" : ""}</small></div>`
     : "";
   return `<div class="whiteboard-depth-node-bar" data-whiteboard-depth-loading="${loading ? "true" : "false"}" data-whiteboard-depth-node="${escapeHtml(node.id)}">
     <button class="whiteboard-depth-focus" type="button" data-whiteboard-depth-action="focus" title="聚焦节点" aria-label="聚焦深度摸索节点">${icon("\uE81E", "聚焦节点")}</button>
@@ -58720,7 +59296,7 @@ const whiteboardDepthExplorerNodeMarkup = (node, documentState) => {
     <label class="whiteboard-depth-select whiteboard-depth-provider"><span>推理设备</span><select data-whiteboard-depth-field="provider"${runtime.busy ? " disabled" : ""}><option value="auto"${selected("auto", settings.provider)}>自动选择</option><option value="directml"${selected("directml", settings.provider)}>DirectML GPU</option><option value="cpu"${selected("cpu", settings.provider)}>CPU</option></select></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-invert"><input type="checkbox" data-whiteboard-depth-field="invertDepth"${settings.invertDepth ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>反向深度</span></label>
      <label class="whiteboard-depth-node-check whiteboard-depth-audio"><input type="checkbox" data-whiteboard-depth-field="keepAudio"${settings.keepAudio ? " checked" : ""}${runtime.busy ? " disabled" : ""} /><span>保留音频</span></label>
-     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="${whiteboardDepthExplorerPreflight.installable ? "install" : "retry"}">${whiteboardDepthExplorerPreflight.installable ? "一键装配" : "重新检查"}</button>` : `<button class="whiteboard-depth-generate${loading || runtime.busy ? " loading" : ""}" type="button" data-whiteboard-depth-action="generate"${disabled ? " disabled" : ""}${loading || runtime.busy ? ' aria-busy="true"' : ""}>${runtime.busy ? "处理中" : loading ? "正在加载…" : "生成深度结果"}</button>`}
+     ${unavailable ? `<button class="whiteboard-depth-generate" type="button" data-whiteboard-depth-action="${whiteboardDepthExplorerPreflight.installable ? "install" : "retry"}">${whiteboardDepthExplorerPreflight.installable ? "一键装配" : "重新检查"}</button>` : `<button class="whiteboard-depth-generate${loading ? " loading" : ""}${runtime.busy ? " is-stop" : ""}" type="button" data-whiteboard-depth-action="${runtime.busy ? "stop" : "generate"}"${disabled && !runtime.busy ? " disabled" : ""}${loading || runtime.busy ? ' aria-busy="true"' : ""}>${runtime.busy ? "停止" : loading ? "正在加载…" : "生成深度结果"}</button>`}
      ${progressMarkup}<small class="whiteboard-depth-node-status${runtime.error || unavailable || tooMany ? " error" : ""}" title="${escapeHtml(status)}">${escapeHtml(status)}${runtime.progressInterrupted ? '<button type="button" data-whiteboard-depth-action="reconnect-progress">重新连接进度</button>' : ""}</small>
   </div>`;
 };
@@ -58902,6 +59478,7 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     const startResponse = await fetch("/api/workspace/depth-explorer/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(context) });
     const startPayload = await startResponse.json().catch(() => ({}));
     if (!startResponse.ok || startPayload.ok === false || !startPayload.jobId) throw new Error(startPayload.message || "深度摸索任务启动失败");
+    runtime.jobId = String(startPayload.jobId);
     let payload = null;
     const createdOutputKeys = new Set();
     const createAvailableOutputs = (availableOutputs = []) => {
@@ -58940,8 +59517,8 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
         await new Promise((resolveWait) => window.setTimeout(resolveWait, Math.max(750, activeDepthRuns * 600)));
         const statusResponse = await fetch(`/api/workspace/depth-explorer/run/status?jobId=${encodeURIComponent(startPayload.jobId)}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
         const status = await statusResponse.json().catch(() => ({}));
-        if (statusResponse.ok && ((status.ok === true && ["complete", "failed"].includes(status.status)) || status.status === "missing")) taskPending = false;
-        if (!statusResponse.ok || status.ok !== true || !["queued", "running", "complete", "failed"].includes(status.status)) throw new Error(status.error || status.message || "深度进度读取失败，请稍后查看任务；不会自动重复生成");
+        if (statusResponse.ok && ((status.ok === true && ["complete", "failed", "cancelled"].includes(status.status)) || status.status === "missing")) taskPending = false;
+        if (!statusResponse.ok || status.ok !== true || !["queued", "running", "cancelling", "complete", "failed", "cancelled"].includes(status.status)) throw new Error(status.error || status.message || "深度进度读取失败，请稍后查看任务；不会自动重复生成");
         const completed = Number(status.completed);
         const total = Number(status.total);
         const currentPercent = Number(status.currentPercent);
@@ -58956,11 +59533,13 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
         runtime.message = String(status.message || "正在处理");
         createAvailableOutputs(status.outputs);
         rerenderWhiteboardDepthExplorerNode(nodeId);
+        if (status.status === "cancelled") { runtime.busy = false; runtime.cancelling = false; runtime.message = "深度摸索已停止"; runtime.jobId = ""; showToast(runtime.message); break; }
         if (status.status === "complete") { payload = status; break; }
         if (status.status === "failed") throw new Error(status.error || status.message || "深度摸索失败");
       }
       if (workspaceIdentity() !== context.workspaceId || state.activeDocument !== context.documentId) throw new Error("深度结果已保存，但当前白板已经切换，请回到原白板查看结果");
       if (!whiteboardNodeById(nodeId)) throw new Error("深度结果已保存，但深度摸索节点已经不存在");
+      if (!payload) return;
       const outputs = payload.outputs || [];
       createAvailableOutputs(outputs);
       runtime.completed = Math.max(runtime.completed || 0, outputs.length);
@@ -58996,9 +59575,34 @@ const runWhiteboardDepthExplorerNode = async (nodeId) => {
     showToast(runtime.error);
   } finally {
     runtime.busy = Boolean(runtime.progressInterrupted);
+    if (!runtime.busy) runtime.jobId = "";
     if (!runtime.busy) whiteboardMediaEditBusyNodeIds.delete(nodeId);
     rerenderWhiteboardDepthExplorerNode(nodeId, context.documentId);
   }
+};
+
+const stopWhiteboardDepthExplorerNode = async (nodeId) => {
+  const runtime = whiteboardDepthExplorerRuntimeState(nodeId);
+  if (!runtime.jobId || !runtime.busy) return false;
+  runtime.cancelling = true;
+  runtime.message = "正在停止深度摸索";
+  rerenderWhiteboardDepthExplorerNode(nodeId);
+  const response = await fetch("/api/workspace/depth-explorer/run/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ jobId: runtime.jobId }),
+  }).catch(() => null);
+  const payload = response ? await response.json().catch(() => ({})) : {};
+  if (!response?.ok || payload.ok === false) {
+    runtime.cancelling = false;
+    runtime.error = payload.message || "停止深度摸索失败";
+    rerenderWhiteboardDepthExplorerNode(nodeId);
+    showToast(runtime.error);
+    return false;
+  }
+  runtime.message = "正在停止深度摸索";
+  rerenderWhiteboardDepthExplorerNode(nodeId);
+  return true;
 };
 
 elements.whiteboardCardToolbar.addEventListener("pointerdown", (event) => event.stopPropagation());
@@ -60682,6 +61286,10 @@ elements.whiteboardImageForm.elements.model.addEventListener("change", () => {
   renderWhiteboardGenerationCredit("image");
 });
 elements.whiteboardImageForm.addEventListener("change", () => renderWhiteboardGenerationCredit("image"));
+elements.whiteboardImageForm.elements.aspectRatio.addEventListener("change", (event) => {
+  rememberWhiteboardMediaAspectRatio(event.target.value);
+  updateWhiteboardMediaCardAspectRatio(elements.whiteboardImageForm.dataset.nodeId, event.target.value);
+});
 
 elements.whiteboardImageSettingsTrigger.addEventListener("click", (event) => {
   event.preventDefault();
@@ -61044,6 +61652,10 @@ elements.whiteboardVideoForm.elements.generationMode.addEventListener("change", 
   renderWhiteboardGenerationCredit("video");
 });
 elements.whiteboardVideoForm.addEventListener("change", () => renderWhiteboardGenerationCredit("video"));
+elements.whiteboardVideoForm.elements.aspectRatio.addEventListener("change", (event) => {
+  rememberWhiteboardMediaAspectRatio(event.target.value);
+  updateWhiteboardMediaCardAspectRatio(elements.whiteboardVideoForm.dataset.nodeId, event.target.value);
+});
 elements.whiteboardVideoTransitionDuration.addEventListener("input", () => {
   const duration = Number(elements.whiteboardVideoTransitionDuration.value) || 4;
   elements.whiteboardVideoTransitionDurationOutput.value = `${duration}s`;
@@ -64288,6 +64900,8 @@ const registerAgentTaskRuntime = ({ conversation, messages, workspaceState, work
     pendingId: String(pendingId || existing?.pendingId || ""),
     requestId: String(requestId || existing?.requestId || ""),
     turnId: String(turnId || existing?.turnId || ""),
+    contextEpoch: String(conversation.agentContextEpoch || ""),
+    invalidatedByRollback: false,
     taskContextSnapshot: clone(taskContextSnapshot || existing?.taskContextSnapshot || null),
   };
   ui.agentTaskRuntimes.set(conversation.id, runtime);
@@ -64349,6 +64963,8 @@ const taskWorkspaceStateForQueueItem = async (item = null) => {
 
 const persistAgentRuntimeView = (runtime, options = {}) => {
   if (!runtime) return persist(options);
+  if (runtime.invalidatedByRollback === true
+    || (runtime.contextEpoch && runtime.contextEpoch !== String(runtime.conversation.agentContextEpoch || ""))) return false;
   if (workspaceTargetIsActive(runtime.workspaceScope?.workspaceKind, runtime.workspaceScope?.workspacePath)) {
     mergeAgentRuntimeConversationState(state, runtime);
     return persist(options);
@@ -68551,7 +69167,7 @@ const revealWhiteboardVideoOverlay = (video, { autoHide = true } = {}) => {
   }, 1600));
 };
 
-elements.whiteboardSurface.addEventListener("play", (event) => {
+  elements.whiteboardSurface.addEventListener("play", (event) => {
   if (!event.target.matches?.(".whiteboard-card-video")) return;
   const nodeId = event.target.closest("[data-canvas-node]")?.dataset?.canvasNode;
   if (nodeId) ui.whiteboardActiveVideoKeys.add(whiteboardActiveVideoKey(nodeId));
@@ -68594,6 +69210,23 @@ elements.whiteboardSurface.addEventListener("pointerleave", (event) => {
   if (!video || video.paused || video.ended) return;
   clearWhiteboardVideoOverlayTimer(shell);
   shell.classList.remove("video-controls-visible");
+}, true);
+
+// Keep native audio controls stable across generation/status renders.  The
+// renderer preserves the <audio> element when its source is unchanged; these
+// listeners provide one bounded recovery for a transient attachment read
+// failure without replacing the element (which would reset playback/time).
+const whiteboardAudioRetryCount = new WeakMap();
+elements.whiteboardSurface.addEventListener("error", (event) => {
+  const audio = event.target;
+  if (!(audio instanceof HTMLAudioElement) || !audio.matches(".whiteboard-card-audio")) return;
+  const attempts = Number(whiteboardAudioRetryCount.get(audio) || 0);
+  if (attempts >= 1) return;
+  whiteboardAudioRetryCount.set(audio, attempts + 1);
+  window.setTimeout(() => {
+    if (!audio.isConnected) return;
+    audio.load();
+  }, 180);
 }, true);
 
 const generatedVideoOverlayTimers = new WeakMap();
@@ -76687,8 +77320,8 @@ const syncProviderSpecificCliButtons = async () => {
         const result = document.querySelector("#videoAdapterResult");
         if (result && !/失败|错误/u.test(result.textContent || "")) {
           result.textContent = probe.started
-            ? "本地 H3 已启动，正在等待 ComfyUI 运行时就绪；不需要 API Key"
-            : "本地 H3 已装配但未启动；点击启动后才会占用本机资源并可生成；不需要 API Key";
+            ? "本地 H3 已启动，正在等待运行时就绪"
+            : "本地 H3 已装配但未启动；点击启动后才会占用本机资源并可生成";
         }
       }
       if (probe.ready === true) renderVideoModelOptions("本地 H3");
@@ -77205,7 +77838,7 @@ document.querySelector("#startLocalH3")?.addEventListener("click", async (event)
   if (result) result.textContent = "正在启动本地 H3，首次启动可能需要数分钟…";
   try {
     const payload = await localH3ControlRequest("start");
-    if (result) result.textContent = payload.ready ? "本地 H3 已启动，可以生成；不需要 API Key" : "本地 H3 正在加载推理环境，可随时点击停止";
+    if (result) result.textContent = payload.ready ? "本地 H3 已启动，可以生成" : "本地 H3 正在加载推理环境，可随时点击停止";
     renderVideoModelOptions("本地 H3");
   } catch (error) {
     if (result) result.textContent = `本地 H3 启动失败：${error.message}`;
@@ -79413,6 +80046,11 @@ const bootstrap = async () => {
     } catch (error) {
       console.warn("Global generation profile migration failed:", error.message);
     }
+  }
+  try {
+    await rebindDesktopTextGenerationRuntime();
+  } catch (error) {
+    console.warn("Desktop text credential runtime rebind failed:", error.message);
   }
   // Rebind DPAPI-backed API credentials before recovery workers need to
   // resume an older media job. The secrets never enter workspace state.

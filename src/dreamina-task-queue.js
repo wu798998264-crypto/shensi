@@ -71,19 +71,31 @@ export const dreaminaPreSubmitTimingLabel = (job = {}, nowMs = Date.now()) => {
 };
 
 export const dreaminaQueueView = (job = {}, { position = 0, nowMs = Date.now() } = {}) => {
-  const localQueued = isDreaminaQueueReorderable(job);
+  // A provider response may retain queue_position=1 while queue_status has
+  // already advanced to Generating. Classify that explicit vendor state
+  // before deriving the local queued/reorderable presentation so the card
+  // cannot remain blue and appear stuck in the local queue.
+  const providerQueueStatus = String(job.providerQueueStatus || '').trim().toLowerCase();
+  const providerGenerating = String(job.providerStatus || '').trim().toLowerCase() === 'running'
+    || ['generating', 'running', 'processing', 'in_progress', 'in-progress', 'started', 'executing'].includes(providerQueueStatus);
+  const localQueued = isDreaminaQueueReorderable(job) && !providerGenerating;
   const deferred = Boolean(job.dreaminaQueueDeferredAt)
     && !job.providerTaskId
     && job.status === 'queued'
     && job.submissionState === 'not_submitted';
   const complete = job.status === 'complete';
+  const resultVerified = complete && Boolean(
+    job.cardReadbackVerified === true
+      || job.result?.attachment?.sha256
+      || job.landingReceipt?.sha256,
+  );
   const legacyQueued = job.status === 'queued' && !job.providerTaskId && job.dreaminaQueuePolicy !== 'command-lease-v1';
   const activity = [job.nextPollAt, job.heartbeatAt, job.updatedAt, job.createdAt]
     .map((value) => Date.parse(value || '')).filter(Number.isFinite);
   const due = activity.length ? Math.max(...activity) : NaN;
   const stale = Number.isFinite(due) && nowMs - due > 120_000;
   const uncertain = ['waiting_credentials', 'waiting_storage', 'retry_required', 'reconciliation_required', 'failed'].includes(job.status)
-    || complete || legacyQueued || job.runtimeNeedsAttention === true || (!localQueued && stale)
+    || (complete && !resultVerified) || legacyQueued || job.runtimeNeedsAttention === true || (!localQueued && stale)
     || job.billingRisk === 'submission_outcome_unknown' || job.providerErrorCode === 'DREAMINA_CONCURRENCY_LIMIT'
     || Boolean(job.forceReleasePendingAt && !job.forceReleaseCompletedAt);
   const state = complete ? 'result_pending_apply' : deferred ? 'queued_paused' : localQueued ? 'queued' : uncertain ? 'attention' : 'active';
@@ -93,9 +105,6 @@ export const dreaminaQueueView = (job = {}, { position = 0, nowMs = Date.now() }
   // rendering the queue so an active task is never shown as permanently
   // queued. The worker normally normalizes this to providerStatus=running,
   // but the fallback also covers older durable records.
-  const providerQueueStatus = String(job.providerQueueStatus || '').trim().toLowerCase();
-  const providerGenerating = String(job.providerStatus || '').trim().toLowerCase() === 'running'
-    || ['generating', 'running', 'processing', 'in_progress', 'in-progress', 'started', 'executing'].includes(providerQueueStatus);
   const stage = complete ? '结果待回写' : deferred ? '重启后自动恢复中' : localQueued ? '本地排队，尚未提交' : (job.dreaminaDispatchToken || job.dreaminaDispatching) && !job.providerTaskId ? '准备提交' : providerGenerating ? '厂商生成中' : ({
     submitting: '正在提交', running: '厂商生成中', polling: '查询生成进度', downloading: '下载及验收',
     waiting_credentials: '需要核验账号', waiting_storage: '需要处理存储', retry_required: '需要核对结果',
@@ -113,7 +122,11 @@ export const dreaminaQueueView = (job = {}, { position = 0, nowMs = Date.now() }
     // metadata only; scheduling and provider isolation continue to use the
     // original request settings unchanged.
     queueModel: String(settings.model || job.request?.generationProfile?.model || ''),
-    queueStage: legacyQueued && !providerGenerating ? '历史任务，未自动重新提交' : stage,
+    queueStage: legacyQueued && !providerGenerating
+      ? '历史任务，未自动重新提交'
+      : resultVerified && !job.cardReadbackVerified
+        ? '结果已生成，正在回写卡片'
+        : stage,
   };
 };
 

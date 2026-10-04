@@ -39,7 +39,7 @@ await first;
 assert.equal(dreaminaProfileSwitchDecision({
   requestedProfileId: "dreamina-account-b",
   jobs: [{ request: { settings: { id: "dreamina-account-a", dreaminaCliProfile: "dreamina-account-a", provider: "即梦", adapter: "cli" } }, status: "running", appliedAt: "" }],
-}).allowed, false, "另一个即梦配置占用唯一凭证锁时只能提示，不能自动排队或切换");
+}).allowed, true, "配置选择不得因旧任务阻断；生成在本地队列排队，凭证命令仍由 broker 串行保护");
 assert.equal(dreaminaProfileSwitchDecision({
   requestedProfileId: "dreamina-account-a",
   jobs: [{ request: { settings: { id: "dreamina-account-a", dreaminaCliProfile: "dreamina-account-a", provider: "即梦", adapter: "cli" } }, status: "running", appliedAt: "" }],

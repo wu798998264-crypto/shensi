@@ -14,6 +14,7 @@ import {
   builtInAggregateImageRecoveryJob,
   classifyMediaSubmissionFailure,
   DEFAULT_AGGREGATE_IMAGE_RECOVERY_ATTEMPTS,
+  isUpstreamStreamInterruptedBeforeCompletion,
   isUpstreamStreamOpenTimeout,
   legacyAggregateReferencePreflightFailurePatch,
 } from "../src/server/media-submission-recovery.mjs";
@@ -35,6 +36,11 @@ const upstreamTimeoutError = Object.assign(new Error("模型请求失败：upstr
 });
 assert.equal(isUpstreamStreamOpenTimeout(upstreamTimeoutError), true, "聚合上游流打开超时必须被识别");
 assert.equal(isUpstreamStreamOpenTimeout({ providerErrorCode: "HTTP_401", message: "invalid api key" }), false);
+const upstreamCompletionDisconnectError = Object.assign(new Error("模型请求失败：stream error: stream disconnected before completion: stream closed before response.completed"), {
+  providerErrorCode: "request_failed",
+  submissionOutcomeKnown: true,
+});
+assert.equal(isUpstreamStreamInterruptedBeforeCompletion(upstreamCompletionDisconnectError), true, "聚合上游在完成事件前断流必须被识别");
 
 const initial = normalizeGenerationProfiles({});
 assert.equal(DEFAULT_IMAGE_GENERATION_MODEL, "gpt-image-2.5", "对话区默认图片模型必须使用 GPT Image 2.5");
@@ -222,6 +228,22 @@ const aggregateTimeoutClassification = classifyMediaSubmissionFailure({
 });
 assert.equal(aggregateTimeoutClassification.submissionUnknown, true, "聚合上游流超时必须进入同幂等键结果核对");
 assert.equal(aggregateTimeoutClassification.upstreamStreamOpenTimeout, true);
+const aggregateCompletionDisconnectClassification = classifyMediaSubmissionFailure({
+  job: { ...recoveryJob, status: "submitting", providerTaskId: null },
+  error: upstreamCompletionDisconnectError,
+});
+assert.equal(aggregateCompletionDisconnectClassification.submissionUnknown, true, "完成事件前断流不得被当成已知失败，必须沿用同幂等键核对");
+assert.equal(aggregateCompletionDisconnectClassification.upstreamStreamInterruptedBeforeCompletion, true);
+assert.equal(classifyMediaSubmissionFailure({
+  job: {
+    channel: "image",
+    status: "submitting",
+    providerTaskId: null,
+    idempotencyKey: "custom-connection-idempotency-key",
+    request: { settings: { ...aggregate, connectionId: "user-custom-aggregate-copy" } },
+  },
+  error: upstreamCompletionDisconnectError,
+}).submissionUnknown, false, "自定义兼容接口的同名断流不得套用内置聚合 API 自动找回规则");
 assert.equal(classifyMediaSubmissionFailure({
   job: { ...recoveryJob, status: "submitting", providerTaskId: null },
   error: Object.assign(new Error("invalid api key"), { providerErrorCode: "HTTP_401", submissionOutcomeKnown: true }),
@@ -248,6 +270,28 @@ assert.equal(builtInAggregateImageRecoveryJob({
 }), false, "任务记录显式包含其他端点时不得冒充内置聚合图片连接");
 
 const originalFetch = globalThis.fetch;
+const consecutiveRequests = [];
+globalThis.fetch = async (url, options = {}) => {
+  consecutiveRequests.push({ url: String(url), key: options.headers?.["Idempotency-Key"] || options.headers?.["idempotency-key"], body: JSON.parse(options.body) });
+  return new Response(JSON.stringify({ data: [{ b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" }] }), {
+    status: 200, headers: { "content-type": "application/json" },
+  });
+};
+try {
+  for (let round = 1; round <= 3; round += 1) {
+    const generated = await generateImageWithAdapter({
+      settings: { ...aggregate, apiKey: "mock-test-only", imageChannel: true },
+      prompt: `无额度连续验收第${round}次`, imageCount: 1, aspectRatio: "16:9",
+      idempotencyKey: `aggregate-consecutive-${round}`,
+    });
+    assert.equal(generated.dataUrls.length, 1);
+  }
+  assert.equal(consecutiveRequests.length, 3, "三次独立点击应恰好三次调用，不增加重试");
+  assert.equal(new Set(consecutiveRequests.map(({ key }) => key)).size, 3, "三次独立生成不得复用旧幂等键");
+  assert.ok(consecutiveRequests.every(({ url, body }) => url === `${expectedBaseUrl}/images/generations` && body.model === aggregate.model));
+} finally {
+  globalThis.fetch = originalFetch;
+}
 let editRequest = null;
 globalThis.fetch = async (url, options = {}) => {
   editRequest = { url: String(url), options };
@@ -301,6 +345,30 @@ try {
   assert.equal(upstreamTimeout?.providerErrorCode, "upstream_first_byte_timeout");
   assert.equal(upstreamTimeout?.submissionOutcomeKnown, false, "真实聚合网关流超时不得声明提交结果已知");
   assert.equal(upstreamTimeout?.retryableUpstreamTimeout, true);
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
+let upstreamCompletionDisconnectRequest = null;
+globalThis.fetch = async (url, options = {}) => {
+  upstreamCompletionDisconnectRequest = { url: String(url), options };
+  return new Response(JSON.stringify({
+    error: {
+      code: "request_failed",
+      message: "stream error: stream disconnected before completion: stream closed before response.completed",
+    },
+  }), { status: 502, headers: { "content-type": "application/json" } });
+};
+try {
+  const upstreamCompletionDisconnect = await generateImageWithAdapter({
+    settings: { ...aggregate, apiKey: "secure-test-token", imageChannel: true },
+    prompt: "验证完成事件前断流的同幂等键恢复",
+    idempotencyKey: "aggregate-upstream-completion-disconnect-idempotency",
+  }).then(() => null, (error) => error);
+  assert.equal(upstreamCompletionDisconnectRequest?.url, `${expectedBaseUrl}/images/generations`);
+  assert.equal(upstreamCompletionDisconnect?.providerErrorCode, "request_failed");
+  assert.equal(upstreamCompletionDisconnect?.submissionOutcomeKnown, false, "完成事件前断流不得声明提交结果已知");
+  assert.equal(upstreamCompletionDisconnect?.retryableUpstreamTimeout, true);
 } finally {
   globalThis.fetch = originalFetch;
 }

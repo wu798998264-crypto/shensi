@@ -119,6 +119,47 @@ process.stdout.write(JSON.stringify({ type: "text", text: JSON.stringify({
   assert.equal(managedEnvironment.xdgConfig, ambientConfig, "增强档位下神思凭据不得隔离运行器全局配置");
   assert.equal(Object.hasOwn(managedEnvironment.config, "plugin"), false, "增强档位不得清空全局插件");
   assert.ok(managedEnvironment.args.includes("--auto"));
+
+  // OpenCode may report stale placement metadata as an error event before it
+  // emits the final assistant message.  That provider diagnostic is
+  // recoverable when text follows it and must not turn the turn into a failed
+  // task.  Each Shensi turn starts a fresh process, so a stale --session
+  // continuation must never be injected either.
+  const recoverableRunner = join(temporary, "mock-opencode-recoverable.mjs");
+  await writeFile(recoverableRunner, `
+const args = process.argv.slice(2);
+if (args.includes("--session")) { console.error("stale session continuation"); process.exit(12); }
+process.stdout.write(JSON.stringify({ type: "error", error: { message: "placementId is stale" } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "text", text: "placement diagnostic recovered" }) + "\\n");
+`, "utf8");
+  const recovered = await runOpenCodeAgent({
+    prompt: "第二轮对话",
+    cwd: temporary,
+    sessionId: "same-conversation",
+    model: "opencode/big-pickle",
+    credentialSource: "opencode_free",
+    launchResolver: async () => ({ executable: process.execPath, prefixArgs: [recoverableRunner] }),
+    timeoutMs: 30_000,
+  });
+  assert.equal(recovered.text, "placement diagnostic recovered");
+  assert.match(recovered.runnerWarnings?.join("\n") || "", /placementId/u);
+
+  // Upstream provider failures may be emitted as a structured error event
+  // while the CLI exits without stderr. Preserve that event in the thrown
+  // message instead of reducing it to an opaque exit-code failure.
+  const upstreamFailureRunner = join(temporary, "mock-opencode-upstream-failure.mjs");
+  await writeFile(upstreamFailureRunner, `
+process.stdout.write(JSON.stringify({ type: "error", error: { message: "Unexpected server error (upstream rate limit)" } }) + "\\n");
+process.exit(1);
+`, "utf8");
+  await assert.rejects(() => runOpenCodeAgent({
+    prompt: "上游失败诊断",
+    cwd: temporary,
+    model: "opencode/laguna-s-2.1-free",
+    credentialSource: "opencode_free",
+    launchResolver: async () => ({ executable: process.execPath, prefixArgs: [upstreamFailureRunner] }),
+    timeoutMs: 30_000,
+  }), /Unexpected server error \(upstream rate limit\)/u);
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

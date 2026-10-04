@@ -15,6 +15,35 @@ export const CANVAS_MIN_ZOOM = 0.125;
 export const CANVAS_MAX_ZOOM = 3;
 export const WHITEBOARD_DEPTH_NODE_WIDTH = 480;
 export const WHITEBOARD_DEPTH_NODE_HEIGHT = 210;
+// Media cards keep their selected aspect ratio, but their outer geometry must
+// stay usable on the canvas.  In particular, a portrait preset must not turn
+// a 320px card into a 560px-tall interaction target.  The renderer uses
+// object-fit for the media itself, so constraining the card is safe and keeps
+// handles, edges and surrounding cards usable.
+export const WHITEBOARD_MEDIA_CARD_MAX_WIDTH = 420;
+export const WHITEBOARD_MEDIA_CARD_MAX_HEIGHT = 320;
+
+export const fitWhiteboardMediaCardSize = ({ width = 320, height = 180, aspectRatio = 16 / 9 } = {}) => {
+  const ratio = clamp(finite(aspectRatio, 16 / 9), 0.1, 10);
+  let nextWidth = clamp(finite(width, 320), 180, WHITEBOARD_MEDIA_CARD_MAX_WIDTH);
+  let nextHeight = nextWidth / ratio;
+  // Preserve the selected ratio while fitting the card into the bounded
+  // canvas target.  The fallback height keeps malformed/legacy records from
+  // becoming zero-sized cards before the ratio correction is applied.
+  if (!(nextHeight > 0)) nextHeight = Math.max(100, finite(height, 180));
+  if (nextHeight > WHITEBOARD_MEDIA_CARD_MAX_HEIGHT) {
+    nextHeight = WHITEBOARD_MEDIA_CARD_MAX_HEIGHT;
+    nextWidth = nextHeight * ratio;
+  }
+  if (nextWidth > WHITEBOARD_MEDIA_CARD_MAX_WIDTH) {
+    nextWidth = WHITEBOARD_MEDIA_CARD_MAX_WIDTH;
+    nextHeight = nextWidth / ratio;
+  }
+  return {
+    width: Math.max(100, Math.round(nextWidth)),
+    height: Math.max(100, Math.round(nextHeight)),
+  };
+};
 
 const boundedWebText = (value = "", limit = 120_000) => String(value).normalize("NFC").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, limit);
 
@@ -212,6 +241,8 @@ export const whiteboardTextGenerationRequest = (instruction = "", { hasUpstream 
 
 const normalizeNode = (node) => {
   const mediaNode = node.type === "file" || MEDIA_NODE_KINDS.has(node.kind);
+  const mediaIntent = !mediaNode
+    && ["image", "video"].includes(String(node.generationIntent?.channel || node.generation?.channel || ""));
   const kind = mediaNode
     ? node.kind === "audio" || String(node.mimeType ?? "").startsWith("audio/")
       ? "audio"
@@ -225,6 +256,9 @@ const normalizeNode = (node) => {
   const width = localOperation
     ? WHITEBOARD_DEPTH_NODE_WIDTH
     : Math.max(180, finite(node.width, mediaNode ? 320 : 260));
+  const mediaGeometry = (mediaNode || mediaIntent)
+    ? fitWhiteboardMediaCardSize({ width, height: node.height, aspectRatio })
+    : null;
   return {
     id: String(node.id),
     type: mediaNode ? "file" : "text",
@@ -235,11 +269,12 @@ const normalizeNode = (node) => {
     text: String(node.text ?? ""),
     x: finite(node.x, 40),
     y: finite(node.y, 40),
-    width,
+    width: mediaGeometry?.width ?? width,
     height: localOperation
       ? WHITEBOARD_DEPTH_NODE_HEIGHT
-      : Math.max(100, finite(node.height, mediaNode ? width / aspectRatio : 160)),
+      : mediaGeometry?.height ?? Math.max(100, finite(node.height, 160)),
     color: String(node.color ?? "default"),
+    ...((mediaNode || mediaIntent) ? { aspectRatio } : {}),
     ...(kind === "web" ? {
       url: String(node.url ?? ""),
       ...(normalizeWebSnapshot(node.webSnapshot) ? { webSnapshot: normalizeWebSnapshot(node.webSnapshot) } : {}),
@@ -921,7 +956,7 @@ export const canvasSelectionBounds = (canvas, nodeIds = [], padding = 18) => {
   return { left, top, right, bottom, width: right - left, height: bottom - top };
 };
 
-export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, generationIntent = null, operation = null, url = "", webSnapshot = null } = {}) => ({
+export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40, width = 260, height = 160, kind = "text", color = "default", reference = null, generation = null, generationIntent = null, operation = null, url = "", webSnapshot = null, aspectRatio = 0 } = {}) => ({
   id: String(id || `canvas-node-${Date.now()}`),
   type: "text",
   kind: NODE_KINDS.has(kind) && !MEDIA_NODE_KINDS.has(kind) ? kind : "text",
@@ -929,9 +964,14 @@ export const createCanvasTextNode = ({ id, name = "", text = "", x = 40, y = 40,
   text: String(text),
   x: finite(x, 40),
   y: finite(y, 40),
-  width: Math.max(180, finite(width, 260)),
-  height: Math.max(100, finite(height, 160)),
+  width: (finite(aspectRatio, 0) > 0 && ["image", "video"].includes(String(generationIntent?.channel || generation?.channel || "")))
+    ? fitWhiteboardMediaCardSize({ width, height, aspectRatio }).width
+    : Math.max(180, finite(width, 260)),
+  height: (finite(aspectRatio, 0) > 0 && ["image", "video"].includes(String(generationIntent?.channel || generation?.channel || "")))
+    ? fitWhiteboardMediaCardSize({ width, height, aspectRatio }).height
+    : Math.max(100, finite(height, 160)),
   color: String(color || "default"),
+  ...(finite(aspectRatio, 0) > 0 ? { aspectRatio: clamp(finite(aspectRatio, 16 / 9), 0.1, 10) } : {}),
   ...(kind === "web" ? {
     url: String(url),
     ...(normalizeWebSnapshot(webSnapshot) ? { webSnapshot: normalizeWebSnapshot(webSnapshot) } : {}),
@@ -964,8 +1004,7 @@ export const createCanvasImageNode = ({ id, file, name = "图片", mimeType = "i
     ...(whiteboardMediaIndexPath ? { whiteboardMediaIndexPath: String(whiteboardMediaIndexPath) } : {}),
     x: finite(x, 40),
     y: finite(y, 40),
-    width: normalizedWidth,
-    height: Math.max(100, normalizedWidth / ratio),
+    ...fitWhiteboardMediaCardSize({ width: normalizedWidth, height: normalizedWidth / ratio, aspectRatio: ratio }),
     color: String(color || "default"),
     ...(normalizeGeneration(generation) ? { generation: normalizeGeneration(generation) } : {}),
   };
@@ -1209,6 +1248,8 @@ export const snapCanvasValue = (value, canvasOrSettings = {}) => {
 };
 
 const patchCanvasNode = (node, patch = {}) => {
+  const mediaIntent = !MEDIA_NODE_KINDS.has(node.kind)
+    && ["image", "video"].includes(String(node.generationIntent?.channel || node.generation?.channel || ""));
   const next = {
     ...node,
     ...(Object.hasOwn(patch, "text") ? { text: String(patch.text ?? "") } : {}),
@@ -1222,7 +1263,7 @@ const patchCanvasNode = (node, patch = {}) => {
     ...(Object.hasOwn(patch, "url") ? { url: String(patch.url ?? "") } : {}),
     ...(Object.hasOwn(patch, "file") && MEDIA_NODE_KINDS.has(node.kind) ? { file: String(patch.file ?? "") } : {}),
     ...(Object.hasOwn(patch, "mimeType") && MEDIA_NODE_KINDS.has(node.kind) ? { mimeType: String(patch.mimeType ?? node.mimeType) } : {}),
-    ...(Object.hasOwn(patch, "aspectRatio") && MEDIA_NODE_KINDS.has(node.kind) ? { aspectRatio: clamp(finite(patch.aspectRatio, node.aspectRatio), 0.1, 10) } : {}),
+    ...(Object.hasOwn(patch, "aspectRatio") && (MEDIA_NODE_KINDS.has(node.kind) || mediaIntent) ? { aspectRatio: clamp(finite(patch.aspectRatio, node.aspectRatio || 16 / 9), 0.1, 10) } : {}),
   };
   if (MEDIA_NODE_KINDS.has(node.kind) && Object.hasOwn(patch, "durationMs")) {
     if (finite(patch.durationMs, 0) > 0) next.durationMs = Math.max(1, finite(patch.durationMs, 0));
@@ -1239,12 +1280,23 @@ const patchCanvasNode = (node, patch = {}) => {
     if (snapshot) next.webSnapshot = snapshot;
     else delete next.webSnapshot;
   }
-  if (MEDIA_NODE_KINDS.has(node.kind) && (Object.hasOwn(patch, "width") || Object.hasOwn(patch, "height"))) {
-    const ratio = clamp(finite(next.aspectRatio, 16 / 9), 0.1, 10);
-    if (Object.hasOwn(patch, "width")) next.height = Math.max(100, next.width / ratio);
-    else next.width = Math.max(180, next.height * ratio);
-  } else if (MEDIA_NODE_KINDS.has(node.kind) && Object.hasOwn(patch, "aspectRatio")) {
-    next.height = Math.max(100, next.width / next.aspectRatio);
+  if (MEDIA_NODE_KINDS.has(node.kind) || mediaIntent) {
+    // A portrait fit may have reduced the persisted width to keep its height
+    // bounded.  When the user picks another preset, start from the normal
+    // generation-card width instead of carrying that temporary narrow width
+    // into every subsequent ratio.
+    const requestedWidth = Object.hasOwn(patch, "aspectRatio")
+      && !Object.hasOwn(patch, "width")
+      && !Object.hasOwn(patch, "height")
+      ? Math.max(next.width, 260)
+      : next.width;
+    const geometry = fitWhiteboardMediaCardSize({
+      width: requestedWidth,
+      height: next.height,
+      aspectRatio: next.aspectRatio,
+    });
+    next.width = geometry.width;
+    next.height = geometry.height;
   }
   if (Object.hasOwn(patch, "reference")) {
     const reference = normalizeReference(patch.reference);

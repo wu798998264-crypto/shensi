@@ -34,7 +34,7 @@ export const installDreaminaQueuePanel = ({ elements, act, toast, changed, fetch
   controls.hidden = false;
   let jobs = [], busy = false, dragging = '', timer, refreshing = null, lastMarkup = '';
   const request = async (url, body) => {
-    const response = await fetchFn(url, { cache: 'no-store', signal: AbortSignal.timeout(url.endsWith('/stop') ? 40_000 : 12_000), ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
+    const response = await fetchFn(url, { cache: 'no-store', signal: AbortSignal.timeout(/\/(?:stop|cancel)$/u.test(url) ? 40_000 : 12_000), ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }) });
     const payload = await response.json();
     if (!response.ok || !payload.ok) throw new Error(payload.message || '队列读取失败');
     return payload;
@@ -96,7 +96,12 @@ export const installDreaminaQueuePanel = ({ elements, act, toast, changed, fetch
     if (action === 'stop') {
         const localQueue = job.queueReorderable || job.queueState === 'queued_paused';
         const message = localQueue ? '确认取消排队？尚未提交，不会扣费。' : '确认停止本地任务并释放凭证锁？远端任务可能继续生成并产生费用，任务记录会保留。';
-        if (window.confirm(message)) { const data = await request('/api/dreamina-queue/' + encodeURIComponent(job.id) + '/stop', {}); changed(data.job); toast(data.job.error); }
+        if (window.confirm(message)) {
+          const endpoint = job.queueProvider && !/即梦|dreamina/iu.test(String(job.queueProvider))
+            ? '/api/generation/jobs/' + encodeURIComponent(job.id) + '/cancel'
+            : '/api/dreamina-queue/' + encodeURIComponent(job.id) + '/stop';
+          const data = await request(endpoint, {}); changed(data.job); toast(data.job.error || (data.job.status === 'cancelled' ? '任务已终止' : '已保存停止意图'));
+        }
       } else { await act(job, action); }
     } catch (error) { toast(error.message); }
     finally { busy = false; if (control.isConnected) control.disabled = false; await refresh(); render(); }

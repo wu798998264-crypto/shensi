@@ -108,13 +108,42 @@ try {
   });
   assert.equal(completed.providerStatus, "completed", "LibTV 返回 loading=false 且带结果 URL 时必须识别为完成");
 
+  const delayedResourceDriver = new LibTvMediaDriver();
+  delayedResourceDriver.invoke = async () => ({ data: {
+    taskInfo: { loading: false, status: 2, progressPercent: 100 },
+    url: [],
+  } });
+  const delayedResource = await delayedResourceDriver.getStatus({
+    job: { providerTaskId: "node-delayed" },
+    workRoot: root,
+  });
+  assert.equal(delayedResource.providerStatus, "running", "LibTV 终态但 URL 尚未出现时必须继续只读查询");
+  assert.equal(delayedResource.resultResourcePending, true, "LibTV 资源未就绪必须留下明确标记");
+
+  const missingMetadataRoot = await mkdtemp(join(tmpdir(), "shensi-libtv-missing-node-"));
+  try {
+    const missingMetadataDriver = new LibTvMediaDriver();
+    missingMetadataDriver.invoke = async () => { throw new Error("缺少节点时不应调用 CLI"); };
+    const missingMetadata = await missingMetadataDriver.getStatus({
+      job: { providerTaskId: "" },
+      workRoot: missingMetadataRoot,
+    });
+    assert.equal(missingMetadata.providerStatus, "unknown", "LibTV 缺少本地节点记录不能伪装成排队");
+    assert.equal(missingMetadata.errorCode, "LIBTV_NODE_METADATA_MISSING");
+  } finally {
+    await rm(missingMetadataRoot, { recursive: true, force: true });
+  }
+
   const workerSource = await readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8");
   assert.match(workerSource, /LIBTV_STALL_TIMEOUT_MS/u, "LibTV 必须有有界的状态停滞超时");
   assert.match(workerSource, /LIBTV_TASK_STALLED/u, "LibTV 状态长期不变化必须留下可处理的明确错误");
   assert.match(workerSource, /LIBTV_DOWNLOAD_TIMEOUT/u, "LibTV 下载超时必须进入有界的手动重试状态");
+  assert.match(workerSource, /LIBTV_RESULT_PENDING/u, "LibTV 结果资源未就绪必须进入有界只读重试");
   const driverSource = await readFile(new URL("../src/server/media-provider-drivers.mjs", import.meta.url), "utf8");
   assert.match(driverSource, /LIBTV_RUN_TIMEOUT_MS/u, "LibTV 初始运行命令必须有独立的短超时");
   assert.match(driverSource, /LIBTV_DOWNLOAD_TIMEOUT_MS/u, "LibTV 下载命令必须有独立的有界超时");
+  const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /current\.resultResourcePending === true[\s\S]{0,240}LibTV 已生成完成/u, "LibTV 资源未就绪必须在界面显示明确状态");
   console.log("LibTV provider task persistence tests passed");
 } finally {
   const resolved = resolve(root);

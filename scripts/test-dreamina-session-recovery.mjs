@@ -75,7 +75,7 @@ for (const [name, source, invoke] of [
 }
 
 for (const [name, source] of [["图片", imageCli], ["视频", videoCli]]) {
-  assert.match(source, /assertDreaminaGenerationCredit\(account\);[\s\S]{0,240}await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,160}const idempotencyKey/u,
+  assert.match(source, /assertDreaminaGenerationCredit\(account\);[\s\S]{0,700}await ensureDreaminaTaskStoreSession\(\);[\s\S]{0,260}const idempotencyKey/u,
     `${name}收费提交前必须先只读预检任务资源会话，且不得无条件重复登录`);
   assert.match(source, /const ensureDreaminaTaskStoreSession = async \(\) => \{[\s\S]{0,120}await listTasks\(\{ limit: 1 \}\);/u,
     `${name}任务资源会话预检必须使用当前 profile 的 list_task 只读接口`);

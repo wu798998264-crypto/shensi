@@ -80,6 +80,24 @@ const migratedLegacyPublic = normalizeGenerationProfiles({
 const migratedLegacyProfile = migratedLegacyPublic.textConnections.find((item) => item.id === "text-public-kilo");
 assert.equal(migratedLegacyProfile, undefined, "旧免费配置不得继续迁移回设置");
 
+const retiredBuiltInAgent = normalizeGenerationProfiles({
+  textConnections: [{
+    id: "text-public-agent",
+    name: "免费模型",
+    remarkName: "免费模型",
+    systemManaged: true,
+    adapter: "api",
+    provider: "免费模型",
+    protocol: "chat_completions",
+    baseUrl: provider.api.baseUrl,
+    model: "tencent/hy3:free",
+    agentModelId: "tencent/hy3:free",
+  }],
+  activeTextConnectionId: "text-public-agent",
+}).textConnections.find((item) => item.id === "text-public-agent");
+assert.equal(retiredBuiltInAgent.model, provider.api.model, "系统内置免费 Agent 的退役模型必须迁移到当前预设");
+assert.equal(retiredBuiltInAgent.agentModelId, provider.api.model, "系统内置免费 Agent 的运行模型必须同步迁移");
+
 const removedPublic = removeGenerationProfile(autoConfigured, "text", "text-public-kilo");
 const normalizedAfterRemoval = normalizeGenerationProfiles(removedPublic);
 assert.equal(normalizedAfterRemoval.textConnections.some((item) => item.id === "text-public-kilo"), false, "免费配置删除后不得自动恢复");

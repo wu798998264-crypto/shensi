@@ -21,6 +21,9 @@ const PROTOCOL_INLINE_PATTERNS = [
   /interaction[_\.]delivery/iu,
   /mcp__shensi__interaction_delivery/iu,
   /(?:routingMode|taskRoute\.mode|selectedModulePlacementId|selectedSkillPlacementIds|routeReason)\s*[=:]/iu,
+  /No tool output found for function call/iu,
+  /(?:invalid_request_error|function_call_output|call_[A-Za-z0-9_-]{8,})/iu,
+  /https?:\/\/127\.0\.0\.1(?::\d+)?\/v1\/(?:responses|chat\/completions)/iu,
 ];
 
 const INTERNAL_THOUGHT_TAG = /<\/?(?:think|thinking|analysis|reasoning)(?:\s[^>]*)?>[\s\S]*?<\/?(?:think|thinking|analysis|reasoning)\s*>/giu;

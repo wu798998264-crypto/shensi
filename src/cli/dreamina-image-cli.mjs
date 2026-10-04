@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
-import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
+import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaControlPlaneFailureIsTransient, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 
 const argv = process.argv.slice(2);
 const OPERATIONS = new Set(["submit", "status", "download", "cancel", "reconcile", "run"]);
@@ -53,7 +53,11 @@ const dreaminaCommandTimeoutMs = (args = []) => {
   const command = String(args[0] || "").toLowerCase();
   if (command === "version") return 60_000;
   if (command === "user_credit") return 45_000;
-  if (["list_task", "query_result", "cancel_task"].includes(command)) return 90_000;
+  // Status reads should fail fast and let the durable worker continue polling.
+  // A hung query must not add another list_task fallback and turn a transient
+  // provider stall into a multi-minute false verification prompt.
+  if (command === "query_result") return 30_000;
+  if (["list_task", "cancel_task"].includes(command)) return 60_000;
   return 10 * 60_000;
 };
 
@@ -113,7 +117,39 @@ const runOnce = async (args) => {
         } catch {}
         return resolveRun(result);
       }
-      const detail = stderr.trim() || stdout.trim() || "没有错误输出";
+      const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+      const payload = parsePayload(combined);
+      const providerTaskId = dreaminaImageGenerationCommand(args[0])
+        ? normalizeDreaminaTaskId(nestedValue(payload, ["submit_id", "submitId", "task_id", "taskId"])) || dreaminaTaskIdInText(combined)
+        : "";
+      // A generation command may exit non-zero while still returning a real
+      // provider task ID (for example authsdk text is attached to a submitted
+      // task). Preserve that ID as a successful bridge response so the worker
+      // can switch to read-only polling instead of marking the profile logged
+      // out or submitting the prompt a second time.
+      if (providerTaskId) {
+        const bridgedPayload = payload && typeof payload === "object" ? {
+          ...payload,
+          submit_id: providerTaskId,
+          providerTaskId,
+        } : { submit_id: providerTaskId, providerTaskId };
+        const result = {
+          // Include a documented submit_id in stdout because submit() parses
+          // the bridge response payload after this child has exited.
+          stdout: JSON.stringify(bridgedPayload),
+          stderr: stderr.trim(),
+          providerTaskId,
+        };
+        try {
+          Object.defineProperty(result, "__dreaminaCommand", {
+            value: String(args[0] || ""),
+            enumerable: false,
+            configurable: true,
+          });
+        } catch {}
+        return resolveRun(result);
+      }
+      const detail = combined || "没有错误输出";
       const markedCode = detail.match(/(?:^|\r?\n)\[(DREAMINA_[A-Z0-9_]+)\]\s*/)?.[1] || "";
       const error = new Error(`Dreamina CLI 退出码 ${code}：${detail.replace(/(?:^|\r?\n)\[DREAMINA_[A-Z0-9_]+\]\s*/, "\n").trim()}`);
       if (markedCode) error.code = markedCode;
@@ -204,6 +240,15 @@ const preserveDreaminaQueryErrorCode = (error) => {
   return [
     "DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_GENERATION_SESSION_REJECTED",
   ].includes(code) ? code : "DREAMINA_QUERY_TRANSIENT";
+};
+const queryAuthFailureIsFinal = (error) => {
+  const code = String(error?.code || "").toUpperCase();
+  return [
+    "DREAMINA_AUTH_REQUIRED",
+    "DREAMINA_GENERATION_AUTH_REQUIRED",
+    "DREAMINA_GENERATION_SESSION_REJECTED",
+    "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+  ].includes(code) || isDreaminaAuthRequiredResponse(error?.message || error);
 };
 
 const semanticAuthFailure = (command = "") => {
@@ -783,6 +828,14 @@ const query = async ({ download = false, providerTaskId = "" } = {}) => {
   try {
     payload = parsePayload((await run(["query_result", `--submit_id=${id}`, `--download_dir=${downloadDirectory}`])).stdout);
   } catch (error) {
+    // An explicit auth/session verdict is already authoritative for this
+    // provider task. Do not spend another full list_task timeout trying a
+    // historical fallback; that was the source of multi-minute waits before
+    // the UI finally asked for verification.
+    if (queryAuthFailureIsFinal(error) || dreaminaControlPlaneFailureIsTransient(error)) {
+      error.code = preserveDreaminaQueryErrorCode(error);
+      throw error;
+    }
     const listed = await findListedTask({ providerTaskId: id }).catch(() => null);
     if (!listed) {
       error.code = preserveDreaminaQueryErrorCode(error);

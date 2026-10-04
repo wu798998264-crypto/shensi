@@ -188,7 +188,7 @@ assert.doesNotMatch(
 assert.match(appSource, /<option value="opencode">OpenCode<\/option>/u);
 assert.doesNotMatch(appSource, /name="textAgentEngine"[\s\S]{0,240}<option value="deepseek_opencode">/u, "模型设置中的旧兼容运行器不得继续作为单独界面选项");
 assert.doesNotMatch(appSource, /id="quickAgentEngine"[\s\S]{0,180}deepseek_opencode/iu, "快速 Agent 选择器不得暴露旧的反向命名显示项");
-assert.match(appSource, /<label>Agent 配置<select id="quickAgentEngine">/u, "快速 Agent 选择器必须按配置展示，不再暴露运行器映射");
+assert.match(appSource, /<label>(?:文字配置|Agent 配置)<select id="quickAgentEngine">/u, "快速 Agent 选择器必须按配置展示，不再暴露运行器映射");
 assert.match(appSource, /openCodeCatalogGroupsForProvider/u, "OpenCode 模型目录必须按当前服务商隔离显示");
 assert.match(appSource, /openCodeCatalogCacheKey/u, "OpenCode 模型目录缓存必须按凭据来源、服务商和 Base URL 隔离");
 assert.doesNotMatch(appSource, /providerField\.hidden = openCodeEngine/u, "选择 OpenCode 时模型服务商字段必须保持可见");

@@ -54,7 +54,7 @@ assert.match(
 );
 assert.match(
   appSource,
-  /const deleteWhiteboardNode = \(nodeId\) => \{[\s\S]*?removeWhiteboardGenerationReferencesForEdges\(documentState\.canvas/u,
+  /const deleteWhiteboardNode = (?:async )?\(nodeId\) => \{[\s\S]*?removeWhiteboardGenerationReferencesForEdges\(documentState\.canvas/u,
   "直接删除白板卡片必须走引用清理路径",
 );
 assert.match(

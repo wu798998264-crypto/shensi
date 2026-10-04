@@ -782,12 +782,13 @@ export const classifyRequestMode = ({
   //正文 write that the user explicitly prohibited.
   if (guidanceOnlyThisTurn && !explicitFormalAssetWrite) {
     return {
-      mode: "creative",
+      mode: "creative_guidance",
       reason: deliverableType
         ? `用户要求讨论${deliverableLabel}创作方向；具体是否进入创作引导由 Agent 读取面板语义路由后决定`
         : "用户要求讨论创作方向；具体模块由 Agent 读取面板语义路由后决定",
       shensiLed: true,
       panelRouteDelegated: true,
+      guidanceOnly: true,
       freshStart,
       ...deliverableMeta,
     };
@@ -1252,7 +1253,7 @@ export const buildAdaptiveTaskRoute = (input = {}, { executionSurface = "chat" }
     semanticWritePlan: semanticDecision?.writePlan ?? null,
     // Panel delegation selects the capability semantically; it does not by
     // itself prove that the task is guidance-only or forbid a formal artifact.
-    guidanceOnly: route.mode === "creative_guidance"
+    guidanceOnly: (route.mode === "creative_guidance" || route.guidanceOnly === true)
       && !taskContractDecision.authoritative
       && !["candidate", "commit"].includes(semanticWriteIntent)
       && !hasExplicitFormalAssetWriteIntent({ text: input.authorizationInstruction ?? input.text }),

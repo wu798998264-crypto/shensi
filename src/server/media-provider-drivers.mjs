@@ -33,11 +33,11 @@ const libTvRunTransportFailure = (error) => {
   // timeout has no proof that the remote node exists; only a transport error
   // that explicitly identifies a network failure may enter read-only recovery.
   if (code === "DRIVER_TIMEOUT") return false;
-  if (!/^(?:DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code)) return false;
+  if (!/^(?:LIBTV_NETWORK_UNREACHABLE|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code)) return false;
   return /fetch failed|network|网络|socket hang up|connection reset|connection refused|timed out|timeout|超时|temporarily unavailable|暂不可用/iu.test(message);
 };
 
-export const classifyLibTvCliError = (error, { args = [] } = {}) => {
+export const classifyLibTvCliError = (error, { args = [], phase = "" } = {}) => {
   const raw = [error?.stderr, error?.stdout, error?.message]
     .map((value) => String(value || "").trim())
     .filter(Boolean)
@@ -59,6 +59,15 @@ export const classifyLibTvCliError = (error, { args = [] } = {}) => {
   // never re-submit the already completed LibTV node.  Preserve a stable
   // code so the worker can expose the existing download-failed/retry state.
   const downloadArgs = Array.isArray(args) && String(args[0] || "").toLowerCase() === "download";
+  const resultResourcePending = downloadArgs
+    && /(?:没有可下载的资源|no downloadable resources|resource\s*(?:is\s*)?not\s*ready)/iu.test(raw);
+  if (resultResourcePending) {
+    error.providerErrorCode = "LIBTV_RESULT_PENDING";
+    error.submissionOutcomeKnown = true;
+    error.resultResourcePending = true;
+    error.message = "LibTV 已返回生成完成，但结果资源尚未可下载；正在只读重试，不会重新提交任务。";
+    return error;
+  }
   const watermarkFlagsRequested = Array.isArray(args)
     && args.some((value) => ["--without-ai-watermark", "--vip"].includes(String(value)));
   const unsupportedDownloadOption = downloadArgs && watermarkFlagsRequested
@@ -78,6 +87,22 @@ export const classifyLibTvCliError = (error, { args = [] } = {}) => {
     error.providerErrorCode = `LIBTV_PROVIDER_${code}`;
     error.submissionOutcomeKnown = true;
     if (nestedMessage) error.message = String(nestedMessage).trim();
+  }
+  const providerCode = String(error?.providerErrorCode || error?.code || "").trim().toUpperCase();
+  const transportMessage = `${raw} ${error?.cause?.message || ""}`;
+  const transportFailure = /^(?:DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(providerCode)
+    && /fetch failed|network|网络|socket hang up|connection reset|connection refused|timed out|timeout|超时|temporarily unavailable|暂不可用/iu.test(transportMessage);
+  if (transportFailure) {
+    const endpoint = String(transportMessage.match(/(?:https?:\/\/)?api2\.liblib\.art(?::\d+)?/iu)?.[0] || "api2.liblib.art:443");
+    const detail = String(transportMessage.match(/(?:UND_ERR_[A-Z_]+|ConnectTimeoutError|ECONNRESET|ECONNREFUSED|EAI_AGAIN|fetch failed)/u)?.[0] || "fetch failed");
+    error.libTvNetworkFailure = true;
+    error.transportCode = providerCode;
+    error.providerErrorCode = "LIBTV_NETWORK_UNREACHABLE";
+    error.submissionOutcomeKnown = true;
+    error.libTvEndpoint = endpoint;
+    error.libTvPhase = String(phase || "").trim();
+    error.failureCategory = "provider_network";
+    error.message = `LibTV${phase ? ` ${phase}` : ""}网络请求失败（${endpoint}）：${detail}。请检查网络、代理或 DNS 后重试。`;
   }
   return error;
 };
@@ -1086,7 +1111,8 @@ export const libTvDownloadArgs = ({ job = {}, node = {}, outputDir = "" } = {}) 
 ];
 
 const libtvStatus = (value) => {
-  const numeric = Number(value);
+  const source = String(value ?? "").trim();
+  const numeric = source === "" ? NaN : Number(source);
   if (numeric === 0) return "queued";
   if (numeric === 1) return "running";
   if (numeric === 2) return "completed";
@@ -1144,6 +1170,13 @@ export const parseLibTvTaskPayload = (payload = {}) => {
   // completed and let the normal download/validation path decide whether the
   // file is actually usable.
   if (!providerFailure && info.loading === false && urls.length && status !== "failed") status = "completed";
+  // LibTV may report the numeric terminal state before its result URL is
+  // visible. Treat that response as a read-only resource-pending observation,
+  // not as a completed artifact. The worker will keep polling the existing
+  // node and will only enter the download path once a real URL is present;
+  // this avoids a premature download loop and never re-submits the task.
+  const resultResourcePending = !providerFailure && status === "completed" && urls.length === 0;
+  if (resultResourcePending) status = "running";
   const error = String(info.failedReason || info.error || data.failedReason || libTvPayloadErrorMessage(payload) || "");
   const rawCode = libTvPayloadErrorCode(payload);
   const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${rawCode} ${error}`);
@@ -1156,7 +1189,8 @@ export const parseLibTvTaskPayload = (payload = {}) => {
   return {
     providerTaskId: taskId,
     providerStatus: status,
-    rawStatus: String(statusValue),
+    rawStatus: resultResourcePending ? `${String(statusValue)}:resource_pending` : String(statusValue),
+    ...(resultResourcePending ? { resultResourcePending: true } : {}),
     ...(urls[0] ? { resultUrl: String(urls[0]) } : {}),
     ...(error ? { error, errorCode: status === "failed" ? providerErrorCode : "" } : {}),
     ...(status === "unknown" ? {
@@ -1359,6 +1393,29 @@ export const listLibTvModels = async ({ channel = "image", settings = {}, select
     label: String(item.modelName || item.modelKey || "").trim(),
     description: String(item.description || "").trim(),
   })).filter((item) => item.slug);
+  // `model search` is account-scoped and can transiently omit the currently
+  // selected model (for example while the provider refreshes model
+  // entitlements).  The authoritative `model <key>` Schema endpoint is the
+  // same bounded recovery already used for a warm cache; apply it to the
+  // cold-cache path as well so a partial search result cannot be mistaken for
+  // a credential/model mismatch and block a paid submission.  Keep the
+  // modality check strict and do not invent aliases.
+  const selected = String(selectedModel || "").trim();
+  if (selected && !models.some((item) => item.slug === selected)) {
+    try {
+      const schemaPayload = await loadLibTvModelSchema({ modelKey: selected, settings, forceFresh: true });
+      const modality = String(schemaPayload?.modality || schemaPayload?.schema?.modality || "").toLowerCase();
+      const schemaKey = String(schemaPayload?.modelKey || schemaPayload?.schema?.modelKey || "").trim();
+      const expected = channel === "image" ? "image" : channel === "video" ? "video" : "audio";
+      if (schemaKey === selected && (!modality || modality === expected)) {
+        models.push({
+          slug: selected,
+          label: String(schemaPayload?.modelName || schemaPayload?.schema?.modelName || selected),
+          description: String(schemaPayload?.description || schemaPayload?.schema?.description || ""),
+        });
+      }
+    } catch {}
+  }
   libTvModelCatalogCache.set(cacheKey, { value: models, expiresAt: Date.now() + LIBTV_MODEL_SCHEMA_CACHE_TTL_MS });
   return models;
 };
@@ -1497,12 +1554,12 @@ export class LibTvMediaDriver extends MediaProviderDriver {
 
   executable(settings = {}) { return libtvExecutable(settings); }
 
-  async invoke(args, { cwd, timeoutMs = 60_000, raw = false, settings = {} } = {}) {
+  async invoke(args, { cwd, timeoutMs = 60_000, raw = false, settings = {}, phase = "" } = {}) {
     const request = { executable: this.executable(settings), args, cwd, timeoutMs };
     try {
       return raw ? await spawnRaw(request) : await spawnJson(request);
     } catch (error) {
-      throw classifyLibTvCliError(error, { args });
+      throw classifyLibTvCliError(error, { args, phase });
     }
   }
 
@@ -1512,13 +1569,13 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     let lastError = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        await this.invoke(["project", "use", id], { cwd: workRoot, timeoutMs: 30_000, settings });
+        await this.invoke(["project", "use", id], { cwd: workRoot, timeoutMs: 30_000, settings, phase: "切换画布" });
         return;
       } catch (error) {
         lastError = error;
         const code = String(error?.providerErrorCode || error?.code || "").toUpperCase();
         const message = String(error?.message || "");
-        const transport = /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code);
+        const transport = /^(?:LIBTV_NETWORK_UNREACHABLE|DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/u.test(code);
         const eventualConsistency = /(?:project|画布).*(?:not found|不存在|not ready|未就绪|初始化|暂不可用)|(?:not found|不存在|not ready|未就绪).*(?:project|画布)/iu.test(message);
         if ((!transport && !eventualConsistency) || attempt >= 2) throw error;
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 750 * (attempt + 1)));
@@ -1548,7 +1605,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       await this.persistProjectMetadata(metadataPath, active);
       return active;
     }
-    const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000, settings });
+    const created = await this.invoke(["project", "create", `神思-${Date.now()}`, "--team-id", "0"], { cwd: workRoot, timeoutMs: 60_000, settings, phase: "创建画布" });
     const projectUuid = String(created.projectMeta?.uuid || created.uuid || "").trim();
     if (!projectUuid) throw asError("LibTV 创建临时画布未返回 UUID", "LIBTV_PROJECT_CREATE_FAILED");
     // Persist immediately after create, before the eventual-consistency
@@ -1589,6 +1646,22 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     };
   }
 
+  async listExistingNodes(projectUuid, workRoot, settings = {}) {
+    const payload = await this.invoke(["node", "list", "-p", String(projectUuid)], {
+      cwd: workRoot,
+      timeoutMs: 45_000,
+      settings,
+      phase: "读取节点列表",
+    });
+    const nodes = [payload?.nodes, payload?.data?.nodes, payload?.data?.items, payload?.items]
+      .find((value) => Array.isArray(value)) || [];
+    return nodes.map((item) => ({
+      id: String(item?.id || item?.nodeKey || item?.key || "").trim(),
+      name: String(item?.name || item?.nodeName || item?.title || "").trim(),
+      type: String(item?.type || item?.nodeType || "").trim(),
+    })).filter((item) => item.id && item.name);
+  }
+
   async submit({ job, references = [], workRoot, onProviderTaskCreated = null }) {
     await mkdir(workRoot, { recursive: true });
     const metadataPath = join(workRoot, "libtv-node.json");
@@ -1619,6 +1692,22 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     let node;
     try { node = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
     const nodeName = `神思-${job.channel}-${job.id}`;
+    const recoverExisting = Number(job.attempt || 0) > 1
+      || job.safeNoTaskRetry === true
+      || Number(job.transientFailures || 0) > 0;
+    let existingNodes = null;
+    const findExistingNode = async (name) => {
+      if (!recoverExisting || !name) return null;
+      if (!existingNodes) existingNodes = await this.listExistingNodes(project.projectUuid, workRoot, settings);
+      return existingNodes.find((item) => item.name === name) || null;
+    };
+    if (!node?.nodeKey) {
+      const recoveredTarget = await findExistingNode(nodeName);
+      if (recoveredTarget) {
+        node = { projectUuid: project.projectUuid, nodeKey: recoveredTarget.id, nodeName, leftNodes: [] };
+        await writeFile(metadataPath, JSON.stringify(node), "utf8");
+      }
+    }
     if (!node?.nodeKey) {
       const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
       const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${names[modelKey] || modelKey}`];
@@ -1708,13 +1797,20 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       for (let index = 0; index < references.length; index += 1) {
         const reference = references[index];
         if (!reference?.absolutePath) continue;
-        const uploaded = await this.invoke(["upload", `神思参考-${index + 1}-${job.id}`, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000, settings });
+        const referenceName = `神思参考-${index + 1}-${job.id}`;
+        const recoveredReference = await findExistingNode(referenceName);
+        if (recoveredReference?.id) {
+          args.push("--left", recoveredReference.id);
+          leftNodes.push(recoveredReference.id);
+          continue;
+        }
+        const uploaded = await this.invoke(["upload", referenceName, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000, settings, phase: "上传参考物" });
         if (uploaded.nodeKey) {
           args.push("--left", String(uploaded.nodeKey));
           leftNodes.push(uploaded.nodeKey);
         }
       }
-      const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000, settings });
+      const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000, settings, phase: "创建生成节点" });
       node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || "").trim(), nodeName, leftNodes };
       if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
       await writeFile(metadataPath, JSON.stringify(node), "utf8");
@@ -1728,7 +1824,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     }
     let run;
     try {
-      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings });
+      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings, phase: "提交生成" });
     } catch (error) {
       // Node creation is durable. If LibTV blocks on --run, switch to the
       // read-only status path instead of leaving the card spinning forever or
@@ -1762,7 +1858,15 @@ export class LibTvMediaDriver extends MediaProviderDriver {
   async getStatus({ job, workRoot }) {
     let node;
     try { node = JSON.parse(await readFile(join(workRoot, "libtv-node.json"), "utf8")); } catch { node = {}; }
-    if (!node.nodeKey) return { providerTaskId: job.providerTaskId, providerStatus: "queued", rawStatus: "queued" };
+    if (!node.nodeKey) {
+      return {
+        providerTaskId: job.providerTaskId,
+        providerStatus: "unknown",
+        rawStatus: "metadata_missing",
+        errorCode: "LIBTV_NODE_METADATA_MISSING",
+        error: "LibTV 本地任务记录缺少节点 ID，无法安全找回；已阻止重新提交，请从原卡片重新发起。",
+      };
+    }
     const payload = await this.invoke(["node", node.nodeKey, "-p", node.projectUuid], {
       cwd: workRoot,
       timeoutMs: 45_000,
@@ -1771,6 +1875,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       // must still be able to read the node and classify the real provider
       // state instead of crashing on an absent request object.
       settings: job?.request?.settings || {},
+      phase: "查询任务状态",
     });
     return { ...parseLibTvTaskPayload(payload), providerTaskId: parseLibTvTaskPayload(payload).providerTaskId || job.providerTaskId || node.nodeKey };
   }
@@ -1794,7 +1899,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     const outputDir = join(workRoot, "libtv-download");
     await rm(outputDir, { recursive: true, force: true });
     await mkdir(outputDir, { recursive: true });
-    await this.invoke(libTvDownloadArgs({ job, node, outputDir }), { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {} });
+    await this.invoke(libTvDownloadArgs({ job, node, outputDir }), { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {}, phase: "下载结果" });
     const files = (await readdir(outputDir, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => join(outputDir, entry.name));
     if (!files.length) throw asError("LibTV 任务已完成但没有下载到结果文件", "MISSING_RESULT_FILE");
     const sourcePath = files[0];

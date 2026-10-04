@@ -189,6 +189,20 @@ try {
     "独立凭据缺失必须返回结构化认证错误，不能退化为普通 CLI 失败");
   assert.match(runner, /shensi-dreamina-broker-recovery-v1/u,
     "凭证代理被强杀后必须在下一条命令前恢复原 Windows 全局凭据槽");
+  assert.match(runner, /\$temporaryRoot\s*=\s*Join-Path \$brokerLeaseDirectory/u,
+    "租约凭证快照必须从持久租约目录派生，确保生产环境统一落在 E: 数据盘");
+  assert.match(runner, /\$recoveryRoot\s*=\s*Join-Path \$brokerLeaseDirectory/u,
+    "租约恢复标记必须从持久租约目录派生，确保生产环境统一落在 E: 数据盘");
+  assert.match(runner, /\[System\.IO\.File\]::Replace\(\$temporary,\s*\$brokerLeasePath,\s*\[System\.Management\.Automation\.Language\.NullString\]::Value\)/u,
+    "覆盖已有租约时必须传入真正的空备份路径值，不能让 PowerShell $null 触发路径为空异常");
+  assert.match(runner, /\$lockTaken -and \$credentialSlotTouched/u,
+    "只有真正切换过凭证槽的运行器才允许执行恢复清理");
+  assert.match(runner, /\$lockTaken -and -not \$credentialSlotTouched/u,
+    "租约写入或启动前失败时必须保留当前凭证，不得误删全局登录态");
+  assert.doesNotMatch(runner, /\$temporaryRoot\s*=\s*Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\)/u,
+    "租约临时凭证不得继续直接落到系统 C: 临时目录");
+  assert.doesNotMatch(runner, /\$recoveryRoot\s*=\s*Join-Path \(\[System\.IO\.Path\]::GetTempPath\(\)\)/u,
+    "租约恢复凭证不得继续直接落到系统 C: 临时目录");
   assert.match(runner, /\$exitCode -eq 0/u,
     "失败的 CLI 命令不得覆盖已保存的独立账号凭据快照");
   assert.match(jobStore, /identity\.verifiedUserId \|\| identity\.expectedUserId/u,

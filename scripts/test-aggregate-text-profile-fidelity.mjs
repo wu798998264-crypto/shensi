@@ -5,6 +5,7 @@ import {
   normalizeGenerationProfiles,
   portableGenerationSettings,
   withoutTextGenerationConfiguration,
+  createGenerationProfile,
 } from "../src/generation-profiles.js";
 import { getProviderModelOptions } from "../src/model-presets.js";
 
@@ -111,6 +112,10 @@ assert.ok(getProviderModelOptions("自定义兼容接口").some((model) => model
   "自定义兼容接口模型目录必须保留 GPT-6 Astra");
 assert.ok(getProviderModelOptions("OpenAI").some((model) => model.slug === "gpt-6-astra"),
   "OpenAI 模型目录必须保留 GPT-6 Astra");
+assert.equal(createGenerationProfile("text", {
+  provider: "自定义兼容接口",
+  adapter: "api",
+}).model, "gpt-6.1-sol", "新建聚合/兼容文字配置默认必须使用 GPT-6.1 Sol");
 
 const notebookTextProfile = {
   ...aggregateProfile,

@@ -26,6 +26,7 @@ import { freePublicModels, modelDisplayName } from "./src/public-model-catalog.j
 import { buildProjectQuestionContext } from "./src/general-project-context.js";
 import {
   agentEngineDescriptor,
+  agentProfileBelongsToEngine,
   isShensiAgentCompatibleProfile,
   isSystemManagedPublicAgentProfile,
   selectedAgentRuntimeProfile,
@@ -157,6 +158,7 @@ import {
   stopDreaminaQueueJob,
   listGenerationJobs,
   markGenerationJobApplied,
+  markGenerationJobCardApplyPending,
   publicGenerationJob as basePublicGenerationJob,
   recoverLegacyMediaGenerationReplacement,
   recoverOrphanedLegacyMediaGenerationReplacements,
@@ -349,6 +351,7 @@ import {
   startWorkspaceDepthExplorerInstall,
   workspaceDepthExplorerInstallStatus,
   startWorkspaceDepthExplorerRun,
+  cancelWorkspaceDepthExplorerRun,
   workspaceDepthExplorerRunStatus,
   runWorkspaceDepthExplorer,
   separateWorkspaceVideoAudio,
@@ -479,6 +482,29 @@ const generationJobWithLifecycle = (job = {}) => {
         recovery: safe.recovery || null,
       },
     }),
+  };
+};
+const sharedMediaQueueView = (job = {}) => {
+  const settings = job.request?.settings || {};
+  const status = String(job.status || '').toLowerCase();
+  const terminal = ['complete', 'cancelled', 'superseded'].includes(status) || Boolean(job.supersededBy);
+  const attention = ['failed', 'retry_required', 'waiting_credentials', 'waiting_storage', 'reconciliation_required', 'cancel_requested'].includes(status)
+    || job.runtimeNeedsAttention === true;
+  const queued = ['queued', 'submitting'].includes(status) && !job.providerTaskId;
+  const stage = terminal && status === 'complete' ? '结果待回写'
+    : attention ? (status === 'cancel_requested' ? '正在停止' : '需要处理')
+      : queued ? '本地排队' : ({ running: '生成中', polling: '查询生成进度', downloading: '下载及验收' }[status] || status || '未知状态');
+  return {
+    ...job,
+    queuePosition: 0,
+    queueState: queued ? 'queued' : attention ? 'attention' : 'active',
+    queueTone: queued ? 'blue' : attention ? 'red' : 'green',
+    queueReorderable: false,
+    queueProfileName: String(settings.remarkName || settings.connectionName || settings.name || settings.provider || '媒体配置'),
+    queueAccount: String(settings.verifiedUserId || settings.userId || ''),
+    queueModel: String(settings.model || job.request?.generationProfile?.model || ''),
+    queueStage: stage,
+    queueProvider: String(settings.provider || job.provider || ''),
   };
 };
 const runWithLifecycle = (run = {}) => ({
@@ -653,10 +679,35 @@ const startMediaRecoveryWorkers = () => {
   mediaRecoveryWatchdog.unref?.();
 };
 
-const resolveDeepSeekAgentSettings = async (settings = {}) => {
+// A profile switch updates both the selected profile id and the flattened
+// runtime fields. During the short persistence window those two projections
+// can disagree (for example after switching from Codex to Claude Code). Use
+// the explicit flattened engine profile first when it is self-consistent;
+// otherwise keep the requested-id lookup and reject a genuine cross-engine
+// mismatch. This prevents a stale id from producing a false串线 error without
+// ever accepting a profile whose adapter/engine do not match the selected
+// runtime.
+const selectedAgentProfileForEngine = (settings = {}, engine = "") => {
   const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
   const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
-  const requestedProfile = requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null;
+  const requested = requestedId
+    ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) || null
+    : null;
+  const flattened = agentProfileBelongsToEngine(settings, engine) ? settings : null;
+  if (flattened) return flattened;
+  if (requested && agentProfileBelongsToEngine(requested, engine)) return requested;
+  if (!requested && String(settings?.agentEngine || "").trim() === engine && agentProfileForEngineFallback(settings, engine)) return settings;
+  return requested;
+};
+
+const agentProfileForEngineFallback = (settings = {}, engine = "") => (
+  String(settings?.agentEngine || "").trim() === engine
+  && String(settings?.adapter || "").trim() === String(agentEngineDescriptor(engine)?.adapter || "")
+);
+
+const resolveDeepSeekAgentSettings = async (settings = {}) => {
+  const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
+  const requestedProfile = selectedAgentProfileForEngine(settings, "deepseek_opencode");
   if (requestedProfile && !(requestedProfile.provider === "DeepSeek" && requestedProfile.adapter === "cli")) {
     throw Object.assign(new Error("当前 Agent 配置不属于 OpenCode+DeepSeek，已阻止跨引擎串用"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
   }
@@ -687,8 +738,7 @@ const resolveDeepSeekAgentSettings = async (settings = {}) => {
 
 const resolveOpenCodeAgentSettings = (settings = {}) => {
   const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
-  const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
-  const profile = (requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null)
+  const profile = selectedAgentProfileForEngine(settings, "opencode")
     || (String(settings?.agentEngine || "") === "opencode" ? settings : null);
   if (!profile || profile.agentEngine !== "opencode" || profile.adapter !== "cli") {
     throw Object.assign(new Error("当前 Agent 配置不属于通用 OpenCode，已阻止跨引擎串用"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
@@ -719,8 +769,7 @@ const resolveOpenCodeAgentSettings = (settings = {}) => {
 
 const resolveClaudeCodeAgentSettings = (settings = {}) => {
   const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
-  const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
-  const profile = (requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null)
+  const profile = selectedAgentProfileForEngine(settings, "claude_code")
     || (String(settings?.agentEngine || "") === "claude_code" ? settings : null);
   if (!profile || profile.agentEngine !== "claude_code" || profile.adapter !== "cli") {
     throw Object.assign(new Error("当前 Agent 配置不属于 Claude Code，已阻止跨引擎串用"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
@@ -761,8 +810,7 @@ const resolveExternalCliAgentSettings = (settings = {}) => {
     throw Object.assign(new Error("当前 Agent 配置不是外置 CLI 运行器"), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
   }
   const profiles = Array.isArray(settings?.textConnections) ? settings.textConnections : [];
-  const requestedId = String(settings?.activeTextAgentConnectionId || settings?.connectionId || settings?.id || "").trim();
-  const profile = (requestedId ? profiles.find((item) => String(item?.id || item?.connectionId || "") === requestedId) : null)
+  const profile = selectedAgentProfileForEngine(settings, requestedEngine)
     || (requestedEngine === String(settings?.agentEngine || "") ? settings : null);
   if (!profile || String(profile.agentEngine || requestedEngine).trim() !== requestedEngine || profile.adapter !== "cli") {
     throw Object.assign(new Error(`${agentEngineDescriptor(requestedEngine).label} 配置必须使用 CLI 调用方式`), { code: "AGENT_ENGINE_PROFILE_MISMATCH", statusCode: 409 });
@@ -1602,8 +1650,44 @@ const agentRunnerInstallManager = createAgentRunnerInstallManager({
 
 const trustedConversationModelSettings = async (settings = {}, { executionSurface = "agent" } = {}) => {
   const surface = "agent";
+  // API credentials are intentionally redacted from portable text profiles.
+  // Hydrate a custom/aggregate API profile from the process-only credential
+  // store before validating the Agent contract; validating the redacted
+  // record first incorrectly reports CODEX_API_KEY_REQUIRED even when the
+  // user has already completed a real connection test.  Keep the old
+  // contract check as the diagnostic fallback when no local binding exists.
+  let trustedSettings = settings;
   if (Array.isArray(settings.textConnections) && settings.textConnections.length) {
-    const contract = effectiveRuntimeContract({ settings, surface });
+    const requestedId = String(
+      settings.activeTextAgentConnectionId
+      || settings.activeTextConnectionId
+      || (settings.textConnections.length === 1 ? settings.textConnections[0]?.id : "")
+      || "",
+    ).trim();
+    const selected = settings.textConnections.find((profile) => String(profile?.id || profile?.connectionId || "") === requestedId);
+    // A custom/aggregate API profile can arrive from an older workspace with
+    // an empty agentEngine or a provider alias.  The adapter preset is the
+    // authoritative identity here; requiring the old literal label made a
+    // valid DPAPI-restored key invisible and produced a false missing-key
+    // failure after restart.
+    const shouldHydrateCustomApi = selected?.adapter === "api"
+      && getProviderPreset(selected?.provider).custom === true
+      && selected?.credentialSource !== "public";
+    if (shouldHydrateCustomApi) {
+      try {
+        trustedSettings = await resolveTrustedGenerationSettings({
+          channel: "text",
+          settings,
+          route: "agent",
+        });
+      } catch (error) {
+        // Preserve the precise contract diagnostics below for a genuinely
+        // missing credential. Other binding/identity errors must still fail
+        // closed instead of falling back to stale top-level fields.
+        if (String(error?.code || "") !== "LOCAL_RUNTIME_BINDING_REQUIRED") throw error;
+      }
+    }
+    const contract = effectiveRuntimeContract({ settings: trustedSettings, surface });
     if (!contract.ok) {
       throw Object.assign(new Error(contract.message || "当前文字模型配置身份无效"), {
         code: contract.code || "GENERATION_PROFILE_IDENTITY_MISMATCH",
@@ -1612,16 +1696,16 @@ const trustedConversationModelSettings = async (settings = {}, { executionSurfac
       });
     }
   }
-  settings = activateTextExecutionModeProfile(settings, surface);
-  if (String(settings.adapter || "") !== "cli" || String(settings.provider || "") !== "OpenAI") {
-    return { settings, trustedModelMetadata: false };
+  trustedSettings = activateTextExecutionModeProfile(trustedSettings, surface);
+  if (String(trustedSettings.adapter || "") !== "cli" || String(trustedSettings.provider || "") !== "OpenAI") {
+    return { settings: trustedSettings, trustedModelMetadata: false };
   }
   const capabilities = await localCapabilities();
-  const selected = (capabilities.codex?.models ?? []).find((model) => model.slug === String(settings.model || ""));
-  if (!selected?.contextWindowTokens) return { settings, trustedModelMetadata: false };
+  const selected = (capabilities.codex?.models ?? []).find((model) => model.slug === String(trustedSettings.model || ""));
+  if (!selected?.contextWindowTokens) return { settings: trustedSettings, trustedModelMetadata: false };
   return {
     settings: {
-      ...settings,
+      ...trustedSettings,
       contextWindowTokens: selected.contextWindowTokens,
       effectiveContextWindowPercent: selected.effectiveContextWindowPercent || 95,
     },
@@ -2522,6 +2606,36 @@ const listProviderModels = async (settings = {}) => {
       agentCapable: Array.isArray(item?.supported_parameters) && item.supported_parameters.includes("tools"),
     };
   }).filter((item) => item.slug).slice(0, 500);
+};
+
+// Custom/aggregate image APIs intentionally use the synchronous adapter path
+// (processImageJob) instead of a registered media driver.  The settings page
+// still needs a non-billing capability check, so reuse the ordinary /models
+// probe rather than treating the missing driver as an unsupported connection.
+const customImageApiUsesAdapterPath = (settings = {}) => (
+  String(settings.adapter || "").trim().toLowerCase() === "api"
+  && String(settings.protocol || "").trim().toLowerCase() === "images"
+  && getProviderPreset(settings.provider).custom === true
+);
+
+const probeCustomImageApiWithoutBilling = async (settings = {}) => {
+  const models = await listProviderModels({ ...settings, channel: "image", imageChannel: true });
+  const selectedModel = String(settings.model || "").trim();
+  const selectedModelVisible = !selectedModel || models.some((item) => String(item?.slug || "") === selectedModel);
+  return {
+    ok: true,
+    connected: true,
+    available: true,
+    driverRegistered: false,
+    executionMode: "synchronous_api",
+    verificationLevel: "model_visibility",
+    visibilityChecked: true,
+    selectedModelVisible,
+    models,
+    message: selectedModelVisible
+      ? `${settings.provider || "兼容 API"} 图片模型目录连接成功；本次未执行收费生成`
+      : `图片模型目录连接成功，但未确认当前模型 ${selectedModel}`,
+  };
 };
 
 const revealLocalPath = ({ targetPath, selectFile }) => new Promise((resolveReveal, rejectReveal) => {
@@ -3510,32 +3624,37 @@ const handleApiRequest = async (request, response, pathname) => {
     const checkedAt = new Date().toISOString();
     const forceFresh = body.forceFresh === true;
     const driver = resolveMediaProviderDriver({ channel, settings: { ...settings, channel, [`${channel}Channel`]: true } });
-    if (!driver && channel === "image" && settings.adapter === "cli") {
+    if (!driver && channel === "image" && (settings.adapter === "cli" || customImageApiUsesAdapterPath(settings))) {
       try {
-        const capability = await testModelAdapter({ settings, cwd: root });
-        const connected = capability.connected === true;
+        const capability = customImageApiUsesAdapterPath(settings)
+          ? await probeCustomImageApiWithoutBilling(settings)
+          : await testModelAdapter({ settings, cwd: root });
+        const connected = customImageApiUsesAdapterPath(settings)
+          ? capability.connected === true && capability.available === true
+          : capability.connected === true;
         return sendJson(response, 200, {
           ...capability,
           ok: true,
           connected,
           available: connected,
           driverRegistered: false,
-          executionMode: "synchronous_cli",
+          executionMode: capability.executionMode || "synchronous_cli",
           durableProfileSignature,
           checkedAt,
         });
       } catch (error) {
+        const customImageApi = customImageApiUsesAdapterPath(settings);
         return sendJson(response, 200, {
           ok: true,
           connected: false,
           available: false,
           driverRegistered: false,
-          executionMode: "synchronous_cli",
+          executionMode: customImageApi ? "synchronous_api" : "synchronous_cli",
           verificationLevel: "connection_failed",
-          reason: "adapter_probe_failed",
+          reason: customImageApi ? "model_catalog_probe_failed" : "adapter_probe_failed",
           durableProfileSignature,
           checkedAt,
-          message: String(error?.message || "图片 CLI 连接检查失败").slice(0, 500),
+          message: String(error?.message || (customImageApi ? "兼容图片 API 模型目录检查失败" : "图片 CLI 连接检查失败")).slice(0, 500),
           models: [],
         });
       }
@@ -4282,8 +4401,11 @@ const handleApiRequest = async (request, response, pathname) => {
   }
 
   if (pathname === '/api/dreamina-queue' && request.method === 'GET') {
-    const jobs = await listDreaminaQueueJobs();
-    return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
+    const dreaminaJobs = await listDreaminaQueueJobs();
+    // This endpoint backs the shared Dreamina credential queue.  Providers
+    // such as Aggregate API, LibTV and H3 have no shared Dreamina lock and
+    // must never appear here or be mistaken for queued Dreamina work.
+    return sendJson(response, 200, { ok: true, jobs: dreaminaJobs.map(generationJobWithLifecycle) });
   }
 
   if (pathname === '/api/dreamina-queue/stop-failed' && request.method === 'POST') {
@@ -4356,7 +4478,7 @@ const handleApiRequest = async (request, response, pathname) => {
     return sendJson(response, 200, { ok: true, jobs: jobs.map(generationJobWithLifecycle) });
   }
 
-  const generationJobMatch = pathname.match(/^\/api\/generation\/jobs\/(generation-[a-z0-9-]+)(?:\/(heartbeat|complete|fail|applied|resume|cancel|reconcile|dismiss))?$/i);
+  const generationJobMatch = pathname.match(/^\/api\/generation\/jobs\/(generation-[a-z0-9-]+)(?:\/(heartbeat|complete|fail|applied|card-apply-pending|resume|cancel|reconcile|dismiss))?$/i);
   if (generationJobMatch) {
     const [, jobId, action = ""] = generationJobMatch;
     if (!action && request.method === "GET") return sendJson(response, 200, { ok: true, job: generationJobWithLifecycle(await getGenerationJob({ jobId })) });
@@ -4366,6 +4488,7 @@ const handleApiRequest = async (request, response, pathname) => {
       if (action === "complete") return sendJson(response, 200, { ok: true, job: generationJobWithLifecycle(await completeClientGenerationJob({ jobId, result: body.result })) });
       if (action === "fail") return sendJson(response, 200, { ok: true, job: generationJobWithLifecycle(await failClientGenerationJob({ jobId, message: body.message, retryRequired: body.retryRequired !== false })) });
       if (action === "applied") return sendJson(response, 200, { ok: true, job: generationJobWithLifecycle(await markGenerationJobApplied({ jobId, resultAssetId: body.resultAssetId, cardReadback: body.cardReadback })) });
+      if (action === "card-apply-pending") return sendJson(response, 200, { ok: true, job: generationJobWithLifecycle(await markGenerationJobCardApplyPending({ jobId, state: body.state, error: body.error })) });
       if (action === "reconcile") {
         const previous = await getGenerationJob({ jobId });
         const trustedSettings = await trustedMediaRecoverySettings({ job: previous, suppliedSettings: body.settings ?? {} });
@@ -9822,6 +9945,11 @@ const handleApiRequest = async (request, response, pathname) => {
     const result = await workspaceDepthExplorerRunStatus(requestUrl.searchParams.get("jobId") || "");
     if (result.status === "complete") await Promise.all((result.outputs || []).map((output) => nutstoreSyncEngine.noteLocalChange(output.attachment.relativePath).catch(() => {})));
     return sendJson(response, 200, result);
+  }
+
+  if (pathname === "/api/workspace/depth-explorer/run/stop" && request.method === "POST") {
+    const body = await readJsonBody(request, 16 * 1024);
+    return sendJson(response, 200, await cancelWorkspaceDepthExplorerRun(String(body.jobId || "")));
   }
 
   if (pathname === "/api/local-h3/probe" && request.method === "POST") {

@@ -139,8 +139,11 @@ export const saveWorkspaceRecoveryCheckpoint = async ({
   omittedStateKeys = [],
   revision = 0,
   baseSavedAt = "",
+  baseStateStamp = "",
+  baseWorkspaceCommitId = "",
   clientId = "",
   whiteboardGenerationDrafts = null,
+  deletedDocumentIds = [],
 } = {}) => {
   const resolvedWorkspacePath = validWorkspacePath(workspacePath);
   if (!state || typeof state !== "object") throw new Error("恢复检查点缺少工作区状态");
@@ -163,12 +166,17 @@ export const saveWorkspaceRecoveryCheckpoint = async ({
     clientId: normalizedClientId,
     revision: nextRevision,
     baseSavedAt: String(baseSavedAt || state.savedAt || ""),
+    baseStateStamp: String(baseStateStamp || ""),
+    baseWorkspaceCommitId: String(baseWorkspaceCommitId || ""),
     updatedAt: new Date().toISOString(),
     dirty: true,
     stateMode: normalizedStateMode,
     ...(normalizedStateMode === RECOVERY_DOCUMENT_OVERLAY_MODE
       ? { documentIds: normalizedDocumentIds }
       : {}),
+    deletedDocumentIds: [...new Set((Array.isArray(deletedDocumentIds) ? deletedDocumentIds : [])
+      .map((documentId) => String(documentId || "").trim())
+      .filter(Boolean))].slice(0, 20_000),
     omittedStateKeys: Array.isArray(omittedStateKeys)
       ? omittedStateKeys.filter((key) => typeof key === "string").slice(0, 32)
       : [],

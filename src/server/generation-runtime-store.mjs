@@ -766,8 +766,19 @@ export const resolveTrustedGenerationSettings = async ({
   if (adapter === "api" && candidate.apiKey) {
     const baseUrl = validateBaseUrl(candidate.baseUrl);
     if (baseUrl) {
+      // A just-hydrated credential may arrive before its durable binding has
+      // finished writing. Keep the selected text profile projection in sync
+      // for this request so the Agent contract sees the same in-memory key as
+      // the flattened runtime fields; the profile remains process-local and
+      // is never persisted by the portable settings store.
+      const textConnections = channel === "text" && Array.isArray(candidate.textConnections)
+        ? candidate.textConnections.map((profile) => String(profile?.id || profile?.connectionId || "") === requested.profileId
+          ? { ...profile, apiKey: candidate.apiKey, baseUrl, adapter, provider, protocol }
+          : profile)
+        : candidate.textConnections;
       return {
         ...candidate,
+        ...(Array.isArray(textConnections) ? { textConnections } : {}),
         id: requested.profileId,
         connectionId: requested.profileId,
         adapter: "api",

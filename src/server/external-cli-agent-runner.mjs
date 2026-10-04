@@ -384,6 +384,7 @@ export const runExternalCliAgent = async ({
   isWaitingForUser = () => false,
   onEvent = null,
   onProcess = null,
+  lightweightGeneral = false,
   spawnProcess = spawn,
   resolveLaunch = resolveRunnerLaunch,
 } = {}) => {
@@ -391,7 +392,9 @@ export const runExternalCliAgent = async ({
   if (!EXTERNAL_ENGINES.has(runner)) throw errorForRunner(runner, "所选运行器未提供外置 CLI Agent 接口", "EXTERNAL_CLI_RUNNER_UNSUPPORTED");
   const task = clean(prompt);
   if (!task) throw errorForRunner(runner, `${runnerLabel(runner)} 没有收到任务指令`, "EXTERNAL_CLI_PROMPT_REQUIRED");
-  if (!nativeHost?.url) throw errorForRunner(runner, `${runnerLabel(runner)} 缺少神思 MCP 工具入口`, "EXTERNAL_CLI_MCP_REQUIRED");
+  // Ordinary conversation turns intentionally run without an MCP host. A
+  // routed task still requires the host and keeps this guard unchanged.
+  if (!nativeHost?.url && lightweightGeneral !== true) throw errorForRunner(runner, `${runnerLabel(runner)} 缺少神思 MCP 工具入口`, "EXTERNAL_CLI_MCP_REQUIRED");
   const sanitizeExternalOutput = (value, options = {}) => runner === "workbuddy"
     ? sanitizeWorkBuddyConversationOutput(value, options)
     : sanitizeConversationOutput(value, options);
@@ -442,7 +445,9 @@ export const runExternalCliAgent = async ({
     ].join("\n")
     : "";
   const resources = deepSeekAgentContextText(contextBlocks);
-  const finalPrompt = [system, workBuddyToolBridgeInstruction, task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
+  const finalPrompt = runner === "workbuddy" && lightweightGeneral === true
+    ? [system, task].filter(Boolean).join("\n\n")
+    : [system, workBuddyToolBridgeInstruction, task, resources ? `神思提供的本轮受控上下文：\n${resources}` : ""].filter(Boolean).join("\n\n");
   if (Buffer.byteLength(finalPrompt, "utf8") > MAX_INPUT_BYTES) {
     throw errorForRunner(runner, `${runnerLabel(runner)} 输入超过 8MB，已停止本次调用`, "EXTERNAL_CLI_INPUT_TOO_LARGE");
   }
@@ -519,6 +524,19 @@ export const runExternalCliAgent = async ({
       workspace,
       permissionMode: accessMode,
     })];
+    if (runner === "workbuddy" && lightweightGeneral === true && !nativeHost?.url) {
+      // The default WorkBuddy print template contains the Shensi MCP config
+      // flags. With no host, passing an empty strict config makes the CLI
+      // wait for a non-existent bridge and presents as a provider timeout.
+      const withoutMcp = [];
+      for (let index = 0; index < args.length; index += 1) {
+        const current = String(args[index] || "");
+        if (/^--mcp-config$/iu.test(current)) { index += 1; continue; }
+        if (/^--strict-mcp-config$/iu.test(current)) continue;
+        withoutMcp.push(args[index]);
+      }
+      args = withoutMcp;
+    }
     const usesPrompt = runner === "workbuddy" ? false : /\{prompt(?:File)?\}/u.test(template);
     // Templates without a prompt placeholder receive the same prompt through stdin.
     const sendPromptToStdin = !usesPrompt;

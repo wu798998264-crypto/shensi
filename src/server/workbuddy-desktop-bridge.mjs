@@ -251,28 +251,117 @@ const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120
   signal?.addEventListener?.("abort", abort, { once: true });
   try {
     const response = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(message), signal: controller.signal });
-    const body = await response.text();
     if (!response.ok) {
+      const body = await response.text();
       const message = `WorkBuddy ACP 请求失败（${response.status}）：${body.slice(-400)}`;
       if ([401, 403].includes(Number(response.status))) throw workBuddyAuthError(message, response.status);
       throw Object.assign(new Error(message), { code: "WORKBUDDY_ACP_REQUEST_FAILED", statusCode: Number(response.status) || 0 });
     }
-    const messages = response.headers.get("content-type")?.includes("text/event-stream") ? parseSse(body) : [JSON.parse(body)];
-    for (const event of messages) if (event?.method === "session/update") onUpdate?.(event.params || {});
-    return messages.find((event) => event?.id === message.id) || messages.at(-1) || {};
+    const isSse = response.headers.get("content-type")?.includes("text/event-stream");
+    if (!isSse || !response.body?.getReader) {
+      const body = await response.text();
+      const messages = isSse ? parseSse(body) : [JSON.parse(body)];
+      for (const event of messages) if (event?.method === "session/update") onUpdate?.(event.params || {});
+      return messages.find((event) => event?.id === message.id) || messages.at(-1) || {};
+    }
+    // WorkBuddy keeps the ACP event stream open after emitting the JSON-RPC
+    // response. Waiting for response.text() therefore turns a completed
+    // prompt into a timeout. Consume frames incrementally and resolve as soon
+    // as this request's response id arrives; session updates remain live.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const parseFrame = (frame) => {
+      const data = frame.split(/\r?\n/u)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data) return null;
+      try { return JSON.parse(data); } catch { return null; }
+    };
+    for (;;) {
+      const chunk = await reader.read();
+      buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done });
+      let boundary = buffer.search(/\r?\n\r?\n/u);
+      while (boundary >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary).replace(/^\r?\n\r?\n/u, "");
+        const event = parseFrame(frame);
+        if (event?.method === "session/update") onUpdate?.(event.params || {});
+        if (event && String(event.id ?? "") === String(message.id ?? "")) {
+          await reader.cancel().catch(() => {});
+          return event;
+        }
+        if (message.method === "session/prompt" && event?.method === "session/update" && promptUpdateIsTerminal(event.params)) {
+          await reader.cancel().catch(() => {});
+          return { jsonrpc: "2.0", id: message.id, result: { status: "completed" }, params: event.params };
+        }
+        boundary = buffer.search(/\r?\n\r?\n/u);
+      }
+      if (chunk.done) {
+        const event = parseFrame(buffer) || (() => { try { return JSON.parse(buffer); } catch { return null; } })();
+        if (event?.method === "session/update") onUpdate?.(event.params || {});
+        if (message.method === "session/prompt" && event?.method === "session/update" && promptUpdateIsTerminal(event.params)) {
+          return { jsonrpc: "2.0", id: message.id, result: { status: "completed" }, params: event.params };
+        }
+        return event || {};
+      }
+    }
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener?.("abort", abort);
   }
 };
 
-const updateText = (params = {}) => {
-  if (params?.update?.sessionUpdate !== "agent_message_chunk") return "";
-  const content = params.update.content;
+const ACP_TEXT_UPDATE_KINDS = new Set([
+  "agent_message_chunk",
+  "agent_message",
+  "assistant_message",
+  "assistant",
+  "message",
+  "text",
+  "text_delta",
+  "final_message",
+  "final",
+]);
+
+export const updateText = (params = {}) => {
+  const update = params?.update && typeof params.update === "object" ? params.update : params;
+  const kind = clean(update?.sessionUpdate || update?.type || update?.kind || "").toLocaleLowerCase();
+  if (!ACP_TEXT_UPDATE_KINDS.has(kind)) return "";
+  const content = update.content ?? update.message ?? update.text ?? update.delta ?? update.output;
   if (typeof content === "string") return content;
-  if (typeof content?.text === "string") return content.text;
-  if (typeof content?.delta === "string") return content.delta;
+  return terminalAcpText(content);
+};
+
+// ACP implementations differ in where the terminal assistant text is
+// placed.  Streaming builds use `update.content.text`, while some desktop
+// builds return the completed message under `result.content`, `result.output`
+// or a nested `message`.  Keep this extractor deliberately text-only so
+// protocol/status/error objects never become user-visible output.
+export const terminalAcpText = (value, depth = 0, seen = new Set()) => {
+  if (depth > 6 || value == null) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((item) => terminalAcpText(item, depth + 1, seen)).filter(Boolean).join("");
+  if (typeof value !== "object" || seen.has(value)) return "";
+  seen.add(value);
+  for (const key of ["text", "output_text", "content", "output", "message", "answer", "final", "result", "params"]) {
+    const candidate = terminalAcpText(value[key], depth + 1, seen);
+    if (candidate) return candidate;
+  }
   return "";
+};
+
+// Some WorkBuddy builds keep the ACP SSE connection open and omit the JSON-RPC
+// response id for `session/prompt`. They do, however, emit a terminal
+// session/update frame. Treat that frame as the prompt response; otherwise a
+// completed answer sits in an open stream until the six-minute watchdog fires.
+const promptUpdateIsTerminal = (params = {}) => {
+  const update = params?.update && typeof params.update === "object" ? params.update : params;
+  const status = clean(update?.status || update?.state || update?.sessionUpdate || update?.type).toLocaleLowerCase();
+  if (update?.completed === true || update?.finished === true || update?.done === true) return true;
+  return /^(?:completed?|done|finished?|stopped|cancelled|canceled)$/u.test(status)
+    || /(?:turn|prompt|session|agent)[ _-]*(?:complete|completed|done|end|ended|finish|finished)$/u.test(status);
 };
 
 const connectAcp = async (endpoint, options = {}) => {
@@ -337,7 +426,15 @@ export const resolveWorkBuddyModelId = (requested = "", available = [], labels =
     ["hy3x", "hy3"],
   ]);
   const labelNeedle = legacyAliases.get(normalized) || normalized;
-  const labelMatch = models.find((item) => normalizedModelLabel(item.name) === labelNeedle);
+  // The desktop catalogue disambiguates duplicate labels with a credit suffix
+  // (for example `Hy3（积分倍率 x0.00）`).  Match the stable model id first,
+  // then the visible label prefix; otherwise a persisted legacy `hy3` value
+  // is incorrectly reported as unavailable even though `hy3-c` is runnable.
+  const idMatch = models
+    .filter((item) => normalizedModelLabel(item.id).startsWith(labelNeedle))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)))[0];
+  if (idMatch) return idMatch.id;
+  const labelMatch = models.find((item) => normalizedModelLabel(item.name).startsWith(labelNeedle));
   if (labelMatch) return labelMatch.id;
   return "";
 };
@@ -470,7 +567,12 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
       onEvent?.({ type: "text", phase: "text_delta", text: delta, part: { type: "text", id: "workbuddy-acp", text: delta } });
     };
     const promptResult = await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 7, method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: String(prompt || "") }] } }, { signal, timeoutMs, onUpdate: update });
-    const finalText = text || updateText(promptResult?.params || {}) || clean(promptResult?.result?.text || "");
+    // Do not use `result || params` here: a valid JSON-RPC result often only
+    // carries `{ status: "completed" }`, while the actual assistant message
+    // remains in params or in the last session/update frame.
+    const finalText = text
+      || updateText(promptResult?.params || {})
+      || terminalAcpText(promptResult);
     if (!finalText) throw new Error("WorkBuddy ACP 已结束，但没有返回可用文本");
     return { text: finalText.trim(), sessionId, actualProvider: "WorkBuddy", actualModel: effectiveModel || "auto", executionRuntime: "workbuddy_desktop_acp", permissionMode: "shensi_only" };
   } finally {

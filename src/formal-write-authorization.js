@@ -82,6 +82,11 @@ const noWriteTargetMatches = ({ source = "", targetDocumentIds = [] } = {}) => {
 const explicitNoWriteGeneration = ({ source = "", action = "", targetDocumentIds = [], formalReviewWrite = false } = {}) => {
   const text = clean(source);
   if (!text || formalReviewWrite || action === "rename") return false;
+  // A negated generation request is guidance/read-only even when the same
+  // sentence mentions a creative deliverable (for example, “我想写一个
+  // 故事……不要生成正文，也不要落盘”).  Do not turn that negated intent
+  // into a candidate-only write authorization.
+  if (NEGATED_GENERATION.test(text)) return false;
   const affirmative = text.replace(NEGATED_WRITE_CLAUSE, " ").trim();
   const generationIntent = FORMAL_DELIVERABLE_CREATE.test(affirmative)
     || CREATE_COMMAND.test(affirmative)

@@ -1605,12 +1605,44 @@ const markGenerationJobAppliedTransition = ({ jobId, resultAssetId = "", cardRea
   }
   return {
     appliedAt: job.appliedAt || new Date().toISOString(),
+    cardApplyState: "applied",
+    cardApplyError: "",
+    cardApplyFailedAt: "",
+    cardApplyCompletedAt: new Date().toISOString(),
     resultAssetId: normalizedAssetId,
     ...(validCardReadback ? {
       cardReadbackVerified: true,
       cardReadbackAt: String(readback.verifiedAt || new Date().toISOString()),
       cardReadbackReceipt: readback,
     } : {}),
+  };
+});
+
+// Persist the card-write phase independently from the provider result.  A
+// downloaded/verified asset must never remain indistinguishable from a card
+// write that is still in progress, especially after a restart or save
+// conflict.  This transition does not touch provider submission, polling or
+// credential leases; it only records local card reconciliation state.
+const normalizeCardApplyState = (value) => {
+  const state = String(value || "pending").trim().toLowerCase();
+  return ["pending", "applying", "failed"].includes(state) ? state : "pending";
+};
+
+export const markGenerationJobCardApplyPending = ({ jobId, state = "pending", error = "" } = {}) => transitionJob(safeJobId(jobId), (job) => {
+  if (job.status !== "complete") {
+    throw jobTransitionError("只有已完成且已落盘的任务可以记录卡片回写状态", "GENERATION_JOB_CARD_APPLY_NOT_COMPLETE");
+  }
+  if (job.appliedAt && state !== "applied") return null;
+  const normalizedState = normalizeCardApplyState(state);
+  const now = new Date().toISOString();
+  const attempts = Math.max(0, Number(job.cardApplyAttempts) || 0) + (normalizedState === "applying" ? 1 : 0);
+  return {
+    cardApplyState: normalizedState,
+    ...(normalizedState === "applying" ? { cardApplyStartedAt: job.cardApplyStartedAt || now } : {}),
+    ...(normalizedState === "failed" ? { cardApplyFailedAt: now } : {}),
+    ...(normalizedState !== "failed" ? { cardApplyFailedAt: "" } : {}),
+    cardApplyError: String(error || "").slice(0, 2000),
+    cardApplyAttempts: attempts,
   };
 });
 
@@ -2074,6 +2106,14 @@ export const completeMediaGenerationJob = ({ jobId, patch = {}, allowProviderCom
   if (cancelPending && !allowProviderCompletionAfterCancel) return null;
   return {
     ...scrubSecrets(patch),
+    ...(job.target?.targetType === "whiteboard-node" ? {
+      cardApplyState: "pending",
+      cardApplyError: "",
+      cardApplyStartedAt: "",
+      cardApplyFailedAt: "",
+      cardApplyCompletedAt: "",
+      cardApplyAttempts: 0,
+    } : {}),
     status: "complete",
     providerStatus: "completed",
     providerErrorCode: "",

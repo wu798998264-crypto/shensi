@@ -34,7 +34,11 @@ assert.equal(needsInteractivePage({ text: `${"公开榜单正文。".repeat(900)
 assert.equal(needsInteractivePage({ text: "请先登录后查看榜单" }), true);
 assert.equal(needsInteractivePage({ text: "公开内容", hasPasswordField: true }), true);
 const isolatedAgentEnvironment = conversationAgentProcessEnvironment({ PATH: "test-path", SHENSI_BROWSER_BRIDGE_URL: "http://127.0.0.1:1", SHENSI_BROWSER_BRIDGE_TOKEN: "secret", SHENSI_OTHER: "keep" });
-assert.deepEqual(isolatedAgentEnvironment, { PATH: "test-path", SHENSI_OTHER: "keep" }, "浏览器桥接地址和令牌不得进入模型子进程环境");
+assert.deepEqual(
+  isolatedAgentEnvironment,
+  { PATH: "test-path", SHENSI_OTHER: "keep", SHENSI_WORKBUDDY_BRIDGE_RUNTIME: "1" },
+  "浏览器桥接地址和令牌不得进入模型子进程环境；仅允许内部桥接运行标记",
+);
 
 const bridgeCalls = [];
 const questions = [];

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { decodeCodexImageItem, decodeCodexImageResult, runCodexImageAppServer } from "../src/cli/codex-image-app-server.mjs";
 import { resolveLocalCodexLaunch } from "../src/cli/codex-launch.mjs";
-import { parseStructuredCliError } from "../src/server/adapters.mjs";
+import { generateImageWithAdapter, parseStructuredCliError } from "../src/server/adapters.mjs";
 import { normalizeGenerationProfiles } from "../src/generation-profiles.js";
 
 const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl7ZQAAAABJRU5ErkJggg==";
@@ -39,6 +39,11 @@ try {
   assert.equal(saved.extension, "png");
   assert.equal(saved.bytes.length, 67);
   assert.equal((await readFile(saved.savedPath)).length, 67);
+  await assert.rejects(
+    decodeCodexImageItem({ type: "imageGeneration", status: "completed", result: "generated", savedPath: join(savedImageRoot, "missing-result.png") }),
+    (error) => error.code === "OPENAI_IMAGE_INVALID_RESULT",
+    "CLI 报告完成但结果文件不存在时不得验收成功",
+  );
 } finally {
   await rm(savedImageRoot, { recursive: true, force: true });
 }
@@ -47,6 +52,16 @@ const structuredError = parseStructuredCliError(`真实错误\nSHENSI_MEDIA_ERRO
 assert.equal(structuredError.code, "OPENAI_IMAGE_INVALID_RESULT");
 assert.equal(structuredError.submissionOutcomeKnown, true);
 assert.equal(structuredError.structuredMessage, "真实错误");
+
+// OpenAI CLI capability probes must not inherit Dreamina account identity
+// requirements.  The CLI's own --check receipt has no dreaminaCliProfile.
+const adaptersSource = await readFile(new URL("../src/server/adapters.mjs", import.meta.url), "utf8");
+const openAiProbeStart = adaptersSource.indexOf('settings.imageChannel === true && settings.cliPath === OPENAI_IMAGE_CLI_ALIAS');
+const dreaminaProbeStart = adaptersSource.indexOf('settings.imageChannel === true && settings.cliPath === DREAMINA_IMAGE_CLI_ALIAS');
+assert.ok(openAiProbeStart >= 0 && dreaminaProbeStart > openAiProbeStart, "OpenAI/即梦探测分支必须存在且有明确边界");
+const openAiProbe = adaptersSource.slice(openAiProbeStart, dreaminaProbeStart);
+assert.doesNotMatch(openAiProbe, /dreaminaCliProfile|DREAMINA_PROFILE_(?:REQUIRED|ID_MISMATCH)/u, "OpenAI CLI 探测不得要求即梦配置 ID");
+assert.match(openAiProbe, /payload\.sessionChecked/u, "OpenAI CLI 探测必须使用自身 --check 回执");
 
 const fakeServer = async () => {
   const child = new EventEmitter();
@@ -131,6 +146,27 @@ const messageOnlyServer = async () => {
   return server;
 };
 
+let unauthenticatedTurnStarts = 0;
+const unauthenticatedServer = async () => {
+  const server = await fakeServer();
+  const originalWrite = server.child.stdin._write.bind(server.child.stdin);
+  server.child.stdin._write = (chunk, encoding, done) => {
+    const source = chunk.toString("utf8");
+    if (source.includes('"method":"turn/start"')) unauthenticatedTurnStarts += 1;
+    if (!source.includes('"method":"account/read"')) return originalWrite(chunk, encoding, done);
+    const request = JSON.parse(source.trim());
+    server.child.stdout.write(`${JSON.stringify({ id: request.id, result: { account: null } })}\n`);
+    done();
+  };
+  return server;
+};
+await assert.rejects(
+  runCodexImageAppServer({ cwd: process.cwd(), model: "gpt-test", prompt: "未登录禁止生成", imageCount: 1, timeoutMs: 60_000, launchServer: unauthenticatedServer }),
+  (error) => error.code === "MISSING_CREDENTIALS",
+  "未登录必须返回真实凭证错误",
+);
+assert.equal(unauthenticatedTurnStarts, 0, "未登录不得调用收费生成");
+
 await assert.rejects(
   runCodexImageAppServer({ cwd: process.cwd(), model: "gpt-test", prompt: "missing reference", imageCount: 1, timeoutMs: 60_000, launchServer: messageOnlyServer }),
   (error) => error.code === "OPENAI_IMAGE_INCOMPLETE_RESULT" && /请求缺少参考图/u.test(error.message),
@@ -156,6 +192,34 @@ await assert.rejects(
   runCodexImageAppServer({ cwd: process.cwd(), model: "gpt-test", prompt: "generate one image", imageCount: 1, timeoutMs: 60_000, launchServer: turnOnlyServer }),
   (error) => error.code === "OPENAI_IMAGE_TOOL_NOT_INVOKED" && /未提交生图任务/u.test(error.message),
 );
+
+// A successful CLI exit without an output file is not a successful image
+// generation.  Keep this local: it exercises the exact parser boundary
+// without invoking the OpenAI CLI or spending credits.
+const cliNoResultRoot = await mkdtemp(join(tmpdir(), "shensi-gpt-image-no-result-"));
+try {
+  await assert.rejects(
+    generateImageWithAdapter({
+      settings: {
+        provider: "OpenAI",
+        adapter: "cli",
+        protocol: "images",
+        model: "gpt-image-2.5",
+        cliPath: process.execPath,
+        cliArgs: '-e "process.exit(0)"',
+        workspacePath: cliNoResultRoot,
+      },
+      prompt: "本地夹具：CLI 不产生结果文件",
+      aspectRatio: "1:1",
+      quality: "standard",
+      imageCount: 1,
+    }),
+    (error) => /媒体 CLI 未输出可读取的文件/u.test(String(error?.message || "")),
+    "CLI 退出成功但没有结果文件时必须明确失败，不能伪造生成成功",
+  );
+} finally {
+  await rm(cliNoResultRoot, { recursive: true, force: true });
+}
 
 const retiredBuiltIns = normalizeGenerationProfiles({
   activeImageConnectionId: "image-openai-cli",
@@ -185,4 +249,4 @@ const namedBuiltInAliasesAreStillRetired = normalizeGenerationProfiles({
 assert.equal(namedBuiltInAliasesAreStillRetired.imageConnections.filter((profile) => ["image-default", "image-openai-cli"].includes(profile.id)).length, 0);
 assert.equal(namedBuiltInAliasesAreStillRetired.activeImageConnectionId, "image-cockpit-aggregate-api");
 
-console.log("Shensi v2.5.1 GPT Image app-server tests passed");
+console.log("Shensi v2.5.1 GPT Image app-server and no-result-file tests passed");

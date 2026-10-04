@@ -28,7 +28,13 @@ export const parseOpenCodeModelCatalog = (raw = "") => {
   let explicitDefault = "";
   try {
     const parsed = JSON.parse(clean);
-    const source = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.models) ? parsed.models : [];
+    const source = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.models)
+        ? parsed.models
+        : Array.isArray(parsed?.data)
+          ? parsed.data
+          : [];
     values = source.map((item) => typeof item === "string" ? item : item?.id || item?.slug || item?.model);
     explicitDefault = modelId(parsed?.defaultModel || parsed?.default?.id || parsed?.default || "");
   } catch {
@@ -39,7 +45,13 @@ export const parseOpenCodeModelCatalog = (raw = "") => {
     const source = (() => {
       try {
         const parsed = JSON.parse(clean);
-        return Array.isArray(parsed) ? parsed : Array.isArray(parsed?.models) ? parsed.models : [];
+        return Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.models)
+            ? parsed.models
+            : Array.isArray(parsed?.data)
+              ? parsed.data
+              : [];
       } catch { return []; }
     })();
     for (const item of source) {
@@ -108,6 +120,31 @@ const spawnCaptured = ({ executable, args, cwd, environment, timeoutMs }) => new
   timer.unref?.();
 });
 
+const fetchOfficialZenCatalog = async ({ timeoutMs = 20_000 } = {}) => {
+  if (typeof fetch !== "function") return "";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch("https://opencode.ai/zen/v1/models", { signal: controller.signal });
+    if (!response.ok) return "";
+    const parsed = await response.json().catch(() => null);
+    if (!parsed || !Array.isArray(parsed.data)) return "";
+    return JSON.stringify({
+      ...parsed,
+      data: parsed.data.map((item) => ({
+        ...(item && typeof item === "object" ? item : {}),
+        id: String(item?.id || item?.slug || item?.model || "").includes("/")
+          ? String(item?.id || item?.slug || item?.model || "")
+          : `opencode/${String(item?.id || item?.slug || item?.model || "")}`,
+      })),
+    });
+  } catch {
+    return "";
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 const probe = async ({ cwd, environment, credentialSource = "opencode", launchResolver, timeoutMs }) => {
   const freeProbe = String(credentialSource || "").trim().toLowerCase() === "opencode_free";
   let isolationRoot = "";
@@ -137,14 +174,22 @@ const probe = async ({ cwd, environment, credentialSource = "opencode", launchRe
       environment: probeEnvironment,
       timeoutMs: Math.min(timeoutMs, 8_000),
     });
-    const catalogOutput = await spawnCaptured({
-      executable: launch.executable,
-      args: [...prefix, "models", "--pure"],
-      cwd,
-      environment: probeEnvironment,
-      timeoutMs,
-    });
-    const parsed = parseOpenCodeModelCatalog(catalogOutput);
+    let catalogOutput = "";
+    for (const args of [[...prefix, "models", "--pure"], [...prefix, "models", "--standalone"]]) {
+      try {
+        catalogOutput = await spawnCaptured({ executable: launch.executable, args, cwd, environment: probeEnvironment, timeoutMs });
+        if (parseOpenCodeModelCatalog(catalogOutput).models.length) break;
+      } catch {
+        // Older and desktop OpenCode builds expose different model commands.
+      }
+    }
+    let parsed = parseOpenCodeModelCatalog(catalogOutput);
+    // OpenCode desktop v2 no longer prints the model list for a standalone
+    // CLI invocation. The public Zen catalogue is authoritative for the
+    // login-free pool, so use it only when the free probe is empty.
+    if (!parsed.models.length && freeProbe) {
+      parsed = parseOpenCodeModelCatalog(await fetchOfficialZenCatalog({ timeoutMs }));
+    }
     if (!parsed.models.length) throw new Error("OpenCode 没有返回任何完整 provider/model 模型 ID");
     return {
       available: true,

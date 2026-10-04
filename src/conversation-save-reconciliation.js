@@ -1,3 +1,10 @@
+import {
+  conversationRollbackRevision,
+  filterConversationRollbackMessages,
+  filterConversationRollbackQueue,
+  rollbackTombstoneSet,
+} from "./conversation-rollback.js";
+
 export const CONVERSATION_SAVE_KEYS = Object.freeze([
   "conversations",
   "messages",
@@ -174,6 +181,22 @@ const recordFreshness = (value = {}) => Math.max(
 // conflict should not make every later conversation unusable; choose the
 // freshest record and union its task metadata instead.
 const mergeConversationRecord = ({ baseline, current, persisted, path }) => {
+  const currentRollbackRevision = conversationRollbackRevision(current);
+  const baselineRollbackRevision = conversationRollbackRevision(baseline);
+  const persistedRollbackRevision = conversationRollbackRevision(persisted);
+  // A newer local rollback is an explicit deletion, not an append-only task
+  // update.  Keep the current timeline intact when an older save races it.
+  if (currentRollbackRevision > Math.max(baselineRollbackRevision, persistedRollbackRevision)) {
+    return {
+      ok: true,
+      value: {
+        ...(persisted || {}),
+        ...(current || {}),
+        messages: filterConversationRollbackMessages(current?.messages || [], current),
+        queue: filterConversationRollbackQueue(current?.queue || [], current),
+      },
+    };
+  }
   const strict = mergeRecord({ baseline, current, persisted, path });
   if (strict.ok) return strict;
   const local = current && typeof current === "object" ? current : {};
@@ -197,6 +220,14 @@ const mergeConversationRecord = ({ baseline, current, persisted, path }) => {
       }
     }
     result[key] = [...byId.values()];
+  }
+  const messageTombstones = rollbackTombstoneSet(current, "messageIds");
+  const queueTombstones = rollbackTombstoneSet(current, "queueIds");
+  if (Array.isArray(result.messages) && messageTombstones.size) {
+    result.messages = result.messages.filter((message) => !messageTombstones.has(String(message?.id || "")));
+  }
+  if (Array.isArray(result.queue) && queueTombstones.size) {
+    result.queue = result.queue.filter((item) => !queueTombstones.has(String(item?.id || "")));
   }
   if (local.snapshots || remote.snapshots) result.snapshots = { ...(remote.snapshots || {}), ...(local.snapshots || {}) };
   if (local.execution || remote.execution) result.execution = { ...(remote.execution || {}), ...(local.execution || {}) };
@@ -325,9 +356,21 @@ export const preserveConversationReferences = (current = {}, incoming = {}) => {
     const live = existing.get(record.id);
     if (!live || live === record) return record;
     const active = current.activeConversationId === record.id;
+    const liveRollbackRevision = conversationRollbackRevision(live);
+    const incomingRollbackRevision = conversationRollbackRevision(record);
     const messages = active ? current.messages : live.messages;
     const snapshots = active ? current.snapshots : live.snapshots;
     const queue = live.queue;
+    if (liveRollbackRevision > incomingRollbackRevision) {
+      Object.assign(live, record, {
+        messages: filterConversationRollbackMessages(messages || [], live),
+        snapshots: active ? current.snapshots : live.snapshots,
+        queue: filterConversationRollbackQueue(queue || [], live),
+        rollbackRevision: liveRollbackRevision,
+        rollbackTombstones: live.rollbackTombstones,
+      });
+      return live;
+    }
     const nextMessages = record.messages || [];
     if (messages && messages !== nextMessages) {
       const byId = new Map(messages.map((message) => [message.id, message]));
@@ -345,11 +388,15 @@ export const preserveConversationReferences = (current = {}, incoming = {}) => {
       Object.assign(snapshots, record.snapshots || {});
     }
     if (queue && queue !== record.queue) {
-      const incomingQueue = record.queue || [];
+      const incomingQueue = filterConversationRollbackQueue(record.queue || [], live);
       const incomingIds = new Set(incomingQueue.map((item) => item.id));
       queue.splice(0, queue.length, ...incomingQueue, ...queue.filter((item) => !incomingIds.has(item.id)));
     }
-    Object.assign(live, record, { messages: messages || nextMessages, snapshots: snapshots || record.snapshots || {}, queue: queue || record.queue || [] });
+    Object.assign(live, record, {
+      messages: filterConversationRollbackMessages(messages || nextMessages, live),
+      snapshots: snapshots || record.snapshots || {},
+      queue: filterConversationRollbackQueue(queue || record.queue || [], live),
+    });
     return live;
   });
   // A save response started before a conversation was created cannot remove

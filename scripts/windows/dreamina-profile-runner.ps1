@@ -24,16 +24,38 @@ $profileRoot = if ($env:SHENSI_DREAMINA_PROFILE_HOME) {
 $profileAuth = Join-Path $profileRoot 'auth.reg'
 $mutex = [System.Threading.Mutex]::new($false, 'Global\ShensiDreaminaCredentialSwitchV1')
 $lockTaken = $false
-$temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("shensi-dreamina-" + [guid]::NewGuid().ToString('N'))
+$brokerLeasePath = [string]$env:SHENSI_DREAMINA_BROKER_LEASE_PATH
+$brokerLeaseToken = [guid]::NewGuid().ToString('N')
+# Keep every broker snapshot and recovery marker on the same volume as the
+# durable lease. This keeps broker staging on the configured E: data volume
+# rather than using the unrelated C: process temp directory. The
+# server supplies an absolute lease path under the configured E: data root in
+# production.  Tests may provide another absolute data root, so derive the
+# staging directory from that path rather than hard-coding a drive letter.
+$brokerLeaseDirectory = $null
+if (-not [string]::IsNullOrWhiteSpace($brokerLeasePath)) {
+  try {
+    $brokerLeaseDirectory = [System.IO.Path]::GetDirectoryName(
+      [System.IO.Path]::GetFullPath($brokerLeasePath)
+    )
+  } catch {
+    $brokerLeaseDirectory = $null
+  }
+}
+if ([string]::IsNullOrWhiteSpace($brokerLeaseDirectory)) {
+  $brokerLeaseDirectory = [System.IO.Path]::GetTempPath()
+}
+$temporaryRoot = Join-Path $brokerLeaseDirectory ("shensi-dreamina-" + [guid]::NewGuid().ToString('N'))
 $currentAuth = Join-Path $temporaryRoot 'current.reg'
 $commandStderr = Join-Path $temporaryRoot 'command.stderr.log'
-$recoveryRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'shensi-dreamina-broker-recovery-v1'
+$recoveryRoot = Join-Path $brokerLeaseDirectory 'shensi-dreamina-broker-recovery-v1'
+$legacyRecoveryRoot = Join-Path ([System.IO.Path]::GetTempPath()) 'shensi-dreamina-broker-recovery-v1'
 $recoveryAuth = Join-Path $recoveryRoot 'current.reg'
 $recoveryEmpty = Join-Path $recoveryRoot 'current.empty'
 $hadCurrentAuth = $false
+$credentialSlotTouched = $false
+$recoverySnapshotOwned = $false
 $exitCode = 1
-$brokerLeasePath = [string]$env:SHENSI_DREAMINA_BROKER_LEASE_PATH
-$brokerLeaseToken = [guid]::NewGuid().ToString('N')
 
 function Write-DreaminaBrokerLease([string]$Command) {
   if ([string]::IsNullOrWhiteSpace($brokerLeasePath)) { return }
@@ -54,7 +76,9 @@ function Write-DreaminaBrokerLease([string]$Command) {
   [System.IO.File]::WriteAllText($temporary, ($lease | ConvertTo-Json -Compress), $utf8NoBom)
   try {
     if ([System.IO.File]::Exists($brokerLeasePath)) {
-      [System.IO.File]::Replace($temporary, $brokerLeasePath, $null)
+      # Windows PowerShell converts $null to "" for this string parameter.
+      # File.Replace then rejects the empty backup path even on one volume.
+      [System.IO.File]::Replace($temporary, $brokerLeasePath, [System.Management.Automation.Language.NullString]::Value)
     } else {
       [System.IO.File]::Move($temporary, $brokerLeasePath)
     }
@@ -218,6 +242,21 @@ try {
   } else {
   New-Item -ItemType Directory -Force -Path $profileRoot, $temporaryRoot | Out-Null
 
+  # An older runner may have been interrupted before this update. Recover its
+  # pending snapshot under the same mutex before switching to E: staging.
+  if (-not [string]::Equals($legacyRecoveryRoot, $recoveryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $legacyRecoveryAuth = Join-Path $legacyRecoveryRoot 'current.reg'
+    $legacyRecoveryEmpty = Join-Path $legacyRecoveryRoot 'current.empty'
+    if (Test-Path -LiteralPath $legacyRecoveryAuth) {
+      Remove-DreaminaRegistryKey
+      Import-DreaminaRegistryKey $legacyRecoveryAuth
+      Remove-Item -LiteralPath $legacyRecoveryAuth -Force
+    } elseif (Test-Path -LiteralPath $legacyRecoveryEmpty) {
+      Remove-DreaminaRegistryKey
+      Remove-Item -LiteralPath $legacyRecoveryEmpty -Force
+    }
+  }
+
   # A force-killed PowerShell process cannot run finally. Recover the real
   # Windows credential slot left by that interrupted command before reading or
   # installing any profile snapshot, otherwise the next profile can appear to
@@ -237,6 +276,8 @@ try {
   Remove-Item -LiteralPath $recoveryAuth, $recoveryEmpty -Force -ErrorAction SilentlyContinue
   if ($hadCurrentAuth) { Copy-Item -LiteralPath $currentAuth -Destination $recoveryAuth -Force }
   else { New-Item -ItemType File -Force -Path $recoveryEmpty | Out-Null }
+  $recoverySnapshotOwned = $true
+  $credentialSlotTouched = $true
   Remove-DreaminaRegistryKey
   # OAuth device binding must start from an empty keychain. Importing the old
   # profile token before `login checklogin` can silently keep the previous
@@ -286,14 +327,20 @@ try {
   }
 } finally {
   try {
-    if (-not $ProbeOnly) {
+    if ($lockTaken -and $credentialSlotTouched) {
       Remove-DreaminaRegistryKey
       if ($hadCurrentAuth -and (Test-Path -LiteralPath $currentAuth)) { Import-DreaminaRegistryKey $currentAuth }
+      $credentialSlotTouched = $false
     }
   } finally {
-    if (-not $ProbeOnly) {
-      Remove-Item -LiteralPath $recoveryAuth, $recoveryEmpty -Force -ErrorAction SilentlyContinue
-      if (Test-Path -LiteralPath $recoveryRoot) { Remove-Item -LiteralPath $recoveryRoot -Force -ErrorAction SilentlyContinue }
+    # A lease-write failure/busy runner has not switched credentials and must
+    # not erase either the active registry slot or another runner's recovery.
+    # If restoration failed, retain both snapshots for the next lock holder.
+    if ($lockTaken -and -not $credentialSlotTouched) {
+      if ($recoverySnapshotOwned) {
+        Remove-Item -LiteralPath $recoveryAuth, $recoveryEmpty -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $recoveryRoot) { Remove-Item -LiteralPath $recoveryRoot -Force -ErrorAction SilentlyContinue }
+      }
       if (Test-Path -LiteralPath $temporaryRoot) { Remove-Item -LiteralPath $temporaryRoot -Recurse -Force }
     }
     Clear-DreaminaBrokerLease

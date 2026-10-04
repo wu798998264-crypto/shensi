@@ -640,6 +640,24 @@ const pathHashIfExists = async (path) => {
   }
 };
 
+const readJsonWithAtomicRecovery = async (path) => {
+  try {
+    return JSON.parse(await readFileWithAtomicRecovery(path));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+};
+
+const pathHashWithAtomicRecovery = async (path) => {
+  try {
+    return hashText(await readFileWithAtomicRecovery(path));
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+};
+
 const atomicWriteIfChanged = async (path, content) => {
   const desiredHash = hashText(content);
   if (await pathHashIfExists(path) === desiredHash) return false;
@@ -662,17 +680,33 @@ const workspaceCommitIsComplete = async (workspaceRoot, commitId) => {
   const marker = await readJsonIfExists(workspaceCommitPath(workspaceRoot));
   if (!marker || String(marker.commitId || "") !== expected) return false;
   const [currentState, historyIndex, currentHash, historyHash, manifestHash] = await Promise.all([
-    readJsonIfExists(join(internalRoot, "current-state.json")),
-    readJsonIfExists(join(internalRoot, "history-isolated", "index.json")),
-    pathHashIfExists(join(internalRoot, "current-state.json")),
-    pathHashIfExists(join(internalRoot, "history-isolated", "index.json")),
-    pathHashIfExists(join(internalRoot, "manifest.json")),
+    readJsonWithAtomicRecovery(join(internalRoot, "current-state.json")),
+    readJsonWithAtomicRecovery(join(internalRoot, "history-isolated", "index.json")),
+    pathHashWithAtomicRecovery(join(internalRoot, "current-state.json")),
+    pathHashWithAtomicRecovery(join(internalRoot, "history-isolated", "index.json")),
+    pathHashWithAtomicRecovery(join(internalRoot, "manifest.json")),
   ]);
   return String(currentState?.workspaceCommitId || "") === expected
     && String(historyIndex?.workspaceCommitId || "") === expected
     && String(marker.currentStateHash || "") === String(currentHash || "")
     && String(marker.historyIndexHash || "") === String(historyHash || "")
     && String(marker.manifestHash || "") === String(manifestHash || "");
+};
+
+const workspaceCommitMismatch = () => Object.assign(new Error("工作区发布版本不一致，已拒绝加载混合内容。原文档与白板未被修改；请等待当前保存完成后重试。"), {
+  code: "WORKSPACE_COMMIT_MISMATCH",
+  statusCode: 409,
+  retryable: true,
+});
+
+const assertWorkspacePublication = async (workspaceRoot, { currentCommitId = "", isolatedCommitId = "", publishedCommitId = "" } = {}) => {
+  const ids = [currentCommitId, isolatedCommitId, publishedCommitId].map((value) => String(value || "").trim());
+  const presentIds = ids.filter(Boolean);
+  if (!presentIds.length) return true;
+  if (presentIds.some((value) => value !== presentIds[0]) || !(await workspaceCommitIsComplete(workspaceRoot, presentIds[0]))) {
+    throw workspaceCommitMismatch();
+  }
+  return true;
 };
 
 const runBounded = async (tasks, concurrency = 6) => {
@@ -865,6 +899,30 @@ const withWorkspaceFileLock = async (workspaceRoot, task, { workspaceLockToken =
     await handle.close().catch(() => {});
     const snapshot = await readWorkspaceLockSnapshot(lockPath).catch(() => null);
     if (snapshot?.lock?.token === ownerToken) await rm(lockPath, { force: true });
+  }
+};
+
+// Directory moves (delete/rename) must wait for an in-flight writer before
+// asking Windows to move the workspace root. Without this coordination a live
+// workspace.lock can make rename fail transiently and surface as a false
+// workspace conflict in the UI.
+const waitForWorkspaceIdle = async (workspaceRoot, { timeoutMs = WORKSPACE_FILE_LOCK_WAIT_MS } = {}) => {
+  const lockPath = join(resolveWorkspaceInternalRoot(workspaceRoot), "workspace.lock");
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const snapshot = await readWorkspaceLockSnapshot(lockPath);
+    if (!snapshot) return;
+    const lock = snapshot.lock;
+    if (lock && !processIsAlive(Number(lock.pid))) {
+      await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
+      continue;
+    }
+    if (!lock && Date.now() - snapshot.mtimeMs > WORKSPACE_FILE_LOCK_STALE_PARTIAL_MS) {
+      await removeWorkspaceLockIfUnchanged(lockPath, snapshot);
+      continue;
+    }
+    if (Date.now() >= deadline) throw workspaceWriteBusy();
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, WORKSPACE_FILE_LOCK_POLL_MS));
   }
 };
 
@@ -2321,17 +2379,25 @@ export const renameWorkspaceProject = async ({ appRoot, requestedPath, name }) =
     }
     const moved = normalizeForCompare(target) !== normalizeForCompare(workspaceRoot);
     try {
-      const statePath = join(target, ".shensi", "current-state.json");
-      const currentState = await readJsonIfExists(statePath);
-      if (currentState) {
-        const migratedState = migrateLegacyBusinessPathsInValue(currentState, {
+      const loaded = await loadWorkspaceState({ appRoot, requestedPath: target });
+      if (loaded.state) {
+        const migratedState = migrateLegacyBusinessPathsInValue(loaded.state, {
           workspaceRoot: target,
           aliases: [{ sourceRoot: workspaceRoot, targetRoot: target }],
         }).value;
         migratedState.projectName = nextName;
+        migratedState.workspaceKind = "project";
         migratedState.settings = portableGenerationSettings(migratedState.settings ?? {});
         delete migratedState.settings.workspacePath;
-        await atomicWriteWithTransientRetry(statePath, JSON.stringify(migratedState, null, 2));
+        // Renaming changes persisted paths in current-state.json. Republish
+        // the complete commit (including history shards and marker) so the
+        // loader cannot reject the renamed workspace as a mixed version.
+        await saveWorkspaceStateCore({
+          appRoot,
+          requestedPath: target,
+          state: migratedState,
+          workspaceCommitId: randomUUID(),
+        });
       }
     } catch (error) {
       if (moved) {
@@ -2368,18 +2434,21 @@ export const deleteWorkspaceProject = async ({ appRoot, requestedPath }) => {
   if (!allowedParents.includes(normalizeForCompare(parent))) {
     throw new Error("只能删除作品根目录下的直属作品");
   }
-  const deletedAt = Date.now();
-  const archiveRoot = join(parent, ".shensi-deleted-projects");
-  await mkdir(archiveRoot, { recursive: true });
-  const archiveName = `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`;
-  const archivedPath = join(archiveRoot, archiveName);
-  await renameWithTransientRetry(workspaceRoot, archivedPath);
-  return {
-    name: basename(workspaceRoot),
-    deletedAt: new Date(deletedAt).toISOString(),
-    expiresAt: new Date(deletedAt + TRASH_RETENTION_MS).toISOString(),
-    archivedPath,
-  };
+  return enqueueWorkspaceWrite(workspaceRoot, async () => {
+    await waitForWorkspaceIdle(workspaceRoot);
+    const deletedAt = Date.now();
+    const archiveRoot = join(parent, ".shensi-deleted-projects");
+    await mkdir(archiveRoot, { recursive: true });
+    const archiveName = `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`;
+    const archivedPath = join(archiveRoot, archiveName);
+    await renameWithTransientRetry(workspaceRoot, archivedPath);
+    return {
+      name: basename(workspaceRoot),
+      deletedAt: new Date(deletedAt).toISOString(),
+      expiresAt: new Date(deletedAt + TRASH_RETENTION_MS).toISOString(),
+      archivedPath,
+    };
+  });
 };
 
 const notebookParentRoot = () => persistentNotesRoot();
@@ -2506,14 +2575,19 @@ export const restoreDeletedWorkspace = async ({ appRoot, trashId }) => {
   const { name, target } = await uniqueRestoredWorkspacePath({ parent: entry.parent, originalName: entry.originalName });
   await renameWithTransientRetry(entry.archivedPath, target);
   try {
-    const statePath = join(target, ".shensi", "current-state.json");
-    const currentState = await readJsonIfExists(statePath);
+    const restored = await loadWorkspaceState({ appRoot, requestedPath: target });
+    const currentState = restored.state;
     if (currentState) {
       currentState.projectName = name;
       currentState.workspaceKind = entry.workspaceKind;
       currentState.settings = portableGenerationSettings(currentState.settings ?? {});
       delete currentState.settings.workspacePath;
-      await atomicWriteWithTransientRetry(statePath, JSON.stringify(currentState, null, 2));
+      // Restoring changes the workspace title, so it is a new publication.
+      // Writing only current-state.json would leave the old commit marker and
+      // history index pointing at a different version; the next load would
+      // either mix old shards or resurrect stale deleted content. Publish all
+      // shards and the marker atomically through the normal save path.
+      await saveWorkspaceState({ appRoot, requestedPath: target, state: currentState });
     }
   } catch (error) {
     try {
@@ -2586,10 +2660,9 @@ export const renameWorkspaceNotebook = async ({ appRoot, requestedPath, name }) 
     }
     const moved = normalizeForCompare(target) !== normalizeForCompare(workspaceRoot);
     try {
-      const statePath = join(target, ".shensi", "current-state.json");
-      const currentState = await readJsonIfExists(statePath);
-      if (currentState) {
-        const migratedState = migrateLegacyBusinessPathsInValue(currentState, {
+      const loaded = await loadWorkspaceState({ appRoot, requestedPath: target });
+      if (loaded.state) {
+        const migratedState = migrateLegacyBusinessPathsInValue(loaded.state, {
           workspaceRoot: target,
           aliases: [{ sourceRoot: workspaceRoot, targetRoot: target }],
         }).value;
@@ -2597,7 +2670,12 @@ export const renameWorkspaceNotebook = async ({ appRoot, requestedPath, name }) 
         migratedState.workspaceKind = "notebook";
         migratedState.settings = portableGenerationSettings(migratedState.settings ?? {});
         delete migratedState.settings.workspacePath;
-        await atomicWriteWithTransientRetry(statePath, JSON.stringify(migratedState, null, 2));
+        await saveWorkspaceStateCore({
+          appRoot,
+          requestedPath: target,
+          state: migratedState,
+          workspaceCommitId: randomUUID(),
+        });
       }
     } catch (error) {
       if (moved) {
@@ -2633,17 +2711,20 @@ export const deleteWorkspaceNotebook = async ({ appRoot, requestedPath }) => {
   if (normalizeForCompare(parent) !== normalizeForCompare(notebookParentRoot())) {
     throw new Error("只能删除笔记根目录下的直属笔记本");
   }
-  const deletedAt = Date.now();
-  const archiveRoot = join(parent, ".shensi-deleted-notebooks");
-  await mkdir(archiveRoot, { recursive: true });
-  const archivedPath = join(archiveRoot, `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`);
-  await renameWithTransientRetry(workspaceRoot, archivedPath);
-  return {
-    name: basename(workspaceRoot),
-    deletedAt: new Date(deletedAt).toISOString(),
-    expiresAt: new Date(deletedAt + TRASH_RETENTION_MS).toISOString(),
-    archivedPath,
-  };
+  return enqueueWorkspaceWrite(workspaceRoot, async () => {
+    await waitForWorkspaceIdle(workspaceRoot);
+    const deletedAt = Date.now();
+    const archiveRoot = join(parent, ".shensi-deleted-notebooks");
+    await mkdir(archiveRoot, { recursive: true });
+    const archivedPath = join(archiveRoot, `${deletedAt}-${safeName(basename(workspaceRoot))}-${Math.random().toString(36).slice(2, 8)}`);
+    await renameWithTransientRetry(workspaceRoot, archivedPath);
+    return {
+      name: basename(workspaceRoot),
+      deletedAt: new Date(deletedAt).toISOString(),
+      expiresAt: new Date(deletedAt + TRASH_RETENTION_MS).toISOString(),
+      archivedPath,
+    };
+  });
 };
 
 const GIB = 1024 ** 3;
@@ -4490,7 +4571,7 @@ export const probeWorkspaceDepthExplorer = async ({ appRoot = process.cwd() } = 
   };
 };
 
-const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs, onProgress = null }) => new Promise((resolveWorker, rejectWorker) => {
+const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs, onProgress = null, cancelCheck = null, onProcess = null }) => new Promise((resolveWorker, rejectWorker) => {
   let child;
   try {
     child = spawn(executable, ["--worker", "--request", requestPath], {
@@ -4502,6 +4583,7 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
     rejectWorker(mediaEditError(`无法启动深度摸索：${error.message}`, "DEPTH_EXPLORER_UNAVAILABLE"));
     return;
   }
+  onProcess?.(child);
   // Publish a deterministic first event before waiting for the worker's
   // event file.  Some bundled workers only flush their first event after
   // they have loaded the model, which otherwise makes the UI appear idle
@@ -4510,6 +4592,11 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
   let stderr = "";
   let settled = false;
   let readingProgress = false;
+  const cancelTimer = setInterval(() => {
+    if (settled || typeof cancelCheck !== "function" || !cancelCheck()) return;
+    try { child.kill(); } catch {}
+    void finish(mediaEditError("深度摸索已停止", "DEPTH_EXPLORER_CANCELLED"));
+  }, 250);
   const progressTimer = setInterval(async () => {
     if (settled || readingProgress) return;
     readingProgress = true;
@@ -4531,6 +4618,7 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
     settled = true;
     clearTimeout(timer);
     clearInterval(progressTimer);
+    clearInterval(cancelTimer);
     const events = String(await readFile(eventPath, "utf8").catch(() => ""))
       .split(/\r?\n/u)
       .map((line) => {
@@ -4548,7 +4636,10 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
     if (stderr.length < 16_000) stderr += chunk.toString("utf8");
   });
   child.once("error", (error) => finish(mediaEditError(`深度摸索进程启动失败：${error.message}`, "DEPTH_EXPLORER_UNAVAILABLE")));
-  child.once("close", (code) => finish(code === 0 ? null : mediaEditError(`深度处理失败（退出码 ${code ?? "unknown"}）`, "DEPTH_EXPLORER_FAILED")));
+  child.once("close", (code) => {
+    if (typeof cancelCheck === "function" && cancelCheck()) return void finish(mediaEditError("深度摸索已停止", "DEPTH_EXPLORER_CANCELLED"));
+    return finish(code === 0 ? null : mediaEditError(`深度处理失败（退出码 ${code ?? "unknown"}）`, "DEPTH_EXPLORER_FAILED"));
+  });
   const timer = setTimeout(() => {
     child.kill();
     finish(mediaEditError("深度处理超过安全时限，已自动停止", "DEPTH_EXPLORER_TIMEOUT"));
@@ -4558,7 +4649,7 @@ const runDepthExplorerWorker = ({ executable, requestPath, eventPath, timeoutMs,
 let depthExplorerQueue = Promise.resolve();
 const depthExplorerRuns = new Map();
 
-export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), requestedPath, relativePaths = [], settings = {}, whiteboardDocumentId = "", onProgress = null } = {}) => {
+export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), requestedPath, relativePaths = [], settings = {}, whiteboardDocumentId = "", onProgress = null, isCancelled = null, onWorkerProcess = null, onControlPath = null } = {}) => {
   const inputs = [...new Set((Array.isArray(relativePaths) ? relativePaths : []).map(String).map((value) => value.trim()).filter(Boolean))];
   if (!inputs.length) throw mediaEditError("请先连接至少一张图片或一个视频", "DEPTH_EXPLORER_INPUT_REQUIRED");
   if (inputs.length > 10) throw mediaEditError("深度摸索一次最多处理 10 个上游媒体", "DEPTH_EXPLORER_BATCH_LIMIT");
@@ -4581,6 +4672,7 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
     const outputs = [];
     onProgress?.({ completed: 0, total: inputs.length, currentIndex: 0, currentPercent: 0, percent: 0, message: `准备处理 ${inputs.length} 个媒体` });
     for (let index = 0; index < inputs.length; index += 1) {
+      if (isCancelled?.()) throw mediaEditError("深度摸索已停止", "DEPTH_EXPLORER_CANCELLED");
       const relativePath = inputs[index];
       const source = await workspaceMediaEditSource({ appRoot, requestedPath, relativePath });
       if (!['image', 'video'].includes(source.kind)) throw mediaEditError("深度摸索只支持图片和视频", "DEPTH_EXPLORER_INPUT_INVALID");
@@ -4592,6 +4684,7 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
       const requestPath = join(jobDirectory, "request.json");
       const eventPath = join(jobDirectory, "events.jsonl");
       const controlPath = join(jobDirectory, "control.json");
+      onControlPath?.(controlPath);
       const jobId = randomUUID().replaceAll("-", "");
       await writeFile(controlPath, JSON.stringify({ paused: false, canceled: false }), "utf8");
       await writeFile(requestPath, JSON.stringify({
@@ -4631,6 +4724,8 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
               percent: Math.round((index / inputs.length) * 100 + (currentPercent / inputs.length)),
             });
           },
+          cancelCheck: isCancelled,
+          onProcess: onWorkerProcess,
         });
         const sourceName = safeName(basename(source.sourcePath, extname(source.sourcePath)) || (source.kind === "image" ? "图片" : "视频"));
         const attachment = await saveWorkspaceAttachmentFromPath({
@@ -4677,10 +4772,13 @@ export const runWorkspaceDepthExplorer = async ({ appRoot = process.cwd(), reque
 export const startWorkspaceDepthExplorerRun = async (params = {}) => {
   const id = randomUUID();
   const total = Array.isArray(params.relativePaths) ? params.relativePaths.length : 0;
-  const state = { id, status: "queued", completed: 0, total, currentIndex: 0, currentPercent: 0, percent: 0, message: "等待开始", outputs: [], error: "" };
+  const state = { id, status: "queued", completed: 0, total, currentIndex: 0, currentPercent: 0, percent: 0, message: "等待开始", outputs: [], error: "", cancelRequested: false, controlPath: "", child: null };
   depthExplorerRuns.set(id, state);
   void runWorkspaceDepthExplorer({
     ...params,
+    isCancelled: () => state.cancelRequested,
+    onWorkerProcess: (child) => { state.child = child; },
+    onControlPath: (controlPath) => { state.controlPath = controlPath; },
     onProgress: (progress) => {
       const next = { ...(progress || {}) };
       const output = next.output;
@@ -4695,15 +4793,34 @@ export const startWorkspaceDepthExplorerRun = async (params = {}) => {
       }
     },
   })
-    .then((result) => Object.assign(state, { status: "complete", percent: 100, completed: total, currentPercent: 100, message: "深度摸索已完成", outputs: result.outputs }))
-    .catch((error) => Object.assign(state, { status: "failed", error: String(error?.message || error).slice(0, 1_000), message: String(error?.message || error).slice(0, 1_000) }));
-  return { ok: true, jobId: id, ...state };
+    .then((result) => Object.assign(state, state.cancelRequested ? { status: "cancelled", message: "深度摸索已停止" } : { status: "complete", percent: 100, completed: total, currentPercent: 100, message: "深度摸索已完成", outputs: result.outputs }))
+    .catch((error) => Object.assign(state, state.cancelRequested || error?.code === "DEPTH_EXPLORER_CANCELLED" ? { status: "cancelled", error: "", message: "深度摸索已停止" } : { status: "failed", error: String(error?.message || error).slice(0, 1_000), message: String(error?.message || error).slice(0, 1_000) } ))
+    .finally(() => { state.child = null; state.controlPath = ""; });
+  const { child: _child, controlPath: _controlPath, cancelRequested: _cancelRequested, ...publicState } = state;
+  return { ok: true, jobId: id, ...publicState };
+};
+
+export const cancelWorkspaceDepthExplorerRun = async (jobId = "") => {
+  const state = depthExplorerRuns.get(String(jobId));
+  if (!state) return { ok: false, status: "missing", message: "找不到深度摸索任务" };
+  if (["complete", "failed", "cancelled"].includes(state.status)) {
+    const { child: _child, controlPath: _controlPath, cancelRequested: _cancelRequested, ...publicState } = state;
+    return { ok: true, ...publicState };
+  }
+  state.cancelRequested = true;
+  state.status = "cancelling";
+  state.message = "正在停止深度摸索";
+  if (state.controlPath) await writeFile(state.controlPath, JSON.stringify({ paused: false, canceled: true }), "utf8").catch(() => {});
+  try { state.child?.kill(); } catch {}
+  const { child: _child, controlPath: _controlPath, cancelRequested: _cancelRequested, ...publicState } = state;
+  return { ok: true, ...publicState };
 };
 
 export const workspaceDepthExplorerRunStatus = async (jobId = "") => {
   const state = depthExplorerRuns.get(String(jobId));
   if (!state) return { ok: false, status: "missing", message: "找不到深度摸索任务" };
-  return { ok: true, ...state };
+  const { child: _child, controlPath: _controlPath, cancelRequested: _cancelRequested, ...publicState } = state;
+  return { ok: true, ...publicState };
 };
 
 const runVideoFrameExtraction = ({ appRoot, sourcePath, outputPath, frameTimeMs }) => new Promise((resolveFrame, rejectFrame) => {
@@ -6276,6 +6393,24 @@ const recoverPendingWorkspaceTransactions = async ({ appRoot, workspaceRoot }) =
       await rm(directory, { recursive: true, force: true });
       continue;
     }
+    // A previous recovery attempt may have found that the original document
+    // was edited outside the pending transaction. Keep both snapshots for
+    // manual comparison, but never retry the same destructive rollback on
+    // every workspace load. This is a blocked transaction, not a startup
+    // failure; the current on-disk document remains authoritative.
+    const externallyBlocked = journal.status === "blocked_external_modification"
+      || (journal.status === "rollback_pending" && /外部修改|WORKSPACE_STATE_CONFLICT/u.test(String(journal.lastError || journal.rollbackError || "")));
+    if (externallyBlocked) {
+      if (journal.status !== "blocked_external_modification") {
+        await atomicWrite(journalPath, JSON.stringify({
+          ...journal,
+          status: "blocked_external_modification",
+          blockedAt: new Date().toISOString(),
+          blockedReason: "current_workspace_changed_after_transaction_failure",
+        }, null, 2));
+      }
+      continue;
+    }
     if (!["applying", "rollback_pending", "pending", "recovering"].includes(journal.status)) {
       throw new Error(`未完成事务 ${journal.id} 状态未知，已停止自动处理`);
     }
@@ -6311,6 +6446,17 @@ const recoverPendingWorkspaceTransactions = async ({ appRoot, workspaceRoot }) =
       await rm(directory, { recursive: true, force: true });
       recovered += 1;
     } catch (error) {
+      if (error?.code === "WORKSPACE_STATE_CONFLICT" || /外部修改|已被外部修改|WORKSPACE_STATE_CONFLICT/u.test(String(error?.message || ""))) {
+        await atomicWrite(journalPath, JSON.stringify({
+          ...journal,
+          status: "blocked_external_modification",
+          lastError: error.message,
+          blockedAt: new Date().toISOString(),
+          blockedReason: "current_workspace_changed_during_recovery",
+          updatedAt: new Date().toISOString(),
+        }, null, 2));
+        continue;
+      }
       await atomicWrite(journalPath, JSON.stringify({
         ...journal,
         status: "rollback_pending",
@@ -6616,10 +6762,22 @@ export const loadWorkspaceState = async ({ appRoot, requestedPath }) => {
         aliases: registeredWorkspaceAliasesForTarget(workspaceRoot),
       });
       if (migratedPaths.changed) {
-        await atomicWrite(
-          join(internalRoot, "current-state.json"),
-          JSON.stringify(migratedPaths.value, null, parsedCurrentState.workspaceKind === "notebook" ? 0 : 2),
-        );
+        const migratedText = JSON.stringify(migratedPaths.value, null, parsedCurrentState.workspaceKind === "notebook" ? 0 : 2);
+        await atomicWrite(join(internalRoot, "current-state.json"), migratedText);
+        // Path migration changes only the current-state payload. Keep the
+        // publication marker in the same commit by updating its current-state
+        // hash; otherwise the next read would reject this legitimate migration
+        // as a mixed version and strand the workspace in a retry loop.
+        const marker = await readJsonIfExists(workspaceCommitPath(workspaceRoot));
+        const commitId = String(migratedPaths.value.workspaceCommitId || "");
+        if (marker?.commitId && marker.commitId === commitId) {
+          await atomicWrite(workspaceCommitPath(workspaceRoot), JSON.stringify({
+            ...marker,
+            currentStateHash: hashText(migratedText),
+            savedAt: migratedPaths.value.savedAt || marker.savedAt,
+            publishedAt: new Date().toISOString(),
+          }, null, 2));
+        }
         continue;
       }
       const currentState = scrubConfidentialMetadata(parsedCurrentState);
@@ -6640,8 +6798,16 @@ export const loadWorkspaceState = async ({ appRoot, requestedPath }) => {
       const currentCommitId = String(currentState.workspaceCommitId || "");
       const isolatedCommitId = String(isolatedState.workspaceCommitId || "");
       const publishedCommitId = String(commitMarker?.commitId || "");
-      const commitsAgree = (!currentCommitId && !isolatedCommitId)
-        || (Boolean(currentCommitId) && currentCommitId === isolatedCommitId && (!publishedCommitId || publishedCommitId === currentCommitId));
+      const commitsAgree = (!currentCommitId && !isolatedCommitId && !publishedCommitId)
+        || (Boolean(currentCommitId) && currentCommitId === isolatedCommitId && publishedCommitId === currentCommitId);
+      if (!commitsAgree) {
+        // A writer may have published a shard between the first read and its
+        // commit marker. Retry one complete read, never combine that shard
+        // with a different current-state or silently restore an older version.
+        if (attempt === 0) continue;
+        throw workspaceCommitMismatch();
+      }
+      await assertWorkspacePublication(workspaceRoot, { currentCommitId, isolatedCommitId, publishedCommitId });
       const conversations = (currentState.conversations ?? []).map((conversation) => ({
         ...conversation,
         ...(commitsAgree ? (isolatedState.conversationState?.[conversation.id] ?? {}) : {}),
@@ -6694,6 +6860,7 @@ export const loadWorkspaceCurrentContent = async ({ appRoot, requestedPath }) =>
     readJsonIfExists(join(internalRoot, "manifest.json")),
   ]);
   if (!currentState) return { workspaceRoot, projectName: basename(workspaceRoot), documents: {} };
+  await assertWorkspacePublication(workspaceRoot, { currentCommitId: currentState.workspaceCommitId });
   const safeState = scrubConfidentialMetadata(currentState);
   return {
     workspaceRoot,
@@ -6716,12 +6883,27 @@ export const loadWorkspaceCurrentContent = async ({ appRoot, requestedPath }) =>
 export const loadWorkspaceDirectoryState = async ({ appRoot, requestedPath }) => {
   const workspaceRoot = resolveWorkspaceRoot({ appRoot, requestedPath });
   const internalRoot = resolveWorkspaceInternalRoot(workspaceRoot);
-  const currentState = await readJsonIfExists(join(internalRoot, "current-state.json"));
-  if (!currentState) return { workspaceRoot, state: null };
-  const safeState = scrubConfidentialMetadata(currentState);
-  safeState.settings = portableGenerationSettings(safeState.settings ?? {});
-  delete safeState.settings.workspacePath;
-  return { workspaceRoot, state: safeState };
+  // A directory picker is a read-only view, but it can race the final
+  // publication marker while a normal workspace save is committing. Retry a
+  // few times inside that short window; a persistent mismatch must still be
+  // rejected so callers never receive mixed current/shard content.
+  let lastMismatch = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const currentState = await readJsonIfExists(join(internalRoot, "current-state.json"));
+    if (!currentState) return { workspaceRoot, state: null };
+    try {
+      await assertWorkspacePublication(workspaceRoot, { currentCommitId: currentState.workspaceCommitId });
+      const safeState = scrubConfidentialMetadata(currentState);
+      safeState.settings = portableGenerationSettings(safeState.settings ?? {});
+      delete safeState.settings.workspacePath;
+      return { workspaceRoot, state: safeState };
+    } catch (error) {
+      if (error?.code !== "WORKSPACE_COMMIT_MISMATCH" || attempt === 2) throw error;
+      lastMismatch = error;
+      await new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+    }
+  }
+  throw lastMismatch || workspaceCommitMismatch();
 };
 
 export const importWorkspaceState = async ({ appRoot, requestedPath, refresh = false }) => {

@@ -14,11 +14,13 @@ export const OPEN_CODE_FREE_MODEL_IDS = Object.freeze([
   "space-bunny-free",
   "longcat-2.5-preview-free",
   "mimo-v2.6-flash-free",
+  "deepseek-v4-flash-free",
   "mimo-v2.5-free",
   "ling-3.0-flash-fin-free",
   "nemotron-3-ultra-free",
   "nemotron-3.5-lightning-free",
   "muse-spark-1.3-contributor-free",
+  "muse-spark-1.2-contributor-free",
   "jev-1.13-free",
 ]);
 
@@ -157,7 +159,7 @@ const DEFAULTS = {
     provider: "OpenAI",
     protocol: "responses",
     baseUrl: "https://api.openai.com/v1",
-    model: "gpt-5.6-sol",
+    model: "gpt-6.1-sol",
     reasoningEffort: "medium",
     speedMode: "default",
     temperature: "0.7",
@@ -169,7 +171,7 @@ const DEFAULTS = {
     executionMode: "agent",
     executionModes: ["agent"],
     agentEngine: "codex_api",
-    agentModelId: "gpt-5.6-sol",
+    agentModelId: "gpt-6.1-sol",
     chatModelId: "",
     credentialSource: "shensi",
     runtimeProfileId: "",
@@ -225,7 +227,7 @@ const BUILT_IN_GPT_CHAT_CLI = {
   provider: "OpenAI",
   protocol: "responses",
   baseUrl: "",
-  model: "gpt-5.6-sol",
+  model: "gpt-6.1-sol",
   reasoningEffort: "medium",
   speedMode: "default",
   temperature: "0.7",
@@ -301,6 +303,18 @@ const BUILT_IN_OPENCODE_FREE_AGENT_PROFILE = {
 };
 
 const PUBLIC_TEXT_PROVIDER_PRESET = getProviderPreset("免费模型");
+// The public Kilo catalogue is live and can retire free model aliases.  Only
+// the system-managed row is migrated; user-created rows keep their selected
+// model so an unavailable choice remains visible and explainable instead of
+// silently changing a user's custom connection.
+const RETIRED_PUBLIC_MODEL_IDS = new Set([
+  "tencent/hy3:free",
+  "meituan/longcat-2.0-free",
+]);
+const normalizedBuiltInPublicModel = (value, fallback) => {
+  const model = String(value || "").trim();
+  return RETIRED_PUBLIC_MODEL_IDS.has(model) ? String(fallback || "").trim() : (model || String(fallback || "").trim());
+};
 const BUILT_IN_PUBLIC_TEXT_PROFILE = {
   id: "text-public-kilo",
   name: "免费模型",
@@ -570,7 +584,30 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
     ? ""
     : explicitAgentEngine
       || (adapter === "api" && SHENSI_AGENT_API_PROTOCOLS.includes(requestedProtocol) ? "codex_api" : "")
-      || (adapter === "cli" && provider === "OpenAI" ? "codex" : "");
+      || (adapter === "cli" && provider === "OpenAI" ? "codex" : "")
+      || (adapter === "cli" && provider === "Claude" ? "claude_code" : "");
+  const runnerCliDefaults = {
+    codex: { cliPath: "codex", cliArgs: "exec --sandbox read-only --skip-git-repo-check --ephemeral --color never -" },
+    opencode: { cliPath: "opencode", cliArgs: "" },
+    claude_code: { cliPath: "claude", cliArgs: "-p --output-format json --model {model}" },
+    workbuddy: { cliPath: "codebuddy", cliArgs: "-p {prompt} --output-format stream-json --model {model} --mcp-config {mcpConfigFile} --strict-mcp-config" },
+  };
+  const runnerDefaults = runnerCliDefaults[defaultAgentEngine] || null;
+  const suppliedCliPath = stringValue(value.cliPath).trim();
+  const suppliedCliArgs = stringValue(value.cliArgs).trim();
+  // Older Claude profiles were saved with the OpenCode executable because
+  // both rows shared the same CLI form.  Once the profile is explicitly
+  // Claude Code, that executable can only produce ENOENT or invoke the wrong
+  // runner; repair the stale value during normalization while preserving
+  // custom paths for every other runner.
+  const normalizedCliPath = defaultAgentEngine === "claude_code"
+    && /^(?:opencode(?:\.(?:exe|cmd|ps1))?)$/iu.test(suppliedCliPath)
+    ? runnerDefaults.cliPath
+    : suppliedCliPath || runnerDefaults?.cliPath || "";
+  const normalizedCliArgs = defaultAgentEngine === "claude_code"
+    && !suppliedCliArgs
+    ? runnerDefaults.cliArgs
+    : suppliedCliArgs || runnerDefaults?.cliArgs || "";
   const executionModes = channel === "text" ? ["agent"] : [];
   const normalized = {
     ...fallback,
@@ -587,8 +624,8 @@ const normalizedProfile = (channel, value = {}, index = 0, secrets = {}) => {
     model,
     timeoutMs: draft ? stringValue(value.timeoutMs) : stringValue(value.timeoutMs, fallback.timeoutMs),
     apiKey: stringValue(secrets[id], stringValue(value.apiKey)),
-    cliPath: stringValue(value.cliPath),
-    cliArgs: stringValue(value.cliArgs),
+    cliPath: normalizedCliPath,
+    cliArgs: normalizedCliArgs,
     remarkName: (provider === "免费模型" && stringValue(value.remarkName).trim() === "公益模型"
       ? "免费模型"
       : stringValue(value.remarkName).trim()).slice(0, 80),
@@ -782,7 +819,9 @@ const ensureBuiltInGptChatCliProfile = (profiles, secrets = {}, disabledProfileI
       ...profile,
       name: !profile.name || /^OpenAI\s/.test(profile.name) ? BUILT_IN_GPT_CHAT_CLI.name : profile.name,
       protocol: profile.protocol || BUILT_IN_GPT_CHAT_CLI.protocol,
-      model: profile.model || BUILT_IN_GPT_CHAT_CLI.model,
+      model: profile.model === "gpt-5.6-sol" && !String(profile.apiKey || "").trim() && (profile.id === BUILT_IN_GPT_CHAT_CLI.id || /^GPT Agent\s*·\s*Codex CLI$/u.test(String(profile.name || "")))
+        ? BUILT_IN_GPT_CHAT_CLI.model
+        : (profile.model || BUILT_IN_GPT_CHAT_CLI.model),
       cliPath: profile.cliPath || preset.path,
       cliArgs: profile.cliArgs || preset.args,
       executionMode: "agent",
@@ -922,6 +961,7 @@ const ensureBuiltInPublicAgentProfile = (profiles) => {
   const existingIndex = profiles.findIndex((profile) => profile.id === BUILT_IN_PUBLIC_AGENT_PROFILE.id);
   if (existingIndex >= 0) {
     const existing = profiles[existingIndex];
+    const selectedModel = normalizedBuiltInPublicModel(existing.model || existing.agentModelId, BUILT_IN_PUBLIC_AGENT_PROFILE.model);
     const managed = normalizedProfile("text", {
       ...BUILT_IN_PUBLIC_AGENT_PROFILE,
       ...existing,
@@ -933,8 +973,8 @@ const ensureBuiltInPublicAgentProfile = (profiles) => {
       provider: BUILT_IN_PUBLIC_AGENT_PROFILE.provider,
       protocol: existing.protocol || BUILT_IN_PUBLIC_AGENT_PROFILE.protocol,
       baseUrl: existing.baseUrl || BUILT_IN_PUBLIC_AGENT_PROFILE.baseUrl,
-      model: existing.model || BUILT_IN_PUBLIC_AGENT_PROFILE.model,
-      agentModelId: existing.model || BUILT_IN_PUBLIC_AGENT_PROFILE.model,
+      model: selectedModel,
+      agentModelId: selectedModel,
       chatModelId: "",
       executionMode: "agent",
       executionModes: ["agent"],

@@ -64,6 +64,7 @@ export const rebaseWorkspaceConflict = ({
   localState = {},
   remoteState = {},
   stateConflictResolutions = {},
+  deletedDocumentIds = new Set(),
 } = {}) => {
   const localDocumentHashes = workspaceDocumentHashes(localState.documents);
   const remoteDocumentHashes = workspaceDocumentHashes(remoteState.documents);
@@ -73,12 +74,21 @@ export const rebaseWorkspaceConflict = ({
   const remoteDocumentIds = changedKeys(baselineDocumentHashes, remoteDocumentHashes);
   const localStateKeys = changedKeys(baselineStateHashes, localStateHashes);
   const remoteStateKeys = changedKeys(baselineStateHashes, remoteStateHashes);
-  const conflictDocumentIds = conflictingKeys({
+  // A destructive delete is an explicit local intent.  If another writer
+  // touched the same document after our baseline, that remote edit must not
+  // turn the delete into an unrecoverable conflict: the rebased state below
+  // removes the document again.  Keep ordinary edits strict when no tombstone
+  // is present.
+  const deletedIds = new Set([...((deletedDocumentIds instanceof Set)
+    ? deletedDocumentIds
+    : Array.isArray(deletedDocumentIds) ? deletedDocumentIds : [])]
+    .map((id) => String(id || "").trim()).filter(Boolean));
+  const conflictDocumentIds = new Set([...conflictingKeys({
     localChanged: localDocumentIds,
     remoteChanged: remoteDocumentIds,
     localHashes: localDocumentHashes,
     remoteHashes: remoteDocumentHashes,
-  });
+  })].filter((id) => !deletedIds.has(id)));
   const detectedStateConflictKeys = conflictingKeys({
     localChanged: localStateKeys,
     remoteChanged: remoteStateKeys,

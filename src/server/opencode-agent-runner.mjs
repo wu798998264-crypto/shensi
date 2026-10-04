@@ -20,6 +20,12 @@ const MAX_INPUT_BYTES = 8 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 1_800_000;
 const runFlagCache = new Map();
+// OpenCode's `--session` continuation is intentionally not used here.  The
+// desktop CLI persists placement metadata for a session, and after a runner
+// restart (or a second Shensi turn) that metadata can point at a stale
+// placementId.  The CLI then emits an error event even though the provider is
+// healthy.  Shensi already supplies the current conversation context in the
+// prompt, so a fresh process per turn is the reliable boundary.
 
 const validModelId = (value = "") => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:+-]{0,159}$/.test(String(value).trim());
 const safeError = (value = "") => String(value || "OpenCode Agent 调用失败")
@@ -108,7 +114,7 @@ const managedProviderConfig = ({ provider, baseUrl, model }) => {
 export const probeOpenCodeSessionCapabilities = () => Object.freeze({
   resume: false,
   fork: false,
-  reason: "fresh_current_environment_process_per_turn",
+  reason: "fresh_current_environment_process_per_turn_avoids_stale_placement_metadata",
 });
 
 const agentPrompt = ({ allowEdits, allowNetwork = false }) => [
@@ -127,6 +133,7 @@ const agentPrompt = ({ allowEdits, allowNetwork = false }) => [
 export const runOpenCodeAgent = async ({
   prompt,
   cwd,
+  sessionId: sessionKey = "",
   model,
   provider = "",
   baseUrl = "",
@@ -182,10 +189,12 @@ export const runOpenCodeAgent = async ({
   const launch = await launchResolver({ environment: launchEnvironment });
   const prefixArgs = Array.isArray(launch?.prefixArgs) ? launch.prefixArgs : [];
   const isolationFlags = supportedRunIsolationFlags(String(launch?.executable || ""), prefixArgs);
+  const freeCredential = credentialSource === "opencode_free";
   const args = [
     ...prefixArgs,
-    "run", ...(isolationFlags.pure ? ["--pure"] : isolationFlags.standalone ? ["--standalone"] : []), "--model", requestedModel, "--format", "json", "--title", "Shensi OpenCode Agent",
+    "run", ...(isolationFlags.pure ? ["--pure"] : isolationFlags.standalone ? ["--standalone"] : []), "--dir", projectDirectory, "--model", requestedModel, "--format", "json",
   ];
+  if (!freeCredential) args.push("--title", "Shensi OpenCode Agent");
   const variant = String(reasoningEffort || "").trim().toLowerCase();
   if (["high", "max"].includes(variant)) args.push("--variant", variant);
   const permissions = deepSeekOpenCodeAgentPermissions({ allowEdits, allowNetwork, agentPermissionMode: accessMode });
@@ -201,13 +210,10 @@ export const runOpenCodeAgent = async ({
   }
   let tempRoot = "";
   const managedCredential = credentialSource === "shensi";
-  const freeCredential = credentialSource === "opencode_free";
-  // Free OpenCode models must run without inheriting the user's login store.
-  // Keep the current-login source attached to the host profile, while the
-  // Shensi and free sources receive an isolated XDG environment.
-  // OpenCode free-tier models are only eligible when invoked by the running
-  // OpenCode desktop service. Do not move them into a temporary XDG store;
-  // Shensi-managed credentials remain fully isolated below.
+  // Shensi-managed credentials receive an isolated XDG environment. The
+  // login-free OpenCode pool deliberately keeps the normal CLI catalogue
+  // environment, but never receives an API key, managed provider config, or
+  // host permission envelope.
   const isolateHostConfiguration = accessMode === "shensi_only" && !freeCredential;
   const secret = managedCredential ? String(apiKey || "").trim() : "";
   if (managedCredential && !secret) throw new Error(`${String(provider || "模型服务商").trim()} Agent 缺少安全凭据`);
@@ -255,10 +261,7 @@ export const runOpenCodeAgent = async ({
     }
   }
   if (nativeHost && !managedCredential && !isolateHostConfiguration) isolatedEnvironment.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: permissions, mcp: { shensi: { type: "remote", url: nativeHost.url, headers: nativeHost.headers, oauth: false, timeout: 3_600_000 } } });
-  if (freeCredential) {
-    const isolationIndex = args.findIndex((item) => item === "--pure" || item === "--standalone");
-    if (isolationIndex >= 0) args.splice(isolationIndex, 1);
-  } else if (accessMode !== "shensi_only") {
+  if (!freeCredential && accessMode !== "shensi_only") {
     const pureIndex = args.indexOf("--pure");
     if (pureIndex >= 0) args.splice(pureIndex, 1);
   }
@@ -267,7 +270,11 @@ export const runOpenCodeAgent = async ({
   // isolated config explicitly allows shensi_* tools. All native tools are
   // still explicitly denied in shensi_only, so --auto can approve only the
   // Shensi workspace tools that remain allowed by the permission matrix.
-  if (["shensi_only", "full_access"].includes(accessMode)) args.splice(args.indexOf("run") + 1, 0, "--auto");
+  // The login-free OpenCode pool rejects the host-side `--auto` permission
+  // switch; it is only needed when Shensi MCP tools are enabled. Free models
+  // never receive a native host, so omit it while keeping the normal
+  // permission contract for managed/current-login sessions.
+  if (!freeCredential && ["shensi_only", "full_access"].includes(accessMode)) args.splice(args.indexOf("run") + 1, 0, "--auto");
   if (String(environment.SHENSI_OPENCODE_DEBUG_PERMISSION || "") === "1") {
     args.push("--print-logs", "--log-level", "DEBUG");
   }
@@ -295,7 +302,9 @@ export const runOpenCodeAgent = async ({
       env: {
         ...launchEnvironment,
         OPENCODE_DISABLE_AUTOUPDATE: "true",
-        OPENCODE_PERMISSION: JSON.stringify(permissions),
+        // The Zen free pool rejects requests carrying a host permission
+        // envelope; `--pure` already disables native tools for this source.
+        ...(freeCredential ? {} : { OPENCODE_PERMISSION: JSON.stringify(permissions) }),
         ...(permissionServerPassword ? { OPENCODE_SERVER_PASSWORD: permissionServerPassword } : {}),
         ...isolatedEnvironment,
       },
@@ -336,7 +345,11 @@ export const runOpenCodeAgent = async ({
       actualModel ||= reportedModel.model;
       onEvent?.(event);
       terminalError ||= openCodeTerminalError(event);
-      if (event.type === "error") throw new Error(eventError(event));
+      // OpenCode can emit a placement/session diagnostic as an ordinary JSON
+      // event and still finish the turn with a usable assistant message.  Do
+      // not abort the stream at the diagnostic: retain it as terminal evidence
+      // and only fail below when no final text was produced.
+      if (event.type === "error") terminalError ||= eventError(event);
       const value = openCodeTextFromEvent(event);
       if (value) textOutput += value;
     };
@@ -380,7 +393,16 @@ export const runOpenCodeAgent = async ({
     child.once("close", (code) => {
       try { if (lineBuffer.trim()) handleLine(lineBuffer); } catch (error) { finish(new Error(safeError(error?.message || error))); return; }
       if (aborted) { finish(Object.assign(new Error("OpenCode Agent 任务已停止"), { name: "AbortError" })); return; }
-      if (code !== 0) { finish(new Error(`OpenCode Agent 退出码 ${code}：${safeError(stderr || "没有错误输出")}`)); return; }
+      if (code !== 0) {
+        // OpenCode's provider gateway can emit a structured terminal error
+        // (for example an upstream rate-limit/5xx response) and then exit
+        // without writing anything to stderr. Preserve that evidence so the
+        // UI can distinguish an upstream failure from an internal runner
+        // launch problem instead of showing the opaque "退出码 1" message.
+        const detail = terminalError || safeError(stderr || "没有错误输出");
+        finish(new Error(`OpenCode Agent 退出码 ${code}：${detail}`));
+        return;
+      }
       const text = textOutput.trim();
       if (!text) {
         finish(new Error(terminalError
@@ -397,6 +419,7 @@ export const runOpenCodeAgent = async ({
         providerModelReported: Boolean(actualProvider && actualModel),
         executionSourceReceipt,
         permissionMode: accessMode,
+        ...(terminalError ? { runnerWarnings: [safeError(`OpenCode 已报告可恢复事件：${terminalError}`)] } : {}),
       });
     });
     effectiveTimeout = createEffectiveAgentTimeout({

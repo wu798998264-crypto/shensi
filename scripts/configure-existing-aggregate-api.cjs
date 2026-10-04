@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
     const profileIndex = profiles.findIndex((item) => item?.id === aggregateBinding.profileId);
     if (profileIndex < 0) throw new Error("聚合 API 运行时绑定与当前工作区配置不一致");
     const documentsBefore = digest(JSON.stringify(state.documents || {}));
-    const model = String(profiles[profileIndex]?.model || "gpt-5.6-sol").trim() || "gpt-5.6-sol";
+    const model = String(profiles[profileIndex]?.model || "gpt-6.1-sol").trim() || "gpt-6.1-sol";
     const configuredProfile = {
       ...profiles[profileIndex],
       remarkName: "聚合api",

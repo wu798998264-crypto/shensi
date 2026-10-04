@@ -8,7 +8,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
 import { seedanceReferenceValidation } from "../seedance-reference-limits.js";
-import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
+import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaControlPlaneFailureIsTransient, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 import {
   dreaminaCommandForVideoRequest,
   seedance25CapabilitiesFromCommandHelp,
@@ -71,7 +71,11 @@ const dreaminaCommandTimeoutMs = (args = []) => {
   const command = String(args[0] || "").toLowerCase();
   if (command === "version") return 60_000;
   if (command === "user_credit") return 45_000;
-  if (["list_task", "query_task", "cancel_task"].includes(command)) return 60_000;
+  // Keep provider status reads bounded; the worker owns retry/backoff and
+  // must not wait minutes before it can classify a transient control-plane
+  // stall as a resumable polling state.
+  if (["query_task", "cancel_task"].includes(command)) return 30_000;
+  if (command === "list_task") return 60_000;
   return 10 * 60_000;
 };
 
@@ -174,6 +178,15 @@ const preserveDreaminaQueryErrorCode = (error) => {
   return [
     "DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_AUTH_REQUIRED", "DREAMINA_AUTH_REFRESH_TRANSPORT_FAILED", "DREAMINA_PROFILE_BROKER_BUSY", "DREAMINA_GENERATION_SESSION_REJECTED", "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
   ].includes(code) ? code : "DREAMINA_QUERY_TRANSIENT";
+};
+const queryAuthFailureIsFinal = (error) => {
+  const code = String(error?.code || "").toUpperCase();
+  return [
+    "DREAMINA_AUTH_REQUIRED",
+    "DREAMINA_GENERATION_AUTH_REQUIRED",
+    "DREAMINA_GENERATION_SESSION_REJECTED",
+    "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+  ].includes(code) || isDreaminaAuthRequiredResponse(error?.message || error);
 };
 
 const runCliOnce = async (args) => {
@@ -1447,6 +1460,13 @@ const query = async ({ download = false, providerTaskId = "" } = {}) => {
   try {
     payload = parsePayload((await runCli(["query_result", `--submit_id=${id}`, `--download_dir=${downloadDirectory}`])).stdout);
   } catch (error) {
+    // An explicit auth/session verdict is final for this provider task. Avoid
+    // the historical list_task fallback, which can add another long CLI
+    // timeout and delay the user's verification prompt by several minutes.
+    if (queryAuthFailureIsFinal(error) || dreaminaControlPlaneFailureIsTransient(error)) {
+      error.code = preserveDreaminaQueryErrorCode(error);
+      throw error;
+    }
     const listed = await findListedTask({ providerTaskId: id }).catch(() => null);
     if (!listed) {
       error.code = preserveDreaminaQueryErrorCode(error);

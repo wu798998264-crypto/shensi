@@ -149,7 +149,7 @@ assert.match(app, /厂商排队[\s\S]{0,220}当前第/u, "厂商排队必须明�
 assert.match(app, /厂商排队[\s\S]{0,220}共/u, "厂商排队必须明确显示总人数语义");
 assert.match(app, /uiText\("正式生成"\)/u, "即梦受理占位状态必须显示正式生成，不能误写成排队");
 assert.match(app, /const beginWhiteboardSubmissionFeedback[\s\S]{0,520}status: "connecting"/u, "点击生成后必须立即建立卡片状态与计时");
-assert.match(app, /cardApplyStage: job\.status === "complete" \? "saving" : ""/u, "任务完成回包必须无缝进入卡片保存阶段，不能出现状态空窗");
+assert.match(app, /cardApplyStage: job\.cardApplyState === "failed"[\s\S]{0,300}job\.status === "complete" && job\.cardApplyState !== "applied" \? "saving" : ""/u, "完成但未回写必须进入保存阶段，回写失败与已应用状态不得被晚回包覆盖");
 assert.match(app, /const WHITEBOARD_CARD_APPLY_STAGE_ORDER = Object\.freeze\(\{[\s\S]{0,120}saving: 1,[\s\S]{0,80}verifying: 2/u,
   "晚到的任务回包不得把已经进入回读的卡片阶段覆盖回保存");
 assert.match(app, /whiteboardCardApplyStageOrder\(incomingStage\) < whiteboardCardApplyStageOrder\(currentStage\)[\s\S]{0,120}normalizedPatch\.cardApplyStage = candidate\.cardApplyStage/u,
@@ -164,7 +164,7 @@ assert.match(app, /const inputByPath = new Map\(inputs\.map\([\s\S]{0,260}output
   "深度结果卡片必须沿用对应图片或视频上游的画幅比例");
 assert.match(app, /sourceElement: decodedSourceElement/u,
   "图片编辑器应复用白板中已经解码的图片，避免重复读取导致打开变慢");
-assert.match(app, /const applyCompletedWhiteboardGenerationJob[\s\S]{0,260}updateWhiteboardCompletedApplyStage\(job, "saving"\)/u, "落盘开始前必须先显示保存状态");
+assert.match(app, /const applyCompletedWhiteboardGenerationJobNow[\s\S]{0,900}updateWhiteboardCompletedApplyStage\(job, "saving"\)/u, "落盘开始前必须先显示保存状态");
 assert.match(app, /updateWhiteboardCompletedApplyStage\(job, "verifying"\);\s+const cardReadback = await verifyWhiteboardGenerationCardReadback/u, "回读开始前必须先显示回读状态");
 assert.match(app, /await markWhiteboardGenerationJobApplied[\s\S]{0,180}finalizeWhiteboardCompletedCandidate\(job\)/u, "只有回读和应用标记成功后才能移除活动候选状态");
 assert.match(app, /if \(ownsCandidate && !retainCandidateUntilVerified\)/u, "回读确认前不得提前清除卡片状态");

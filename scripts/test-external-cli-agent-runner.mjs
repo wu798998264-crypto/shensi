@@ -86,6 +86,38 @@ const workBuddyResultPromise = runExternalCliAgent({
 const workBuddyResult = await workBuddyResultPromise;
 assert.equal(workBuddyResult.text, "这是 WorkBuddy 的正常回答。", "WorkBuddy 最终结果不得包含内部路由 JSON");
 
+// A general conversation must not wait for a nonexistent MCP bridge. The
+// lightweight path keeps only the safety instruction and user prompt and
+// strips the strict MCP flags from the default WorkBuddy print template.
+const lightWorkBuddyChild = new EventEmitter();
+lightWorkBuddyChild.stdout = new PassThrough();
+lightWorkBuddyChild.stderr = new PassThrough();
+lightWorkBuddyChild.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+lightWorkBuddyChild.kill = () => { lightWorkBuddyChild.emit("close", 1); };
+let lightArgs = [];
+const lightWorkBuddyResult = await runExternalCliAgent({
+  engine: "workbuddy",
+  prompt: "解释一个词",
+  cwd: process.cwd(),
+  cliPath: "fake-workbuddy",
+  cliArgs: "-p --output-format stream-json --mcp-config {mcpConfigFile} --strict-mcp-config",
+  nativeHost: null,
+  lightweightGeneral: true,
+  agentPermissionMode: "shensi_only",
+  spawnProcess: (_executable, args) => {
+    lightArgs = args;
+    process.nextTick(() => {
+      lightWorkBuddyChild.stdout.write(`${JSON.stringify({ type: "message", delta: "轻量回答" })}\n`);
+      lightWorkBuddyChild.stdout.end();
+      lightWorkBuddyChild.stderr.end();
+      lightWorkBuddyChild.emit("close", 0);
+    });
+    return lightWorkBuddyChild;
+  },
+});
+assert.equal(lightWorkBuddyResult.text, "轻量回答");
+assert.equal(lightArgs.some((arg) => /mcp-config|strict-mcp-config/iu.test(String(arg))), false, "轻量 WorkBuddy 不得等待空 MCP 配置");
+
 const workBuddyLeakEvents = [];
 const workBuddySchemaChild = new EventEmitter();
 workBuddySchemaChild.stdout = new PassThrough();

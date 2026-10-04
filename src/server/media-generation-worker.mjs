@@ -388,7 +388,7 @@ const providerPatch = (result = {}) => ({
 const transientProviderFailure = (error) => {
   const code = String(error?.providerErrorCode || error?.code || "").toUpperCase();
   const message = errorMessage(error);
-  return /^(?:HTTP_(?:408|409|425|429|5\d\d)|DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|DREAMINA_(?:PROFILE_BROKER_BUSY|AUTH_REFRESH_TRANSPORT_FAILED|CREDIT_QUERY_TIMEOUT|CONTROL_PLANE_TRANSIENT|QUERY_TRANSIENT|RESULT_PENDING)|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/.test(code)
+  return /^(?:HTTP_(?:408|409|425|429|5\d\d)|LIBTV_NETWORK_UNREACHABLE|LIBTV_RESULT_PENDING|DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|DREAMINA_(?:PROFILE_BROKER_BUSY|AUTH_REFRESH_TRANSPORT_FAILED|CREDIT_QUERY_TIMEOUT|CONTROL_PLANE_TRANSIENT|QUERY_TRANSIENT|RESULT_PENDING)|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/.test(code)
     || /fetch failed|network|socket|timeout|timed out|temporarily unavailable|rate limit/i.test(message);
 };
 
@@ -1855,7 +1855,7 @@ const processJob = async (candidate) => {
       && current.status === "submitting"
       && current.submissionState === "submitting"
       && !current.providerTaskId
-      && /^(?:DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/i.test(providerCode);
+      && /^(?:LIBTV_NETWORK_UNREACHABLE|DRIVER_TIMEOUT|DRIVER_EXIT_FAILED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|UND_ERR_)/i.test(providerCode);
     if (libTvPreSubmitTransportFailure) error.submissionOutcomeKnown = true;
     const errorProviderTaskId = String(error?.providerTaskId || error?.provider_task_id || "").trim();
     const usableErrorProviderTaskId = errorProviderTaskId

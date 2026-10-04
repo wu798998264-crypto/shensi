@@ -246,6 +246,39 @@ const restoreConversationOverlay = (restored, canonicalState, checkpointState) =
 
 export const restoreRecoveryState = ({ canonicalState = null, checkpoint = null } = {}) => {
   if (!checkpoint?.state || typeof checkpoint.state !== "object") return canonicalState;
+  const deletedDocumentIds = new Set((Array.isArray(checkpoint.deletedDocumentIds)
+    ? checkpoint.deletedDocumentIds
+    : []).map((documentId) => String(documentId || "").trim()).filter(Boolean));
+  const removeDeletedDocuments = (restored) => {
+    if (!deletedDocumentIds.size || !restored || typeof restored !== "object") return restored;
+    const next = { ...restored };
+    if (next.documents && typeof next.documents === "object") next.documents = { ...next.documents };
+    for (const documentId of deletedDocumentIds) {
+      if (next.documents) delete next.documents[documentId];
+      if (next.histories && typeof next.histories === "object") delete next.histories[documentId];
+      if (next.viewHistories && typeof next.viewHistories === "object") delete next.viewHistories[documentId];
+      if (next.documentConversationBindings && typeof next.documentConversationBindings === "object") {
+        delete next.documentConversationBindings[documentId];
+      }
+      if (next.rollbackDocumentObjects && typeof next.rollbackDocumentObjects === "object") {
+        delete next.rollbackDocumentObjects[documentId];
+      }
+    }
+    if (next.moduleItems && typeof next.moduleItems === "object") {
+      next.moduleItems = Object.fromEntries(Object.entries(next.moduleItems).map(([moduleId, items]) => [
+        moduleId,
+        Array.isArray(items) ? items.filter((item) => !deletedDocumentIds.has(String(item?.[0] || ""))) : items,
+      ]));
+    }
+    if (next.directoryOrders && typeof next.directoryOrders === "object") {
+      next.directoryOrders = Object.fromEntries(Object.entries(next.directoryOrders).map(([key, order]) => [
+        key,
+        Array.isArray(order) ? order.filter((id) => !deletedDocumentIds.has(String(id || ""))) : order,
+      ]));
+    }
+    if (deletedDocumentIds.has(String(next.activeDocument || ""))) next.activeDocument = "";
+    return next;
+  };
   if (checkpoint.stateMode === RECOVERY_DOCUMENT_OVERLAY_MODE) {
     const restored = {
       ...(canonicalState && typeof canonicalState === "object" ? canonicalState : {}),
@@ -256,12 +289,12 @@ export const restoreRecoveryState = ({ canonicalState = null, checkpoint = null 
       checkpoint.state.documents ?? {},
       checkpoint.documentIds ?? Object.keys(checkpoint.state.documents ?? {}),
     );
-    return restored;
+    return removeDeletedDocuments(restored);
   }
   // `full-v1` is the legacy name used by older checkpoints.  It still
   // contains a whole workspace snapshot, so it must use the same additive
   // conversation merge instead of replacing the canonical conversation list.
-  if (checkpoint.stateMode && ![RECOVERY_OVERLAY_MODE, RECOVERY_FULL_MODE].includes(checkpoint.stateMode)) return checkpoint.state;
+  if (checkpoint.stateMode && ![RECOVERY_OVERLAY_MODE, RECOVERY_FULL_MODE].includes(checkpoint.stateMode)) return removeDeletedDocuments(checkpoint.state);
   const restored = {
     ...(canonicalState && typeof canonicalState === "object" ? canonicalState : {}),
     ...checkpoint.state,
@@ -269,5 +302,5 @@ export const restoreRecoveryState = ({ canonicalState = null, checkpoint = null 
   if (checkpoint.state.documents && typeof checkpoint.state.documents === "object") {
     restored.documents = mergeRecoveryDocuments(canonicalState?.documents ?? {}, checkpoint.state.documents);
   }
-  return restoreConversationOverlay(restored, canonicalState, checkpoint.state);
+  return removeDeletedDocuments(restoreConversationOverlay(restored, canonicalState, checkpoint.state));
 };

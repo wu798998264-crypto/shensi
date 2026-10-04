@@ -6,6 +6,8 @@ assert.match(source, /BRIDGE_READINESS_WINDOW_MS\s*=\s*12_000/u, "WorkBuddy 首�
 assert.match(source, /const waitForSidecar\s*=\s*async/u, "首次使用必须等待桌面 sidecar 就绪");
 assert.match(source, /Date\.now\(\)\s*<\s*deadline/u, "桥接发现不得无限轮询");
 assert.match(source, /const openAcpTaskSession\s*=\s*async/u, "ACP 会话生命周期必须独立封装");
+assert.match(source, /const promptUpdateIsTerminal\s*=\s*\(params = \{\}\)/u, "无 JSON-RPC response id 的 ACP 终态必须可识别");
+assert.match(source, /message\.method === "session\/prompt"[\s\S]{0,300}promptUpdateIsTerminal/u, "ACP prompt 不能等待一个永不关闭的 SSE 流");
 assert.match(source, /session\s*=\s*await createHeadlessSession[\s\S]{0,900}return await prepare\(\)/u, "旧 ACP 会话失败后只能有界重建一次");
 assert.match(source, /CODEBUDDY_FORCE_HEADLESS_BUNDLE:\s*"1"/u, "ACP 子进程必须使用稳定的 headless bundle");
 assert.match(source, /CODEBUDDY_FORCE_LITE_WB_BUNDLE:\s*"0"/u, "ACP 子进程不得强制旧的 lite 模型目录");

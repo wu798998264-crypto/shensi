@@ -54,6 +54,25 @@ export const dreaminaFailureDiagnosis = ({
 
   let resolvedCode = errorCode;
   if (ACCOUNT_VERIFICATION_CODES.has(errorCode)) {
+    // Once Dreamina has returned a durable provider task ID, an auth-looking
+    // error must still guide the user to verify the original account. The
+    // verification is read-only recovery only: retaining the task ID prevents
+    // duplicate submission and the queue never retries the paid request.
+    if (providerTaskCreated && ["DREAMINA_AUTH_REQUIRED", "DREAMINA_GENERATION_AUTH_REQUIRED"].includes(errorCode)) {
+      return {
+        code: "DREAMINA_PROVIDER_TASK_AUTH_FAILURE",
+        raw,
+        providerTaskCreated,
+        ...diagnosis({
+          category: "provider_task_internal_failure",
+          title: "即梦原任务需要核验原配置",
+          cause: "厂商已经返回真实任务编号，但查询或资源处理阶段报告 authsdk 异常；需要核验原配置后只读续接原任务。",
+          resolution: "核验产生该任务的原即梦配置后续接原厂商任务；保留并只读核对原厂商任务编号，不要重新提交同一任务。若厂商明确失败，再从失败卡片重新生成。",
+          requiresAccountVerification: true,
+          retryable: true,
+        }),
+      };
+    }
     return {
       code: errorCode,
       raw,

@@ -62,11 +62,21 @@ const GPT6_ASTRA_MODEL = model("gpt-6-astra", "GPT-6 Astra", {
   maxOutputTokens: 128_000,
 });
 
+// The aggregate text endpoint is OpenAI-compatible and exposes the same
+// current Sol model family as the first-party catalogue.  Keep this shared
+// descriptor so the custom/aggregate picker and the OpenAI picker use the
+// exact same model contract (reasoning levels and limits).
+const GPT6_1_SOL_MODEL = model("gpt-6.1-sol", "GPT-6.1 Sol", {
+  reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+  defaultReasoningLevel: "medium",
+  speedTiers: [PRIORITY],
+});
+
 export const isGpt6AstraModel = (slug = "") => /^(?:openai\/)?gpt-6-astra$/iu.test(String(slug).trim());
 
 export const OPENAI_MODEL_OPTIONS = [
   GPT6_ASTRA_MODEL,
-  model("gpt-6.1-sol", "GPT-6.1 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
+  GPT6_1_SOL_MODEL,
   model("gpt-6-sol", "GPT-6 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
   model("gpt-6-luna", "GPT-6 Luna", { reasoningLevels: ["low", "medium", "high", "xhigh", "max"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
   model("gpt-5.6-sol", "GPT-5.6 Sol", { reasoningLevels: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultReasoningLevel: "medium", speedTiers: [PRIORITY] }),
@@ -398,10 +408,14 @@ export const PROVIDER_MODEL_OPTIONS = {
     model("poolside/laguna-s-2.1:free", "Laguna S 2.1", { contextWindowTokens: 262_144 }),
     model("kilo-auto/free", "Auto", { contextWindowTokens: 256_000, maxOutputTokens: 10_000 }),
     model("stepfun/step-3.7-flash:free", "Step 3.7 Flash", { contextWindowTokens: 262_144 }),
-    model("tencent/hy3:free", "Hy3", { contextWindowTokens: 262_144 }),
-    model("meituan/longcat-2.0-free", "LongCat 2.0", { contextWindowTokens: 1_048_756 }),
+    // Retained as visible compatibility entries so an old saved profile can
+    // explain why it was retired; live /models results remain authoritative.
+    model("tencent/hy3:free", "Hy3（已退役）", { contextWindowTokens: 262_144, selectable: false, available: false, availabilityNote: "Kilo 当前目录已移除该免费别名，请改用实时目录中的模型" }),
+    model("meituan/longcat-2.0-free", "LongCat 2.0（已退役）", { contextWindowTokens: 1_048_756, selectable: false, available: false, availabilityNote: "Kilo 当前目录已移除该免费别名，请改用实时目录中的模型" }),
   ],
-  "自定义兼容接口": [GPT6_ASTRA_MODEL],
+  // Aggregate API text connections should start on the current Sol model;
+  // Astra remains selectable for endpoints that still expose it.
+  "自定义兼容接口": [GPT6_1_SOL_MODEL, GPT6_ASTRA_MODEL],
 };
 
 const currentProviderId = (provider) => provider === "公益模型" ? "免费模型" : provider;
@@ -849,7 +863,7 @@ export const PROVIDER_PRESETS = [
   {
     id: "OpenAI",
     label: "OpenAI",
-    api: { protocol: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-5.6-sol" },
+    api: { protocol: "responses", baseUrl: "https://api.openai.com/v1", model: "gpt-6.1-sol" },
     cli: { path: "codex", args: "exec --sandbox read-only --skip-git-repo-check --ephemeral --color never -", testArgs: ["--version"], apiKeyEnv: "OPENAI_API_KEY", workspaceAgent: true },
   },
   {
@@ -947,7 +961,9 @@ export const PROVIDER_PRESETS = [
   {
     id: "自定义兼容接口",
     label: "自定义兼容接口",
-    api: { protocol: "chat_completions", baseUrl: "", model: "" },
+    // New custom/aggregate text connections start on the current Sol model;
+    // callers may still choose any model returned by the endpoint catalogue.
+    api: { protocol: "chat_completions", baseUrl: "", model: "gpt-6.1-sol" },
     cli: { path: "", args: "", testArgs: ["--version"], apiKeyEnv: "" },
     custom: true,
   },

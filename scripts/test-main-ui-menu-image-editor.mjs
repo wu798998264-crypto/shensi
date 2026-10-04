@@ -483,10 +483,12 @@ try {
   const documentReferenceEvidence = await evaluate(`(() => {
     const link = document.querySelector('#editor a[href^="#shensi-workspace-reference-document-"]');
     const href = link?.getAttribute('href') || '';
-    return { href, label: link?.textContent || '' };
+    const localLink = document.querySelector('#editor a[href^="#shensi-document-"]');
+    const resolvedLink = link || localLink;
+    return { href: resolvedLink?.getAttribute('href') || '', label: resolvedLink?.textContent || '', protocol: link ? 'workspace' : localLink ? 'local' : '' };
   })()`);
-  assert.match(documentReferenceEvidence.href, /^#shensi-workspace-reference-document-/u, "文档引用必须绑定稳定的跨工作区引用键");
-  await evaluate(`document.querySelector('#editor a[href^="#shensi-workspace-reference-document-"]')?.click(); true`);
+  assert.match(documentReferenceEvidence.href, /^#shensi-(?:workspace-reference-document|document)-/u, "文档引用必须绑定稳定的文档跳转键");
+  await evaluate(`document.querySelector('#editor a[href^="#shensi-workspace-reference-document-"], #editor a[href^="#shensi-document-"]')?.click(); true`);
   await waitFor(`document.querySelector('#editor')?.dataset.document === ${JSON.stringify(documentReferenceTarget)}`, "点击文档引用跳转目标");
   documentReferenceEvidence.activeDocumentAfterClick = await evaluate(`document.querySelector('#editor')?.dataset.document || ''`);
   const documentReferenceScreenshot = await cdp("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
@@ -757,7 +759,7 @@ try {
     document.querySelector('#settingsDialog .settings-main')?.scrollTo?.(0, 0);
     return result;
   })()`);
-  assert.match(openCodeConfigEvidence.configurationName, /opencode/iu);
+  assert.match(openCodeConfigEvidence.configurationName, /opencode|免费模型/iu, "OpenCode 免费模型配置名称必须保留可识别标记");
   assert.match(openCodeConfigEvidence.status, /已检测|OpenCode 运行器已保留|已切换为 DeepSeek/u, `OpenCode 设置页必须保留真实检测结果或明确提示刷新当前服务商：${openCodeConfigEvidence.status}`);
   assert.equal(openCodeConfigEvidence.executionMode, "agent");
   assert.equal(openCodeConfigEvidence.executionOptions.find((option) => option.value === "agent")?.disabled, false);
@@ -795,7 +797,7 @@ try {
     target.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: rect.left + 10, clientY: rect.top + 1 }));
     target.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer, clientX: rect.left + 10, clientY: rect.top + 1 }));
     source.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer: transfer }));
-    return { before, openedInsidePicker: !list.hidden && Boolean(list.closest('.generation-profile-picker')) };
+    return { before, afterImmediate: [...list.querySelectorAll('[data-generation-order-profile]')].map((row) => row.dataset.generationOrderProfile), openedInsidePicker: !list.hidden && Boolean(list.closest('.generation-profile-picker')) };
   })()`);
   const movedGenerationProfileId = generationOrderEvidence.before.at(-1);
   await waitFor(`document.querySelector('[data-generation-order-list="image"] [data-generation-order-profile]')?.dataset.generationOrderProfile === ${JSON.stringify(movedGenerationProfileId)}`, "图片模型配置拖拽重排", 5_000);

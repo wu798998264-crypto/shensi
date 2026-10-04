@@ -23,8 +23,22 @@ export const buildFrontendTaskRoute = ({
   const prompt = String(text || "").trim();
   const resourceSignal = Boolean(hasAttachments || hasReferences || hasSelection);
   const panelSignal = textHasPanelSignal(prompt);
-  const explicitGeneral = GENERAL_TERMS.test(prompt) && prompt.length <= 160;
-  const panelCandidate = resourceSignal || panelSignal || workspaceKind === "notebook";
+  // Short exact-reply probes are ordinary conversation even when they are
+  // sent from a notebook/project surface. Keep the whitelist narrow so a
+  // creative instruction that merely contains “回复” still enters the full
+  // panel route.
+  const shortReplyProbe = /^(?:请(?:用[^：:\n]{0,12})?(?:回答|回复|输出)|(?:只|仅)(?:回复|输出)|(?:回答|回复|输出))(?::|：|\s|$)/u.test(prompt)
+    && prompt.length <= 160;
+  const explicitGeneral = (GENERAL_TERMS.test(prompt) || shortReplyProbe) && prompt.length <= 160;
+  // The notebook/project surface is context, not proof that the current turn
+  // needs the full panel route.  Treating every notebook message as a panel
+  // task forced ordinary OpenCode/WorkBuddy turns through catalogue loading,
+  // document preloads and delivery review; after a few turns that extra work
+  // could exhaust the runner's active timeout even though the user only asked
+  // a normal question.  Explicit panel signals and resources remain
+  // authoritative, while an unmarked short question can use the lightweight
+  // general lane on either surface.
+  const panelCandidate = resourceSignal || panelSignal;
   if (panelCandidate) {
     return {
       schemaVersion: 1,
