@@ -123,6 +123,7 @@ export const LIBTV_IMAGE_MODEL_OPTIONS = [
   model("nebula-core", "全能图片模型", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("nebula-2-flash", "General image V2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("doubao-seedream-5-0-pro", "Seedream 5.0 Pro", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
+  model("flux-3-image", "Genesis F.3", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("qwen-image-3", "Qwen image 3.0", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-v8.2", "Style Image V8.2", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
   model("mj-v8.1", "Style Image V8.1", { capabilities: ["image_generation"], inputCapabilities: ["image_input"] }),
@@ -140,6 +141,7 @@ export const LIBTV_IMAGE_MODEL_OPTIONS = [
 
 export const LIBTV_VIDEO_MODEL_OPTIONS = [
   model("star-video2.5", "Seedance 2.5", { capabilities: ["video_generation"], inputCapabilities: ["image_input", "video_input", "audio_input"], durationSeconds: Array.from({ length: 27 }, (_, index) => index + 4), resolutions: ["480p", "720p"] }),
+  model("star-video2.5-draft", "Seedance 2.5（样片模式）", { capabilities: ["video_generation"], inputCapabilities: ["image_input", "video_input", "audio_input"], durationSeconds: Array.from({ length: 27 }, (_, index) => index + 4), resolutions: ["480p"] }),
   model("star-video2", "Seedance 2.0 VIP", { capabilities: ["video_generation"], inputCapabilities: ["image_input", "video_input", "audio_input"], durationSeconds: Array.from({ length: 12 }, (_, index) => index + 4), resolutions: ["720p", "1080p"] }),
   model("MiniMax-Hailuo-H3-Max", "Minimax H3 Max", { capabilities: ["video_generation"], inputCapabilities: ["image_input", "video_input", "audio_input"], durationSeconds: Array.from({ length: 11 }, (_, index) => index + 5), resolutions: ["768P", "2K"] }),
   model("MiniMax-Hailuo-H3", "Minimax H3", { capabilities: ["video_generation"], inputCapabilities: ["image_input", "video_input", "audio_input"], durationSeconds: Array.from({ length: 11 }, (_, index) => index + 5), resolutions: ["768P", "2K"] }),

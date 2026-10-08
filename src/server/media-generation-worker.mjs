@@ -359,10 +359,15 @@ const providerPatch = (result = {}) => ({
   providerStatus: String(result.providerStatus || result.rawStatus || "running"),
   providerRawStatus: String(result.rawStatus || ""),
   providerErrorCode: String(result.errorCode || ""),
+  ...(result.providerRawError ? { providerRawError: String(result.providerRawError).slice(0, 4_000) } : {}),
+  ...(result.providerRawPayload ? { providerRawPayload: String(result.providerRawPayload).slice(0, 8_000) } : {}),
+  ...(result.providerCliStderr ? { providerCliStderr: String(result.providerCliStderr).slice(0, 4_000) } : {}),
   ...(result.failureCategory ? { failureCategory: String(result.failureCategory) } : {}),
   ...(result.failureReason ? { failureReason: String(result.failureReason) } : {}),
   ...(result.failureResolution ? { failureResolution: String(result.failureResolution) } : {}),
   ...(result.resultUrl ? { providerResultUrl: String(result.resultUrl) } : {}),
+  resultResourcePending: result.resultResourcePending === true,
+  resultReconciliationPending: result.resultReconciliationPending === true,
   ...(result.resultUrlExpiresAt ? { resultUrlExpiresAt: String(result.resultUrlExpiresAt) } : {}),
   ...(providerProgressNumber(providerResultProgress(result)) !== null ? { providerProgressPercent: providerProgressNumber(providerResultProgress(result)) } : {}),
   providerQueuePosition: providerQueueNumber(result.providerQueuePosition),
@@ -891,6 +896,8 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
     if (dreaminaCliMediaJob(current) && isDreaminaCredentialBusy(error)) throw error;
     if (!current.providerTaskId || !transientProviderFailure(error)) throw error;
     const failures = Number(current.transientFailures || 0) + 1;
+    const providerFailureCode = String(error.providerErrorCode || error.code || "PROVIDER_RESULT_DOWNLOAD_FAILED");
+    const libTvResultPending = driver.id === "libtv-cli" && providerFailureCode === "LIBTV_RESULT_PENDING";
     const dreaminaResultRecovery = dreaminaCliMediaJob(current)
       ? dreaminaResultRecoveryPolicy({
         job: current,
@@ -921,14 +928,21 @@ const downloadProviderResult = async ({ job, settings, driver, workRoot }) => {
       return updateRunnableMediaGenerationJob({ jobId: current.id, patch: {
         status: "retry_required",
         providerStatus: "completed",
-        providerErrorCode: String(error.providerErrorCode || error.code || "PROVIDER_RESULT_DOWNLOAD_FAILED"),
+        providerErrorCode: providerFailureCode,
         progressPercent: 100,
         transientFailures: failures,
         failedAt: "",
         retryAllowed: true,
         nextPollAt: "",
         automaticRecoveryStoppedAt: new Date().toISOString(),
-        error: `厂商结果已生成，但下载连续 ${failures} 次失败，已停止自动重试；原任务 ${current.providerTaskId} 已保留。请点击“找回结果”继续下载，不会重新生成或重复扣费。最近错误：${errorMessage(error)}`,
+        ...(libTvResultPending ? {
+          failureCategory: "provider_result_pending",
+          failureReason: "LibTV 节点已返回完成态，但官方 CLI 始终没有提供可下载资源。",
+          failureResolution: "请点击“找回结果”再次读取原节点；不会重新创建或重复提交任务。",
+          error: `LibTV 节点已显示生成完成，但官方 CLI 连续 ${failures} 次没有提供结果资源；已停止自动等待。原任务 ${current.providerTaskId} 已保留，请点击“找回结果”重试下载，不会重新生成或重复扣费。`,
+        } : {
+          error: `厂商结果已生成，但下载连续 ${failures} 次失败，已停止自动重试；原任务 ${current.providerTaskId} 已保留。请点击“找回结果”继续下载，不会重新生成或重复扣费。最近错误：${errorMessage(error)}`,
+        }),
         heartbeatAt: new Date().toISOString(),
       } });
     }
@@ -1490,6 +1504,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     const submittedStatus = assertProviderStatus(submitted, "媒体厂商提交");
     if (submittedStatus === "failed" && providerCapacityLimited(submitted)) {
       const failures = Number(job.transientFailures || 0) + 1;
+      const libTvCapacity = driver.id === "libtv-cli"
+        && String(submitted.providerErrorCode || submitted.errorCode || "").toUpperCase() === "LIBTV_CAPACITY_INSUFFICIENT";
+      const capacityCode = libTvCapacity ? "LIBTV_CAPACITY_INSUFFICIENT" : "DREAMINA_CONCURRENCY_LIMIT";
       if (job.dreaminaQueuePolicy === 'command-lease-v1' || failures > MAX_CAPACITY_AUTOMATIC_RETRIES) {
         await update(job.id, {
           status: "failed",
@@ -1497,7 +1514,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
           providerTaskId: null,
           rejectedProviderTaskId: submitted.providerTaskId,
           providerStatus: "failed",
-          providerErrorCode: "DREAMINA_CONCURRENCY_LIMIT",
+          providerErrorCode: capacityCode,
           submissionState: "not_submitted",
           capacityRetrySafe: false,
           transientFailures: failures,
@@ -1509,7 +1526,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
           nextPollAt: "",
           retryAllowed: true,
           heartbeatAt: new Date().toISOString(),
-          error: job.dreaminaQueuePolicy === 'command-lease-v1'
+          error: libTvCapacity
+            ? 'LibTV 厂商当前算力不足，本次未创建生成任务。已停止自动重试；请稍后重新生成，原画布节点已保留，不会重复创建。'
+            : job.dreaminaQueuePolicy === 'command-lease-v1'
             ? '即梦厂商明确返回并发名额已满，本次未创建收费任务。已暂停提交并标红；请等待厂商名额释放后手动重新生成。'
             : `厂商连续 ${failures} 次明确返回并发名额已满，本次没有创建收费任务。自动重试已停止；可稍后在卡片上重新生成。`,
         });
@@ -1522,7 +1541,7 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         providerTaskId: null,
         rejectedProviderTaskId: submitted.providerTaskId,
         providerStatus: "queued",
-        providerErrorCode: "DREAMINA_CONCURRENCY_LIMIT",
+          providerErrorCode: capacityCode,
         submissionState: "not_submitted",
         capacityRetrySafe: true,
         transientFailures: failures,
@@ -1532,7 +1551,9 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
         failedAt: "",
         nextPollAt: new Date(Date.now() + delayMs).toISOString(),
         heartbeatAt: new Date().toISOString(),
-        error: `厂商并发名额已满，本次未创建收费项目；将在约 ${Math.ceil(delayMs / 1000)} 秒后自动重试（${failures}/${MAX_CAPACITY_AUTOMATIC_RETRIES}）。`,
+          error: libTvCapacity
+            ? `LibTV 厂商当前算力不足，本次未创建生成任务；将在约 ${Math.ceil(delayMs / 1000)} 秒后自动重试（${failures}/${MAX_CAPACITY_AUTOMATIC_RETRIES}），不会重复创建画布节点。`
+            : `厂商并发名额已满，本次未创建收费项目；将在约 ${Math.ceil(delayMs / 1000)} 秒后自动重试（${failures}/${MAX_CAPACITY_AUTOMATIC_RETRIES}）。`,
       });
       return;
     }
@@ -1698,6 +1719,45 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
     }
     if (["complete", "cancelled", "superseded"].includes(polled.status)) return;
     job = polled;
+    if (dreaminaCliMediaJob(job) && status.resultReconciliationPending === true) {
+      const recovery = dreaminaResultRecoveryPolicy({
+        job,
+        errorCode: "DREAMINA_RESULT_PENDING",
+        message: "即梦查询返回 Finish，但没有任务历史或可下载结果",
+      });
+      const pendingPatch = {
+        providerErrorCode: "DREAMINA_RESULT_PENDING",
+        resultRecoveryStartedAt: recovery.startedAt,
+        resultRecoveryExpiresAt: recovery.expiresAt,
+        resultRecoveryAttempts: recovery.attempts,
+        failureCategory: "provider_result_pending",
+        failureReason: "即梦查询接口返回 Finish，但没有返回任务历史或结果文件。",
+        failureResolution: "系统只会继续查询原厂商任务号；超过时限后可手动找回，不会重新提交。",
+        heartbeatAt: new Date().toISOString(),
+      };
+      if (recovery.expired) {
+        await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
+          ...pendingPatch,
+          status: "retry_required",
+          providerStatus: "running",
+          nextPollAt: "",
+          failedAt: "",
+          progressPercent: 100,
+          retryAllowed: true,
+          billingRisk: job.billingRisk || "provider_task_submitted",
+          automaticRecoveryStoppedAt: new Date().toISOString(),
+          error: `即梦原任务 ${job.providerTaskId || "未知"} 的查询接口已返回 Finish，但在安全窗口内仍没有任务历史或结果文件；已停止自动等待。可点击“找回结果”继续查询，不会重新提交或重复扣费。`,
+        } });
+      } else {
+        await updateRunnableMediaGenerationJob({ jobId: job.id, patch: {
+          ...pendingPatch,
+          status: "polling",
+          nextPollAt: new Date(Date.now() + durableProviderPollDelayMs(job, status.providerStatus)).toISOString(),
+          error: `即梦原任务 ${job.providerTaskId || "未知"} 的队列已结束，但结果尚未物化；正在只读找回（${recovery.attempts} 次），不会重新提交。`,
+        } });
+      }
+      return;
+    }
     const providerStateChangedAt = Date.parse(String(polled.providerStateChangedAt || ""));
     if (driver.id === "libtv-cli"
       && !providerTerminalStatus(status.providerStatus)
@@ -1716,7 +1776,12 @@ const processProviderJob = async (job, settings, driver = resolveMediaProviderDr
       } });
       return;
     }
-    if (status.providerStatus === "failed") throw Object.assign(new Error(status.error || "媒体厂商任务失败"), { providerErrorCode: status.errorCode || "PROVIDER_FAILED" });
+    if (status.providerStatus === "failed") throw Object.assign(new Error(status.error || "媒体厂商任务失败"), {
+      providerErrorCode: status.errorCode || "PROVIDER_FAILED",
+      ...(status.providerRawError ? { providerRawError: String(status.providerRawError).slice(0, 4_000) } : {}),
+      ...(status.providerRawPayload ? { providerRawPayload: String(status.providerRawPayload).slice(0, 8_000) } : {}),
+      ...(status.providerCliStderr ? { providerCliStderr: String(status.providerCliStderr).slice(0, 4_000) } : {}),
+    });
     if (status.providerStatus === "cancelled") {
       await confirmMediaGenerationCancelled({ jobId: job.id, patch: { cancelledAt: new Date().toISOString(), heartbeatAt: new Date().toISOString() } });
       return;
@@ -1919,9 +1984,13 @@ const processJob = async (candidate) => {
       statusCode: Number(error.statusCode) || 0,
       message: errorMessage(error),
     });
+    const dreaminaDiagnosticMessage = [
+      errorMessage(error),
+      error.providerCliStderr,
+    ].map((value) => String(value || "").trim()).filter(Boolean).join("\n");
     const dreaminaFailure = dreaminaCliMediaJob(current) ? dreaminaFailureDiagnosis({
       code: providerCode,
-      message: errorMessage(error),
+      message: dreaminaDiagnosticMessage,
       providerTaskId: current.providerTaskId,
       submissionState: current.submissionState,
     }) : null;
@@ -1929,6 +1998,9 @@ const processJob = async (candidate) => {
       failureCategory: dreaminaFailure.category,
       failureReason: dreaminaFailure.cause,
       failureResolution: dreaminaFailure.resolution,
+      ...(dreaminaFailure.raw ? { providerRawError: String(dreaminaFailure.raw).slice(0, 4_000) } : {}),
+      ...(error.providerRawPayload ? { providerRawPayload: String(error.providerRawPayload).slice(0, 8_000) } : {}),
+      ...(error.providerCliStderr ? { providerCliStderr: String(error.providerCliStderr).slice(0, 4_000) } : {}),
     } : {};
     const dreaminaTaskSessionRecovery = dreaminaCliMediaJob(current)
       ? dreaminaTaskSessionRecoveryPolicy({

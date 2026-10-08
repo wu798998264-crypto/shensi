@@ -44,7 +44,13 @@ export const classifyLibTvCliError = (error, { args = [], phase = "" } = {}) => 
     .join("\n");
   const payload = parsedJson(raw);
   const nestedCode = payload?.code ?? payload?.error?.code ?? payload?.data?.code ?? payload?.ret;
-  const nestedMessage = payload?.msg ?? payload?.message ?? payload?.error?.message ?? payload?.data?.msg ?? "";
+  const nestedMessage = payload?.msg
+    ?? payload?.message
+    ?? payload?.error?.message
+    ?? payload?.data?.msg
+    ?? payload?.data?.message
+    ?? payload?.data?.error?.message
+    ?? "";
   const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${raw} ${nestedCode || ""} ${nestedMessage || ""}`);
   if (capacity) {
     error.providerErrorCode = "LIBTV_CAPACITY_INSUFFICIENT";
@@ -114,12 +120,55 @@ const providerPrompt = (job = {}) => sanitizeMediaProviderPrompt(
 
 const parsedJson = (source) => {
   const text = String(source || "").trim();
+  if (!text) return {};
   try { return JSON.parse(text); } catch {}
-  const start = text.lastIndexOf("{");
-  if (start >= 0) {
-    try { return JSON.parse(text.slice(start)); } catch {}
+  // LibTV occasionally prefixes the JSON response with a human-readable log
+  // line.  The old lastIndexOf("{") fallback selected an inner object from a
+  // nested response (for example `data.taskInfo`) and therefore lost the
+  // provider code/status.  First try complete JSON lines, then scan balanced
+  // JSON values and prefer the candidate that ends last and spans the most
+  // bytes at that end.  This remains tolerant of CLI noise without changing
+  // the provider request or submission flow.
+  const lines = text.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      const value = JSON.parse(lines[index]);
+      if (value && typeof value === "object") return value;
+    } catch {}
   }
-  return {};
+  let best = null;
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== "{" && text[start] !== "[") continue;
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    for (let end = start; end < text.length; end += 1) {
+      const character = text[end];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') { inString = true; continue; }
+      if (character === "{" || character === "[") stack.push(character);
+      else if (character === "}" || character === "]") {
+        const opener = stack.pop();
+        if ((character === "}" && opener !== "{") || (character === "]" && opener !== "[")) break;
+        if (!stack.length) {
+          try {
+            const value = JSON.parse(text.slice(start, end + 1));
+            if (value && typeof value === "object") {
+              const candidate = { value, end, length: end - start + 1 };
+              if (!best || candidate.end > best.end || (candidate.end === best.end && candidate.length > best.length)) best = candidate;
+            }
+          } catch {}
+          break;
+        }
+      }
+    }
+  }
+  return best?.value || {};
 };
 
 const PLACEHOLDER_PROVIDER_TASK_IDS = new Set([
@@ -1012,6 +1061,7 @@ const LIBTV_IMAGE_NAMES = Object.freeze({
   "nebula-ultra": "General image Pro",
   "nebula-2-flash": "General image V2",
   "doubao-seedream-5-0-pro": "Seedream 5.0 Pro",
+  "flux-3-image": "Genesis F.3",
   "qwen-image-3": "Qwen image 3.0",
   "mj-v8.2": "Style Image V8.2",
   "mj-v8.1": "Style Image V8.1",
@@ -1028,6 +1078,7 @@ const LIBTV_IMAGE_NAMES = Object.freeze({
 });
 const LIBTV_VIDEO_NAMES = Object.freeze({
   "star-video2.5": "Seedance 2.5",
+  "star-video2.5-draft": "Seedance 2.5（样片模式）",
   "star-video2": "Seedance 2.0 VIP",
   "MiniMax-Hailuo-H3-Max": "Minimax H3 Max",
   "MiniMax-Hailuo-H3": "Minimax H3",
@@ -1132,12 +1183,26 @@ const libtvStatus = (value) => {
 
 const libTvPayloadErrorCode = (payload = {}) => {
   const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
-  const value = payload?.code ?? payload?.ret ?? data?.code ?? data?.ret ?? data?.errorCode ?? "";
+  const info = data?.taskInfo && typeof data.taskInfo === "object" ? data.taskInfo : data?.task_info && typeof data.task_info === "object" ? data.task_info : {};
+  const value = payload?.code
+    ?? payload?.ret
+    ?? data?.code
+    ?? data?.ret
+    ?? data?.errorCode
+    ?? data?.error_code
+    ?? info?.code
+    ?? info?.ret
+    ?? info?.errorCode
+    ?? info?.error_code
+    ?? info?.taskStatusCode
+    ?? info?.task_status_code
+    ?? "";
   return String(value ?? "").trim();
 };
 
 const libTvPayloadErrorMessage = (payload = {}) => {
   const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
+  const info = data?.taskInfo && typeof data.taskInfo === "object" ? data.taskInfo : data?.task_info && typeof data.task_info === "object" ? data.task_info : {};
   return String(
     payload?.msg
       ?? payload?.message
@@ -1145,6 +1210,13 @@ const libTvPayloadErrorMessage = (payload = {}) => {
       ?? data?.msg
       ?? data?.message
       ?? data?.error?.message
+      ?? info?.msg
+      ?? info?.message
+      ?? info?.error
+      ?? info?.errorMessage
+      ?? info?.error_message
+      ?? info?.failedReason
+      ?? info?.failed_reason
       ?? "",
   ).trim();
 };
@@ -1171,12 +1243,11 @@ export const parseLibTvTaskPayload = (payload = {}) => {
   // file is actually usable.
   if (!providerFailure && info.loading === false && urls.length && status !== "failed") status = "completed";
   // LibTV may report the numeric terminal state before its result URL is
-  // visible. Treat that response as a read-only resource-pending observation,
-  // not as a completed artifact. The worker will keep polling the existing
-  // node and will only enter the download path once a real URL is present;
-  // this avoids a premature download loop and never re-submits the task.
+  // visible. Keep the provider terminal state so the worker enters the
+  // existing bounded download/retry path instead of treating the node as
+  // indefinitely running. The download command is still the authority for
+  // whether the resource is actually available; no task is re-submitted.
   const resultResourcePending = !providerFailure && status === "completed" && urls.length === 0;
-  if (resultResourcePending) status = "running";
   const error = String(info.failedReason || info.error || data.failedReason || libTvPayloadErrorMessage(payload) || "");
   const rawCode = libTvPayloadErrorCode(payload);
   const capacity = /1200000136|算力不足|capacity\s*(?:insufficient|shortage)|insufficient\s*compute/iu.test(`${rawCode} ${error}`);
@@ -1418,6 +1489,25 @@ export const listLibTvModels = async ({ channel = "image", settings = {}, select
   }
   libTvModelCatalogCache.set(cacheKey, { value: models, expiresAt: Date.now() + LIBTV_MODEL_SCHEMA_CACHE_TTL_MS });
   return models;
+};
+
+const resolveLibTvModelName = async ({ channel = "image", modelKey = "", settings = {} } = {}) => {
+  const key = String(modelKey || "").trim();
+  if (!key) return key;
+  const fallbackNames = channel === "image"
+    ? LIBTV_IMAGE_NAMES
+    : channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
+  const fallback = String(fallbackNames[key] || key);
+  try {
+    const models = await listLibTvModels({ channel, settings, selectedModel: key });
+    const match = models.find((item) => String(item?.slug || "").trim() === key);
+    // node create expects the account-visible modelName, not necessarily the
+    // stable modelKey.  Prefer the authoritative catalog label while keeping
+    // the proven built-in alias as a bounded fallback when the CLI is offline.
+    return String(match?.label || fallback).trim() || fallback;
+  } catch {
+    return fallback;
+  }
 };
 
 export const listLibTvModelCapabilities = async ({ channel = "video", settings = {}, selectedModel = "", forceFresh = false } = {}) => {
@@ -1710,7 +1800,8 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     }
     if (!node?.nodeKey) {
       const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
-      const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${names[modelKey] || modelKey}`];
+      const modelName = await resolveLibTvModelName({ channel: job.channel, modelKey, settings });
+      const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${modelName || names[modelKey] || modelKey}`];
       if (job.channel === "image") {
         // LibTV image schemas vary: older models expose one output control,
         // while the current 2.5 models expose independent quality and
@@ -1826,6 +1917,23 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     try {
       run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings, phase: "提交生成" });
     } catch (error) {
+      // LibTV creates a durable canvas node before it checks provider
+      // capacity.  A capacity response therefore means "node exists, no
+      // provider task was created"; return a failed submission observation so
+      // the worker can clear the node key from the paid-task field and safely
+      // retry the same node later, instead of treating the canvas node ID as a
+      // remote task and polling it forever.
+      if (String(error?.providerErrorCode || error?.code || "").toUpperCase() === "LIBTV_CAPACITY_INSUFFICIENT") {
+        return {
+          providerTaskId: node.nodeKey,
+          providerStatus: "failed",
+          rawStatus: "capacity_before_provider_task",
+          error: error.message,
+          errorCode: "LIBTV_CAPACITY_INSUFFICIENT",
+          capacityLimited: true,
+          retryAfterMs: Number(error.retryAfterMs) || 60_000,
+        };
+      }
       // Node creation is durable. If LibTV blocks on --run, switch to the
       // read-only status path instead of leaving the card spinning forever or
       // submitting the same node again. Explicit provider errors still pass
@@ -1901,7 +2009,12 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     await mkdir(outputDir, { recursive: true });
     await this.invoke(libTvDownloadArgs({ job, node, outputDir }), { cwd: workRoot, timeoutMs: LIBTV_DOWNLOAD_TIMEOUT_MS, raw: true, settings: job.request.settings || {}, phase: "下载结果" });
     const files = (await readdir(outputDir, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => join(outputDir, entry.name));
-    if (!files.length) throw asError("LibTV 任务已完成但没有下载到结果文件", "MISSING_RESULT_FILE");
+    if (!files.length) {
+      throw asError(
+        "LibTV 任务已返回完成态，但官方 CLI 尚未提供可下载结果资源",
+        "LIBTV_RESULT_PENDING",
+      );
+    }
     const sourcePath = files[0];
     const extension = extname(sourcePath).toLowerCase();
     const mimeType = extension === ".png" ? "image/png" : extension === ".jpg" || extension === ".jpeg" ? "image/jpeg" : extension === ".wav" ? "audio/wav" : extension === ".m4a" ? "audio/mp4" : extension === ".ogg" ? "audio/ogg" : extension === ".mp3" ? "audio/mpeg" : extension === ".webm" ? "video/webm" : extension === ".mov" ? "video/quicktime" : "video/mp4";

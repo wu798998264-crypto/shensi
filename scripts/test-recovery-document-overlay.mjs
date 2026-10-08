@@ -85,6 +85,72 @@ try {
   assert.equal(loaded.stateMode, "document-overlay-v2");
   assert.deepEqual(loaded.documentIds, ["chapter-1", "chapter-deleted"]);
 
+  // A newer clean/default checkpoint from another renderer must not hide an
+  // older dirty overlay that still carries the user's deletion tombstones.
+  // This reproduces the data-loss case where the active client checkpoint was
+  // a 47-document template while another client still had the real notebook.
+  const selectionWorkspacePath = join(temporaryDataRoot, "笔记", "选择保护检查点");
+  await saveWorkspaceRecoveryCheckpoint({
+    workspacePath: selectionWorkspacePath,
+    workspaceKind: "notebook",
+    projectName: "选择保护检查点",
+    clientId: "user-overlay",
+    revision: 12,
+    stateMode: "overlay-v1",
+    deletedDocumentIds: ["deleted-user-file"],
+    state: { documents: { "kept-user-file": { title: "用户编辑内容", markdown: "真实正文" } } },
+  });
+  await saveWorkspaceRecoveryCheckpoint({
+    workspacePath: selectionWorkspacePath,
+    workspaceKind: "notebook",
+    projectName: "选择保护检查点",
+    clientId: "active-default",
+    revision: 3,
+    stateMode: "overlay-v1",
+    state: { documents: { "template-file": { title: "默认模板", markdown: "" } } },
+  });
+  await commitWorkspaceRecoveryCheckpoint({ workspacePath: selectionWorkspacePath, clientId: "active-default", revision: 3 });
+  const selectedProtective = await loadWorkspaceRecoveryCheckpoint({
+    workspacePath: selectionWorkspacePath,
+    clientId: "active-default",
+  });
+  assert.equal(selectedProtective.clientId, "user-overlay", "带删除墓碑的用户检查点不得被更新的默认检查点遮蔽");
+  assert.deepEqual(selectedProtective.deletedDocumentIds, ["deleted-user-file"]);
+
+  // Once the canonical workspace has advanced, a dirty checkpoint from the
+  // previous baseline must not be silently replaced by a newer clean/template
+  // checkpoint, and it must not be returned to hydration at all.
+  const mismatchWorkspacePath = join(temporaryDataRoot, "笔记", "基线冲突保护");
+  await saveWorkspaceRecoveryCheckpoint({
+    workspacePath: mismatchWorkspacePath,
+    workspaceKind: "notebook",
+    projectName: "基线冲突保护",
+    clientId: "old-user-overlay",
+    baseStateStamp: "canonical-old",
+    deletedDocumentIds: ["deleted-after-restore"],
+    state: { documents: { "old-user-file": { title: "旧草稿", markdown: "不可覆盖当前版本" } } },
+  });
+  await saveWorkspaceRecoveryCheckpoint({
+    workspacePath: mismatchWorkspacePath,
+    workspaceKind: "notebook",
+    projectName: "基线冲突保护",
+    clientId: "new-default",
+    baseStateStamp: "canonical-new",
+    state: { documents: { "template-file": { title: "默认模板", markdown: "" } } },
+  });
+  const noStaleFallback = await loadWorkspaceRecoveryCheckpoint({
+    workspacePath: mismatchWorkspacePath,
+    clientId: "new-default",
+    baseStateStamp: "canonical-current-without-checkpoint",
+  });
+  assert.equal(noStaleFallback, null, "canonical 基线不匹配时不得回退到旧用户或默认模板检查点");
+  const matchingOverlay = await loadWorkspaceRecoveryCheckpoint({
+    workspacePath: mismatchWorkspacePath,
+    clientId: "new-default",
+    baseStateStamp: "canonical-new",
+  });
+  assert.equal(matchingOverlay.clientId, "new-default", "只允许加载与当前 canonical 基线严格匹配的检查点");
+
   const restored = restoreRecoveryState({
     canonicalState: {
       projectName: "恢复协议测试",

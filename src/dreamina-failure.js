@@ -18,6 +18,13 @@ const LEGACY_UNSTRUCTURED_CODES = new Set([
   "PROVIDER_FAILED",
 ]);
 
+// These patterns intentionally require an explicit policy/copyright signal.
+// A generic "content" or "generation failed" string is not enough to claim
+// that the provider rejected the prompt or a reference asset.
+const COPYRIGHT_REJECTION = /(?:copyright|copyrighted|著作权|版权|侵权|知识产权|ip\s*(?:violation|infringement))/iu;
+const CONTENT_POLICY_REJECTION = /(?:content[\s_-]*(?:policy|moderation|safety)|policy[\s_-]*(?:violation|rejected)|moderation[\s_-]*(?:blocked|rejected)|safety[\s_-]*filter|内容审核|安全审核|内容违规|违规内容|敏感内容|审核不通过|违反[^\n]{0,12}(?:规范|政策|规则)|不合规内容)/iu;
+const REFERENCE_POLICY_REJECTION = /(?:reference|ref(?:erence)?|input\s+(?:image|video|audio|media)|参考(?:物|媒体|图片|视频|音频)?|素材)[\s\S]{0,160}(?:copyright|著作权|版权|侵权|知识产权|content[\s_-]*(?:policy|rejected)|policy|moderation|safety|审核|违规|不合规)|(?:copyright|著作权|版权|侵权|知识产权|content[\s_-]*(?:policy|rejected)|policy|moderation|safety|审核|违规|不合规)[\s\S]{0,160}(?:reference|ref(?:erence)?|input\s+(?:image|video|audio|media)|参考(?:物|媒体|图片|视频|音频)?|素材)/iu;
+
 const diagnosis = ({ category, title, cause, resolution, requiresAccountVerification = false, retryable = false }) => ({
   category,
   title,
@@ -68,7 +75,11 @@ export const dreaminaFailureDiagnosis = ({
           title: "即梦原任务需要核验原配置",
           cause: "厂商已经返回真实任务编号，但查询或资源处理阶段报告 authsdk 异常；需要核验原配置后只读续接原任务。",
           resolution: "核验产生该任务的原即梦配置后续接原厂商任务；保留并只读核对原厂商任务编号，不要重新提交同一任务。若厂商明确失败，再从失败卡片重新生成。",
-          requiresAccountVerification: true,
+          // The task already has a durable provider ID.  This is a
+          // provider-task recovery state, not proof that the saved account
+          // identity is invalid; the UI must not force a new account
+          // verification before read-only recovery.
+          requiresAccountVerification: false,
           retryable: true,
         }),
       };
@@ -108,6 +119,38 @@ export const dreaminaFailureDiagnosis = ({
         cause: "任务已经提交给即梦并保留了厂商任务 ID，但当前配置无法继续查询或下载原任务结果。",
         resolution: "核验当前任务原来使用的即梦配置；核验成功后只续接原厂商任务，不会重新提交或重复扣费。",
         requiresAccountVerification: true,
+      }),
+    };
+  }
+
+  const policyText = `${errorCode} ${raw}`;
+  if (REFERENCE_POLICY_REJECTION.test(policyText)) {
+    return {
+      code: "DREAMINA_REFERENCE_POLICY_REJECTED",
+      raw,
+      providerTaskCreated,
+      ...diagnosis({
+        category: "reference_policy_rejected",
+        title: "即梦参考素材未通过厂商审核",
+        cause: "即梦明确将参考素材判定为版权、内容安全或合规审核不通过；这是厂商返回的审核结果，不是本地账号或凭证锁故障。",
+        resolution: providerTaskCreated
+          ? "保留原厂商任务编号，不要重新提交同一任务；根据下方即梦原始报错替换或移除不合规参考素材后，再从失败卡片重新生成。"
+          : "根据下方即梦原始报错替换或移除不合规参考素材后，再重新生成。",
+      }),
+    };
+  }
+  if (COPYRIGHT_REJECTION.test(policyText) || CONTENT_POLICY_REJECTION.test(policyText)) {
+    return {
+      code: "DREAMINA_CONTENT_POLICY_REJECTED",
+      raw,
+      providerTaskCreated,
+      ...diagnosis({
+        category: "content_policy_rejected",
+        title: "即梦提示词或生成内容未通过厂商审核",
+        cause: "即梦明确返回了版权、内容安全或合规审核拒绝；这是厂商返回的审核结果，不是本地账号或积分故障。",
+        resolution: providerTaskCreated
+          ? "保留原厂商任务编号，不要重新提交同一任务；根据下方即梦原始报错修改提示词或内容设定后，再从失败卡片重新生成。"
+          : "根据下方即梦原始报错修改提示词或内容设定后，再重新生成。",
       }),
     };
   }
@@ -225,11 +268,24 @@ export const dreaminaFailureDiagnosis = ({
       resolution: "检查参考文件是否存在、可读取且格式受支持，移除异常参考后重试。",
       retryable: true,
     }),
+    DREAMINA_REFERENCE_UPLOAD_TRANSIENT: diagnosis({
+      category: "reference_upload_transient",
+      title: "即梦参考媒体上传暂时超时",
+      cause: "即梦参考媒体上传阶段的临时网络请求超时；这不是账号核验失败。",
+      resolution: providerTaskCreated
+        ? "已保留厂商任务编号，只读续查原任务，禁止重新提交以免重复扣费；若厂商最终明确失败，再从失败卡片重新生成。"
+        : "本次尚未取得厂商任务编号，神思会按现有有限次数重试同一提交；重试仍失败时请检查参考文件和网络后再手动重试。",
+      retryable: true,
+    }),
     DREAMINA_REFERENCE_INVALID: diagnosis({
       category: "reference_invalid",
       title: "即梦参考媒体无效",
-      cause: "参考文件的类型、路径、数量或内容不符合当前即梦生成模式要求。",
-      resolution: "检查参考文件是否完整，并按当前图片或视频模式允许的数量和格式重新选择。",
+      cause: providerTaskCreated
+        ? "即梦已返回厂商任务编号，但参考媒体在厂商校验阶段被判定为类型、数量、尺寸、时长或内容不符合当前生成模式。"
+        : "参考文件的类型、路径、数量或内容不符合当前即梦生成模式要求。",
+      resolution: providerTaskCreated
+        ? "保留原厂商任务编号并只读核对结果，不要重新提交同一任务；根据下方即梦原始报错修正参考物后，再从失败卡片重新生成。"
+        : "检查参考文件是否完整，并按当前图片或视频模式允许的数量和格式重新选择；界面会保留即梦返回的原始报错。",
     }),
     DREAMINA_SUBMISSION_UNCERTAIN: diagnosis({
       category: "submission_outcome_unknown",

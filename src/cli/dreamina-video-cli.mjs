@@ -99,7 +99,12 @@ const retryCount = (name, fallback) => {
 const authRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_AUTH_RETRY_DELAY_MS) || 800);
 const uploadRetryDelayMs = () => Math.max(50, Number(process.env.SHENSI_DREAMINA_UPLOAD_RETRY_DELAY_MS) || 1_200);
 const boundedRetryDelay = (base, attempt, cap = 10_000) => Math.min(cap, base * (2 ** Math.max(0, attempt)));
-const referenceUploadDidNotCreateTask = (value) => /upload resource[\s\S]*no file upload|upload (?:image|video|audio): upload phase, no file upload|no (?:reference )?files? (?:were )?uploaded|failed to upload (?:reference|image|video|audio)[\s\S]*(?:before (?:task )?submit|without creating (?:a )?task)/i.test(String(value || ""));
+const referenceUploadTransientFailure = (value) => /upload resource[\s\S]*(?:ApplyImageUpload|apply phase|context deadline exceeded|timed?\s*out|timeout|ECONN(?:RESET|REFUSED)|connection (?:reset|closed|timed?\s*out)|暂时不可用|连接超时)/iu.test(String(value || ""));
+const referenceUploadDidNotCreateTask = (value) => {
+  const text = String(value || "");
+  return /upload resource[\s\S]*no file upload|upload (?:image|video|audio): upload phase, no file upload|no (?:reference )?files? (?:were )?uploaded|failed to upload (?:reference|image|video|audio)[\s\S]*(?:before (?:task )?submit|without creating (?:a )?task)/iu.test(text)
+    || referenceUploadTransientFailure(text);
+};
 const DREAMINA_VIDEO_GENERATION_COMMANDS = new Set([
   "text2video", "image2video", "frames2video", "multiframe2video", "multimodal2video", "multiframe_video", "longvideo",
 ]);
@@ -522,16 +527,64 @@ const payloadHasFailureStatusWithoutTaskId = (payload) => {
   if (!explicitTaskId && ["fail", "failed", "error"].includes(status)) return true;
   return Object.values(payload).some(payloadHasFailureStatusWithoutTaskId);
 };
-const rawFailureReason = (payload) => String(nestedValue(payload, ["fail_reason", "failure_reason", "message", "error"]) || "Dreamina 视频任务失败");
+const providerErrorText = (value) => {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(providerErrorText).filter(Boolean).join("；");
+  if (typeof value === "object") {
+    const preferred = ["message", "msg", "error", "detail", "reason", "description", "raw"]
+      .map((key) => providerErrorText(value[key]))
+      .find(Boolean);
+    if (preferred) return preferred;
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+};
+const rawFailureReason = (payload) => providerErrorText(nestedValue(payload, [
+  "fail_reason", "failure_reason", "fail_msg", "failure_message", "error_message", "error_msg",
+  "status_msg", "message", "msg", "detail", "reason", "error",
+])) || "Dreamina 视频任务失败";
 const concurrencyLimited = (value) => /ExceedConcurrencyLimit|(?:ret|code)\s*[=:]\s*1310/i.test(String(value || ""));
+const referenceMediaRejectedFailure = (value) => {
+  const text = String(value || "");
+  if (!text || referenceUploadTransientFailure(text)) return false;
+  const reference = "(?:reference|ref(?:erence)?|input\\s+(?:image|video|audio|media)|image|video|audio|media|参考(?:物|媒体|图片|视频|音频)?|素材)";
+  const rejection = "(?:invalid|unsupported|not\\s+supported|rejected|forbidden|too\\s+(?:large|small|long|short)|size|dimension|resolution|format|duration|count|limit|content|policy|审核|不支持|无效|拒绝|超限|数量|格式|尺寸|分辨率|时长|违规|不合规|无法识别)";
+  return new RegExp(`${reference}[\\s\\S]{0,120}${rejection}|${rejection}[\\s\\S]{0,120}${reference}`, "iu").test(text);
+};
 const friendlyFailureReason = (value) => {
-  const reason = String(value || "Dreamina 视频任务失败");
+  const reason = providerErrorText(value) || "Dreamina 视频任务失败";
   if (concurrencyLimited(reason)) {
     return "即梦当前并发任务数已达上限（ExceedConcurrencyLimit）。";
   }
   return reason;
 };
 const failureCode = (payload) => String(nestedValue(payload, ["error_code", "errorCode", "code", "ret"]) || "").trim();
+const SENSITIVE_PROVIDER_KEY = /(?:token|access[_-]?token|refresh[_-]?token|cookie|session|authorization|credential|password|secret|private[_-]?key|api[_-]?key)/iu;
+const sanitizeProviderEvidence = (value, depth = 0) => {
+  if (depth > 5) return "[nested value omitted]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return value.length > 800 ? `${value.slice(0, 800)}…[truncated]` : value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 40).map((item) => sanitizeProviderEvidence(item, depth + 1));
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, child]) => [
+      key,
+      SENSITIVE_PROVIDER_KEY.test(key) ? "[redacted]" : sanitizeProviderEvidence(child, depth + 1),
+    ]));
+  }
+  return String(value);
+};
+const providerPayloadEvidence = (payload) => {
+  if (payload === null || payload === undefined) return "";
+  try {
+    const serialized = JSON.stringify(sanitizeProviderEvidence(payload));
+    return serialized && serialized.length > 8_000 ? `${serialized.slice(0, 8_000)}…[truncated]` : serialized || "";
+  } catch {
+    return "";
+  }
+};
 const resultUrl = (payload) => String(nestedValue(payload, ["result_url", "download_url", "video_url", "url"]) || "").trim();
 const resultUrlExpiresAt = (payload) => String(nestedValue(payload, ["result_url_expires_at", "expires_at", "expire_time"]) || "").trim();
 const nestedNumber = (payload, keys) => {
@@ -1160,15 +1213,24 @@ const acquireIdempotencyLock = async ({ lockPath, journalPath }) => {
 };
 
 const publicPayload = (payload, fallbackId = "", options = {}) => {
-  const status = normalizedStatus(payload, options);
+  const { cliStderr = "", ...statusOptions } = options || {};
+  const status = normalizedStatus(payload, statusOptions);
   const queue = queueInfo(payload);
   const rawError = status === "failed" ? rawFailureReason(payload) : "";
+  const referenceUploadTransient = status === "failed" && referenceUploadTransientFailure(rawError);
+  const referenceInvalid = status === "failed"
+    && !referenceUploadTransient
+    && (referenceMediaRejectedFailure(rawError) || referenceMediaRejectedFailure(failureCode(payload)));
   const capacityLimited = status === "failed" && concurrencyLimited(`${rawError} ${failureCode(payload)}`);
   const providerTaskId = submitId(payload) || fallbackId;
   const providerTaskAuthFailure = status === "failed" && Boolean(providerTaskId) && isDreaminaAuthRequiredResponse(rawError);
   const providerSessionExpired = status === "failed" && !providerTaskId && isDreaminaAuthRequiredResponse(rawError);
   const errorCode = capacityLimited
     ? "DREAMINA_CONCURRENCY_LIMIT"
+    : referenceUploadTransient
+      ? "DREAMINA_REFERENCE_UPLOAD_TRANSIENT"
+      : referenceInvalid
+        ? "DREAMINA_REFERENCE_INVALID"
     : providerTaskAuthFailure
       ? "DREAMINA_PROVIDER_TASK_AUTH_FAILURE"
     : providerSessionExpired
@@ -1184,6 +1246,13 @@ const publicPayload = (payload, fallbackId = "", options = {}) => {
     error: status === "failed"
       ? friendlyFailureReason(rawError)
       : status === "unknown" ? `Dreamina CLI 返回无法识别的任务状态：${rawStatus(payload) || "空状态"}` : "",
+    ...(rawError ? { providerRawError: rawError.slice(0, 4_000) } : {}),
+    ...(status === "failed" || status === "unknown"
+      ? { providerRawPayload: providerPayloadEvidence(payload) }
+      : {}),
+    ...(String(cliStderr || "").trim()
+      ? { providerCliStderr: String(cliStderr).trim().slice(0, 4_000) }
+      : {}),
     errorCode,
     ...(failure ? {
       failureCategory: failure.category,
@@ -1354,8 +1423,10 @@ const submit = async () => {
       });
     }
     let payload;
+    let cliStderr = "";
     try {
       const cliResult = await runGenerationSubmitCli(command);
+      cliStderr = cliResult.stderr || "";
       payload = parsePayload([cliResult.stdout || "", cliResult.stderr || ""].filter(Boolean).join("\n"));
       if (!submitId(payload) && cliResult.providerTaskId) {
         payload = { ...payload, submit_id: normalizeDreaminaTaskId(cliResult.providerTaskId) };
@@ -1374,7 +1445,7 @@ const submit = async () => {
       throw error;
     }
     let result = {
-      ...publicPayload(payload),
+      ...publicPayload(payload, "", { cliStderr }),
       executionReceipt: dreaminaExecutionReceipt(account.identity),
       accountControlPlaneDeferred: account.controlPlaneDeferred === true,
       accountCreditSourceConflict: account.creditSourceConflict === true,
@@ -1457,8 +1528,11 @@ const query = async ({ download = false, providerTaskId = "" } = {}) => {
     }
   }
   let payload;
+  let cliStderr = "";
   try {
-    payload = parsePayload((await runCli(["query_result", `--submit_id=${id}`, `--download_dir=${downloadDirectory}`])).stdout);
+    const cliResult = await runCli(["query_result", `--submit_id=${id}`, `--download_dir=${downloadDirectory}`]);
+    cliStderr = cliResult.stderr || "";
+    payload = parsePayload(cliResult.stdout);
   } catch (error) {
     // An explicit auth/session verdict is final for this provider task. Avoid
     // the historical list_task fallback, which can add another long CLI
@@ -1489,7 +1563,11 @@ const query = async ({ download = false, providerTaskId = "" } = {}) => {
   // The requested provider task ID is the durable task identity. Query output
   // may contain nested asset IDs or a stale submit_id; neither may retarget the
   // local job to a different (and potentially billable) provider task.
-  const result = { ...publicPayload(payload, id), providerTaskId: id, downloadedPath };
+  const result = {
+    ...publicPayload(payload, id, { cliStderr }),
+    providerTaskId: id,
+    downloadedPath,
+  };
   if (download && result.providerStatus === "completed") {
     if (!downloadedPath) throw Object.assign(new Error(`Dreamina 视频任务 ${id} 已完成，但未返回可下载文件`), { code: "DREAMINA_RESULT_PENDING" });
     if (!output) throw new Error("Dreamina 下载缺少 --output");

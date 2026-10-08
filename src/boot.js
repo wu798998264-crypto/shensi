@@ -21,11 +21,13 @@
     const root = document.getElementById("root");
     if (!root || root.childElementCount) return;
     const english = localStorage.getItem("shensi-ui-preferences")?.includes('"uiLanguage":"en-US"');
-    root.textContent = english
+    const failure = document.createElement("div");
+    failure.className = "boot-failure-screen";
+    failure.setAttribute("role", "alert");
+    failure.textContent = english
       ? "The app failed to load. Refresh the page to try again."
       : "应用加载失败，请刷新页面后重试。";
-    root.setAttribute("role", "alert");
-    root.style.padding = "24px";
+    root.replaceChildren(failure);
   };
 
   window.addEventListener("error", (event) => {

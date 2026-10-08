@@ -6,9 +6,10 @@ import { dreaminaFailureDiagnosis } from "../src/dreamina-failure.js";
 const sources = await Promise.all([
   readFile(new URL("../src/cli/dreamina-image-cli.mjs", import.meta.url), "utf8"),
   readFile(new URL("../src/cli/dreamina-video-cli.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../src/server/media-generation-worker.mjs", import.meta.url), "utf8"),
 ]);
 
-for (const source of sources) {
+for (const source of sources.slice(0, 2)) {
   const activeStatus = source.indexOf("const activeStatuses =");
   const queueHint = source.indexOf(
     'if ((queue.position !== null && queue.position > 0) || /queue|wait|排队/',
@@ -20,12 +21,16 @@ for (const source of sources) {
   assert.match(source, /activeStatuses\.includes\(queueStatus\)/u, "queue_status=Generating 必须显示为生成中");
 }
 assert.match(sources[0], /providerTaskId = dreaminaImageGenerationCommand/u, "图片提交异常也必须保留厂商任务 ID");
+assert.match(sources[0], /needsExactTaskReconciliation/u, "图片查询遇到 Finish 但无结果时必须进行精确任务核对");
+assert.match(sources[0], /resultReconciliationPending/u, "图片查询必须区分队列结束和结果已物化");
 assert.match(sources[0], /switch to read-only polling/u, "图片任务带任务 ID 时必须转为只读续查");
 assert.match(sources[0], /submit_id: providerTaskId/u, "图片桥接回执必须把任务 ID 作为 submit_id 交给提交层");
-for (const source of sources) {
+for (const source of sources.slice(0, 2)) {
   assert.match(source, /queryAuthFailureIsFinal/u, "即梦查询遇到明确核验失败时不得再追加 list_task 长超时");
   assert.match(source, /if \(queryAuthFailureIsFinal\(error\)(?:\s*\|\|\s*dreaminaControlPlaneFailureIsTransient\(error\))?\)\s*\{/u, "明确核验失败和查询暂态故障必须立即返回给续查 worker");
 }
+assert.match(sources[2], /status\.resultReconciliationPending === true/u, "即梦 Finish 无结果必须进入有界结果找回");
+assert.match(sources[2], /providerErrorCode: "DREAMINA_RESULT_PENDING"/u, "即梦结果查询停滞必须使用结果待找回错误码");
 
 const generating = dreaminaQueueView({
   id: "generation-status-1",

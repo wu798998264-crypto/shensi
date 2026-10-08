@@ -23,6 +23,10 @@
 .PARAMETER ProductName
     Artifact name prefix. Default: ShensiCreativeEngine.
 
+.PARAMETER AllowDirty
+    Local diagnosis only. Allows a dirty source checkout and must not be used
+    for a formal release or cloud upload.
+
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1
 #>
@@ -30,6 +34,7 @@
 param(
     [switch]$SkipVerify,
     [switch]$SkipBuild,
+    [switch]$AllowDirty,
     [string]$OutputDir = "release",
     [string]$ProductName = "ShensiCreativeEngine"
 )
@@ -57,6 +62,16 @@ $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding UTF8 | C
 $version = $packageJson.version
 if ($version -notmatch '^\d\.\d\.\d$') {
     throw "正式版本号必须由三个单数字段组成；例如 7.7.9 的下一版应进位为 7.8.0"
+}
+
+# Never turn an in-progress checkout (which may contain private notes,
+# credentials or an unreviewed hotfix) into a formal installer.  The explicit
+# AllowDirty switch is retained only for local diagnosis and is rejected by
+# the cloud release preparation step as well.
+$statusLines = @(& git -C $repoRoot status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) { throw "Cannot determine source checkout status." }
+if ($statusLines.Count -gt 0 -and -not $AllowDirty) {
+    throw "正式打包要求源码工作区干净；请先提交或隔离未提交修改。调试构建可显式使用 -AllowDirty，但不得发布。"
 }
 
 # A formal installer version is immutable. Refuse to create a second package
@@ -102,6 +117,20 @@ $releaseBuild | Add-Member -NotePropertyName commit -NotePropertyValue $sourceCo
 $releaseBuildJson = $releaseBuild | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($releaseBuildPath, $releaseBuildJson, [System.Text.UTF8Encoding]::new($false))
 Write-Host "==> Updated release-build.json (buildId=$buildId, publishable=true)"
+
+# Freeze the exact runtime source set before any build step. The manifest is
+# embedded in the installer and rechecked afterPack, in the final installer,
+# and again by the packaged core at startup. This prevents a later local edit
+# or a partial packaging run from being mistaken for the verified build.
+$previousRequireCleanSource = $env:SHENSI_REQUIRE_CLEAN_SOURCE
+if (-not $AllowDirty) { $env:SHENSI_REQUIRE_CLEAN_SOURCE = "1" }
+try {
+    & node (Join-Path $repoRoot "scripts\create-runtime-manifest.mjs")
+} finally {
+    if ($null -eq $previousRequireCleanSource) { Remove-Item Env:SHENSI_REQUIRE_CLEAN_SOURCE -ErrorAction SilentlyContinue }
+    else { $env:SHENSI_REQUIRE_CLEAN_SOURCE = $previousRequireCleanSource }
+}
+if ($LASTEXITCODE -ne 0) { throw "runtime source manifest generation failed (exit $LASTEXITCODE)" }
 
 # ---------------------------------------------------------------------------
 # 3. Build verification. A formal package must never continue after a failed

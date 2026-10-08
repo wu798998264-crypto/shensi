@@ -183,7 +183,11 @@ const pathInside = (root, target) => {
 };
 
 const projectKey = (cwd) => createHash("sha256").update(cwd).digest("hex").slice(0, 24);
-const safeMessage = (error) => String(error?.message || error || "未知错误").replace(/Authorization:\s*[^\s]+/gi, "Authorization: [REDACTED]");
+const safeMessage = (error) => String(error?.message || error || "未知错误")
+  .replace(/Authorization:\s*[^\s]+/gi, "Authorization: [REDACTED]")
+  .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+  .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]")
+  .replace(/\b(?:sk|sess|key)-[A-Za-z0-9_-]{16,}\b/gi, "[REDACTED-SECRET]");
 const codexApiFunctionToolsSupported = (settings = {}) => (
   String(settings.provider || "").trim() === "OpenAI"
   || (String(settings.id || settings.connectionId || "").trim() === "text-public-agent"

@@ -121,7 +121,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.2.3-integrity-ask-recovery";
+} from "./generation-profiles.js?v=9.2.9-integrity-ask-recovery";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
@@ -6049,12 +6049,12 @@ const fetchWorkspaceLoadWithRetry = async (workspacePath, attempts = 3) => {
   throw lastError ?? new Error("工作区加载失败");
 };
 
-const loadWorkspaceRecoveryForHydration = async (workspacePath) => {
+const loadWorkspaceRecoveryForHydration = async (workspacePath, baseStateStamp = "") => {
   if (!workspacePath) return null;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
   try {
-    const response = await fetch(`/api/recovery/checkpoint?workspacePath=${encodeURIComponent(workspacePath)}&clientId=${encodeURIComponent(recoveryClientId)}`, {
+    const response = await fetch(`/api/recovery/checkpoint?workspacePath=${encodeURIComponent(workspacePath)}&clientId=${encodeURIComponent(recoveryClientId)}&baseStateStamp=${encodeURIComponent(baseStateStamp)}`, {
       signal: controller.signal,
     });
     const payload = await response.json();
@@ -6071,23 +6071,32 @@ const hydrateWorkspace = async () => {
   ui.workspaceRecoveryRestored = false;
   try {
     if (storedActiveWorkspace()?.empty === true) return { status: "empty" };
+    // A fresh isolated runtime (and a first launch with no resume pointer)
+    // intentionally has no active workspace yet.  Do not synthesize the
+    // historical `runtime/作品/未命名` path and then treat its missing state
+    // file as corruption; the startup workspace list will enter the explicit
+    // empty-workspace mode and let the user create/select a real notebook or
+    // work.  This also keeps test/runtime data roots isolated from E: data.
+    if (!String(state.settings?.workspacePath || "").trim()) return { status: "empty" };
     await resolvePersistentWorkspaceLocation();
     const localLayout = clone(state.layout ?? PANE_LAYOUT_DEFAULTS);
     const payload = await fetchWorkspaceLoadWithRetry(state.settings.workspacePath);
-    const checkpoint = await loadWorkspaceRecoveryForHydration(payload.workspaceRoot || state.settings.workspacePath);
+    const checkpoint = await loadWorkspaceRecoveryForHydration(payload.workspaceRoot || state.settings.workspacePath, payload.stateStamp || "");
     const canonicalBaselineState = payload.state ? workspaceStatePayload(payload.state) : null;
-    const checkpointBaselineMatches = !payload.state
-      ? true
-      : Boolean(
-        checkpoint?.baseStateStamp
-        && payload.stateStamp
-        && String(checkpoint.baseStateStamp) === String(payload.stateStamp),
-      );
+    const checkpointBaselineMatches = Boolean(
+      payload.state
+      && checkpoint?.baseStateStamp
+      && payload.stateStamp
+      && String(checkpoint.baseStateStamp) === String(payload.stateStamp),
+    );
     const checkpointCanRestore = Boolean(checkpoint?.dirty && checkpoint.state && checkpointBaselineMatches);
     const hydratedState = checkpointCanRestore
       ? restoreRecoveryState({ canonicalState: payload.state, checkpoint })
       : payload.state;
-    if (!hydratedState) return { status: "missing" };
+    // Loading an existing selection is not permission to initialize a template.
+    // Keep autosave blocked when a state file is temporarily unavailable; only
+    // the explicit new-workspace flow may create the first state.
+    if (!hydratedState) throw new Error("所选工作区状态未能安全读取，已禁止默认模板写入。请刷新或从恢复记录找回，不要覆盖现有文件");
     const initial = createInitialState();
     state = {
       ...initial,
@@ -6118,7 +6127,7 @@ const hydrateWorkspace = async () => {
     ui.workspaceRevision = ui.recoveryCheckpointRevision;
     ui.workspaceDirty = checkpointCanRestore;
     ui.workspaceStateChangesPending = checkpointCanRestore;
-    if (checkpoint?.whiteboardGenerationDrafts) {
+    if (checkpointCanRestore && checkpoint.whiteboardGenerationDrafts) {
       // A checkpoint can be older than the renderer's local draft cache when
       // the process crashed between localStorage and the asynchronous server
       // write. Merge by per-entry updatedAt instead of overwriting the newest
@@ -8187,6 +8196,11 @@ const noteColorPickerMarkup = (command, label, iconCode) => `
     </div>
   </div>`;
 
+// A transient boot error must never leave layout styles/ARIA state on the app
+// mount point after the application recovers and renders normally.
+root.style.removeProperty("padding");
+root.removeAttribute("role");
+root.classList.remove("boot-failure-root");
 root.innerHTML = `
   <div class="app-shell${DESKTOP_RUNTIME ? " desktop-runtime" : ""}" data-theme="${state.theme}" data-runtime="${DESKTOP_RUNTIME ? "desktop" : "browser-preview"}">
     <header class="topbar v804-fixed-layout">
@@ -14118,6 +14132,64 @@ const whiteboardCandidateKey = (nodeId, {
 
 const whiteboardCandidateFor = (nodeId, location = {}) => ui.whiteboardCandidates.get(whiteboardCandidateKey(nodeId, location)) ?? null;
 
+// A media result can be visible in the card before the asynchronous card
+// write-back has completed. Copying the canonical placeholder at that moment
+// used to create a second media card with an empty `file`, which rendered as a
+// blank rectangle. Materialize the verified candidate into the clipboard
+// record without mutating the source canvas.
+const whiteboardClipboardNode = (node, documentId = state.activeDocument) => {
+  const candidate = whiteboardCandidateFor(node?.id, { documentId });
+  const attachment = candidate?.attachment && typeof candidate.attachment === "object"
+    ? candidate.attachment
+    : candidate?.result?.attachment && typeof candidate.result.attachment === "object"
+      ? candidate.result.attachment
+    : null;
+  const channel = String(candidate?.kind || candidate?.channel || "").trim().toLowerCase();
+  if (!node || !attachment?.relativePath || !["image", "video", "audio"].includes(channel)) return node;
+  const mimeType = String(attachment.mimeType || (channel === "audio" ? "audio/mpeg" : channel === "video" ? "video/mp4" : "image/png"));
+  const generation = {
+    ...(node.generation || {}),
+    channel,
+    prompt: String(candidate.prompt || node.generation?.prompt || ""),
+    ...(candidate.jobId ? { jobId: String(candidate.jobId) } : {}),
+    ...(candidate.completedAt || candidate.createdAt ? { createdAt: String(candidate.completedAt || candidate.createdAt) } : {}),
+  };
+  return {
+    ...node,
+    type: "file",
+    kind: channel,
+    text: "",
+    file: String(attachment.relativePath),
+    name: String(attachment.name || node.name || (channel === "audio" ? "音频" : channel === "video" ? "视频" : "图片")),
+    mimeType,
+    ...(Number.isFinite(Number(candidate.aspectRatio)) && Number(candidate.aspectRatio) > 0
+      ? { aspectRatio: Number(candidate.aspectRatio) }
+      : {}),
+    ...(attachment.thumbnailRelativePath ? { thumbnailRelativePath: String(attachment.thumbnailRelativePath) } : {}),
+    ...(attachment.thumbnailMimeType ? { thumbnailMimeType: String(attachment.thumbnailMimeType) } : {}),
+    ...(Number(attachment.durationMs) > 0 ? { durationMs: Math.max(1, Number(attachment.durationMs)) } : {}),
+    generation,
+  };
+};
+
+const whiteboardClipboardMediaChannel = (node) => {
+  const direct = String(node?.kind || "").trim().toLowerCase();
+  if (["image", "video", "audio"].includes(direct)) return direct;
+  const generation = String(node?.generation?.channel || "").trim().toLowerCase();
+  if (["image", "video", "audio"].includes(generation)) return generation;
+  const intent = String(node?.generationIntent?.channel || "").trim().toLowerCase();
+  return ["image", "video", "audio"].includes(intent) ? intent : "";
+};
+
+const whiteboardClipboardNodeUsable = (node) => {
+  if (!node) return false;
+  // A generation target can still be represented as a text/generated node
+  // while its provider result is being applied.  Never copy that placeholder
+  // as a blank card; only a durable media path is copyable.
+  const mediaChannel = whiteboardClipboardMediaChannel(node);
+  return !mediaChannel || Boolean(String(node.file || "").trim());
+};
+
 const whiteboardCandidateBelongsToJob = (candidateKey, jobId) => {
   const candidate = ui.whiteboardCandidates.get(candidateKey);
   return Boolean(candidate && jobId && candidate.jobId === jobId);
@@ -14932,7 +15004,15 @@ const mediaGenerationProfileLabel = (job = {}) => {
 
 const mediaGenerationErrorText = (job = {}) => {
   const current = job && typeof job === "object" ? job : {};
-  const raw = String(current.error || "").trim();
+  const rawProviderError = String(current.providerRawError || current.error || "").trim();
+  const rawParts = [rawProviderError, current.providerCliStderr]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const payloadEvidence = String(current.providerRawPayload || "").trim();
+  if (payloadEvidence && (!rawParts.length || /final generation failed|任务失败|生成失败/iu.test(rawParts.join("\n")))) {
+    rawParts.push(`厂商原始响应：${payloadEvidence}`);
+  }
+  const raw = rawParts.join("\n");
   const code = String(current.providerErrorCode || current.errorCode || "").trim().toUpperCase();
   const settings = current.request?.settings ?? {};
   const dreamina = ["即梦", "dreamina"].includes(String(settings.provider || "").trim().toLowerCase())
@@ -14961,7 +15041,10 @@ const maybeNotifyDreaminaQueueOccupancy = (job = {}) => {
 
 const dreaminaFailureInput = ({ error = null, job = null } = {}) => ({
   code: job?.providerErrorCode || job?.errorCode || error?.code || error?.errorCode || "",
-  message: job?.error || error?.message || "",
+  message: [job?.providerRawError, job?.providerCliStderr, job?.providerRawPayload, job?.error || error?.message]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join("\n"),
   providerTaskId: job?.providerTaskId || "",
   submissionState: job?.submissionState || "",
 });
@@ -51768,10 +51851,17 @@ const copyWhiteboardCard = (nodeId) => {
       pending.push(edge.fromNode);
     }
   }
-  const records = [...ids]
-    .map((id) => copyCanvasNode(canvas, id))
+  const copiedRecords = [...ids]
+    .map((id) => {
+      const record = copyCanvasNode(canvas, id);
+      return record ? { ...record, node: whiteboardClipboardNode(record.node) } : null;
+    })
     .filter(Boolean);
-  if (!records.length) return false;
+  if (copiedRecords.length !== ids.size || copiedRecords.some((record) => !whiteboardClipboardNodeUsable(record.node))) {
+    showToast("当前媒体卡片尚未完成落盘，暂时不能复制空卡片");
+    return false;
+  }
+  const records = copiedRecords;
   const bounds = canvasSelectionBounds(canvas, [...ids]);
   return setWhiteboardClipboard({ records, bounds, mode: "copy" });
 };
@@ -51781,7 +51871,14 @@ const copyWhiteboardCards = (nodeIds = []) => {
   const ids = [...new Set(nodeIds.map(String).filter(Boolean))];
   if (!documentState || !ids.length) return false;
   if (ids.length === 1) return copyWhiteboardCard(ids[0]);
-  const records = ids.map((nodeId) => copyCanvasNode(documentState.canvas, nodeId)).filter(Boolean);
+  const records = ids.map((nodeId) => {
+    const record = copyCanvasNode(documentState.canvas, nodeId);
+    return record ? { ...record, node: whiteboardClipboardNode(record.node) } : null;
+  });
+  if (records.length !== ids.length || records.some((record) => !whiteboardClipboardNodeUsable(record.node))) {
+    showToast("当前媒体卡片尚未完成落盘，暂时不能复制空卡片");
+    return false;
+  }
   const bounds = canvasSelectionBounds(documentState.canvas, records.map((record) => record.node.id));
   if (!records.length || !bounds) return false;
   return setWhiteboardClipboard({ records, bounds, mode: "copy" });
@@ -51792,10 +51889,20 @@ const cutWhiteboardCards = (nodeIds = []) => {
   const ids = [...new Set(nodeIds.map(String).filter(Boolean))];
   if (!documentState || !ids.length) return false;
   if (ids.length === 1) {
-    const record = copyCanvasNode(documentState.canvas, ids[0]);
-    if (!record || !setWhiteboardClipboard({ records: [record], mode: "cut" })) return false;
+    const sourceRecord = copyCanvasNode(documentState.canvas, ids[0]);
+    const record = sourceRecord
+      ? { ...sourceRecord, sourceNode: sourceRecord.node, node: whiteboardClipboardNode(sourceRecord.node) }
+      : null;
+    if (!record || !whiteboardClipboardNodeUsable(record.node) || !setWhiteboardClipboard({ records: [record], mode: "cut" })) return false;
   } else {
-    const records = ids.map((nodeId) => copyCanvasNode(documentState.canvas, nodeId)).filter(Boolean);
+    const records = ids.map((nodeId) => {
+      const record = copyCanvasNode(documentState.canvas, nodeId);
+      return record ? { ...record, sourceNode: record.node, node: whiteboardClipboardNode(record.node) } : null;
+    });
+    if (records.length !== ids.length || records.some((record) => !whiteboardClipboardNodeUsable(record.node))) {
+      showToast("当前媒体卡片尚未完成落盘，暂时不能剪切空卡片");
+      return false;
+    }
     const bounds = canvasSelectionBounds(documentState.canvas, records.map((record) => record.node.id));
     if (!records.length || !bounds || !setWhiteboardClipboard({ records, bounds, mode: "cut" })) return false;
   }
@@ -52059,15 +52166,16 @@ const pasteWhiteboardCard = ({ x, y } = {}) => {
   if (cutClipboard && sourceDocument && sourceDocumentId === state.activeDocument) {
     let sourceCanvas = nextCanvas;
     for (const record of sourceRecords) {
-      const currentSource = sourceCanvas.nodes.find((node) => node.id === record.node.id);
-      if (!currentSource || JSON.stringify(currentSource) !== JSON.stringify(record.node)) {
+      const sourceNode = record.sourceNode || record.node;
+      const currentSource = sourceCanvas.nodes.find((node) => node.id === sourceNode.id);
+      if (!currentSource || JSON.stringify(currentSource) !== JSON.stringify(sourceNode)) {
         sourceChanged = true;
         continue;
       }
-      const removal = removeCanvasNodeWithRecord(sourceCanvas, record.node.id);
+      const removal = removeCanvasNodeWithRecord(sourceCanvas, sourceNode.id);
       if (!removal.record) continue;
       removeWhiteboardGenerationReferencesForEdges(sourceCanvas, removal.record.edges?.map((edge) => edge.id), removal.canvas);
-      closeWhiteboardGenerationSessionsForNodes([record.node.id], { documentId: sourceDocumentId });
+      closeWhiteboardGenerationSessionsForNodes([sourceNode.id], { documentId: sourceDocumentId });
       sourceCanvas = removal.canvas;
       removedSourceCount += 1;
     }
@@ -52078,15 +52186,16 @@ const pasteWhiteboardCard = ({ x, y } = {}) => {
     const sourceBeforeCanvas = whiteboardCanvasSnapshot(sourceDocument.canvas);
     let sourceCanvas = sourceDocument.canvas;
     for (const record of sourceRecords) {
-      const currentSource = sourceCanvas.nodes.find((node) => node.id === record.node.id);
-      if (!currentSource || JSON.stringify(currentSource) !== JSON.stringify(record.node)) {
+      const sourceNode = record.sourceNode || record.node;
+      const currentSource = sourceCanvas.nodes.find((node) => node.id === sourceNode.id);
+      if (!currentSource || JSON.stringify(currentSource) !== JSON.stringify(sourceNode)) {
         sourceChanged = true;
         continue;
       }
-      const removal = removeCanvasNodeWithRecord(sourceCanvas, record.node.id);
+      const removal = removeCanvasNodeWithRecord(sourceCanvas, sourceNode.id);
       if (!removal.record) continue;
       removeWhiteboardGenerationReferencesForEdges(sourceCanvas, removal.record.edges?.map((edge) => edge.id), removal.canvas);
-      closeWhiteboardGenerationSessionsForNodes([record.node.id], { documentId: sourceDocumentId });
+      closeWhiteboardGenerationSessionsForNodes([sourceNode.id], { documentId: sourceDocumentId });
       sourceCanvas = removal.canvas;
       removedSourceCount += 1;
     }
@@ -62590,25 +62699,88 @@ const clipboardImageFiles = (clipboardData) => [...(clipboardData?.items ?? [])]
 
 const nativeClipboardImageFile = async () => {
   const readImage = window.shensiDesktop?.clipboard?.readImage;
-  if (typeof readImage !== "function") return null;
-  const result = await readImage();
-  if (!result?.ok || !result.bytes) return null;
-  const transferable = result.bytes?.data ?? result.bytes;
-  const bytes = transferable instanceof Uint8Array ? transferable : new Uint8Array(transferable);
-  if (!bytes.byteLength) throw new Error("Windows 剪贴板返回了空图片");
-  return new File([bytes], `粘贴图片-${Date.now()}.png`, { type: result.mimeType || "image/png" });
+  if (typeof readImage === "function") {
+    try {
+      const result = await readImage();
+      if (result?.ok && result.bytes) {
+        const transferable = result.bytes?.data ?? result.bytes;
+        const bytes = transferable instanceof Uint8Array ? transferable : new Uint8Array(transferable);
+        if (bytes.byteLength) return new File([bytes], `粘贴图片-${Date.now()}.png`, { type: result.mimeType || "image/png" });
+      }
+    } catch {
+      // Fall through to the browser Clipboard API when the native bridge is
+      // unavailable or the current clipboard format is not a bitmap.
+    }
+  }
+  if (typeof navigator.clipboard?.read !== "function") return null;
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find((value) => /^image\//i.test(value));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      if (blob?.size) return new File([blob], `粘贴图片-${Date.now()}.${type.split("/")[1] || "png"}`, { type });
+    }
+  } catch {
+    // Permission-denied browser reads are normal; the paste event path still
+    // handles DataTransfer files and text below.
+  }
+  return null;
+};
+
+const clipboardHtmlImageFile = async (clipboardData) => {
+  const html = String(clipboardData?.getData?.("text/html") || "");
+  const source = html.match(/<img\b[^>]*\bsrc=["']([^"']+)["']/iu)?.[1] || "";
+  if (!/^data:image\//iu.test(source)) return null;
+  try {
+    const response = await fetch(source);
+    const blob = await response.blob();
+    return blob?.size ? new File([blob], `粘贴图片-${Date.now()}.${blob.type.split("/")[1] || "png"}`, { type: blob.type || "image/png" }) : null;
+  } catch {
+    return null;
+  }
 };
 
 const nativeClipboardFiles = async () => {
   const readFiles = window.shensiDesktop?.clipboard?.readFiles;
   if (typeof readFiles !== "function") return [];
-  const result = await readFiles();
+  let result;
+  try { result = await readFiles(); } catch { return []; }
   if (!result?.ok || !Array.isArray(result.files)) return [];
   return result.files.map((record) => {
     const transferable = record?.bytes?.data ?? record?.bytes;
     const bytes = transferable instanceof Uint8Array ? transferable : new Uint8Array(transferable || []);
-    return bytes.byteLength ? new File([bytes], String(record.name || `剪贴板文件-${Date.now()}`)) : null;
+    const name = String(record.name || `剪贴板文件-${Date.now()}`);
+    const mimeType = String(record.mimeType || attachmentMimeType({ name, type: "" }));
+    return bytes.byteLength ? new File([bytes], name, { type: mimeType }) : null;
   }).filter(Boolean);
+};
+
+const whiteboardClipboardRecords = (clipboard) => (
+  Array.isArray(clipboard?.records) && clipboard.records.length
+    ? clipboard.records
+    : clipboard?.record?.node ? [clipboard.record] : []
+);
+
+const whiteboardClipboardFilesMatch = async (files, clipboard) => {
+  const records = whiteboardClipboardRecords(clipboard);
+  if (!records.length || files.length !== records.length) return false;
+  for (const [index, file] of files.entries()) {
+    const node = records[index]?.node;
+    if (!node) return false;
+    const mediaChannel = whiteboardClipboardMediaChannel(node);
+    if (mediaChannel) {
+      const expectedName = String(node.file || "").split(/[\\/]/u).at(-1)?.toLowerCase() || "";
+      if (!expectedName || String(file.name || "").toLowerCase() !== expectedName) return false;
+      continue;
+    }
+    try {
+      if (String(await file.text()) !== String(node.text || "")) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
 };
 
 const pasteIntoWhiteboard = async (point = {}) => {
@@ -62616,12 +62788,19 @@ const pasteIntoWhiteboard = async (point = {}) => {
   if (!documentState) return false;
   const internal = ui.whiteboardClipboard;
   const sameWorkspace = normalizedWorkspacePath(internal?.workspacePath) === normalizedWorkspacePath(state.settings.workspacePath);
-  if (sameWorkspace && !internal.externalClipboardMayHaveChanged && (internal.record?.node || internal.records?.length)) {
-    return pasteWhiteboardCard(point);
-  }
   try {
     const files = await nativeClipboardFiles();
-    if (files.length) return (await importFilesToWhiteboard(files, point)) > 0;
+    if (files.length) {
+      const matchesInternal = sameWorkspace
+        && !internal.externalClipboardMayHaveChanged
+        && await whiteboardClipboardFilesMatch(files, internal);
+      return matchesInternal
+        ? pasteWhiteboardCard(point)
+        : (await importFilesToWhiteboard(files, point)) > 0;
+    }
+    if (sameWorkspace && !internal.externalClipboardMayHaveChanged && whiteboardClipboardRecords(internal).length) {
+      return pasteWhiteboardCard(point);
+    }
     const image = await nativeClipboardImageFile();
     if (image) return (await importFilesToWhiteboard([image], point)) > 0;
     const textResult = await window.shensiDesktop?.clipboard?.readText?.();
@@ -62631,7 +62810,7 @@ const pasteIntoWhiteboard = async (point = {}) => {
       if (nodeId) showToast("已将剪贴板文字建立为白板卡片");
       return Boolean(nodeId);
     }
-    if (sameWorkspace && (internal?.record?.node || internal?.records?.length)) return pasteWhiteboardCard(point);
+    if (sameWorkspace && whiteboardClipboardRecords(internal).length) return pasteWhiteboardCard(point);
     showToast("剪贴板中没有可粘贴的卡片、文件、图片或文字");
     return false;
   } catch (error) {
@@ -62677,12 +62856,28 @@ document.addEventListener("paste", async (event) => {
   if (!documentState || target?.matches("input, textarea, select") || target?.closest("[contenteditable='true']")) return;
   const internalClipboard = ui.whiteboardClipboard;
   const files = clipboardImageFiles(event.clipboardData);
+  const clipboardTypes = [...(event.clipboardData?.types ?? [])].map((type) => String(type || "").toLowerCase());
+  const htmlClipboard = String(event.clipboardData?.getData("text/html") || "");
+  const externalMediaHint = files.length
+    || clipboardTypes.includes("files")
+    || clipboardTypes.some((type) => type.startsWith("image/"))
+    || /<img\b[^>]*\bsrc=/iu.test(htmlClipboard);
+  const internalClipboardNames = new Set((Array.isArray(internalClipboard?.records)
+    ? internalClipboard.records
+    : internalClipboard?.record ? [internalClipboard.record] : [])
+    .map((record) => String(record?.node?.file || "").split(/[\\/]/u).at(-1) || "")
+    .filter(Boolean));
+  const eventFileNames = files.map((file) => String(file?.name || "")).filter(Boolean);
+  const internalFileDropMatch = Boolean(eventFileNames.length
+    && eventFileNames.every((name) => internalClipboardNames.has(name)));
   const text = String(event.clipboardData?.getData("text/plain") || "");
   const bounds = elements.whiteboardEditor.getBoundingClientRect();
   const point = ui.whiteboardPointer?.documentId === state.activeDocument
     ? ui.whiteboardPointer
     : whiteboardWorldPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2, documentState);
-  if ((internalClipboard?.record?.node || internalClipboard?.records?.length) && !internalClipboard.externalClipboardMayHaveChanged) {
+  if ((internalClipboard?.record?.node || internalClipboard?.records?.length)
+    && !internalClipboard.externalClipboardMayHaveChanged
+    && (!externalMediaHint || internalFileDropMatch)) {
     event.preventDefault();
     event.stopPropagation();
     pasteWhiteboardCard(point);
@@ -62694,15 +62889,24 @@ document.addEventListener("paste", async (event) => {
     await importFilesToWhiteboard(files, point);
     return;
   }
-  if (!text.trim()) {
-    const nativeImageFile = await nativeClipboardImageFile().catch((error) => {
-      showToast(error.message || "剪贴板图片读取失败");
-      return null;
-    });
-    if (!nativeImageFile) return;
+  const htmlImageFile = await clipboardHtmlImageFile({ getData: (type) => type === "text/html" ? htmlClipboard : "" });
+  if (htmlImageFile) {
+    event.preventDefault();
+    event.stopPropagation();
+    await importFilesToWhiteboard([htmlImageFile], point);
+    return;
+  }
+  const nativeImageFile = await nativeClipboardImageFile().catch((error) => {
+    showToast(error.message || "剪贴板图片读取失败");
+    return null;
+  });
+  if (nativeImageFile) {
     event.preventDefault();
     event.stopPropagation();
     await importFilesToWhiteboard([nativeImageFile], point);
+    return;
+  }
+  if (!text.trim()) {
     return;
   }
   event.preventDefault();
@@ -69879,7 +70083,20 @@ const syncAccountProfile = (user, token = ui.account.token) => {
 
 const accountPlatformUI = installAccountPlatformUI({ accountApi, getAccount: () => ui.account, syncAccountProfile, showToast });
 
-const rememberAccountSession = ({ account = "", token = "", remember = false } = {}) => {
+const accountSessionBridge = () => window.shensiDesktop?.credentials || null;
+
+const rememberAccountSession = async ({ account = "", token = "", remember = false } = {}) => {
+  const bridge = accountSessionBridge();
+  if (typeof bridge?.writeAccountSession === "function") {
+    await bridge.writeAccountSession({ account, token, remember });
+    // Renderer storage is retained only as a migration fallback for browser
+    // preview. Packaged Electron sessions never persist account tokens here.
+    localStorage.removeItem("shensi-account-token");
+    sessionStorage.removeItem("shensi-account-token");
+    if (remember && account) localStorage.setItem("shensi-account-remembered-account", account);
+    else localStorage.removeItem("shensi-account-remembered-account");
+    return;
+  }
   const storage = remember ? localStorage : sessionStorage;
   const otherStorage = remember ? sessionStorage : localStorage;
   storage.setItem("shensi-account-token", token);
@@ -69889,15 +70106,17 @@ const rememberAccountSession = ({ account = "", token = "", remember = false } =
 };
 
 const clearRememberedAccountSession = () => {
+  const bridge = accountSessionBridge();
+  if (typeof bridge?.clearAccountSession === "function") void bridge.clearAccountSession().catch(() => {});
   localStorage.removeItem("shensi-account-token");
   sessionStorage.removeItem("shensi-account-token");
 };
 
 const accountEmailUI = installAccountEmailUI({ dialog: elements.accountLoginDialog, form: elements.accountLoginForm, accountApi, getAccount: () => ui.account,
   setStatus: (message) => setAccountLoginStatus(message),
-  onLogin: (payload) => {
+  onLogin: async (payload) => {
     syncAccountProfile(payload.user, payload.token);
-    rememberAccountSession({ account: payload.user.account, token: payload.token, remember: false });
+    await rememberAccountSession({ account: payload.user.account, token: payload.token, remember: false });
     showToast('神思账号已通过邮箱验证登录');
   },
   onBound: (user, token) => { syncAccountProfile(user, token); showToast('邮箱已验证绑定，可用于验证码登录'); },
@@ -69905,13 +70124,26 @@ const accountEmailUI = installAccountEmailUI({ dialog: elements.accountLoginDial
 document.querySelector('#accountBindEmail').addEventListener('click', () => accountEmailUI.openBinding());
 
 const restoreRememberedAccountSession = async () => {
-  const token = localStorage.getItem("shensi-account-token") || sessionStorage.getItem("shensi-account-token") || "";
+  const bridge = accountSessionBridge();
+  let stored = null;
+  if (typeof bridge?.readAccountSession === "function") {
+    try { stored = await bridge.readAccountSession(); } catch { stored = null; }
+  }
+  const legacyLocalToken = localStorage.getItem("shensi-account-token") || "";
+  const legacySessionToken = sessionStorage.getItem("shensi-account-token") || "";
+  const token = String(stored?.token || legacyLocalToken || legacySessionToken || "");
+  const remembered = stored?.remember === true || (!stored?.token && Boolean(legacyLocalToken));
   if (!token) return false;
   ui.account.token = token;
   try {
     const payload = await accountApi("/api/account/me");
     if (ui.account.token !== token) return false;
     syncAccountProfile(payload.user, token);
+    if (typeof bridge?.writeAccountSession === "function") {
+      if (remembered && !stored?.token) await bridge.writeAccountSession({ account: payload.user?.account || payload.user?.email || "", token, remember: true });
+      localStorage.removeItem("shensi-account-token");
+      sessionStorage.removeItem("shensi-account-token");
+    }
     return true;
   } catch (error) {
     if (ui.account.token !== token) return false;
@@ -69965,13 +70197,13 @@ elements.accountLoginForm.addEventListener("submit", async (event) => {
       const account = form.account.value.trim();
       const payload = await accountApi("/api/account/login", { method: "POST", body: { account, password: form.password.value, rememberMe: remember } });
       syncAccountProfile(payload.user, payload.token);
-      rememberAccountSession({ account, token: payload.token, remember });
+      await rememberAccountSession({ account, token: payload.token, remember });
       elements.accountLoginDialog.close();
       showToast("神思账号已登录");
     } else if (mode === "register") {
       const payload = await accountApi("/api/account/register", { method: "POST", body: { account: form.registerAccount.value.trim(), displayName: form.displayName.value.trim(), contact: form.contact.value.trim(), password: form.registerPassword.value, securityQuestion: form.securityQuestion.value.trim(), securityAnswer: form.securityAnswer.value, rememberMe: false } });
       syncAccountProfile(payload.user, payload.token);
-      rememberAccountSession({ account: form.registerAccount.value.trim(), token: payload.token, remember: false });
+      await rememberAccountSession({ account: form.registerAccount.value.trim(), token: payload.token, remember: false });
       elements.accountLoginDialog.close();
       showToast("账号注册成功，已自动登录");
     } else {
@@ -77652,11 +77884,37 @@ const ensureDreaminaGenerationAccountAvailable = async (settings = null, { chann
     showToast("当前连接未指定即梦账号，请重新选择配置");
     return false;
   }
-  const account = dreaminaAccountForSettings(settings);
-  if (String(account?.runtimeState || "") === "auth_required") {
-    openDreaminaReverifyDialog({ settings, account, channel });
+  let account = dreaminaAccountForSettings(settings);
+  const hadReusableEvidence = dreaminaAccountHasDurableIdentity(account);
+  let statusReadError = null;
+  if (!hadReusableEvidence) {
+    // A renderer restart can leave the in-memory status table empty or stale.
+    // Probe this exact profile once before deciding that the user must rebind;
+    // this does not submit a provider task and does not touch the queue/lock.
+    const refreshed = await refreshDreaminaAccountStatus({ verifyLive: true, profileId, channel })
+      .catch((error) => {
+        statusReadError = error;
+        return null;
+      });
+    if (refreshed) account = refreshed;
+  }
+  const transientStatus = Boolean(
+    statusReadError
+    || account?.statusReadUnavailable === true
+    || account?.creditRefreshDeferred === true
+    || ["bridge_unavailable", "bridge_error", "transient", "unavailable"].includes(String(account?.runtimeState || "")),
+  );
+  if (transientStatus && !dreaminaAccountHasDurableIdentity(account)) {
+    showToast(`即梦账号状态暂时无法读取：${statusReadError?.message || account?.error || "请稍后重试"}`);
     return false;
   }
+  // Preserve the caller's channel when the modal is opened from a generation
+  // action. The settings object is cloned so this presentation hint cannot
+  // leak into persisted provider configuration.
+  if (settings && channel === "image") settings = { ...settings, imageChannel: true };
+  if (settings && channel === "video") settings = { ...settings, videoChannel: true };
+  if (dreaminaAccountRequiresVerification(account)) openDreaminaReverifyDialog({ settings, account });
+  if (dreaminaAccountRequiresVerification(account)) return false;
   if (String(account?.runtimeState || "") !== "auth_required"
     && (account?.state === "verified" || dreaminaAccountHasDurableIdentity(account))) {
     if (account.cliGenerationEligible === false) {

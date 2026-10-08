@@ -892,6 +892,15 @@ const startBackend = async () => {
       SHENSI_INSTALL_ROOT: installRoot,
       SHENSI_AGENT_PROJECT_ROOT: agentProjectRoot,
       SHENSI_MACHINE_DATA_ROOT: serverMachineDataRoot,
+      // Explicit test/tool roots must reach the backend as the authoritative
+      // creative-data root as well.  Without this, an isolated Electron run
+      // silently falls back to the user's E: root while the main process
+      // believes it is using the temporary root, which triggers the safe-load
+      // guard and can make the UI appear empty.  Normal installs leave this
+      // unset and retain the existing bootstrap/default-root behavior.
+      ...(String(process.env.SHENSI_DATA_ROOT || "").trim()
+        ? { SHENSI_DATA_ROOT: serverMachineDataRoot }
+        : {}),
       SHENSI_BROWSER_BRIDGE_URL: browserBridge.url,
       SHENSI_BROWSER_BRIDGE_TOKEN: browserBridge.token,
       ...(String(process.env.SHENSI_FFMPEG_PATH || "").trim() || !bundledFfmpegPath
@@ -1246,6 +1255,31 @@ const installWindowBridge = () => {
     ok: true,
     ...(await credentialVault.update((current) => ({ ...current, ...(payload?.secrets ?? {}), ...(current.nutstore_webdav ? { nutstore_webdav: current.nutstore_webdav } : {}) }))),
   })));
+  ipcMain.handle("shensi:credentials:read-account-session", trustedIpcHandler("shensi:credentials:read-account-session", async () => {
+    const { records = {} } = await credentialVault.readChannel("shensi_account_session");
+    let session = null;
+    try { session = JSON.parse(String(records.default || "")); } catch { session = null; }
+    const account = String(session?.account || "").trim().slice(0, 320);
+    const token = String(session?.token || "").trim().slice(0, 8_192);
+    return { ok: true, account, token, remember: Boolean(account && token && session?.remember === true) };
+  }));
+  ipcMain.handle("shensi:credentials:write-account-session", trustedIpcHandler("shensi:credentials:write-account-session", async (_event, payload = {}) => {
+    const account = String(payload.account || "").trim().slice(0, 320);
+    const token = String(payload.token || "").trim().slice(0, 8_192);
+    if (payload.remember !== true) {
+      await credentialVault.deleteChannel("shensi_account_session");
+      return { ok: true, stored: false };
+    }
+    if (!account || !token) throw new Error("账户会话缺少账号或令牌");
+    await credentialVault.writeChannel("shensi_account_session", {
+      default: JSON.stringify({ account, token, remember: true, updatedAt: new Date().toISOString() }),
+    });
+    return { ok: true, stored: true, account };
+  }));
+  ipcMain.handle("shensi:credentials:clear-account-session", trustedIpcHandler("shensi:credentials:clear-account-session", async () => {
+    await credentialVault.deleteChannel("shensi_account_session");
+    return { ok: true, stored: false };
+  }));
   ipcMain.handle("shensi:credentials:nutstore-status", trustedIpcHandler("shensi:credentials:nutstore-status", async () => {
     const value = await readStoredNutstoreCredential();
     return { ok: true, configured: Boolean(value), account: value?.account || "" };

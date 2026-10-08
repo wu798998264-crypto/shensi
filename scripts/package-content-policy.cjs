@@ -4,12 +4,31 @@ const { pathToFileURL } = require('node:url');
 
 const runtimeScripts = new Set(['scripts/launcher.mjs', 'scripts/update-installer-helper.mjs', 'scripts/windows/dreamina-profile-runner.ps1']);
 const forbidden = /(?:^|\/)(?:tests?|fixtures|artifacts|test-results|runtime|output|logs|\.git|\.shensi|\.tmp[^/]*|generated|作品|笔记|secrets?|credentials?|tokens?|原始资料|_备份_不参与规则扫描|版本草案|废弃设定|回收站)(?:\/|$)|(?:^|\/)(?:\.env(?:\.[^/]*)?|secrets?|credentials?|tokens?|api[-_]?keys?)(?:\.[^/]*)?$|(?:^|\/)(?:test-|audit-|smoke-|benchmark-|run-.*real|configure-existing-|rebind-|bind-existing-)|(?:^|\/)[^/]+\.(?:test|spec)\.[^/]+$|(?:向天垂钓|三相之力|幻烬)|\.(?:log|pfx|p12|pem|key|cer|db|sqlite|docx|mp4|zip)$/iu;
+// Path allowlists prevent accidental user-data inclusion; content scanning is
+// the second boundary for a runtime file that was renamed to look harmless.
+// These patterns require a concrete high-entropy value, so ordinary source
+// identifiers such as `apiKey` or `Authorization` are not findings.
+const credentialInContent = [
+  /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+)?PRIVATE\s+KEY-----/iu,
+  /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)\s*[=:]\s*["'][A-Za-z0-9_\-.~+/=]{20,}["']/iu,
+  /authorization\s*[=:]\s*["']?Bearer\s+[A-Za-z0-9._\-]{20,}/iu,
+  /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/u,
+];
+const contentScannable = /\.(?:cjs|css|html|js|json|mjs|nsh|ps1|svg|txt|yaml|yml)$/iu;
+async function assertNoPackagedCredentials(filePath, relativePath) {
+  if (!contentScannable.test(relativePath)) return;
+  const bytes = await fs.readFile(filePath);
+  if (bytes.includes(0)) return;
+  const content = bytes.toString('utf8');
+  const match = credentialInContent.find((pattern) => pattern.test(content));
+  if (match) throw new Error(`安装包运行文件疑似包含真实凭证或令牌：${relativePath}`);
+}
 function allowedPackagePath(value) {
   const file = String(value).replaceAll('\\', '/').replace(/^\.\//, '');
   if (/^node_modules\/@openai\/codex(?:-(?:win32|linux|darwin)-(?:x64|arm64))?\//u.test(file)) return !/(?:^|\/)(?:test|tests|examples|\.env|\.git)(?:\/|$)/iu.test(file) && !file.includes('../');
   if (file.includes('../') || forbidden.test(file)) return false;
   if (runtimeScripts.has(file)) return true;
-  if (['server.mjs', 'index.html', 'package.json', 'release-build.json', 'update-config.json'].includes(file)) return true;
+  if (['server.mjs', 'index.html', 'package.json', 'release-build.json', 'release-runtime-manifest.json', 'update-config.json'].includes(file)) return true;
   if (file.startsWith('src/')) return /\.(?:mjs|cjs|js|css|html|json|svg|png|woff2?)$/i.test(file);
   if (file.startsWith('public/assets/')) return /^public\/assets\/shensi-[a-z-]+\.(?:png|ico|svg)$/i.test(file);
   if (file.startsWith('packaging/windows/desktop-app/')) return /\.(?:mjs|cjs|json|nsh)$/i.test(file);
@@ -26,7 +45,11 @@ async function verifyPackagedApplication(appRoot) {
       const relativePath = path.relative(appRoot, target).replaceAll('\\', '/');
       if (entry.isSymbolicLink()) { rejected.push(relativePath); continue; }
       if (entry.isDirectory()) await visit(target);
-      else { count++; if (!allowedPackagePath(relativePath)) rejected.push(relativePath); }
+      else {
+        count++;
+        if (!allowedPackagePath(relativePath)) rejected.push(relativePath);
+        else await assertNoPackagedCredentials(target, relativePath);
+      }
     }
   }
   await visit(appRoot);
@@ -80,7 +103,34 @@ module.exports = async function afterPack(context) {
   const appRoot = path.join(context.appOutDir, 'resources', 'app');
   await verifyPackagedApplication(appRoot);
   await verifyPackagedInitialState(appRoot);
-  const { buildBundledShensiManifest, validateBundledShensi } = await import(pathToFileURL(path.join(context.packager.projectDir, 'src/server/bundled-shensi.mjs')));
+  const projectRoot = context.packager.projectDir;
+  const sourceRuntimePath = path.join(projectRoot, 'release-runtime-manifest.json');
+  const packagedRuntimePath = path.join(appRoot, 'release-runtime-manifest.json');
+  const runtimeManifestAvailable = await Promise.all([sourceRuntimePath, packagedRuntimePath]
+    .map((target) => fs.stat(target).then(() => true).catch(() => false)))
+    .then(([source, packaged]) => source && packaged);
+  if (!runtimeManifestAvailable && process.env.SHENSI_BUILD_ID) {
+    throw new Error('正式打包缺少 release-runtime-manifest.json；禁止生成未冻结源码的安装包');
+  }
+  if (runtimeManifestAvailable) {
+    const { verifyRuntimeManifest } = await import(pathToFileURL(path.join(projectRoot, 'src/server/runtime-manifest.mjs')));
+    const sourceRuntime = JSON.parse(await fs.readFile(sourceRuntimePath, 'utf8'));
+    await verifyRuntimeManifest({
+      root: projectRoot,
+      expectedVersion: sourceRuntime.version,
+      expectedBuildId: sourceRuntime.buildId,
+      expectedSourceHash: sourceRuntime.sourceHash,
+      requireManifest: true,
+    });
+    await verifyRuntimeManifest({
+      root: appRoot,
+      expectedVersion: sourceRuntime.version,
+      expectedBuildId: sourceRuntime.buildId,
+      expectedSourceHash: sourceRuntime.sourceHash,
+      requireManifest: true,
+    });
+  }
+  const { buildBundledShensiManifest, validateBundledShensi } = await import(pathToFileURL(path.join(projectRoot, 'src/server/bundled-shensi.mjs')));
   const sourceManifest = JSON.parse(await fs.readFile(path.join(context.packager.projectDir, 'packaging/bundled/shensi-bundle-manifest.json'), 'utf8'));
   const expected = sourceManifest.files.filter((file) => file.role !== 'reference-only' && allowedPackagePath(`packaging/bundled/skill/神思/${file.path}`));
   const actual = await buildBundledShensiManifest({ appRoot });

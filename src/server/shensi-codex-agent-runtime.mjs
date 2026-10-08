@@ -21,6 +21,9 @@ const APPROVAL_METHODS = new Set([
 
 const safeMessage = (error) => String(error?.message || error || "未知错误")
   .replace(/Authorization:\s*[^\s]+/gi, "Authorization: [REDACTED]")
+  .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+  .replace(/((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)\s*[:=]\s*)([^\s,;]+)/gi, "$1[REDACTED]")
+  .replace(/\b(?:sk|sess|key)-[A-Za-z0-9_-]{16,}\b/gi, "[REDACTED-SECRET]")
   .slice(0, 2_000);
 
 const runtimeError = (message, code, safeToFallback = false) => Object.assign(new Error(message), { code, safeToFallback });

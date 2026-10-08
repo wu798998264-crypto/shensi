@@ -3167,11 +3167,12 @@ export const upsertWorkspaceWhiteboardMediaIndex = async ({
   });
 };
 
-const directoryBytes = async (root, seenFiles = new Set()) => {
+const directoryBytes = async (root, seenFiles = new Set(), ignoredPaths = new Set()) => {
   let total = 0;
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
     const path = join(root, entry.name);
-    if (entry.isDirectory()) total += await directoryBytes(path, seenFiles);
+    if (ignoredPaths.has(resolve(path))) continue;
+    if (entry.isDirectory()) total += await directoryBytes(path, seenFiles, ignoredPaths);
     else if (entry.isFile()) {
       const info = await stat(path);
       const identity = `${info.dev}:${info.ino}`;
@@ -3531,18 +3532,20 @@ const installMediaObject = async ({ workspaceRoot, temporaryPath, targetPath, ha
   }));
 };
 
-const assertAttachmentCapacity = async ({ attachmentRoot, expectedBytes = 0, limitBytes }) => {
-  const size = Number(expectedBytes) || 0;
-  if (size < 0 || size > limitBytes) throw new Error(`单个附件超过当前 ${Math.floor(limitBytes / MIB)} MiB 上限`);
+const assertAttachmentCapacity = async ({ attachmentRoot, quotaRoot = attachmentRoot, expectedBytes = 0, limitBytes, ignoredPaths = new Set() }) => {
+  const parsedSize = Number(expectedBytes);
+  if (!Number.isFinite(parsedSize) || parsedSize < 0 || parsedSize > limitBytes) throw new Error(`单个附件超过当前 ${Math.floor(limitBytes / MIB)} MiB 上限`);
+  const size = Math.floor(parsedSize);
   await mkdir(attachmentRoot, { recursive: true });
+  await mkdir(quotaRoot, { recursive: true });
   const policy = mediaStoragePolicy();
-  const used = await directoryBytes(attachmentRoot);
-  if (size && used + size > policy.workspaceMediaQuotaBytes) {
+  const used = await directoryBytes(quotaRoot, new Set(), ignoredPaths);
+  if (used + size > policy.workspaceMediaQuotaBytes) {
     const error = new Error("当前工作区媒体磁盘配额不足，请清理空间或更换保存目录后继续");
     error.code = "MEDIA_QUOTA_EXCEEDED";
     throw error;
   }
-  const disk = await statfs(attachmentRoot, { bigint: true }).catch(() => null);
+  const disk = await statfs(quotaRoot, { bigint: true }).catch(() => null);
   if (disk && size) {
     const free = disk.bavail * disk.bsize;
     const peakWriteBytes = size * 2;
@@ -3586,13 +3589,36 @@ const detectedAttachmentMime = async (path, declaredMimeType, name) => {
   const bytes = header.subarray(0, bytesRead);
   if (bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return { mimeType: "image/png", signature: "png" };
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return { mimeType: "image/jpeg", signature: "jpeg" };
+  if (bytes.subarray(0, 4).toString("ascii") === "GIF8") return { mimeType: "image/gif", signature: "gif" };
+  if (bytes.subarray(0, 2).toString("ascii") === "BM") return { mimeType: "image/bmp", signature: "bmp" };
   if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WAVE") return { mimeType: "audio/wav", signature: "wav" };
   if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return { mimeType: "image/webp", signature: "webp" };
   if (bytes.subarray(0, 4).toString("ascii") === "OggS") return { mimeType: String(declaredMimeType).startsWith("video/") ? "video/ogg" : "audio/ogg", signature: "ogg" };
   if (bytes.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return { mimeType: String(declaredMimeType).startsWith("audio/") ? "audio/webm" : "video/webm", signature: "webm" };
-  if (bytes.subarray(4, 8).toString("ascii") === "ftyp") return { mimeType: String(declaredMimeType).startsWith("audio/") ? "audio/mp4" : "video/mp4", signature: "mp4" };
+  if (bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brand = bytes.subarray(8, 12).toString("ascii").trim();
+    if (["avif", "avis"].includes(brand)) return { mimeType: "image/avif", signature: "avif" };
+    if (["heic", "heix", "hevc", "hevx"].includes(brand)) return { mimeType: "image/heic", signature: "heic" };
+    if (brand === "qt") return { mimeType: "video/quicktime", signature: "mov" };
+    return { mimeType: String(declaredMimeType).startsWith("audio/") ? "audio/mp4" : "video/mp4", signature: "mp4" };
+  }
   if (bytes.subarray(0, 3).toString("ascii") === "ID3") return { mimeType: "audio/mpeg", signature: "mp3" };
   return { mimeType: attachmentMimeByExtension(name) || String(declaredMimeType || "application/octet-stream"), signature: "" };
+};
+
+const mediaMimeMatchesSignature = (declaredMimeType, detectedMimeType) => {
+  const declared = String(declaredMimeType || "").toLowerCase().trim();
+  const detected = String(detectedMimeType || "").toLowerCase().trim();
+  if (!/^(?:image|video|audio)\//u.test(declared)) return true;
+  if (!detected || declared === detected) return true;
+  // A caller may deliberately use a family wildcard, but a concrete
+  // declaration (for example image/png) must not be accepted for a JPEG or
+  // a WebM payload.  This prevents a mislabeled media upload from entering
+  // the media object store and failing much later during playback.
+  if (/\/[a-z0-9*+-]+$/u.test(declared) && declared.endsWith("/*")) {
+    return detected.startsWith(`${declared.slice(0, -1)}`);
+  }
+  return false;
 };
 
 const imageValidationError = (message) => Object.assign(new Error(message), { code: "IMAGE_VALIDATION_FAILED" });
@@ -4102,10 +4128,11 @@ export const saveWorkspaceAttachmentFromStream = async ({ appRoot, requestedPath
   const destination = await attachmentDestination(workspaceRoot, name, { stableName, mediaBatchId, whiteboardDocumentId, whiteboardMediaKind });
   const declaredMimeType = String(mimeType || attachmentMimeByExtension(name) || "application/octet-stream");
   const limitBytes = attachmentFileLimit(declaredMimeType);
-  await assertAttachmentCapacity({ attachmentRoot: destination.attachmentRoot, expectedBytes, limitBytes });
+  const quotaRoot = join(workspaceRoot, await attachmentBaseRelativePath(workspaceRoot));
   const temporaryPath = `${destination.targetPath}.${process.pid}.${randomUUID()}.upload`;
   const meter = new HashAndLimitTransform(limitBytes);
   try {
+    await assertAttachmentCapacity({ attachmentRoot: destination.attachmentRoot, quotaRoot, expectedBytes, limitBytes });
     await pipeline(stream, meter, createWriteStream(temporaryPath, { flags: "wx" }));
     if (!meter.size) throw new Error("附件内容为空");
     const declaredBytes = Math.max(0, Number(expectedBytes) || 0);
@@ -4116,6 +4143,26 @@ export const saveWorkspaceAttachmentFromStream = async ({ appRoot, requestedPath
       error.actualBytes = meter.size;
       throw error;
     }
+    // Re-check using the bytes actually received.  This is required for
+    // streamed downloads whose content length is unknown and also closes the
+    // race where a client declares zero bytes to bypass the preflight quota
+    // check.  Exclude our temporary file because it is already included in
+    // the directory walk.
+    await assertAttachmentCapacity({
+      attachmentRoot: destination.attachmentRoot,
+      quotaRoot,
+      expectedBytes: 0,
+      limitBytes,
+      ignoredPaths: new Set([resolve(temporaryPath)]),
+    }).then(async () => {
+      const policy = mediaStoragePolicy();
+      const used = await directoryBytes(quotaRoot, new Set(), new Set([resolve(temporaryPath)]));
+      if (used + meter.size > policy.workspaceMediaQuotaBytes) {
+        const error = new Error("当前工作区媒体磁盘配额不足，请清理空间或更换保存目录后继续");
+        error.code = "MEDIA_QUOTA_EXCEEDED";
+        throw error;
+      }
+    });
     const handle = await open(temporaryPath, "r+");
     try {
       await handle.sync();
@@ -4123,6 +4170,14 @@ export const saveWorkspaceAttachmentFromStream = async ({ appRoot, requestedPath
       await handle.close();
     }
     const detected = await detectedAttachmentMime(temporaryPath, declaredMimeType, destination.safeFile);
+    if (/^(?:image|video|audio)\//u.test(declaredMimeType)
+      && (!detected.signature || !mediaMimeMatchesSignature(declaredMimeType, detected.mimeType))) {
+      const error = new Error(`附件声明类型 ${declaredMimeType} 与文件实际格式不一致`);
+      error.code = "MEDIA_MIME_MISMATCH";
+      error.declaredMimeType = declaredMimeType;
+      error.detectedMimeType = detected.mimeType;
+      throw error;
+    }
     const imageMetadata = requireValidImage
       ? await validateGeneratedImage(temporaryPath, detected, declaredMimeType)
       : { imageWidth: null, imageHeight: null, imageFormat: "", imageValidation: "" };
@@ -4134,7 +4189,7 @@ export const saveWorkspaceAttachmentFromStream = async ({ appRoot, requestedPath
         error.code = mediaMetadata.probeErrorCode;
         throw error;
       }
-      const validContainer = ["mp4", "webm", "ogg"].includes(detected.signature);
+      const validContainer = ["mp4", "webm", "ogg", "mov"].includes(detected.signature);
       const validVideoStream = mediaMetadata.durationMs > 0
         && mediaMetadata.videoWidth > 0
         && mediaMetadata.videoHeight > 0

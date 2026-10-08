@@ -33,6 +33,15 @@ const staging = await mkdtemp(join(tmpdir(), 'shensi-clean-package-'));
 try {
   const sourceRoot = process.cwd();
   const appRoot = join(staging, 'resources', 'app');
+  const runtimeSourceManifest = JSON.parse(await readFile(join(sourceRoot, 'release-runtime-manifest.json'), 'utf8'));
+  await mkdir(dirname(join(appRoot, 'release-runtime-manifest.json')), { recursive: true });
+  await copyFile(join(sourceRoot, 'release-runtime-manifest.json'), join(appRoot, 'release-runtime-manifest.json'));
+  for (const entry of runtimeSourceManifest.entries) {
+    const source = join(sourceRoot, ...String(entry.path).split('/'));
+    const destination = join(appRoot, ...String(entry.path).split('/'));
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(source, destination);
+  }
   const bundleManifestPath = 'packaging/bundled/shensi-bundle-manifest.json';
   const manifest = JSON.parse(await readFile(join(sourceRoot, bundleManifestPath), 'utf8'));
   const approvedFiles = manifest.files.filter((file) => file.role !== 'reference-only').map((file) => `packaging/bundled/skill/神思/${file.path}`);

@@ -397,6 +397,18 @@ const queueInfo = (payload) => {
     status: String(nestedValue(payload, ["queue_status", "queueStatus"]) || "").trim(),
   };
 };
+const hasProviderResultPayload = (payload) => {
+  const value = nestedValue(payload, ["item_list", "history_record_id", "history_id", "result_json", "result"]);
+  if (Array.isArray(value)) return value.length > 0;
+  if (value && typeof value === "object") return Object.keys(value).length > 0;
+  return Boolean(String(value || "").trim());
+};
+const needsExactTaskReconciliation = (payload) => {
+  const queue = queueInfo(payload);
+  return rawStatus(payload) === "querying"
+    && String(queue.status || "").trim().toLowerCase() === "finish"
+    && !hasProviderResultPayload(payload);
+};
 const normalizedProgressPercent = (payload) => {
   const explicitPercent = nestedValue(payload, [
     "progress_percent", "progressPercent", "progress_pct", "progressPct",
@@ -612,6 +624,7 @@ const publicPayload = (payload, fallbackId = "", { missingStatus = "unknown" } =
     ? dreaminaFailureDiagnosis({ code: errorCode, message: rawError, providerTaskId })
     : null;
   const queue = queueInfo(payload);
+  const resultReconciliationPending = providerStatus === "running" && needsExactTaskReconciliation(payload);
   return {
     providerTaskId,
     providerStatus,
@@ -631,6 +644,7 @@ const publicPayload = (payload, fallbackId = "", { missingStatus = "unknown" } =
     providerQueueLength: queue.length,
     providerQueuePriority: queue.priority,
     providerQueueStatus: queue.status,
+    resultReconciliationPending,
     progressPercent: normalizedProgressPercent(payload),
     creditCount: nestedNumber(payload, ["credit_count", "creditCount"]),
     executionReceipt: dreaminaExecutionReceipt(),
@@ -843,7 +857,7 @@ const query = async ({ download = false, providerTaskId = "" } = {}) => {
     }
     payload = listed;
   }
-  if (hasFlag("--verify-list")) {
+  if (hasFlag("--verify-list") || needsExactTaskReconciliation(payload)) {
     const queriedStatus = normalizedStatus(payload);
     if (["queued", "running", "unknown"].includes(queriedStatus)) {
       const listed = await findListedTask({ providerTaskId: id }).catch(() => null);

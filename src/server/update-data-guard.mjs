@@ -403,6 +403,135 @@ const sameInventory = (expected, actual) => {
   });
 };
 
+// Deletion records are newer than a pre-update snapshot by definition when
+// they were written after the snapshot was taken. A rollback must not restore
+// an older workspace entry while silently discarding that newer tombstone.
+// Keep this list deliberately narrow: ordinary user files remain strict and
+// any unexpected difference still aborts the rollback.
+const DELETION_RECORD_RELATIVE_PATHS = new Set([
+  "config/workspace-tombstones-v1.json",
+]);
+const WORKSPACE_CURRENT_STATE_RE = /(?:^|\/)\.shensi\/current-state\.json$/u;
+
+const readJsonIfPresent = async (path) => {
+  const raw = await readFile(path, "utf8").catch((error) => {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  });
+  if (raw === null) return null;
+  try { return JSON.parse(raw.replace(/^\uFEFF/, "")); } catch (error) {
+    error.message = `删除记录损坏，已拒绝自动回滚：${error.message}`;
+    throw error;
+  }
+};
+
+const deletionTimestamp = (value) => Date.parse(String(value?.deletedAt || value?.deletedAtIso || "")) || 0;
+
+const trashDocumentIds = (entry = {}) => {
+  const kind = entry.kind === "tree" || entry.documents ? "tree" : entry.kind === "file" ? "file" : "other";
+  if (kind === "tree") return Object.keys(entry.documents || {});
+  return kind === "file" && String(entry.id || "").trim() ? [String(entry.id)] : [];
+};
+
+const removeDeletedDocuments = (state, ids) => {
+  if (!state || typeof state !== "object" || !ids.size) return;
+  for (const id of ids) {
+    delete state.documents?.[id];
+    delete state.documentRefs?.[id];
+    delete state.histories?.[id];
+    delete state.currentVersionMeta?.documents?.[id];
+  }
+  for (const collection of [state.moduleItems, state.moduleHistories, state.viewHistories, state.volumeHistories]) {
+    for (const [key, value] of Object.entries(collection || {})) {
+      if (Array.isArray(value)) {
+        collection[key] = value.filter((item) => !Array.isArray(item) || !ids.has(String(item[0] || "")));
+      }
+    }
+  }
+};
+
+const mergeWorkspaceCurrentStateDeletion = async ({ targetPath, currentState }) => {
+  if (!currentState || typeof currentState !== "object") return false;
+  const restored = await readJsonIfPresent(targetPath);
+  const next = restored && typeof restored === "object" ? restored : {};
+  const currentTrash = Array.isArray(currentState.trash) ? currentState.trash : [];
+  if (!currentTrash.length) return false;
+  const byTrashId = new Map((Array.isArray(next.trash) ? next.trash : []).map((entry) => [String(entry?.trashId || entry?.id || ""), entry]));
+  let changed = !restored;
+  for (const entry of currentTrash) {
+    const key = String(entry?.trashId || entry?.id || "").trim();
+    if (!key) continue;
+    const existing = byTrashId.get(key);
+    if (!existing || deletionTimestamp(entry) >= deletionTimestamp(existing)) {
+      if (JSON.stringify(existing) !== JSON.stringify(entry)) changed = true;
+      byTrashId.set(key, entry);
+    }
+  }
+  const mergedTrash = [...byTrashId.values()];
+  if (JSON.stringify(next.trash || []) !== JSON.stringify(mergedTrash)) changed = true;
+  const deletedIds = new Set(currentTrash.flatMap(trashDocumentIds));
+  if (deletedIds.size) {
+    removeDeletedDocuments(next, deletedIds);
+    changed = true;
+  }
+  if (!changed) return false;
+  await atomicWriteJson(targetPath, { ...next, trash: mergedTrash });
+  return true;
+};
+
+const readWorkspaceDeletionOverlays = async (root) => {
+  const inventory = await inventoryDataRoot(root, { allowMissing: true });
+  const overlays = new Map();
+  for (const file of inventory.files) {
+    if (!WORKSPACE_CURRENT_STATE_RE.test(file.path)) continue;
+    const parsed = await readJsonIfPresent(join(root, ...file.path.split("/")));
+    if (parsed) overlays.set(file.path, parsed);
+  }
+  return overlays;
+};
+
+const mergeWorkspaceTombstones = async ({ targetRoot, currentState }) => {
+  const relativePath = "config/workspace-tombstones-v1.json";
+  const targetPath = join(targetRoot, ...relativePath.split("/"));
+  const current = currentState;
+  if (!current || typeof current !== "object" || !current.tombstones || typeof current.tombstones !== "object") return false;
+  const restored = await readJsonIfPresent(targetPath);
+  const merged = restored && typeof restored === "object" ? restored : {};
+  const tombstones = { ...(merged.tombstones && typeof merged.tombstones === "object" ? merged.tombstones : {}) };
+  let changed = !restored;
+  for (const [path, value] of Object.entries(current.tombstones)) {
+    const existing = tombstones[path];
+    if (!existing || deletionTimestamp(value) >= deletionTimestamp(existing)) {
+      if (JSON.stringify(existing) !== JSON.stringify(value)) changed = true;
+      tombstones[path] = value;
+    }
+  }
+  if (!changed) return false;
+  await atomicWriteJson(targetPath, {
+    schemaVersion: merged.schemaVersion ?? current.schemaVersion ?? 1,
+    ...merged,
+    tombstones,
+  });
+  return true;
+};
+
+const sameInventoryWithDeletionRecords = (expected, actual, extraAllowedPaths = []) => {
+  const allowedPaths = new Set([...DELETION_RECORD_RELATIVE_PATHS, ...extraAllowedPaths]);
+  const expectedFiles = new Map((expected.files || []).map((file) => [file.path, file]));
+  const actualFiles = new Map((actual.files || []).map((file) => [file.path, file]));
+  for (const file of expected.files || []) {
+    const candidate = actualFiles.get(file.path);
+    if (!candidate) return false;
+    if (candidate.sizeBytes !== file.sizeBytes || candidate.sha256 !== file.sha256) {
+      if (!allowedPaths.has(file.path)) return false;
+    }
+  }
+  for (const file of actual.files || []) {
+    if (!expectedFiles.has(file.path) && !allowedPaths.has(file.path)) return false;
+  }
+  return true;
+};
+
 const containsInventory = (expected, actual) => {
   const actualFiles = new Map(actual.files.map((file) => [file.path, file]));
   return expected.files.every((file) => {
@@ -519,6 +648,8 @@ export const restoreVerifiedDataSnapshot = async ({ dataRoot = appDataRoot(), sn
     || !sameInventory(manifest.inventory, await inventoryDataRoot(sourceRoot, { allowMissing: false }))) {
     throw new Error("更新回滚快照无效；为避免覆盖用户数据已停止自动回滚");
   }
+  const currentDeletionState = await readJsonIfPresent(join(targetRoot, "config", "workspace-tombstones-v1.json"));
+  const currentWorkspaceDeletionOverlays = await readWorkspaceDeletionOverlays(targetRoot);
   const quarantineRoot = join(dirname(targetRoot), `.${basename(targetRoot)}-failed-update-${timestampLabel()}-${randomUUID()}`);
   const targetExists = await stat(targetRoot).then(() => true).catch((error) => error?.code === "ENOENT" ? false : Promise.reject(error));
   const movedEntries = [];
@@ -552,8 +683,15 @@ export const restoreVerifiedDataSnapshot = async ({ dataRoot = appDataRoot(), sn
   }
   try {
     await copyInventory({ sourceRoot, targetRoot, inventory: manifest.inventory, copyFileImpl });
+    await mergeWorkspaceTombstones({ targetRoot, currentState: currentDeletionState });
+    for (const [relativePath, currentState] of currentWorkspaceDeletionOverlays) {
+      await mergeWorkspaceCurrentStateDeletion({
+        targetPath: join(targetRoot, ...relativePath.split("/")),
+        currentState,
+      });
+    }
     const restored = await inventoryDataRoot(targetRoot, { allowMissing: false });
-    if (!sameInventory(manifest.inventory, restored)) throw new Error("自动回滚后的用户数据校验失败");
+    if (!sameInventoryWithDeletionRecords(manifest.inventory, restored, [...currentWorkspaceDeletionOverlays.keys()])) throw new Error("自动回滚后的用户数据校验失败");
     return {
       restored: true,
       quarantineRoot: movedEntries.length ? quarantineRoot : "",

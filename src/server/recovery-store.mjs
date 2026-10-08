@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { appDataRoot } from "./app-data.mjs";
 import { portableGenerationSettings } from "../generation-profiles.js";
@@ -193,48 +193,87 @@ export const saveWorkspaceRecoveryCheckpoint = async ({
   });
 };
 
-export const loadWorkspaceRecoveryCheckpoint = async ({ workspacePath, clientId = "" } = {}) => {
+export const loadWorkspaceRecoveryCheckpoint = async ({ workspacePath, clientId = "", baseStateStamp = "" } = {}) => {
   const resolvedWorkspacePath = validWorkspacePath(workspacePath);
   await mkdir(checkpointRoot(), { recursive: true });
   const normalizedClientId = String(clientId || "");
-
-  // A checkpoint can contain the complete workspace state (including whiteboard
-  // prompt/reference drafts), so older installations may have hundreds of
-  // multi-megabyte files for one workspace.  Never scan and JSON-parse every
-  // client file during startup.  The active client is the only authoritative
-  // checkpoint for this session; read it directly first.
-  if (normalizedClientId) {
-    const ownCheckpoint = await readJson(checkpointPath(resolvedWorkspacePath, normalizedClientId));
-    if (ownCheckpoint && normalizedWorkspacePath(ownCheckpoint.workspacePath) === normalizedWorkspacePath(resolvedWorkspacePath)) {
-      return scrubCheckpoint(ownCheckpoint);
-    }
-  }
-
-  const legacyCheckpoint = await readJson(legacyCheckpointPath(resolvedWorkspacePath));
-  if (legacyCheckpoint && normalizedWorkspacePath(legacyCheckpoint.workspacePath) === normalizedWorkspacePath(resolvedWorkspacePath)) {
-    return scrubCheckpoint(legacyCheckpoint);
-  }
-
+  const normalizedPath = normalizedWorkspacePath(resolvedWorkspacePath);
+  const ownPath = normalizedClientId ? checkpointPath(resolvedWorkspacePath, normalizedClientId) : "";
+  const legacyPath = legacyCheckpointPath(resolvedWorkspacePath);
   const prefix = `${checkpointIdentity(resolvedWorkspacePath)}-`;
   const entries = await readdir(checkpointRoot(), { withFileTypes: true });
-  const paths = entries
+  const candidateEntries = entries
     .filter((entry) => entry.isFile() && entry.name.startsWith(prefix) && entry.name.endsWith(".json"))
-    // Limit fallback recovery to a small bounded sample.  This path is only
-    // for sessions whose client checkpoint no longer exists; parsing every
-    // historical snapshot would block the renderer and can exhaust memory.
-    .slice(-8)
     .map((entry) => join(checkpointRoot(), entry.name));
-  const checkpoints = (await Promise.all(paths.map((path) => readJson(path))))
-    .filter((checkpoint) => checkpoint && normalizedWorkspacePath(checkpoint.workspacePath) === normalizedWorkspacePath(resolvedWorkspacePath))
-    .map((checkpoint) => scrubCheckpoint(checkpoint))
-    .sort((left, right) => Date.parse(right.updatedAt || 0) - Date.parse(left.updatedAt || 0));
-  const dirty = checkpoints.filter((checkpoint) => checkpoint.dirty === true);
-  const sameClientDirty = normalizedClientId
-    ? dirty.find((checkpoint) => checkpoint.clientId === normalizedClientId)
-    : null;
-  if (sameClientDirty) return sameClientDirty;
-  if (dirty.length) return dirty[0];
-  return checkpoints.find((checkpoint) => checkpoint.clientId === normalizedClientId) ?? checkpoints[0] ?? null;
+
+  // Checkpoint files contain complete workspace snapshots and can be tens of
+  // megabytes each.  Read only a bounded, mtime-sorted window of headers first;
+  // this is enough to discover a dirty overlay or deletion tombstone without
+  // parsing every historical client snapshot during startup.  The active client
+  // and legacy paths are always included even when they fall outside the window.
+  const recentPaths = (await Promise.all(candidateEntries.map(async (path) => ({
+    path,
+    mtimeMs: (await stat(path).catch(() => ({ mtimeMs: 0 }))).mtimeMs || 0,
+  })))).sort((left, right) => right.mtimeMs - left.mtimeMs).slice(0, 32).map(({ path }) => path);
+  const paths = [...new Set([ownPath, legacyPath, ...recentPaths].filter(Boolean))];
+  const readHeader = async (path) => {
+    let handle;
+    try {
+      handle = await open(path, "r");
+      const buffer = Buffer.alloc(128 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      const text = buffer.toString("utf8", 0, bytesRead);
+      const stateMarker = text.indexOf(',"state":');
+      if (stateMarker < 0) return null;
+      return JSON.parse(`${text.slice(0, stateMarker)}}`);
+    } catch {
+      return null;
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  };
+  const headers = await Promise.all(paths.map(async (path) => ({ path, header: await readHeader(path) })));
+  const validHeaders = headers.filter(({ header }) => (
+    header && normalizedWorkspacePath(header.workspacePath) === normalizedPath
+  ));
+  const headerUpdatedAt = (header) => {
+    const parsed = Date.parse(header?.updatedAt || "");
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  const hasProtectiveData = ({ header }) => Boolean(
+    header?.dirty === true
+    && (!baseStateStamp || String(header.baseStateStamp || "") === String(baseStateStamp)),
+  );
+  // Another renderer's newer, compatible unsaved edit must not be hidden by an
+  // own-client clean checkpoint.  The canonical stamp is still authoritative:
+  // an old dirty overlay must never roll back a later committed workspace.
+  const protective = validHeaders.filter(hasProtectiveData).sort((left, right) => (
+    headerUpdatedAt(right.header) - headerUpdatedAt(left.header)
+  ));
+  if (baseStateStamp) {
+    const matching = validHeaders
+      .filter(({ header }) => String(header.baseStateStamp || "") === String(baseStateStamp))
+      .sort((left, right) => (
+        Number(right.header.dirty === true) - Number(left.header.dirty === true)
+        || headerUpdatedAt(right.header) - headerUpdatedAt(left.header)
+      ));
+    for (const { path: matchingPath } of matching) {
+      const selected = await readJson(matchingPath);
+      if (!selected || normalizedWorkspacePath(selected.workspacePath) !== normalizedPath) continue;
+      return scrubCheckpoint(selected);
+    }
+    return null;
+  }
+  const fallback = validHeaders.sort((left, right) => headerUpdatedAt(right.header) - headerUpdatedAt(left.header));
+  const selectedPaths = [...new Set([...protective, ...fallback].map(({ path }) => path))];
+  for (const selectedPath of selectedPaths) {
+    const selected = await readJson(selectedPath);
+    // A complete header alone is not enough: a truncated body must not replace
+    // the previous valid snapshot, even if it has the newest timestamp.
+    if (!selected || normalizedWorkspacePath(selected.workspacePath) !== normalizedPath) continue;
+    return scrubCheckpoint(selected);
+  }
+  return null;
 };
 
 export const commitWorkspaceRecoveryCheckpoint = async ({ workspacePath, clientId = "", revision = 0, savedAt = "", stateStamp = "" } = {}) => {

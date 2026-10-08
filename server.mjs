@@ -312,6 +312,7 @@ import { applyMemoryBackfillDisposition, applyReviewedMemoryBackfillCandidate, M
 import { executeOfflineWorkflow, OFFLINE_WORKFLOW_TOOL_IDS, WorkflowRuntimeError } from "./src/server/workflow-runtime.mjs";
 import { untrustedSkillMessage, validateSkillSandboxOutput } from "./src/skill-security.js";
 import { runtimeIdentity } from "./src/server/runtime-identity.mjs";
+import { verifyRuntimeManifest } from "./src/server/runtime-manifest.mjs";
 import { resolveBundledShensiRoot, validateBundledShensi } from "./src/server/bundled-shensi.mjs";
 import { collectGlobalAssetCatalog } from "./src/server/global-asset-catalog.mjs";
 import {
@@ -453,6 +454,20 @@ const buildIdentity = await loadBuildIdentity({
   appRoot: root,
   packageMetadata,
   runtimeBuildHash: runtime.buildHash,
+});
+// Formal packages carry a frozen runtime manifest. Validate it before opening
+// the data service so a partial or mixed install cannot mutate user data with
+// code that was not part of the verified artifact. Development checkouts may
+// omit the manifest and continue normally.
+const packagedRuntimeManifestHash = buildIdentity.packaged
+  ? String(JSON.parse(await readFile(join(root, "release-build.json"), "utf8")).runtimeManifestHash || "")
+  : "";
+await verifyRuntimeManifest({
+  root,
+  expectedVersion: packageMetadata.version,
+  expectedBuildId: buildIdentity.packaged ? buildIdentity.buildId : "",
+  expectedSourceHash: packagedRuntimeManifestHash,
+  requireManifest: Boolean(packagedRuntimeManifestHash),
 });
 const startedAt = new Date().toISOString();
 const sessionToken = randomBytes(32).toString("base64url");
@@ -2506,6 +2521,15 @@ const readJsonBody = (request, maxBytes = 8 * 1024 * 1024, maxDecodedBytes = max
   request.on("error", rejectBody);
 });
 
+const MULTIPART_UPLOAD_IDLE_TIMEOUT_MS = (() => {
+  const value = Number(process.env.SHENSI_MULTIPART_UPLOAD_IDLE_TIMEOUT_MS);
+  return Number.isSafeInteger(value) && value >= 5_000 ? value : 60_000;
+})();
+const MULTIPART_UPLOAD_TOTAL_TIMEOUT_MS = (() => {
+  const value = Number(process.env.SHENSI_MULTIPART_UPLOAD_TOTAL_TIMEOUT_MS);
+  return Number.isSafeInteger(value) && value >= MULTIPART_UPLOAD_IDLE_TIMEOUT_MS ? value : 15 * 60_000;
+})();
+
 const multipartFileStream = async function* (request, boundary) {
   if (!boundary || boundary.length > 200) throw requestError("上传边界无效", 400);
   if (String(request.headers["content-encoding"] || "identity").toLowerCase() !== "identity") throw requestError("流式附件不支持请求压缩", 415);
@@ -2516,6 +2540,7 @@ const multipartFileStream = async function* (request, boundary) {
   let headersParsed = false;
   let complete = false;
   for await (const value of request) {
+    if (request.destroyed || request.aborted) throw requestError("附件上传连接已中断", 408, "UPLOAD_ABORTED");
     pending = Buffer.concat([pending, Buffer.isBuffer(value) ? value : Buffer.from(value)]);
     if (!headersParsed) {
       const index = pending.indexOf(headerEnd);
@@ -3288,6 +3313,7 @@ const handleApiRequest = async (request, response, pathname) => {
     const checkpoint = await loadWorkspaceRecoveryCheckpoint({
       workspacePath: requestUrl.searchParams.get("workspacePath"),
       clientId: requestUrl.searchParams.get("clientId"),
+      baseStateStamp: requestUrl.searchParams.get("baseStateStamp") || "",
     });
     return sendJson(response, 200, { ok: true, checkpoint });
   }
@@ -9051,6 +9077,7 @@ const handleApiRequest = async (request, response, pathname) => {
         saved = await saveWorkspaceState({
           appRoot: root,
           requestedPath: body.workspacePath,
+          expectedStateStamp: String(body.expectedStateStamp || loaded.stateStamp || ""),
           state: {
             ...loaded.state,
             documents: changedDocuments,
@@ -9101,6 +9128,7 @@ const handleApiRequest = async (request, response, pathname) => {
         saved = await saveWorkspaceState({
           appRoot: root,
           requestedPath: body.workspacePath,
+          expectedStateStamp: String(body.expectedStateStamp || loaded.stateStamp || ""),
           state: {
             ...loaded.state,
             documents: { [documentId]: prepared.documentState },
@@ -9775,17 +9803,43 @@ const handleApiRequest = async (request, response, pathname) => {
     let attachment;
     let attachmentWorkspacePath = "";
     if (boundary) {
-      const expectedBytes = Number(request.headers["x-shensi-file-size"] || 0);
-      if (!Number.isSafeInteger(expectedBytes) || expectedBytes < 0) throw requestError("附件大小声明无效", 400);
+      const rawExpectedBytes = String(request.headers["x-shensi-file-size"] || "").trim();
+      const expectedBytes = Number(rawExpectedBytes);
+      // Multipart uploads must carry a positive length.  A zero or missing
+      // declaration used to bypass the quota preflight and allowed an
+      // unbounded stream to consume the workspace disk.  Internal generated
+      // media downloads use the workspace API directly and are still
+      // protected by the streaming post-write quota check.
+      if (!rawExpectedBytes || !Number.isSafeInteger(expectedBytes) || expectedBytes <= 0) {
+        throw requestError("附件大小声明无效；multipart 上传必须提供正数 X-Shensi-File-Size", 400, "UPLOAD_SIZE_REQUIRED");
+      }
+      const uploadStartedAt = Date.now();
+      const abortUpload = () => {
+        if (!request.destroyed) request.destroy(new Error("附件上传超时或客户端已断开"));
+      };
+      // IncomingMessage#setTimeout delegates to request.socket.  Node may
+      // clear that socket as soon as a tiny multipart body finishes, so use
+      // the socket directly and tolerate the already-closed cleanup race.
+      request?.socket?.setTimeout?.(MULTIPART_UPLOAD_IDLE_TIMEOUT_MS, abortUpload);
+      const uploadTimer = setTimeout(abortUpload, MULTIPART_UPLOAD_TOTAL_TIMEOUT_MS);
+      uploadTimer.unref?.();
       attachmentWorkspacePath = requestUrl.searchParams.get("workspacePath");
-      attachment = await saveWorkspaceAttachmentFromStream({
-        appRoot: root,
-        requestedPath: attachmentWorkspacePath,
-        name: requestUrl.searchParams.get("name"),
-        mimeType: requestUrl.searchParams.get("mimeType"),
-        stream: multipartFileStream(request, boundary),
-        expectedBytes,
-      });
+      try {
+        attachment = await saveWorkspaceAttachmentFromStream({
+          appRoot: root,
+          requestedPath: attachmentWorkspacePath,
+          name: requestUrl.searchParams.get("name"),
+          mimeType: requestUrl.searchParams.get("mimeType"),
+          stream: multipartFileStream(request, boundary),
+          expectedBytes,
+        });
+        if (Date.now() - uploadStartedAt > MULTIPART_UPLOAD_TOTAL_TIMEOUT_MS) {
+          throw requestError("附件上传超过总时限", 408, "UPLOAD_TIMEOUT");
+        }
+      } finally {
+        clearTimeout(uploadTimer);
+        request?.socket?.setTimeout?.(0);
+      }
     } else {
       const body = await readJsonBody(request, 56 * 1024 * 1024);
       attachmentWorkspacePath = body.workspacePath;

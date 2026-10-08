@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { execFile, spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -11,6 +11,8 @@ const clean = (value = "") => String(value ?? "").replace(/\0/gu, "").trim();
 const DEFAULT_TIMEOUT_MS = 1_800_000;
 const BRIDGE_READINESS_WINDOW_MS = 12_000;
 const BRIDGE_POLL_INTERVAL_MS = 500;
+const WBIPC_HANDSHAKE_TIMEOUT_MS = 5_000;
+const WBIPC_IO_TIMEOUT_MS = 30_000;
 const ACP_HEADERS = { "x-codebuddy-request": "1", "content-type": "application/json", accept: "application/json, text/event-stream" };
 const workBuddyAuthError = (message, statusCode = 0) => Object.assign(new Error(message), {
   code: "WORKBUDDY_AUTH_REQUIRED",
@@ -93,6 +95,95 @@ const disambiguateWorkBuddyModelNames = (models = [], metadata = []) => {
 
 const controlPipePath = (root, uuid) => `\\\\.\\pipe\\workbuddy-${createHash("sha1").update(resolve(root)).digest("hex").slice(0, 12)}-sidecar-control-${uuid}`;
 
+/**
+ * A listening ACP port is not sufficient evidence of a WorkBuddy desktop
+ * session.  Only a WorkBuddy.exe child with a real session id and an official
+ * daemon/sidecar ancestor can carry the desktop credential bootstrap.
+ */
+export const isDesktopOwnedGateway = (candidate = {}) => Boolean(
+  candidate?.gateway
+  && candidate?.desktopOwned === true
+  && /^workbuddy\.exe$/iu.test(clean(candidate?.processName)),
+);
+
+const wbipcDiscoveryPath = (environment = process.env) => join(configRoot(environment), "wbipc", "endpoint.json");
+
+const wbipcTicketId = (ticket) => createHash("sha256").update(String(ticket), "utf8").digest("hex").slice(0, 16);
+
+const wbipcTranscript = (role, { protocol = 1, endpoint, clientNonce, serverNonce }) => {
+  const parts = [role === "server" ? "wbipc-s" : "wbipc-c", String(protocol), endpoint, clientNonce, serverNonce];
+  const chunks = [];
+  for (const part of parts) {
+    const value = Buffer.from(String(part), "utf8");
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(value.length, 0);
+    chunks.push(length, value);
+  }
+  return Buffer.concat(chunks);
+};
+
+const wbipcProof = (ticket, role, transcript) => createHmac("sha256", Buffer.from(String(ticket), "utf8"))
+  .update(wbipcTranscript(role, transcript)).digest("base64url");
+
+const safeProofEqual = (left, right) => {
+  const a = Buffer.from(String(left || ""), "utf8");
+  const b = Buffer.from(String(right || ""), "utf8");
+  return a.length > 0 && a.length === b.length && timingSafeEqual(a, b);
+};
+
+const wbipcReadFrame = (socket, timeoutMs = WBIPC_HANDSHAKE_TIMEOUT_MS) => new Promise((resolveFrame, rejectFrame) => {
+  let buffer = "";
+  let settled = false;
+  const finish = (error, value) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    socket.removeListener("data", onData);
+    socket.removeListener("error", onError);
+    socket.removeListener("close", onClose);
+    if (error) rejectFrame(error); else resolveFrame(value);
+  };
+  const onData = (chunk) => {
+    buffer += String(chunk || "");
+    const index = buffer.indexOf("\n");
+    if (index < 0) return;
+    const line = buffer.slice(0, index);
+    try { finish(null, JSON.parse(line)); } catch (error) { finish(error); }
+  };
+  const onError = (error) => finish(error);
+  const onClose = () => finish(new Error("WorkBuddy WBIPC 端点在握手期间关闭"));
+  const timer = setTimeout(() => finish(new Error("WorkBuddy WBIPC 握手超时")), timeoutMs);
+  socket.setEncoding("utf8");
+  socket.on("data", onData);
+  socket.once("error", onError);
+  socket.once("close", onClose);
+});
+
+const probeWbipcEndpoint = async ({ endpoint, ticket, timeoutMs = WBIPC_HANDSHAKE_TIMEOUT_MS } = {}) => {
+  if (!endpoint || !ticket) return null;
+  const socket = net.createConnection(endpoint);
+  const close = () => { try { socket.destroy(); } catch {} };
+  const clientNonce = randomBytes(16).toString("base64url");
+  try {
+    await new Promise((resolveConnect, rejectConnect) => {
+      const timer = setTimeout(() => rejectConnect(new Error("WorkBuddy WBIPC 连接超时")), timeoutMs);
+      socket.once("connect", () => { clearTimeout(timer); resolveConnect(); });
+      socket.once("error", (error) => { clearTimeout(timer); rejectConnect(error); });
+    });
+    socket.write(`${JSON.stringify({ type: "session_hello", protocol_min: 1, protocol_max: 1, client_nonce: clientNonce, ticket_id: wbipcTicketId(ticket), client: { kind: "shensi", id: "shensi-bridge", version: "1" } })}\n`);
+    const challenge = await wbipcReadFrame(socket, timeoutMs);
+    if (challenge?.type !== "session_challenge") throw new Error(`WorkBuddy WBIPC 握手被拒绝：${clean(challenge?.code || challenge?.type)}`);
+    const transcript = { protocol: 1, endpoint, clientNonce, serverNonce: clean(challenge.server_nonce) };
+    if (!transcript.serverNonce || !safeProofEqual(challenge.server_proof, wbipcProof(ticket, "server", transcript))) throw new Error("WorkBuddy WBIPC 服务端证明无效");
+    socket.write(`${JSON.stringify({ type: "session_prove", client_proof: wbipcProof(ticket, "client", transcript) })}\n`);
+    const ack = await wbipcReadFrame(socket, timeoutMs);
+    if (ack?.type !== "session_hello_ack") throw new Error(`WorkBuddy WBIPC 握手确认失败：${clean(ack?.code || ack?.type)}`);
+    return { endpoint, pipes: Array.isArray(ack.pipes) ? ack.pipes : [], connectionEpoch: clean(ack.connection_epoch) };
+  } finally {
+    close();
+  }
+};
+
 const powershell = async (command, timeoutMs = 5_000) => {
   const result = await execFileAsync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command], {
     windowsHide: true,
@@ -117,7 +208,7 @@ const listSidecars = async ({ environment = process.env } = {}) => {
   try { rows = JSON.parse(raw || "[]"); } catch { rows = []; }
   if (!Array.isArray(rows)) rows = rows ? [rows] : [];
   const root = configRoot(environment);
-  return rows.map((row) => {
+  const candidates = rows.map((row) => {
     const commandLine = clean(row?.CommandLine);
     const uuid = commandLine.match(/--control-pipe-uuid\s+([0-9a-f-]{8,})/iu)?.[1] || "";
     const executable = commandLine.match(/"([A-Za-z]:\\[^"]*?WorkBuddy\.exe)"/iu)?.[1]
@@ -125,6 +216,61 @@ const listSidecars = async ({ environment = process.env } = {}) => {
       || "";
     return uuid ? { uuid, pid: Number(row?.ProcessId) || 0, executable, commandLine, controlPipe: controlPipePath(root, uuid) } : null;
   }).filter(Boolean);
+  // WorkBuddy 5.6+ no longer exposes --control-pipe-uuid. Its desktop daemon
+  // publishes a ticketed WBIPC endpoint instead. Keep the old sidecar result
+  // shape intact and append a modern candidate only after the endpoint file is
+  // structurally valid; liveness and HMAC proof are checked by discoverSidecar.
+  const modernRow = rows.find((row) => /WorkBuddy\.exe/iu.test(clean(row?.CommandLine)) && !/--type=/iu.test(clean(row?.CommandLine)));
+  const modernCommandLine = clean(modernRow?.CommandLine);
+  const modernExecutable = modernCommandLine.match(/"([A-Za-z]:\\[^"]*?WorkBuddy\.exe)"/iu)?.[1]
+    || modernCommandLine.match(/(?:^|\s)([A-Za-z]:\\[^\s]*?WorkBuddy\.exe)(?:\s|$)/iu)?.[1]
+    || "";
+  const discovery = await readFile(wbipcDiscoveryPath(environment), "utf8").catch(() => "");
+  if (discovery && modernExecutable) {
+    try {
+      const payload = JSON.parse(discovery);
+      if (clean(payload?.endpoint) && clean(payload?.ticket)) candidates.push({
+        modern: true,
+        pid: Number(modernRow?.ProcessId) || 0,
+        executable: modernExecutable,
+        commandLine: modernCommandLine,
+        wbipcEndpoint: clean(payload.endpoint),
+        wbipcTicket: clean(payload.ticket),
+      });
+    } catch {}
+  }
+  // WorkBuddy 5.6 keeps a logged-in CodeBuddy gateway alive as a separate
+  // `codebuddy --serve --port 0` child.  Starting a fresh `codebuddy --acp`
+  // process from Shensi bypasses the desktop daemon's credential bootstrap and
+  // therefore always answers `Authentication required`.  Reuse the gateway's
+  // authenticated ACP HTTP endpoint instead.  The port is kernel-assigned, so
+  // discover it from the listening socket owned by that exact child process;
+  // never guess a fixed port and never read any token from disk.
+  const serverRaw = await powershell(
+    "$all = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine); $byId = @{}; foreach ($item in $all) { $byId[[int]$item.ProcessId] = $item }; $rows = @($all | Where-Object { $_.Name -in @('node.exe','WorkBuddy.exe') -and $_.CommandLine -match '(?i)codebuddy.*--serve' } | ForEach-Object { $processId = $_.ProcessId; $parents = @(); $parentId = [int]$_.ParentProcessId; for ($i = 0; $i -lt 6 -and $parentId -gt 0; $i++) { $parent = $byId[$parentId]; if (-not $parent) { break }; $parents += [string]$parent.CommandLine; $parentId = [int]$parent.ParentProcessId }; $ports = @(Get-NetTCPConnection -State Listen -OwningProcess $processId -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort); [pscustomobject]@{ ProcessId = $processId; ParentProcessId = $_.ParentProcessId; Name = $_.Name; CommandLine = $_.CommandLine; ParentChain = ($parents -join [Environment]::NewLine); DesktopOwned = ($_.Name -eq 'WorkBuddy.exe' -and $_.CommandLine -match '(?i)--session-id\\s+[0-9a-f-]{8,}' -and (($parents -join [Environment]::NewLine) -match '(?i)(?:sidecar-entry\\.js|daemon-app-server-entry\\.js|WorkBuddy\\.exe)')); Ports = $ports } }); $rows | ConvertTo-Json -Compress",
+    5_000,
+  ).catch(() => "");
+  let serverRows;
+  try { serverRows = JSON.parse(serverRaw || "[]"); } catch { serverRows = []; }
+  if (!Array.isArray(serverRows)) serverRows = serverRows ? [serverRows] : [];
+  for (const row of serverRows) {
+    const ports = (Array.isArray(row?.Ports) ? row.Ports : [row?.Ports])
+      .map((port) => Number(port) || 0)
+      .filter((port) => port > 0 && port < 65536);
+    for (const port of ports) {
+      candidates.push({
+        modern: true,
+        gateway: true,
+        desktopOwned: row?.DesktopOwned === true,
+        pid: Number(row?.ProcessId) || 0,
+        parentPid: Number(row?.ParentProcessId) || 0,
+        processName: clean(row?.Name),
+        commandLine: clean(row?.CommandLine),
+        acpEndpoint: `http://127.0.0.1:${port}/api/v1/acp`,
+      });
+    }
+  }
+  return candidates;
 };
 
 const controlRequest = (pipe, request, timeoutMs = 30_000) => new Promise((resolveRequest, rejectRequest) => {
@@ -157,7 +303,27 @@ const controlRequest = (pipe, request, timeoutMs = 30_000) => new Promise((resol
 
 const discoverSidecar = async (options = {}) => {
   const candidates = await listSidecars(options);
-  for (const candidate of candidates) {
+  // The official sidecar is the only path that receives WorkBuddy's
+  // credential-protection bootstrap.  A raw `codebuddy --serve` started by a
+  // shell (or by an older Shensi probe) can expose an ACP port while returning
+  // `Authentication required`; treating that port as the desktop session is
+  // the source of the historic "logged out / bridge unavailable" flip-flop.
+  // Prefer sidecar-control, then a desktop-owned gateway with a session id.
+  // Never select a bare node/codebuddy gateway, and do not turn WBIPC liveness
+  // alone into a usable ACP session.
+  const ordered = [
+    ...candidates.filter((candidate) => !candidate.gateway && !candidate.modern),
+    ...candidates.filter((candidate) => isDesktopOwnedGateway(candidate)),
+  ];
+  for (const candidate of ordered) {
+    if (candidate.gateway && candidate.acpEndpoint) {
+      return { ...candidate, direct: true };
+    }
+    if (candidate.modern) {
+      const probe = await probeWbipcEndpoint({ endpoint: candidate.wbipcEndpoint, ticket: candidate.wbipcTicket }).catch(() => null);
+      if (probe?.pipes?.includes("wb.request")) return { ...candidate, wbipc: probe, direct: true };
+      continue;
+    }
     const ping = await controlRequest(candidate.controlPipe, { jsonrpc: "2.0", id: 1, method: "sidecar.ping", params: {} }).catch(() => null);
     if (ping?.pid) return { ...candidate, ping };
   }
@@ -195,7 +361,97 @@ const toMcpServers = (nativeHost) => nativeHost?.url ? [{
   headers: asHeaders(nativeHost.headers),
 }] : [];
 
+const directAcpClient = ({ executable, cwd, model = "", environment = process.env, timeoutMs = 90_000 } = {}) => {
+  const root = executable ? dirname(executable) : "";
+  const codebuddy = root ? join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy") : "";
+  if (!codebuddy) throw new Error("未找到 WorkBuddy 桌面端内置 ACP CLI");
+  const child = spawn(process.execPath, [codebuddy, "--acp", ...(clean(model) ? ["--model", clean(model)] : [])], {
+    cwd: resolve(cwd || process.cwd()),
+    env: {
+      ...environment,
+      WORKBUDDY_CONFIG_DIR: configRoot(environment),
+      ELECTRON_RUN_AS_NODE: "1",
+      CODEBUDDY_FORCE_HEADLESS_BUNDLE: "1",
+      CODEBUDDY_FORCE_LITE_WB_BUNDLE: "0",
+      ...(environment.CODEBUDDY_NO_UPDATE_CHECK ? {} : { CODEBUDDY_NO_UPDATE_CHECK: "1" }),
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+  });
+  let buffer = "";
+  let nextId = 1;
+  let closed = false;
+  const pending = new Map();
+  const finishPending = (error) => {
+    for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
+    pending.clear();
+  };
+  const onLine = (line) => {
+    if (!line.trim()) return;
+    let frame;
+    try { frame = JSON.parse(line); } catch { return; }
+    if (frame?.method && frame?.params) for (const entry of pending.values()) entry.onUpdate?.(frame.params);
+    if (frame?.id === undefined || frame?.id === null) return;
+    const entry = pending.get(String(frame.id));
+    if (!entry) return;
+    pending.delete(String(frame.id));
+    clearTimeout(entry.timer);
+    if (frame.error) entry.reject(Object.assign(new Error(frame.error.message || "WorkBuddy ACP 请求失败"), { code: frame.error.code, data: frame.error.data }));
+    else entry.resolve(frame);
+  };
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    buffer += chunk;
+    for (;;) {
+      const index = buffer.indexOf("\n");
+      if (index < 0) break;
+      onLine(buffer.slice(0, index).replace(/\r$/u, ""));
+      buffer = buffer.slice(index + 1);
+    }
+  });
+  child.on("error", (error) => finishPending(Object.assign(error, { code: error.code || "WORKBUDDY_ACP_PROCESS_ERROR" })));
+  child.on("exit", (code, signal) => finishPending(new Error(`WorkBuddy ACP 进程已退出（${code ?? ""}${signal ? `/${signal}` : ""}）`)));
+  const request = (method, params = {}, { signal = null, timeoutMs: requestTimeoutMs = timeoutMs, onUpdate } = {}) => new Promise((resolveRequest, rejectRequest) => {
+    if (closed) { rejectRequest(new Error("WorkBuddy ACP 会话已关闭")); return; }
+    const id = String(nextId++);
+    const entry = { resolve: resolveRequest, reject: rejectRequest, onUpdate, timer: null };
+    entry.timer = setTimeout(() => {
+      pending.delete(id);
+      rejectRequest(Object.assign(new Error(`WorkBuddy ACP 请求超时：${method}`), { code: "WORKBUDDY_ACP_TIMEOUT" }));
+    }, requestTimeoutMs);
+    pending.set(id, entry);
+    const abort = () => {
+      try { child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "session/cancel", params })}\n`); } catch {}
+      clearTimeout(entry.timer);
+      pending.delete(id);
+      rejectRequest(Object.assign(new Error("WorkBuddy ACP 请求已取消"), { name: "AbortError" }));
+    };
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener?.("abort", abort, { once: true });
+    try { child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`); }
+    catch (error) { clearTimeout(entry.timer); pending.delete(id); rejectRequest(error); }
+  });
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    finishPending(new Error("WorkBuddy ACP 会话已关闭"));
+    try { child.stdin.end(); } catch {}
+    await new Promise((resolveClose) => {
+      const timer = setTimeout(() => { try { child.kill(); } catch {} resolveClose(); }, 1_000);
+      child.once("exit", () => { clearTimeout(timer); resolveClose(); });
+    });
+  };
+  return { kind: "stdio", request, close, child, codebuddy };
+};
+
 const createHeadlessSession = async ({ sidecar, cwd, nativeHost, model = "", environment = process.env, sessionId = randomUUID(), timeoutMs = 90_000 } = {}) => {
+  if (sidecar?.gateway && sidecar.acpEndpoint) {
+    return { acpEndpoint: sidecar.acpEndpoint, sessionId, direct: true };
+  }
+  if (sidecar?.direct) {
+    const client = directAcpClient({ executable: sidecar.executable, cwd, model, environment, timeoutMs });
+    return { acpEndpoint: { kind: "stdio", client }, sessionId, direct: true };
+  }
   const executable = sidecar.executable || join(dirname(dirname(sidecar.commandLine || "")), "WorkBuddy.exe");
   const root = executable ? dirname(executable) : "";
   const codebuddy = root ? join(root, "resources", "app.asar.unpacked", "cli", "bin", "codebuddy") : "";
@@ -240,6 +496,15 @@ const parseSse = (source = "") => {
 };
 
 const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120_000, onUpdate } = {}) => {
+  if (endpoint?.kind === "stdio" && endpoint.client?.request) {
+    try {
+      return await endpoint.client.request(message.method, message.params || {}, { signal, timeoutMs, onUpdate });
+    } catch (error) {
+      const authFailure = acpAuthFailure({ error: { message: error?.message, code: error?.code, data: error?.data } });
+      if (authFailure) throw authFailure;
+      throw error;
+    }
+  }
   const headers = {
     ...ACP_HEADERS,
     "acp-connection-id": credentials.connectionId,
@@ -262,7 +527,10 @@ const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120
       const body = await response.text();
       const messages = isSse ? parseSse(body) : [JSON.parse(body)];
       for (const event of messages) if (event?.method === "session/update") onUpdate?.(event.params || {});
-      return messages.find((event) => event?.id === message.id) || messages.at(-1) || {};
+      const result = messages.find((event) => event?.id === message.id) || messages.at(-1) || {};
+      const authFailure = acpAuthFailure(result);
+      if (authFailure) throw authFailure;
+      return result;
     }
     // WorkBuddy keeps the ACP event stream open after emitting the JSON-RPC
     // response. Waiting for response.text() therefore turns a completed
@@ -290,6 +558,8 @@ const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120
         if (event?.method === "session/update") onUpdate?.(event.params || {});
         if (event && String(event.id ?? "") === String(message.id ?? "")) {
           await reader.cancel().catch(() => {});
+          const authFailure = acpAuthFailure(event);
+          if (authFailure) throw authFailure;
           return event;
         }
         if (message.method === "session/prompt" && event?.method === "session/update" && promptUpdateIsTerminal(event.params)) {
@@ -304,7 +574,10 @@ const acpPost = async (endpoint, credentials, message, { signal, timeoutMs = 120
         if (message.method === "session/prompt" && event?.method === "session/update" && promptUpdateIsTerminal(event.params)) {
           return { jsonrpc: "2.0", id: message.id, result: { status: "completed" }, params: event.params };
         }
-        return event || {};
+        const result = event || {};
+        const authFailure = acpAuthFailure(result);
+        if (authFailure) throw authFailure;
+        return result;
       }
     }
   } finally {
@@ -364,7 +637,43 @@ const promptUpdateIsTerminal = (params = {}) => {
     || /(?:turn|prompt|session|agent)[ _-]*(?:complete|completed|done|end|ended|finish|finished)$/u.test(status);
 };
 
+const parseAcpErrorPayload = (value, depth = 0) => {
+  if (depth > 4 || value == null) return null;
+  if (typeof value === "string") {
+    const source = value.trim();
+    if (!source) return null;
+    try { return parseAcpErrorPayload(JSON.parse(source), depth + 1); } catch {}
+    return { message: source };
+  }
+  if (typeof value !== "object") return null;
+  const message = clean(value.message || value.errorMessage || value.details);
+  const code = clean(value.code || value.category || value.errorCode);
+  const nested = value.error || value.data || value.details;
+  const child = nested && typeof nested === "object" ? parseAcpErrorPayload(nested, depth + 1) : null;
+  return { ...(child || {}), ...(message ? { message } : {}), ...(code ? { code } : {}) };
+};
+
+export const acpAuthFailure = (promptResult = {}) => {
+  const candidates = [
+    promptResult?.error,
+    promptResult?.result?.error,
+    promptResult?.result?.errorMessage,
+    promptResult?.result?._meta?.["codebuddy.ai/errorMessage"],
+    promptResult?._meta?.["codebuddy.ai/errorMessage"],
+    promptResult?.params?.error,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseAcpErrorPayload(candidate);
+    const text = clean([parsed?.code, parsed?.message, typeof candidate === "string" ? candidate : ""].filter(Boolean).join(" "));
+    if (/(?:authentication required|not authenticated|please use \/login|登录|未登录|auth_required)/iu.test(text)) {
+      return workBuddyAuthError(`WorkBuddy 桌面会话未登录：${text.slice(0, 300)}`);
+    }
+  }
+  return null;
+};
+
 const connectAcp = async (endpoint, options = {}) => {
+  if (endpoint?.kind === "stdio") return { kind: "stdio" };
   const connectEndpoint = `${String(endpoint).replace(/\/$/u, "")}/connect`;
   const response = await fetch(connectEndpoint, { method: "POST", headers: { "x-codebuddy-request": "1" }, signal: options.signal });
   if (!response.ok) {
@@ -377,6 +686,10 @@ const connectAcp = async (endpoint, options = {}) => {
 };
 
 const closeAcp = async (endpoint, credentials, { sidecar = null, sessionId = "" } = {}) => {
+  if (endpoint?.kind === "stdio") {
+    await endpoint.client?.close?.();
+    return;
+  }
   if (credentials?.connectionId) {
     await fetch(String(endpoint), {
       method: "DELETE",
@@ -567,6 +880,8 @@ export const runWorkBuddyDesktopBridge = async ({ prompt, model = "", cwd = proc
       onEvent?.({ type: "text", phase: "text_delta", text: delta, part: { type: "text", id: "workbuddy-acp", text: delta } });
     };
     const promptResult = await acpPost(session.acpEndpoint, credentials, { jsonrpc: "2.0", id: 7, method: "session/prompt", params: { sessionId, prompt: [{ type: "text", text: String(prompt || "") }] } }, { signal, timeoutMs, onUpdate: update });
+    const authFailure = acpAuthFailure(promptResult);
+    if (authFailure) throw authFailure;
     // Do not use `result || params` here: a valid JSON-RPC result often only
     // carries `{ status: "completed" }`, while the actual assistant message
     // remains in params or in the last session/update frame.

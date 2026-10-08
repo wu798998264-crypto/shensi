@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { signReleaseManifest, verifyReleaseManifest } from "../../src/server/release-manifest.mjs";
-import { runtimeIdentity } from "../../src/server/runtime-identity.mjs";
+import { readRuntimeManifest, verifyRuntimeManifest } from "../../src/server/runtime-manifest.mjs";
 
 const scriptRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptRoot, "..", "..");
@@ -53,9 +53,27 @@ if (!signature.timestampSubject) throw new Error("Windows 安装包缺少可信�
 const hash = createHash("sha256");
 hash.update(await readFile(requestedInstaller));
 const installerSha256 = hash.digest("hex");
-const runtime = await runtimeIdentity(repositoryRoot);
+const runtimeManifest = await readRuntimeManifest(repositoryRoot);
+if (!runtimeManifest) throw new Error("发布运行清单缺失；必须先用正式打包流程冻结源码");
+if (runtimeManifest.sourceDirty === true || releaseBuild.sourceDirty === true) {
+  throw new Error("运行源码清单标记为 dirty；禁止把未提交源码发布到云端");
+}
+await verifyRuntimeManifest({
+  root: repositoryRoot,
+  expectedVersion: version,
+  expectedBuildId: buildId,
+  expectedSourceHash: runtimeManifest.sourceHash,
+  requireManifest: true,
+});
+if (String(releaseBuild.runtimeManifestHash || "") !== String(runtimeManifest.sourceHash || "")) {
+  throw new Error("release-build.json 与运行源码清单摘要不一致；禁止发布");
+}
 const declaredCommit = String(releaseBuild.commit || "").toLowerCase();
-const sourceRevision = /^[a-f0-9]{40,64}$/.test(declaredCommit) ? declaredCommit : runtime.sourceHash;
+const manifestCommit = String(runtimeManifest.sourceCommit || "").toLowerCase();
+if (!/^[a-f0-9]{40,64}$/u.test(declaredCommit) || !/^[a-f0-9]{40,64}$/u.test(manifestCommit) || declaredCommit !== manifestCommit) {
+  throw new Error("release-build.json 的 commit 与运行源码清单 sourceCommit 不一致；禁止发布");
+}
+const sourceRevision = /^[a-f0-9]{40,64}$/.test(declaredCommit) ? declaredCommit : runtimeManifest.sourceHash;
 const localAppData = String(process.env.LOCALAPPDATA || "").trim();
 const defaultPrivateKey = localAppData ? join(localAppData, "ShensiRelease", "signing", "manifest-ed25519-private.pem") : "";
 const privateKeyPath = resolve(String(process.env.SHENSI_UPDATE_MANIFEST_PRIVATE_KEY || defaultPrivateKey));
@@ -73,7 +91,7 @@ const manifest = signReleaseManifest({
     channel: updateConfig.channel,
     commit: sourceRevision,
     publishedAt: new Date().toISOString(),
-    runtimeBuildHash: runtime.sourceHash,
+    runtimeBuildHash: runtimeManifest.sourceHash,
     dataSchemaVersion: Number(packageMetadata.dataSchemaVersion || 1),
     minimumSupportedVersion: String(updateConfig.minimumSupportedVersion || "1.0.0"),
     rollbackCompatibleFrom: String(updateConfig.rollbackCompatibleFrom || "1.0.0"),
@@ -101,14 +119,22 @@ const manifestPath = join(outputRoot, "update-manifest.json");
 const planPath = join(outputRoot, "release-assets.json");
 await writeFile(checksumPath, `${installerSha256} *${expectedInstallerName}\n`, "utf8");
 await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+const plannedAssets = [
+  { path: requestedInstaller, name: expectedInstallerName, kind: "installer", sizeBytes: installerInfo.size, sha256: installerSha256 },
+  { path: checksumPath, name: basename(checksumPath), kind: "checksum", sizeBytes: (await stat(checksumPath)).size, sha256: createHash("sha256").update(await readFile(checksumPath)).digest("hex") },
+  { path: manifestPath, name: basename(manifestPath), kind: "manifest", sizeBytes: (await stat(manifestPath)).size, sha256: createHash("sha256").update(await readFile(manifestPath)).digest("hex") },
+];
 await writeFile(planPath, `${JSON.stringify({
-  schemaVersion: 1,
+  schemaVersion: 2,
   uploadPerformed: false,
   repository: updateConfig.repository,
   tag: `v${version}`,
   version,
   buildId,
-  assets: [requestedInstaller, checksumPath, manifestPath],
+  // Keep the path-only list for older tooling, while assetDetails is the
+  // allowlisted, hash-bound contract consumed by the upload guard.
+  assets: plannedAssets.map((asset) => asset.path),
+  assetDetails: plannedAssets,
 }, null, 2)}\n`, "utf8");
 
 process.stdout.write(JSON.stringify({

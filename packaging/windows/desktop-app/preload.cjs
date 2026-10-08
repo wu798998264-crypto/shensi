@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const versionArgument = process.argv.find((argument) => argument.startsWith("--shensi-app-version="));
-const appVersion = versionArgument ? versionArgument.slice("--shensi-app-version=".length) : "9.2.3";
+const appVersion = versionArgument ? versionArgument.slice("--shensi-app-version=".length) : "9.2.9";
 
 contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
   runtime: "electron",
@@ -19,6 +19,13 @@ contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
   credentials: Object.freeze({
     readGeneration: () => ipcRenderer.invoke("shensi:credentials:read-generation"),
     writeGeneration: (secrets) => ipcRenderer.invoke("shensi:credentials:write-generation", { secrets }),
+    readAccountSession: () => ipcRenderer.invoke("shensi:credentials:read-account-session"),
+    writeAccountSession: (payload) => ipcRenderer.invoke("shensi:credentials:write-account-session", {
+      account: String(payload?.account || ""),
+      token: String(payload?.token || ""),
+      remember: payload?.remember === true,
+    }),
+    clearAccountSession: () => ipcRenderer.invoke("shensi:credentials:clear-account-session"),
     nutstoreStatus: () => ipcRenderer.invoke("shensi:credentials:nutstore-status"),
     storeNutstore: (payload) => ipcRenderer.invoke("shensi:credentials:nutstore-store", {
       account: String(payload?.account || ""),

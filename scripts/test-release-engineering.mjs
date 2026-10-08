@@ -10,6 +10,7 @@ const appData = await readFile(new URL("../src/server/app-data.mjs", import.meta
 const updateConfig = JSON.parse(await readFile(new URL("../update-config.json", import.meta.url), "utf8"));
 const updateManager = await readFile(new URL("../src/server/update-manager.mjs", import.meta.url), "utf8");
 const updatePreparation = await readFile(new URL("./windows/prepare-github-release.mjs", import.meta.url), "utf8");
+const runtimeManifest = await readFile(new URL("../src/server/runtime-manifest.mjs", import.meta.url), "utf8");
 
 assert.match(packageScript, /yyyyMMddHHmmssfff/u, "every installer must get a unique timestamp build id");
 assert.match(packageScript, /git -C \$repoRoot rev-parse HEAD[\s\S]{0,350}NotePropertyName commit -NotePropertyValue \$sourceCommit/u, "packaging must refresh the source revision rather than retaining an earlier build's commit");
@@ -31,5 +32,14 @@ assert.doesNotMatch(updateManager, /VERYSILENT|SUPPRESSMSGBOXES|NORESTART/u, "�
 assert.match(updateConfig.manifestPublicKeyPem, /BEGIN PUBLIC KEY/u, "updater must pin the release manifest public key");
 assert.match(packageJson.build?.win?.signtoolOptions?.rfc3161TimeStampServer || "", /^https?:\/\//u, "formal package signing must request a trusted timestamp");
 assert.match(updatePreparation, /uploadPerformed:\s*false/u, "release preparation must remain local until the user explicitly requests upload");
+assert.match(packageScript, /create-runtime-manifest\.mjs/u, "formal packaging must freeze a runtime source manifest before build");
+assert.match(packageJson.build?.files?.join("\n") || "", /release-runtime-manifest\.json/u, "installer must carry the runtime source manifest");
+assert.match(updatePreparation, /verifyRuntimeManifest/u, "release preparation must verify the frozen runtime manifest");
+assert.match(updatePreparation, /sourceDirty === true/u, "cloud release preparation must reject a dirty runtime manifest");
+assert.match(updatePreparation, /manifestCommit[\s\S]{0,500}declaredCommit/u, "cloud release must bind release-build commit to runtime manifest sourceCommit");
+assert.match(packageScript, /正式打包要求源码工作区干净/u, "formal packaging must reject dirty source by default");
+assert.match(packageScript, /AllowDirty/u, "dirty source must require an explicit local diagnostic switch");
+assert.match(updatePreparation, /assetDetails/u, "release plan must include hash-bound asset details");
+assert.match(runtimeManifest, /发布运行文件校验失败/u, "runtime manifest must reject post-build source drift");
 
 console.log("Shensi release engineering contract passed");
