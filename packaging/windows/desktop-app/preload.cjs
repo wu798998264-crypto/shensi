@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const versionArgument = process.argv.find((argument) => argument.startsWith("--shensi-app-version="));
-const appVersion = versionArgument ? versionArgument.slice("--shensi-app-version=".length) : "9.2.9";
+const appVersion = versionArgument ? versionArgument.slice("--shensi-app-version=".length) : "9.3.0";
 
 contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
   runtime: "electron",
