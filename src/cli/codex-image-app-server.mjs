@@ -1,4 +1,5 @@
 import { access, readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -103,11 +104,26 @@ const safeError = (value) => {
   return String(value.message || value.error || JSON.stringify(value)).slice(0, 2_000);
 };
 
+const turnFailure = (value, imageToolStarted) => {
+  const info = value?.codexErrorInfo;
+  const providerErrorCode = typeof info === "string" ? info : Object.keys(info || {})[0] || "OPENAI_IMAGE_TURN_FAILED";
+  const noTaskRejection = !imageToolStarted && [
+    "unauthorized", "badRequest", "usageLimitExceeded", "rateLimitExceeded",
+    "contextWindowExceeded", "sessionBudgetExceeded", "sandboxError",
+  ].includes(providerErrorCode);
+  return Object.assign(new Error([safeError(value), safeError(value?.additionalDetails)].filter(Boolean).join("\n") || "Codex GPT 生图失败"), {
+    code: "OPENAI_IMAGE_TURN_FAILED",
+    providerErrorCode,
+    submissionOutcomeKnown: noTaskRejection,
+  });
+};
+
 export const runCodexImageAppServer = async ({
   cwd = process.cwd(),
   model = "",
   prompt = "",
   imageCount = 1,
+  referenceImages = [],
   timeoutMs = 600_000,
   onThread = null,
   onImage = null,
@@ -115,6 +131,8 @@ export const runCodexImageAppServer = async ({
   resolveImagegenSkill = resolveCodexImagegenSkillPath,
 } = {}) => {
   const expectedCount = Math.max(1, Math.min(4, Number(imageCount) || 1));
+  const referencePaths = [...new Set(referenceImages.map((value) => String(value || "").trim()))];
+  if (referencePaths.some((path) => !isAbsolute(path))) throw Object.assign(new Error("OpenAI CLI 参考图必须使用绝对文件路径"), { code: "OPENAI_IMAGE_REFERENCE_INVALID", submissionOutcomeKnown: true });
   const { child } = await launchServer({ cwd, env: process.env, isolateConfig: true });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   const pending = new Map();
@@ -127,10 +145,24 @@ export const runCodexImageAppServer = async ({
   let settled = false;
   let imageQueue = Promise.resolve();
   let abortCompletion = null;
+  let imageToolStarted = false;
+  let lastProviderError = null;
 
-  const stop = () => {
+  const stop = async () => {
+    for (const entry of pending.values()) {
+      clearTimeout(entry.timer);
+      entry.reject(new Error("Codex 图片会话已结束"));
+    }
+    pending.clear();
     lines.close();
-    if (child.exitCode === null && !child.killed) child.kill();
+    if (child.exitCode === null && !child.killed) {
+      // The npm launcher is a parent of codex.exe on Windows. Killing only
+      // that launcher can leave our dedicated image app-server orphaned.
+      if (process.platform === "win32" && Number(child.pid) > 0) {
+        await new Promise((resolveStop) => execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 5_000 }, () => resolveStop()));
+      }
+      if (child.exitCode === null && !child.killed) child.kill();
+    }
   };
   const request = (method, params, requestTimeoutMs = 30_000) => new Promise((resolveRequest, rejectRequest) => {
     const id = ++requestId;
@@ -149,7 +181,7 @@ export const runCodexImageAppServer = async ({
       settled = true;
       clearTimeout(overallTimer);
       try { await imageQueue; } catch (imageError) { error ||= imageError; }
-      stop();
+      await stop();
       if (error) rejectCompletion(error);
       else if (images.length < expectedCount) {
         const noImageToolResult = !toolErrors.length && !agentMessages.length && protocolEvents.includes("turn/completed");
@@ -166,7 +198,7 @@ export const runCodexImageAppServer = async ({
       } else resolveCompletion(images.slice(0, expectedCount));
     };
     abortCompletion = finish;
-    const overallTimer = setTimeout(() => finish(Object.assign(new Error("Codex GPT 生图超时"), {
+    const overallTimer = setTimeout(() => finish(Object.assign(new Error(`Codex GPT 生图超时${lastProviderError ? `；最近一次上游错误：${lastProviderError.message}` : ""}`), {
       code: "OPENAI_IMAGE_APP_SERVER_TIMEOUT",
       submissionOutcomeKnown: false,
     })), Math.max(60_000, Number(timeoutMs) || 600_000));
@@ -183,7 +215,11 @@ export const runCodexImageAppServer = async ({
         const entry = pending.get(message.id);
         pending.delete(message.id);
         clearTimeout(entry.timer);
-        if (message.error) entry.reject(new Error(safeError(message.error)));
+        if (message.error) entry.reject(Object.assign(new Error(safeError(message.error)), {
+          code: "OPENAI_IMAGE_REQUEST_REJECTED",
+          providerErrorCode: String(message.error.code || "OPENAI_IMAGE_REQUEST_REJECTED"),
+          submissionOutcomeKnown: !imageToolStarted,
+        }));
         else entry.resolve(message.result);
         return;
       }
@@ -192,14 +228,26 @@ export const runCodexImageAppServer = async ({
         return;
       }
       const item = message.params?.item;
+      if (item?.type === "imageGeneration") imageToolStarted = true;
       if (message.method === "item/completed" && item?.type === "agentMessage") {
         const text = safeError(item.text);
         if (text) agentMessages.push(text);
         return;
       }
       if (message.method === "item/completed" && item?.type === "imageGeneration") {
-        if (String(item.status || "").toLowerCase() === "failed" || item.error) {
-          toolErrors.push(safeError(item.error || item.result || "Codex 图片工具执行失败"));
+        if (String(item.status || "").toLowerCase() === "failed" || item.error || item.failure) {
+          const failure = item.failure;
+          const resetTime = new Date(Number(failure?.resetsAt) * 1000);
+          const resetDescription = failure?.resetsAt && Number.isFinite(resetTime.getTime()) ? `，恢复时间：${resetTime.toISOString()}` : "";
+          const detail = failure?.type === "usageLimitExceeded"
+            ? `OpenAI 图片生成额度已耗尽${failure.limitId ? `（${failure.limitId}）` : ""}${resetDescription}`
+            : safeError(item.error || item.result || failure || "Codex 图片工具执行失败");
+          toolErrors.push(detail);
+          void finish(Object.assign(new Error(detail), {
+            code: "OPENAI_IMAGE_TOOL_FAILED",
+            providerErrorCode: failure?.type || "OPENAI_IMAGE_TOOL_FAILED",
+            submissionOutcomeKnown: true,
+          }));
           return;
         }
         imageQueue = imageQueue.then(async () => {
@@ -211,13 +259,20 @@ export const runCodexImageAppServer = async ({
         return;
       }
       if (message.method === "turn/failed") {
-        void finish(Object.assign(new Error(safeError(message.params?.error) || "Codex GPT 生图失败"), {
-          code: "OPENAI_IMAGE_TURN_FAILED",
-          submissionOutcomeKnown: images.length > 0,
-        }));
+        void finish(turnFailure(message.params?.error, imageToolStarted));
         return;
       }
-      if (message.method === "turn/completed") void finish();
+      if (message.method === "error") {
+        lastProviderError = turnFailure(message.params?.error, imageToolStarted);
+        if (message.params?.willRetry !== true) void finish(lastProviderError);
+        return;
+      }
+      if (message.method === "turn/completed") {
+        const turn = message.params?.turn || {};
+        void finish(turn.error || ["failed", "interrupted"].includes(turn.status)
+          ? turnFailure(turn.error || { message: `Codex 图片会话${turn.status === "interrupted" ? "已中断" : "失败"}` }, imageToolStarted)
+          : null);
+      }
     });
     child.stderr.on("data", (chunk) => { stderrTail = `${stderrTail}${chunk.toString("utf8")}`.slice(-8_000); });
     child.once("error", (error) => void finish(Object.assign(new Error(`Codex app-server 无法启动：${error.message}`), { code: error.code || "OPENAI_IMAGE_APP_SERVER_START_FAILED", submissionOutcomeKnown: true })));
@@ -254,7 +309,8 @@ export const runCodexImageAppServer = async ({
       sandbox: "read-only",
       sandboxPolicy: { type: "readOnly", networkAccess: false },
       developerInstructions: "Generate the requested image by calling the native image generation tool exactly as many times as requested. Do not call any other tool. Return only image results.",
-      ephemeral: true,
+      // Keep image sessions recoverable and diagnosable after a timeout.
+      ephemeral: false,
     }, 30_000);
     const threadId = String(started?.thread?.id || "");
     if (!threadId) throw new Error("Codex app-server 未返回生图会话 ID");
@@ -264,6 +320,7 @@ export const runCodexImageAppServer = async ({
       input: [
         { type: "skill", name: "imagegen", path: imagegenSkillPath },
         { type: "text", text: String(prompt || ""), text_elements: [] },
+        ...referencePaths.map((path) => ({ type: "localImage", path, detail: "original" })),
       ],
       cwd,
       runtimeWorkspaceRoots: [cwd],

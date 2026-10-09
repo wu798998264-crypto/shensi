@@ -19768,6 +19768,22 @@ button.trash-entry-main:focus-visible {
   height: 15px;
 }
 
+.libtv-account-panel [data-libtv-account-refresh] {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  padding: 0;
+  border-radius: 6px;
+}
+
+.libtv-account-panel [data-libtv-metric="membership"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 #refreshDreaminaCredit.is-refreshing .icon {
   animation: dreamina-credit-refresh-spin .8s linear infinite;
 }

@@ -40,11 +40,14 @@ class CapturingLibTvDriver extends LibTvMediaDriver {
   async project() { return { projectUuid: "test-project" }; }
 
   async invoke(args) {
-    if (args[0] === "upload") return { nodeKey: `uploaded-${args[1]}` };
+    if (args[0] === "upload") return { newNodeKey: `uploaded-${args[1]}` };
     if (args[0] === "node" && args[1] === "create") {
       this.createdArgs = args;
-      return { nodeKey: "generated-node" };
+      return args.includes("--left")
+        ? { mode: "create-and-connect", newNodeKey: "generated-node" }
+        : { nodeKey: "generated-node" };
     }
+    assert.equal(args[1], "generated-node", "生成必须使用 CLI 实际返回的 nodeKey/newNodeKey");
     return { status: "completed", taskId: "test-task" };
   }
 }
@@ -119,8 +122,37 @@ try {
   const leftIndex = imageReferenceArgs.indexOf("--left");
   assert.ok(leftIndex >= 0 && /^uploaded-/u.test(imageReferenceArgs[leftIndex + 1]), "LibTV 图片参考必须上传并连接到生成节点");
   assert.ok(imageReferenceArgs.includes("ratio=21:9"), "LibTV 图片节点必须透传新增比例");
+  const videoReferenceArgs = await captureSubmission({
+    model: "star-video2",
+    request: { duration: 4, resolution: "720p", aspectRatio: "16:9" },
+    references: [{ mimeType: "image/png", absolutePath: referencePath }],
+  });
+  assert.ok(videoReferenceArgs.includes("--left"), "带参考视频节点必须兼容 create-and-connect 的 newNodeKey 回执");
 } finally {
   await rm(referenceRoot, { recursive: true, force: true });
+}
+
+for (const missingReceipt of ["upload", "create"]) {
+  const missingRoot = await mkdtemp(join(tmpdir(), "shensi-libtv-missing-key-"));
+  try {
+    const driver = new CapturingLibTvDriver();
+    const originalInvoke = driver.invoke.bind(driver);
+    let paidRuns = 0;
+    driver.invoke = async (args) => {
+      if (args.at(-1) === "--run") paidRuns += 1;
+      if (missingReceipt === "upload" && args[0] === "upload") return {};
+      if (missingReceipt === "create" && args[0] === "node" && args[1] === "create") return {};
+      return originalInvoke(args);
+    };
+    await assert.rejects(driver.submit({
+      job: { id: "mock-missing-receipt", channel: "image", request: { prompt: "mock", settings: { cliPath: "libtv", model: "lib-image-2.5-s" } } },
+      references: missingReceipt === "upload" ? [{ mimeType: "image/png", absolutePath: join(missingRoot, "mock.png") }] : [],
+      workRoot: missingRoot,
+    }), (error) => error.submissionOutcomeKnown === true && error.providerErrorCode === (missingReceipt === "upload" ? "LIBTV_REFERENCE_NODE_MISSING" : "LIBTV_NODE_CREATE_FAILED"));
+    assert.equal(paidRuns, 0, "创建/上传缺少节点 ID 时不得触发生成，更不得悄悄丢弃参考物");
+  } finally {
+    await rm(missingRoot, { recursive: true, force: true });
+  }
 }
 
 console.log("LibTV 图片模型名、视频 Schema 时长与参考模式适配测试通过");

@@ -1,0 +1,123 @@
+<!doctype html><meta charset="utf-8"><title>Isolated prompt clipboard regression</title>
+<link rel="stylesheet" href="../../src/styles.css">
+<body style="padding:24px;background:white"><div id="account"></div><div id="editors"></div><div id="menu"></div>
+<script type="module">
+import { enrichWhiteboardPromptClipboardSegments, whiteboardPromptClipboardText, parseWhiteboardPromptClipboardPayload, hasWhiteboardPromptClipboardHtml } from '../../src/whiteboard-prompt-clipboard.js';
+import { createLibTvAccountPanel, libTvAccountPanelMarkup } from '../../src/libtv-account-panel.js';
+import { whiteboardPromptReferenceSequenceAfterReplacement } from '../../src/whiteboard-rich-prompt.js';
+import { createCanvasImageNode, addCanvasTextNode } from '../../src/whiteboard.js';
+
+window.runPromptTests = async (code, account) => {
+  const assert = (condition, reason) => { if (!condition) throw new Error(reason); };
+  const makeForm = (id) => {
+    const form = document.createElement('form'); form.dataset.nodeId = id;
+    form.innerHTML = '<textarea hidden></textarea><div class="whiteboard-generation-inline-mentions" contenteditable="true"></div><div class="whiteboard-generation-references"></div>';
+    document.querySelector('#editors').append(form); return form;
+  };
+  const sourceForm = makeForm('source-target'); const destinationForm = makeForm('destination-target');
+  const sourceEditor = sourceForm.querySelector('[contenteditable]');
+  sourceEditor.innerHTML = '前文<span data-rich-mention-token="@「图片1」" data-rich-mention-node-id="image" contenteditable="false">@「图片1」</span>后文<span data-rich-mention-token="@「图片1」" data-rich-mention-node-id="image" contenteditable="false">@「图片1」</span>';
+  const image = createCanvasImageNode({ id:'image',width:320,file:'media/test.png',name:'test.png',mimeType:'image/png' });
+  const boardA = { canvas:{nodes:[image,{id:'source-target',x:400,y:0}],edges:[{fromNode:'image',toNode:'source-target'}]} };
+  const boardB = { canvas:{nodes:[{id:'destination-target',x:400,y:0}],edges:[]} };
+  let current = boardA; let copies = 0; let clipboard = new DataTransfer(); const notices = [];
+  const state = { settings:{workspacePath:'isolated-workspace'},activeDocument:'board-a' };
+  const Node = window.Node, File = window.File;
+  const WHITEBOARD_PROMPT_CLIPBOARD_TYPE = 'application/x-shensi-generation-prompt+json';
+  const WHITEBOARD_RICH_PROMPT_CARET_GUARD = '\u200B';
+  const WHITEBOARD_RICH_PROMPT_BLOCK_TAGS = new Set(['DIV','P','PRE']);
+  const WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS = 20000;
+  const whiteboardGenerationRichPrompt = form => form.querySelector('[contenteditable]');
+  const whiteboardGenerationPromptInput = form => form.querySelector('textarea');
+  const activeWhiteboardDocument = () => current;
+  const normalizeCanvas = canvas => canvas;
+  const whiteboardNodeById = (id,board=current) => board.canvas.nodes.find(node=>node.id===id);
+  const whiteboardCanvasSnapshot = canvas => structuredClone(canvas);
+  const whiteboardGenerationSources = (canvas,id) => ({upstream:canvas.edges.filter(edge=>edge.toNode===id).map(edge=>canvas.nodes.find(node=>node.id===edge.fromNode))});
+  const clipboardImageFiles = () => []; const nativeClipboardImageFile = async () => null;
+  const syncWhiteboardRichPromptValue = () => {};
+  const whiteboardRichPromptSelectionOffsets = () => ({start:0,end:0});
+  const whiteboardGenerationExplicitReferenceIds = () => new Set();
+  const addCanvasEdge = (canvas,edge) => {canvas.edges.push(edge);return canvas;};
+  const orderWhiteboardGenerationNodes = nodes => nodes;
+  const whiteboardGenerationReferenceAliases = nodes => new Map(nodes.map((node,index)=>[node.id,`图片${index+1}`]));
+  const whiteboardNodeKindLabel = () => '图片';
+  const whiteboardRichPromptMentionRanges = () => [];
+  const writeWhiteboardGenerationPromptReferenceSequence = (form,sequence) => {form.sequence=sequence;};
+  const writeWhiteboardGenerationExplicitReferenceIds = (form,ids) => {form.referenceIds=[...ids];};
+  const renderWhiteboardGenerationInlineMentions = form => {whiteboardGenerationRichPrompt(form).textContent=whiteboardGenerationPromptInput(form).value;};
+  const syncWhiteboardGenerationPromptReferenceSequenceFromEditor = () => {};
+  const warnWhiteboardAudioReferenceDuration = () => {}; const nowTime=()=>new Date().toISOString();
+  const pushWhiteboardHistory = () => {}; const persist = () => {}; const renderWhiteboardGenerationReferences = () => {};
+  const placeWhiteboardRichPromptCaretAtOffset = () => {}; const rememberWhiteboardRichPromptSelection = () => {};
+  const showToast = message => notices.push(message);
+  const importFilesToWhiteboard = async () => {throw new Error('Unexpected external import');};
+  const addWhiteboardImageCard = ({attachment,toNode}) => {
+    const id=`copied-image-${++copies}`;current.canvas.nodes.push({id,kind:'image',file:attachment});
+    current.canvas.edges.push({fromNode:id,toNode});return id;
+  };
+  const uid = () => 'copied-text';
+  const checkWhiteboardReferenceCapacity = () => ({ok:true});
+  const workspaceAttachmentUrl = () => '/test-attachment';
+  let fetched = false;
+  let fetchAction = () => {current=boardB;state.activeDocument='board-b';};
+  const fetch = async () => {fetched=true;fetchAction();return new Response(new Blob(['test'],{type:'image/png'}));};
+  const uploadWorkspaceMediaFile = async () => {throw new Error('Must stop before importing into a different board');};
+  const functions = eval(`(() => { ${code.functions}\n return {orderedWhiteboardPromptPasteSegments,insertOrderedWhiteboardPromptSegments,restoreWhiteboardPromptClipboardReference,orderedWhiteboardPromptSegmentsFromNode,appendWhiteboardPromptClipboardReferenceHtml}; })()`);
+  const {orderedWhiteboardPromptPasteSegments,insertOrderedWhiteboardPromptSegments,restoreWhiteboardPromptClipboardReference,orderedWhiteboardPromptSegmentsFromNode,appendWhiteboardPromptClipboardReferenceHtml}=functions;
+  const form=sourceForm,editor=sourceEditor;
+  eval(code.copyListener);
+  const selectContents = element => {const range=document.createRange();range.selectNodeContents(element);const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);return range;};
+  const copyEvent=()=>{const event=new Event('copy',{bubbles:true,cancelable:true});Object.defineProperty(event,'clipboardData',{value:clipboard});sourceEditor.dispatchEvent(event);};
+  selectContents(sourceEditor);copyEvent();
+  assert(clipboard.getData(WHITEBOARD_PROMPT_CLIPBOARD_TYPE),`Native copy must retain reference metadata (selection=${document.getSelection().toString()}, collapsed=${document.getSelection().isCollapsed}, display=${getComputedStyle(sourceEditor).display})`);
+  const richHtml=clipboard.getData('text/html');assert(hasWhiteboardPromptClipboardHtml(richHtml),'HTML fallback marker must survive');
+  const onlyHtml={getData:type=>type==='text/html'?richHtml:type==='text/plain'?'前文@「图片1」后文@「图片1」':''};
+  const segments=await orderedWhiteboardPromptPasteSegments(onlyHtml);
+  assert(segments.filter(segment=>segment.kind==='reference').length===2,'HTML-only clipboard must retain both reference occurrences');
+  boardA.canvas.nodes.push({id:'same-board-target',x:800,y:0});
+  const sameBoardForm=makeForm('same-board-target');
+  await insertOrderedWhiteboardPromptSegments(sameBoardForm,segments);
+  assert(copies===0 && sameBoardForm.sequence.every(id=>id==='image'),'Pasting into another operation bar on the same board must reuse the original image');
+  assert(boardA.canvas.edges.filter(edge=>edge.toNode==='same-board-target').length===1,'Same-board repeated image references must connect only once');
+  const textEditContextState={target:sourceEditor,range:selectContents(sourceEditor),selectedText:'copied'};
+  const elements={textEditContextMenu:document.querySelector('#menu')};
+  const closeTextEditContextMenu=()=>{};
+  const copyTextToClipboard=async()=>{throw new Error('Plain-only copy would lose references');};
+  const readFormattedClipboard=async()=>({html:richHtml,text:onlyHtml.getData('text/plain')});
+  const replaceTextEditContextHtml=()=>{throw new Error('Generic HTML paste must not bypass prompt references');};
+  // Never write to the user's OS clipboard: dispatch the real copy handler
+  // into this fixture's in-memory DataTransfer instead.
+  document.execCommand=command=>{if(command==='copy'){clipboard=new DataTransfer();copyEvent();return true;}throw new Error(`Unexpected edit command ${command}`);};
+  eval(code.menuListener);
+  const clickMenu=async action=>{elements.textEditContextMenu.innerHTML=`<button data-text-edit-action="${action}">test</button>`;elements.textEditContextMenu.querySelector('button').click();for(let i=0;i<6;i++)await new Promise(resolve=>setTimeout(resolve,0));};
+  document.getSelection().removeAllRanges();await clickMenu('copy');
+  assert(clipboard.getData(WHITEBOARD_PROMPT_CLIPBOARD_TYPE),'Context-menu copy must preserve image identity despite losing focus');
+  current=boardB;state.activeDocument='board-b';textEditContextState.target=whiteboardGenerationRichPrompt(destinationForm);
+  textEditContextState.range=selectContents(textEditContextState.target);await clickMenu('paste-formatted');
+  assert(whiteboardGenerationPromptInput(destinationForm).value==='前文@「图片1」后文@「图片1」','Context-menu HTML paste must retain exact order');
+  assert(copies===1,`Repeated references must create only one copied image on another board (copies=${copies}, notices=${JSON.stringify(notices)}, reference=${JSON.stringify(segments[1])})`);
+  assert(destinationForm.sequence.length===2 && destinationForm.sequence[0]===destinationForm.sequence[1],'Both occurrences must bind to the same restored image');
+  assert(boardB.canvas.edges.length===1,'Restored upstream must be linked exactly once');
+  assert(boardB.canvas.nodes.find(node=>node.kind==='image').file.relativePath==='media/test.png','Image attachment must survive cross-board paste');
+  current=boardA;state.activeDocument='board-a';
+  let switched=false;try{await restoreWhiteboardPromptClipboardReference({...segments[1].reference,workspacePath:'another-workspace'},whiteboardNodeById('source-target'),boardA);}catch(error){switched=error.message.includes('切换');}
+  assert(fetched && switched && copies===1,'Switching boards during an asynchronous paste must abort before touching the new board');
+  current=boardA;state.activeDocument='board-a';
+  fetchAction=()=>{sourceForm.dataset.nodeId='another-target';};
+  const beforePrompt=whiteboardGenerationPromptInput(sourceForm).value;
+  let targetSwitched=false;
+  try{await insertOrderedWhiteboardPromptSegments(sourceForm,[{...segments[1],reference:{...segments[1].reference,workspacePath:'another-workspace'}}]);}
+  catch(error){targetSwitched=error.message.includes('切换');}
+  assert(targetSwitched && copies===1 && whiteboardGenerationPromptInput(sourceForm).value===beforePrompt,'Switching target cards during file retrieval must not overwrite the new operation bar');
+  sourceForm.dataset.nodeId='source-target';
+  const textId=await restoreWhiteboardPromptClipboardReference({kind:'text',text:'真实参考文字',title:'参考'},whiteboardNodeById('source-target'),boardA);
+  assert(whiteboardNodeById(textId).text==='真实参考文字' && !whiteboardNodeById(textId).generation,'Text references restore as ordinary upstream nodes, not generated tasks');
+  document.querySelector('#editors').remove();document.querySelector('#menu').remove();
+  document.querySelector('#account').innerHTML=libTvAccountPanelMarkup();
+  const panel=createLibTvAccountPanel({panel:document.querySelector('#libTvAccountPanel'),snapshot:()=>({visible:true,channel:'image',settings:{id:'libtv',provider:'LibTV',adapter:'cli'}}),request:async()=>account});
+  await panel.refresh();
+  assert(document.querySelector('[data-libtv-metric="credit"]').textContent==='—','No returned credit must be shown as unknown');
+  return {passed:true,cases:['native-copy','HTML-only-paste','same-board-operation-bars','context-menu-copy','context-menu-paste','cross-board-image','repeated-reference','switch-board-during-paste','switch-target-during-paste','text-reference','LibTV-panel']};
+};
+</script>

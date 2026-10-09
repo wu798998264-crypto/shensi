@@ -1896,14 +1896,17 @@ export class LibTvMediaDriver extends MediaProviderDriver {
           continue;
         }
         const uploaded = await this.invoke(["upload", referenceName, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000, settings, phase: "上传参考物" });
-        if (uploaded.nodeKey) {
-          args.push("--left", String(uploaded.nodeKey));
-          leftNodes.push(uploaded.nodeKey);
-        }
+        const uploadedNodeKey = String(uploaded.nodeKey || uploaded.newNodeKey || "").trim();
+        if (!uploadedNodeKey) throw Object.assign(asError("LibTV 上传参考物未返回节点 ID，尚未提交生成", "LIBTV_REFERENCE_NODE_MISSING"), { submissionOutcomeKnown: true });
+        args.push("--left", uploadedNodeKey);
+        leftNodes.push(uploadedNodeKey);
       }
       const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000, settings, phase: "创建生成节点" });
-      node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || "").trim(), nodeName, leftNodes };
-      if (!node.nodeKey) throw asError("LibTV 创建节点未返回节点 ID", "LIBTV_NODE_CREATE_FAILED");
+      // Official CLI create-and-connect receipts use newNodeKey, while
+      // unconnected create/query receipts use nodeKey. Both identify the
+      // canvas node, and neither is a paid generation submission.
+      node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || created.newNodeKey || "").trim(), nodeName, leftNodes };
+      if (!node.nodeKey) throw Object.assign(asError("LibTV 创建节点未返回节点 ID，尚未提交生成", "LIBTV_NODE_CREATE_FAILED"), { submissionOutcomeKnown: true });
       await writeFile(metadataPath, JSON.stringify(node), "utf8");
     }
     if (typeof onProviderTaskCreated === "function") {

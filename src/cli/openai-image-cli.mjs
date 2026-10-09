@@ -7,6 +7,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path
 import { homedir } from "node:os";
 import { resolveLocalCodexLaunch } from "./codex-launch.mjs";
 import { resolveCodexImagegenSkillPath, runCodexImageAppServer } from "./codex-image-app-server.mjs";
+import { openAiImageRecoveryFailure, openAiImageRecoveryFailurePatch } from "./openai-image-recovery-error.mjs";
 import { DEFAULT_MODEL_MEDIA_REFERENCES } from "../model-presets.js";
 
 const VERSION = "2.19.5";
@@ -14,6 +15,7 @@ const DEFAULT_MODEL = "gpt-image-2.5";
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024;
 const STRUCTURED_ERROR_PREFIX = "SHENSI_MEDIA_ERROR_JSON:";
+let activeRecoveryKey = "";
 
 export const resolveCodexOpenAiApiKey = async ({
   environment = process.env,
@@ -443,9 +445,11 @@ const main = async () => {
   if (existingRecovery && !forceNewSubmission && await copyRecoveredResult({
     idempotencyKey, record: existingRecovery, outputPath, model, aspectRatio, quality, resolution, background, imageCount,
   })) return;
+  const previousFailure = openAiImageRecoveryFailure(existingRecovery || {});
+  if (previousFailure && !forceNewSubmission) throw previousFailure;
   if (recoveryOnly) {
     throw new Error(existingRecovery
-      ? "OPENAI_IMAGE_RECOVERY_PENDING：图片生成会话仍在自动核对，本轮不会重新提交"
+      ? `OPENAI_IMAGE_RECOVERY_PENDING：图片生成会话仍在自动核对，本轮不会重新提交${existingRecovery.failure?.message ? `；上次错误：${existingRecovery.failure.message}` : ""}`
       : "OPENAI_IMAGE_RECOVERY_MISSING：未找到可安全认领的生图会话，本轮不会重新提交");
   }
   if (existingRecovery && !forceNewSubmission) {
@@ -479,7 +483,9 @@ const main = async () => {
     imageCount,
     threadId: "",
     preparedAt: new Date().toISOString(),
+    failure: null,
   });
+  activeRecoveryKey = idempotencyKey;
   const apiAuth = await resolveCodexOpenAiApiKey();
   if (apiAuth.apiKey) {
     const apiVerification = await verifyOpenAiImageApiKey({ apiKey: apiAuth.apiKey, model });
@@ -540,6 +546,7 @@ const main = async () => {
     model: process.env.SHENSI_OPENAI_IMAGE_AGENT_MODEL || "gpt-5.6-terra",
     prompt: codexPrompt,
     imageCount,
+    referenceImages,
     timeoutMs: Math.max(Number(args.get("--timeout-ms")) || 0, 600_000),
     onThread: async ({ threadId }) => {
       observedThreadId = threadId;
@@ -580,7 +587,10 @@ const main = async () => {
   process.stdout.write(JSON.stringify({ path: outputPaths[0], paths: outputPaths, imageCount, returnedImageCount: outputPaths.length, model, aspectRatio, quality, resolution, background, codexThreadId: threadId }));
 };
 
-main().catch((error) => {
+main().catch(async (error) => {
+  if (activeRecoveryKey) await writeRecoveryRecord(activeRecoveryKey, openAiImageRecoveryFailurePatch(error)).catch((journalError) => {
+    process.stderr.write(`OpenAI 图片错误记录保存失败：${String(journalError.message || journalError).slice(0, 300)}\n`);
+  });
   const payload = {
     message: String(error?.message || error).slice(0, 2_000),
     code: String(error?.code || "OPENAI_IMAGE_CLI_FAILED"),

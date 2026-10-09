@@ -348,6 +348,8 @@ import { compactRecoveryState, restoreRecoveryState } from "./recovery-checkpoin
 import { shouldRefreshLocalSession } from "./local-session-retry.js";
 import { fullTextImportDocumentTitle, fullTextImportInstructionRequested } from "./full-text-import-contract.js";
 import { enrichWhiteboardPromptClipboardSegments, whiteboardPromptClipboardText } from "./whiteboard-prompt-clipboard.js";
+import { hasWhiteboardPromptClipboardHtml, parseWhiteboardPromptClipboardPayload } from "./whiteboard-prompt-clipboard.js";
+import { createLibTvAccountPanel, libTvAccountPanelMarkup } from "./libtv-account-panel.js";
 
 let SHENSI_SESSION_TOKEN = document.querySelector('meta[name="shensi-session-token"]')?.content || "";
 
@@ -9172,6 +9174,7 @@ root.innerHTML = `
               </div>
             </div>
             <section class="wide dreamina-account-panel" id="dreaminaAccountPanel" data-dreamina-status-channel="" hidden aria-live="polite"><div class="dreamina-account-main"><strong id="dreaminaAccountTitle">即梦账号</strong><p id="dreaminaAccountStatus">正在读取独立账号状态…</p><div class="dreamina-account-metrics" id="dreaminaAccountMetrics" hidden><span class="dreamina-current-credit"><button class="icon-button bare" id="refreshDreaminaCredit" type="button" title="刷新积分" aria-label="刷新当前即梦配置积分">${icon("\uE72C", "刷新积分")}</button><small>当前积分</small><b data-dreamina-metric="credit">—</b></span><span><small>累计消耗</small><b data-dreamina-metric="consumed">—</b></span><span><small>会员</small><b data-dreamina-metric="membership">—</b></span></div></div><div class="settings-inline-actions"><button class="secondary-button" id="bindDreaminaAccount" type="button">核验账号</button></div></section>
+            ${libTvAccountPanelMarkup()}
             <section class="wide dreamina-account-panel custom-api-capability-panel" id="customApiCapabilityPanel" hidden aria-live="polite"><div class="dreamina-account-main"><div class="custom-api-capability-heading"><strong id="customApiCapabilityTitle">多模态能力</strong><button class="icon-button bare" id="refreshCustomApiCapabilities" type="button" title="刷新多模态能力状态" aria-label="刷新多模态能力状态">${icon("\uE72C", "刷新多模态能力状态")}</button></div><p id="customApiCapabilitySummary">正在读取文字、图片、视频和音频能力…</p><div class="dreamina-account-metrics custom-api-capability-metrics" id="customApiCapabilityMetrics"><span><small>文字</small><b data-custom-api-capability="text">待核验</b></span><span><small>图片</small><b data-custom-api-capability="image">待核验</b></span><span><small>视频</small><b data-custom-api-capability="video">待核验</b></span><span><small>音频</small><b data-custom-api-capability="audio">待核验</b></span></div><button class="secondary-button compact" id="syncCustomApiCapabilities" type="button" hidden>同步已检测能力</button></div></section>
             <p class="settings-security-note">API Key 不写入作品、笔记、同步目录、localStorage、Markdown 或历史版本；保存设置或文字连接测试成功后，仅由系统凭证安全加密保存。</p>
           </section>
@@ -13211,13 +13214,14 @@ const readTextFromClipboard = async () => {
   return String(await navigator.clipboard.readText());
 };
 
-const readFormattedClipboard = async () => {
+const readFormattedClipboard = async ({ rawHtml = false } = {}) => {
   if (navigator.clipboard?.read) {
     const items = await navigator.clipboard.read();
     for (const item of items) {
       if (!item.types.includes("text/html")) continue;
       const blob = await item.getType("text/html");
-      return { html: sanitizeDocumentHtml(await blob.text()), text: await readTextFromClipboard() };
+      const html = await blob.text();
+      return { html: rawHtml ? html : sanitizeDocumentHtml(html), text: await readTextFromClipboard() };
     }
   }
   return { html: "", text: await readTextFromClipboard() };
@@ -29014,10 +29018,26 @@ elements.textEditContextMenu.addEventListener("click", async (event) => {
   try {
     if (action === "supplement") {
       if (!openCaretSupplementEditor(insertionRange)) showToast("无法锁定右键位置，请在正文文字中重新点击");
+    } else if (action === "copy" && target?.matches?.(".whiteboard-generation-inline-mentions")) {
+      target.focus({ preventScroll: true });
+      const selection = document.getSelection();
+      selection.removeAllRanges();
+      if (textEditContextState.range) selection.addRange(textEditContextState.range.cloneRange());
+      if (!document.execCommand("copy")) throw new Error("未能复制生成提示词，请使用 Ctrl+C 重试；原内容未改动");
     } else if (action === "copy") await copyTextToClipboard(selected);
     else if (action === "paste-formatted") {
-      const clipboard = await readFormattedClipboard();
-      replaceTextEditContextHtml(clipboard.html, clipboard.text, "insertFromPaste");
+      const promptForm = target?.matches?.(".whiteboard-generation-inline-mentions") ? target.closest("form") : null;
+      const promptOrigin = promptForm ? { document: activeWhiteboardDocument(), workspacePath: state.settings.workspacePath, nodeId: promptForm.dataset.nodeId, range: textEditContextState.range?.cloneRange?.() } : null;
+      const clipboard = await readFormattedClipboard({ rawHtml: Boolean(promptForm) });
+      if (promptForm && hasWhiteboardPromptClipboardHtml(clipboard.html)) {
+        if (activeWhiteboardDocument() !== promptOrigin.document || state.settings.workspacePath !== promptOrigin.workspacePath || promptForm.dataset.nodeId !== promptOrigin.nodeId) throw new Error("白板或目标卡片已切换，已停止粘贴，未修改新的操作栏");
+        target.focus({ preventScroll: true });
+        const selection = document.getSelection();
+        selection.removeAllRanges();
+        if (promptOrigin.range) selection.addRange(promptOrigin.range);
+        const segments = await orderedWhiteboardPromptPasteSegments({ getData: (type) => type === "text/html" ? clipboard.html : type === "text/plain" ? clipboard.text : "" });
+        await insertOrderedWhiteboardPromptSegments(promptForm, segments);
+      } else replaceTextEditContextHtml(clipboard.html, clipboard.text, "insertFromPaste");
     } else if (action === "paste-text") replaceTextEditContextSelection(await readTextFromClipboard(), "insertFromPaste");
     else if (action === "insert-link") openNoteLinkDialog();
     else if (action === "insert-document") openNoteReferenceDialog();
@@ -63400,15 +63420,16 @@ const imageFileFromDataUrl = async (src, index = 0) => {
 const orderedWhiteboardPromptPasteSegments = async (clipboardData) => {
   const custom = String(clipboardData?.getData(WHITEBOARD_PROMPT_CLIPBOARD_TYPE) || "");
   if (custom) {
-    try {
-      const parsed = JSON.parse(custom);
-      if (parsed?.version === 1 && Array.isArray(parsed.segments)) return parsed.segments;
-    } catch {}
+    const segments = parseWhiteboardPromptClipboardPayload(custom);
+    if (segments) return segments;
   }
   const imageFiles = clipboardImageFiles(clipboardData);
   const html = String(clipboardData?.getData("text/html") || "");
   if (html) {
     const documentFragment = new DOMParser().parseFromString(html, "text/html").body;
+    const encoded = documentFragment.querySelector("[data-shensi-generation-prompt]")?.getAttribute("data-shensi-generation-prompt");
+    const portable = encoded ? parseWhiteboardPromptClipboardPayload(encoded) : null;
+    if (portable) return portable;
     const segments = [];
     let imageIndex = 0;
     const visit = async (node) => {
@@ -63418,6 +63439,10 @@ const orderedWhiteboardPromptPasteSegments = async (clipboardData) => {
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
       if (["SCRIPT", "STYLE", "META", "LINK"].includes(node.tagName)) return;
+      if (node.matches?.("[data-rich-mention-token]")) {
+        appendWhiteboardPromptClipboardSegment(segments, { kind: "reference", nodeId: node.dataset.richMentionNodeId || "", token: node.dataset.richMentionToken || "" });
+        return;
+      }
       if (node.tagName === "IMG") {
         let file = imageFiles[imageIndex] || await imageFileFromDataUrl(node.getAttribute("src"), imageIndex).catch(() => null);
         if (!file && imageIndex === 0) file = await nativeClipboardImageFile().catch(() => null);
@@ -63449,12 +63474,51 @@ const orderedWhiteboardPromptPasteSegments = async (clipboardData) => {
   return segments;
 };
 
+const restoreWhiteboardPromptClipboardReference = async (reference, target, documentState, isCurrentForm = () => true) => {
+  if (!reference || !["image", "video", "audio", "text", "web"].includes(reference.kind)) return "";
+  const workspacePath = state.settings.workspacePath;
+  const isCurrentTarget = () => state.settings.workspacePath === workspacePath && isCurrentForm()
+    && activeWhiteboardDocument() === documentState && whiteboardNodeById(target.id, documentState);
+  const assertCurrentTarget = () => { if (!isCurrentTarget()) throw new Error("白板或目标卡片已切换，已停止粘贴，未修改新的操作栏"); };
+  assertCurrentTarget();
+  if (["text", "web"].includes(reference.kind)) {
+    if (!reference.text) return "";
+    const beforeCanvas = whiteboardCanvasSnapshot(documentState.canvas);
+    const nodeId = uid("canvas-node");
+    documentState.canvas = addCanvasTextNode(documentState.canvas, {
+      id: nodeId, kind: "text", text: String(reference.text), name: String(reference.title || "粘贴参考"),
+      x: target.x - 360, y: target.y, width: 320, height: 180,
+    });
+    documentState.canvas = addCanvasEdge(documentState.canvas, { fromNode: nodeId, toNode: target.id });
+    if (!checkWhiteboardReferenceCapacity(documentState.canvas, [target.id]).ok) {
+      documentState.canvas = beforeCanvas;
+      return "";
+    }
+    return nodeId;
+  }
+  let attachment = reference.file;
+  if (!attachment?.relativePath || /(?:^|[\\/])\.\.(?:[\\/]|$)|^[\\/]|^[a-z]+:/iu.test(attachment.relativePath)) return "";
+  if (reference.workspacePath !== workspacePath) {
+    const response = await fetch(workspaceAttachmentUrl(attachment.relativePath, reference.documentId, { workspacePath: reference.workspacePath }));
+    if (!response.ok) throw new Error("无法读取复制时的参考文件，原始引用标记会保留");
+    const blob = await response.blob();
+    assertCurrentTarget();
+    attachment = await uploadWorkspaceMediaFile(new File([blob], attachment.name || "粘贴参考", { type: attachment.mimeType || blob.type }));
+    assertCurrentTarget();
+  }
+  return addWhiteboardImageCard({ attachment, aspectRatio: Number(reference.width) / Number(reference.height) || 16 / 9, x: target.x - 360, y: target.y, width: 320, toNode: target.id, assetOrigin: "clipboard" });
+};
+
 const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
   const editor = whiteboardGenerationRichPrompt(form);
   const input = whiteboardGenerationPromptInput(form);
   const target = whiteboardNodeById(form?.dataset.nodeId);
   const documentState = activeWhiteboardDocument();
   if (!editor || !input || !target || !segments.length) return false;
+  const workspacePath = state.settings.workspacePath;
+  const isCurrentForm = () => form.dataset.nodeId === target.id && state.settings.workspacePath === workspacePath
+    && activeWhiteboardDocument() === documentState && Boolean(whiteboardNodeById(target.id, documentState));
+  const assertCurrentForm = () => { if (!isCurrentForm()) throw new Error("白板或目标卡片已切换，已停止粘贴，未修改新的操作栏"); };
   const beforeCanvas = whiteboardCanvasSnapshot(documentState?.canvas);
   let connectedCopiedReference = false;
   syncWhiteboardRichPromptValue(form);
@@ -63463,8 +63527,11 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
   const offsets = whiteboardRichPromptSelectionOffsets(editor, range) || form._whiteboardRichPromptSelectionOffsets || { start: input.value.length, end: input.value.length };
   const explicitIds = whiteboardGenerationExplicitReferenceIds(form);
   const insertedMentionOccurrences = [];
+  const restoredReferences = new Map();
+  const missingReferences = [];
   let insertion = "";
   for (const segment of segments) {
+    assertCurrentForm();
     if (segment?.kind === "text") {
       insertion += String(segment.text || "");
       continue;
@@ -63476,13 +63543,37 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
         targetNodeId: target.id,
         onImportedNode: (id) => importedIds.push(id),
       });
+      assertCurrentForm();
       nodeId = importedIds[0] || "";
     }
-    let node = nodeId ? normalizeCanvas(documentState?.canvas).nodes.find((item) => item.id === nodeId) : null;
+    const reference = segment?.reference;
+    const sameDocument = !reference?.documentId || (reference.documentId === state.activeDocument && reference.workspacePath === state.settings.workspacePath);
+    let node = nodeId && sameDocument ? normalizeCanvas(documentState?.canvas).nodes.find((item) => item.id === nodeId) : null;
+    if (!node && reference) {
+      const sourceKey = `${reference.workspacePath}:${reference.documentId}:${nodeId}`;
+      let restoredId = restoredReferences.get(sourceKey);
+      if (!restoredId) {
+        try { restoredId = await restoreWhiteboardPromptClipboardReference(reference, target, documentState, isCurrentForm); }
+        catch (error) {
+          if (!isCurrentForm()) throw error;
+          missingReferences.push(error.message);
+        }
+        if (restoredId) restoredReferences.set(sourceKey, restoredId);
+      }
+      node = restoredId ? normalizeCanvas(documentState.canvas).nodes.find((item) => item.id === restoredId) : null;
+      if (node) connectedCopiedReference = true;
+    }
     if (!node) {
       // Keep a missing upstream reference visible instead of silently
       // deleting user content during a copy/paste round trip.
       insertion += String(segment.token ?? "");
+      if (segment.content) insertion += `\n【已插入参考内容】\n${segment.content}`;
+      missingReferences.push(String(segment.token || "缺失参考"));
+      continue;
+    }
+    if (node.id === target.id) {
+      insertion += String(segment.token ?? "");
+      missingReferences.push("不能将目标卡片自身连接为上游参考");
       continue;
     }
     if (!whiteboardGenerationSources(documentState.canvas, target.id).upstream.some((item) => item.id === node.id)) {
@@ -63499,6 +63590,7 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
     insertion += token;
     explicitIds.add(node.id);
   }
+  assertCurrentForm();
   const insertionStart = offsets.start;
   const insertionEnd = offsets.end;
   const beforeInsertionOccurrences = whiteboardRichPromptMentionRanges(editor).map((item) => ({
@@ -63528,6 +63620,7 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
   const caret = Math.min(WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS, offsets.start + insertion.length);
   placeWhiteboardRichPromptCaretAtOffset(form, caret, { focus: true });
   rememberWhiteboardRichPromptSelection(form);
+  if (missingReferences.length) showToast(`文字已粘贴，部分参考未能恢复，原标记已保留：${missingReferences[0]}`);
   return true;
 };
 
@@ -63634,6 +63727,7 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
       : [];
     const segments = enrichWhiteboardPromptClipboardSegments(orderedWhiteboardPromptSegmentsFromNode(fragment), {
       references,
+      source: { workspacePath: state.settings.workspacePath, documentId: state.activeDocument },
       contentForNode: (node) => ["image", "video", "audio"].includes(node?.kind)
         ? ""
         : node?.kind === "web"
@@ -63645,19 +63739,25 @@ const insertOrderedWhiteboardPromptSegments = async (form, segments = []) => {
     event.clipboardData.setData(WHITEBOARD_PROMPT_CLIPBOARD_TYPE, JSON.stringify({ version: 1, segments }));
     event.clipboardData.setData("text/plain", whiteboardPromptClipboardText(segments));
     const wrapper = document.createElement("div");
+    wrapper.setAttribute("data-shensi-generation-prompt", JSON.stringify({ version: 1, segments }));
     wrapper.append(fragment.cloneNode(true));
     appendWhiteboardPromptClipboardReferenceHtml(wrapper, segments);
-    event.clipboardData.setData("text/html", wrapper.innerHTML);
+    event.clipboardData.setData("text/html", wrapper.outerHTML);
   });
   editor?.addEventListener("paste", async (event) => {
     const hasImage = clipboardImageFiles(event.clipboardData).length > 0
       || /<img\b/i.test(String(event.clipboardData?.getData("text/html") || ""));
     const hasOrderedPrompt = Boolean(event.clipboardData?.getData(WHITEBOARD_PROMPT_CLIPBOARD_TYPE));
-    if (!hasImage && !hasOrderedPrompt) return;
+    const hasReferenceHtml = hasWhiteboardPromptClipboardHtml(event.clipboardData?.getData("text/html"));
+    if (!hasImage && !hasOrderedPrompt && !hasReferenceHtml) return;
     event.preventDefault();
     event.stopPropagation();
-    const segments = await orderedWhiteboardPromptPasteSegments(event.clipboardData);
-    if (await insertOrderedWhiteboardPromptSegments(form, segments)) showToast("已按原顺序粘贴文字、图片与参考；缺失上游已保留原始引用标记");
+    try {
+      const origin = { document: activeWhiteboardDocument(), workspacePath: state.settings.workspacePath, nodeId: form.dataset.nodeId };
+      const segments = await orderedWhiteboardPromptPasteSegments(event.clipboardData);
+      if (activeWhiteboardDocument() !== origin.document || state.settings.workspacePath !== origin.workspacePath || form.dataset.nodeId !== origin.nodeId) throw new Error("白板或目标卡片已切换，已停止粘贴，未修改新的操作栏");
+      if (!await insertOrderedWhiteboardPromptSegments(form, segments)) showToast("请先打开目标卡片的生成操作栏，再粘贴参考提示词");
+    } catch (error) { showToast(`提示词粘贴失败：${error.message}`); }
   });
   editor?.addEventListener("beforeinput", (event) => {
     // Chromium can transiently remap an IME composition caret at the boundary
@@ -71323,6 +71423,7 @@ const renderModelSettingsChannel = () => {
     renderDreaminaAccountStatus(account, ui.modelSettingsChannel);
   }
   if (typeof renderCustomApiCapabilityStatus === "function") renderCustomApiCapabilityStatus();
+  if (typeof libTvAccountPanelForSettings === "function") void libTvAccountPanelForSettings()?.refresh();
   renderPaidMediaSmokeRecoveries();
 };
 
@@ -77561,10 +77662,33 @@ const continueDreaminaProfileVerification = (profileId, expiresAt, { trigger = n
   return task;
 };
 
+let libTvAccountPanelController = null;
+const libTvAccountPanelForSettings = () => {
+  const panel = document.querySelector("#libTvAccountPanel");
+  if (!panel) return null;
+  return libTvAccountPanelController ||= createLibTvAccountPanel({
+    panel,
+    snapshot: () => ({
+      channel: ui.modelSettingsChannel,
+      visible: ui.settingsSection === "model" && ["image", "video", "audio"].includes(ui.modelSettingsChannel),
+      settings: generationSettingsForChannel(generationWorkingSettings(), ui.modelSettingsChannel),
+    }),
+    request: async ({ channel, settings }) => {
+      const response = await fetch("/api/libtv/account/status", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ channel, settings }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.message || payload.error || "LibTV 账号查询失败");
+      return payload;
+    },
+  });
+};
+
 const syncProviderSpecificCliButtons = async () => {
   const form = elements.settingsForm.elements;
   const panel = document.querySelector("#dreaminaAccountPanel");
   renderCustomApiCapabilityStatus();
+  void libTvAccountPanelForSettings()?.refresh();
   const isImageDreaminaCli = form.imageAdapter.value === "cli" && form.imageProvider.value === "即梦";
   const isVideoDreaminaCli = form.videoAdapter.value === "cli" && form.videoProvider.value === "即梦";
   const selectedChannel = ["image", "video"].includes(ui.modelSettingsChannel) ? ui.modelSettingsChannel : "";

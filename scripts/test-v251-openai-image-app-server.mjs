@@ -87,7 +87,10 @@ const fakeServer = async () => {
         if (request.method === "initialize") reply({ id: request.id, result: { platformFamily: "windows" } });
         else if (request.method === "account/read") reply({ id: request.id, result: { account: { type: "chatgpt", email: "test@example.com" } } });
         else if (request.method === "modelProvider/capabilities/read") reply({ id: request.id, result: { imageGeneration: true, namespaceTools: true, webSearch: true } });
-        else if (request.method === "thread/start") reply({ id: request.id, result: { thread: { id: "thread-image-test" } } });
+        else if (request.method === "thread/start") {
+          observedThreadParams = request.params;
+          reply({ id: request.id, result: { thread: { id: "thread-image-test" } } });
+        }
         else if (request.method === "turn/start") {
           observedTurnInput = request.params.input;
           reply({ id: request.id, result: { turn: { id: "turn-image-test" } } });
@@ -106,11 +109,13 @@ const fakeServer = async () => {
 let observedThread = "";
 let observedImage = null;
 let observedTurnInput = [];
+let observedThreadParams = {};
 const results = await runCodexImageAppServer({
   cwd: process.cwd(),
   model: "gpt-test",
   prompt: "generate one image",
   imageCount: 1,
+  referenceImages: [join(process.cwd(), "reference.jpg")],
   timeoutMs: 60_000,
   launchServer: fakeServer,
   resolveImagegenSkill: async () => join(process.cwd(), "imagegen", "SKILL.md"),
@@ -128,6 +133,48 @@ assert.equal(results[0].path, "mock-result.png");
 assert.equal(results[0].bytes.length, 67);
 assert.deepEqual(observedTurnInput[0], { type: "skill", name: "imagegen", path: join(process.cwd(), "imagegen", "SKILL.md") });
 assert.equal(observedTurnInput[1].type, "text");
+assert.deepEqual(observedTurnInput[2], { type: "localImage", path: join(process.cwd(), "reference.jpg"), detail: "original" }, "参考图必须作为真实图像输入，而不是只传路径文字");
+assert.equal(observedThreadParams.ephemeral, false, "图片线程必须保留，才能在超时后诊断和找回");
+
+const notificationServer = (notifications) => async () => {
+  const server = await fakeServer();
+  const originalWrite = server.child.stdin._write.bind(server.child.stdin);
+  server.child.stdin._write = (chunk, encoding, done) => {
+    const source = chunk.toString("utf8");
+    if (!source.includes('"method":"turn/start"')) return originalWrite(chunk, encoding, done);
+    const request = JSON.parse(source.trim());
+    server.child.stdout.write(`${JSON.stringify({ id: request.id, result: { turn: { id: "turn-failure-test" } } })}\n`);
+    queueMicrotask(() => {
+      for (const message of notifications) server.child.stdout.write(`${JSON.stringify(message)}\n`);
+    });
+    done();
+  };
+  return server;
+};
+const runNotifications = (notifications) => runCodexImageAppServer({
+  cwd: process.cwd(), model: "gpt-test", prompt: "test only", timeoutMs: 60_000,
+  resolveImagegenSkill: async () => "mock-skill",
+  launchServer: notificationServer(notifications),
+});
+await assert.rejects(runNotifications([
+  { method: "error", params: { willRetry: false, error: { message: "Invalid image request", additionalDetails: "reference invalid", codexErrorInfo: "badRequest" } } },
+]), (error) => error.providerErrorCode === "badRequest" && error.submissionOutcomeKnown === true && /reference invalid/u.test(error.message), "官方终止错误必须立即结束，不能等十分钟再进入未知提交循环");
+await assert.rejects(runNotifications([
+  { method: "turn/completed", params: { turn: { status: "failed", error: { message: "Authentication rejected", codexErrorInfo: "unauthorized" } } } },
+]), (error) => error.providerErrorCode === "unauthorized" && /Authentication rejected/u.test(error.message), "终态 turn.error 不得被误报为没有调用工具");
+await assert.rejects(runNotifications([
+  { method: "item/completed", params: { item: { type: "imageGeneration", status: "failed", result: "", failure: { type: "usageLimitExceeded", limitId: "images", resetsAt: 1_800_000_000 } } } },
+]), (error) => error.providerErrorCode === "usageLimitExceeded" && error.submissionOutcomeKnown === true && /额度已耗尽/u.test(error.message), "图片工具的 failure 字段必须保留真实额度原因");
+await assert.rejects(runNotifications([
+  { method: "item/started", params: { item: { type: "imageGeneration", id: "started-image" } } },
+  { method: "error", params: { willRetry: false, error: { message: "connection lost after submission", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 502 } } } } },
+]), (error) => error.submissionOutcomeKnown === false, "工具启动后断流仍是未知提交，不能自动重投");
+const afterRetry = await runNotifications([
+  { method: "error", params: { willRetry: true, error: { message: "reconnecting", codexErrorInfo: "serverOverloaded" } } },
+  { method: "item/completed", params: { item: { type: "imageGeneration", status: "completed", result: PNG_BASE64 } } },
+  { method: "turn/completed", params: { turn: { status: "completed" } } },
+]);
+assert.equal(afterRetry.length, 1, "可恢复通知不能截断随后成功的图像返回");
 
 const messageOnlyServer = async () => {
   const server = await fakeServer();
@@ -249,4 +296,5 @@ const namedBuiltInAliasesAreStillRetired = normalizeGenerationProfiles({
 assert.equal(namedBuiltInAliasesAreStillRetired.imageConnections.filter((profile) => ["image-default", "image-openai-cli"].includes(profile.id)).length, 0);
 assert.equal(namedBuiltInAliasesAreStillRetired.activeImageConnectionId, "image-cockpit-aggregate-api");
 
+await import("./test-openai-image-terminal-recovery.mjs");
 console.log("Shensi v2.5.1 GPT Image app-server and no-result-file tests passed");

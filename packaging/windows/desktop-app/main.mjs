@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { createCredentialVault } from "./credential-vault.mjs";
 import { directoryDialogOptions, resolveDirectoryDialogDefaultPath } from "./directory-dialog.mjs";
 import { nextAvailableMediaSavePath, sanitizeSuggestedMediaName } from "./media-save-name.mjs";
+import { applyMainWindowTaskbarIdentity } from "./taskbar-identity.mjs";
 
 const PRODUCT_NAME_ZH = "神思";
 const PRODUCT_NAME_EN = "神思";
@@ -578,6 +579,7 @@ const showAndSynchronizeMainWindow = ({ focus = true } = {}) => {
   const shouldMaximize = mainWindow.isMaximized() || mainWindow._savedWindowState?.maximized === true;
   if (mainWindow.isMinimized()) mainWindow.restore();
   if (wasHidden && mainWindow.isMaximized()) mainWindow.unmaximize();
+  applyMainWindowTaskbarIdentity(mainWindow, { appId: APP_USER_MODEL_ID });
   mainWindow.setSkipTaskbar(false);
   mainWindow.show();
   if (shouldMaximize && !mainWindow.isMaximized()) mainWindow.maximize();
@@ -1851,6 +1853,7 @@ const createMainWindowShell = async () => {
     },
   });
 
+  applyMainWindowTaskbarIdentity(mainWindow, { appId: APP_USER_MODEL_ID });
   mainWindow.removeMenu();
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     const external = safeExternalUrl(url);

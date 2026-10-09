@@ -177,6 +177,7 @@ import {
   terminateMediaGenerationWorker,
 } from "./src/server/media-worker-manager.mjs";
 import { listLibTvModels, resolveMediaProviderDriver } from "./src/server/media-provider-drivers.mjs";
+import { probeLibTvAccountStatus } from "./src/server/libtv-account-status.mjs";
 import { localH3InstallStatus, probeLocalH3Runtime, startLocalH3Install, startLocalH3Runtime, stopLocalH3Runtime } from "./src/server/local-h3-runtime.mjs";
 import { canonicalMediaProfileSignature, CANONICAL_MEDIA_PROFILE_SIGNATURE_PREFIX } from "./src/server/media-profile-signature.mjs";
 import { dreaminaJobRequiresCredentialProfile } from "./src/dreamina-manual-profile-policy.js";
@@ -3637,6 +3638,15 @@ const handleApiRequest = async (request, response, pathname) => {
       ok: true,
       ...(await completeDreaminaProfileOAuth({ requestedProfileId: body.profileId })),
     });
+  }
+
+  if (pathname === "/api/libtv/account/status" && request.method === "POST") {
+    const body = await readJsonBody(request);
+    const channel = String(body.channel || "image");
+    if (!["image", "video", "audio"].includes(channel)) throw requestError("请选择 LibTV 媒体配置", 422);
+    const settings = await resolveTrustedGenerationSettings({ channel, settings: body.settings ?? {} });
+    const driver = resolveMediaProviderDriver({ channel, settings });
+    return sendJson(response, 200, { ok: true, ...(await probeLibTvAccountStatus({ driver, settings, cwd: root })) });
   }
 
   if (pathname === "/api/media/capabilities/probe" && request.method === "POST") {
