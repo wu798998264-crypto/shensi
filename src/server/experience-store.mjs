@@ -866,6 +866,42 @@ export const listExperiences = async ({ accountId = "local", status = "all", sco
     .map((record) => publicExperienceRecord(record, store));
 };
 
+// Explicit task adoption reads only the requested records. This is deliberately
+// narrower than recallExperiencePackage: no semantic matching, no automatic
+// selection, and revoked/suspended records cannot be injected into a task.
+export const readExperienceRecordsByIds = async ({ accountId = "local", recordIds = [], dataRoot = appDataRoot() } = {}) => {
+  const ids = [...new Set(list(recordIds).map((item) => textValue(item, 180)).filter(Boolean))];
+  if (!ids.length) return { records: [], missingIds: [] };
+  const store = await readStore(dataRoot);
+  const account = textValue(accountId, 160) || "local";
+  const byId = new Map(store.records.filter((record) => record.accountId === account).map((record) => [record.id, record]));
+  const records = [];
+  const missingIds = [];
+  for (const id of ids) {
+    const record = byId.get(id);
+    if (!record || record.status === "revoked" || record.usage?.recallSuspended === true) {
+      missingIds.push(id);
+      continue;
+    }
+    const publicRecord = publicExperienceRecord(record, null);
+    records.push({
+      id: publicRecord.id,
+      title: publicRecord.title || publicRecord.observation || publicRecord.id,
+      observation: publicRecord.observation || "",
+      recommendation: publicRecord.recommendation || "",
+      conditions: list(publicRecord.conditions),
+      exclusions: list(publicRecord.exclusions),
+      scope: publicRecord.scope || null,
+      facets: publicRecord.facets || null,
+      lane: publicRecord.lane || "",
+      deliverableType: publicRecord.deliverableType || "",
+      contextDomain: publicRecord.contextDomain || "",
+      version: publicRecord.currentVersion || publicRecord.version || 0,
+    });
+  }
+  return { records, missingIds };
+};
+
 export const revokeExperience = async ({ recordId, reason = "", dataRoot = appDataRoot() } = {}) => enqueueWrite(dataRoot, async () => {
   const store = await readStore(dataRoot);
   const record = store.records.find((item) => item.id === textValue(recordId, 180));

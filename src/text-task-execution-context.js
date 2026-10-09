@@ -1,4 +1,5 @@
 import { buildMemoryReadPlan } from "./memory-compiler.js";
+import { CREATIVE_CONTRACT_DOCUMENT_ID, normalizeCreativeContract } from "./creative-contract.js";
 
 const text = (value = "") => String(value ?? "").trim();
 const unique = (values = []) => [...new Set((Array.isArray(values) ? values : [values]).map(text).filter(Boolean))];
@@ -7,8 +8,29 @@ const body = (document = {}) => text(document.markdown || document.text || docum
   .replace(/\s+/gu, " ")
   .trim();
 
-const documentReason = ({ documentId, requiredIds, explicitIds, targetDocumentId, memoryPlan }) => {
+const creativeContractHasContent = (document = {}) => {
+  const contract = normalizeCreativeContract(document);
+  return Boolean(text(contract.bannedTerms) || text(contract.specialNotes));
+};
+
+const formalWritingTask = (taskRoute = null) => {
+  const route = taskRoute && typeof taskRoute === "object" ? taskRoute : {};
+  const intent = route.intentEnvelope && typeof route.intentEnvelope === "object" ? route.intentEnvelope : {};
+  const mode = text(route.mode || route.recommendedMode);
+  const taskType = text(intent.taskType || route.taskType || route.taskKind);
+  const writeMode = text(intent.writeMode || route.writeMode);
+  const hasFormalWriteAuthorization = writeMode === "formal_auto"
+    || writeMode === "confirm_required"
+    || route.formalArtifactExpected === true
+    || route.writeAuthorization?.state === "commit";
+  const writingMode = ["creative", "visual_prompt", "quick_revision"].includes(mode);
+  const writingType = ["writing", "modification", "planning"].includes(taskType);
+  return hasFormalWriteAuthorization && (writingMode || writingType);
+};
+
+const documentReason = ({ documentId, requiredIds, explicitIds, targetDocumentId, memoryPlan, creativeContractRequired = false }) => {
   if (documentId === targetDocumentId) return "本轮冻结目标文档";
+  if (documentId === CREATIVE_CONTRACT_DOCUMENT_ID && creativeContractRequired) return "正式创作/修改任务必须读取非空创作合同";
   if (explicitIds.includes(documentId)) return "用户明确引用";
   if (requiredIds.includes(documentId)) return "结构化任务合同要求读取";
   return memoryPlan?.reasons?.[documentId] || "按本轮任务语义读取";
@@ -28,6 +50,9 @@ export const compileNativeAgentDocumentReadManifest = ({
   const explicitIds = unique(explicitDocumentIds);
   const targetId = text(targetDocumentId);
   const routeRequiredIds = unique(taskRoute?.intentEnvelope?.requiredContextDocumentIds || []);
+  const creativeContractRequired = available.has(CREATIVE_CONTRACT_DOCUMENT_ID)
+    && creativeContractHasContent(inventory[CREATIVE_CONTRACT_DOCUMENT_ID])
+    && formalWritingTask(taskRoute);
   const scriptDomain = text(contextDomain || taskRoute?.contextDomain).includes("script")
     || targetId.startsWith("script-episode-");
   const targetIsNarrativeUnit = /^(?:chapter|script-episode)-\d+$/u.test(targetId);
@@ -43,6 +68,7 @@ export const compileNativeAgentDocumentReadManifest = ({
     ...routeRequiredIds,
     ...explicitIds,
     ...(targetId && available.has(targetId) ? [targetId] : []),
+    ...(creativeContractRequired ? [CREATIVE_CONTRACT_DOCUMENT_ID] : []),
   ]);
   const priorityDocumentIds = unique([
     ...requiredDocumentIds,
@@ -54,7 +80,7 @@ export const compileNativeAgentDocumentReadManifest = ({
     displayCharacterCount: Math.max(0, Number(inventory[documentId]?.displayCharacterCount) || 0),
     required: requiredDocumentIds.includes(documentId),
     available: available.has(documentId),
-    reason: documentReason({ documentId, requiredIds: routeRequiredIds, explicitIds, targetDocumentId: targetId, memoryPlan }),
+    reason: documentReason({ documentId, requiredIds: routeRequiredIds, explicitIds, targetDocumentId: targetId, memoryPlan, creativeContractRequired }),
   }));
   return {
     schemaVersion: 1,
@@ -62,6 +88,7 @@ export const compileNativeAgentDocumentReadManifest = ({
     requiredDocumentIds,
     priorityDocumentIds,
     entries,
+    creativeContractReadRequired: creativeContractRequired,
     memoryDocumentsPlanned: Boolean(memoryPlan?.priorityIds?.some((documentId) => /^(?:script-)?memory-/u.test(documentId))),
     memorySkillRequired: false,
   };
@@ -80,6 +107,9 @@ export const compileTextTaskExecutionContext = ({
   const workspaceIdentity = text(snapshot.workspaceIdentity)
     || `${snapshot.workspaceKind === "notebook" ? "notebook" : "project"}:${text(snapshot.workspacePath || snapshot.workspaceName).toLocaleLowerCase("en-US")}`;
   const targetId = text(targetDocumentId || readManifest?.targetDocumentId || snapshot.boundDocumentId);
+  const adoptedExperienceIds = formalWritingTask(taskRoute)
+    ? unique(snapshot.adoptedExperienceIds || [])
+    : [];
   return {
     schemaVersion: 1,
     taskId,
@@ -99,6 +129,8 @@ export const compileTextTaskExecutionContext = ({
     },
     route: {
       taskKind: text(taskRoute?.taskKind),
+      taskType: text(taskRoute?.intentEnvelope?.taskType || taskRoute?.taskType || taskRoute?.taskKind),
+      writeMode: text(taskRoute?.intentEnvelope?.writeMode || taskRoute?.writeMode),
       mode: text(taskRoute?.mode),
       deliverableType: text(taskRoute?.deliverableType),
       selectedTopLevelPlacementId: text(taskRoute?.selectedTopLevelPlacementId),
@@ -116,6 +148,7 @@ export const compileTextTaskExecutionContext = ({
       entries: [],
       memorySkillRequired: false,
     },
+    adoptedExperienceIds,
     write: {
       authorization: taskRoute?.writeAuthorization || null,
       taskContract: taskRoute?.taskContract || null,
@@ -136,6 +169,7 @@ export const normalizeTextTaskExecutionContext = (value = null) => {
     taskId,
     sourceMessageId,
     idempotencyKey: text(value.idempotencyKey),
+    adoptedExperienceIds: unique(value.adoptedExperienceIds || []),
     readManifest: {
       ...readManifest,
       schemaVersion: 1,

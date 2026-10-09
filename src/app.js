@@ -304,7 +304,7 @@ import { createDocumentEditHistory, documentEditHistoryAvailability, rebaseDocum
 import { beginDocumentWriteTransaction, commitDocumentWriteTransaction } from "./document-write-transaction.js?v=3.0.10-create-title";
 import { dreaminaMembershipDisplay } from "./dreamina-membership.js";
 import { buildMemoryReadPlan, memoryQuestionDocumentIds } from "./memory-compiler.js";
-import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.8-prompt-input";
+import { compileNativeAgentDocumentReadManifest, compileTextTaskExecutionContext } from "./text-task-execution-context.js?v=6.4.9-creative-contract-read-policy";
 import { buildFrontendTaskRoute, frontendRouteCanUseGeneralLane } from "./frontend-task-route.js?v=1.0.0-light-route";
 import { memoryProjectionDecision } from "./memory-projection-policy.js";
 import { ensureMemoryStore, isEmptyMemoryProjectionPlaceholder, isStructuredMemoryDocumentId, markMemorySourceStale, MEMORY_STORE_PROJECTION_HASH_VERSION, memoryStoreProjectionBaselineDecision, memoryStoreProjectionFingerprint, mergeFormalMemoryDelivery, mergeMemoryCandidate, normalizeFormalMemoryDelivery, projectMemoryStoreDocumentText, projectMemoryStoreMarkdown, trustedMemoryProjection } from "./structured-memory-store.js";
@@ -2099,6 +2099,7 @@ let ui = {
     experienceFailedJobs: [],
     experienceRecallTraces: [],
     experienceSelectedIds: [],
+    experienceAdoptionIds: [],
     experienceView: "all",
     experienceProjectId: "",
     experienceActivation: null,
@@ -4253,6 +4254,7 @@ const captureTaskContextSnapshot = (conversationId = "") => {
       editorContentRevision: documentContentHash,
     }),
     documentContentHash,
+    adoptedExperienceIds: [...new Set((ui.automation.experienceAdoptionIds ?? []).map((id) => String(id || "").trim()).filter(Boolean))],
     selectedText: String(state.selectedText || ""),
     selectedTextDocumentId: state.selectedText ? activeDocumentId : "",
   };
@@ -9183,7 +9185,7 @@ root.innerHTML = `
             <div class="skill-settings-content" id="skillSettingsContent"></div>
           </section>
           <section class="settings-page experience-settings-page" data-settings-page="experience" hidden>
-            <header><h3>创作经验</h3><p>经验是独立的本机建议数据，不是 Skill，也不属于某一本作品的正文或记忆。当前面板包含经验能力时，神思才会在采用后总结并在相似任务中参考。</p></header>
+            <header><h3>创作经验</h3><p>经验是独立的本机建议数据，不是 Skill，也不属于某一本作品的正文或记忆。点击某条经验的“本轮采用”后，它只会随下一次正式写作、设定、大纲或正文修改读取一次；未明确采用时不会注入 Agent。</p></header>
             <section class="experience-explanation" aria-label="创作经验如何工作">
               <article><span>1</span><div><strong>采用后自动总结</strong><p>只有你明确采用的成品才可能形成经验，未采用的候选稿不会写入经验库。</p></div></article>
               <article><span>2</span><div><strong>创作时自动参考</strong><p>遇到相似题材、文体或任务时，神思会自动选择相关经验，无需手动勾选。</p></div></article>
@@ -20335,7 +20337,11 @@ const captureActiveDocumentViewState = () => {
   const documentId = String(state.activeDocument || "");
   if (!documentId || !state.documents?.[documentId]) return;
   const documentState = state.documents[documentId];
-  if (elements.editor?.dataset.document === documentId && documentState.documentKind !== "whiteboard" && !documentPreviewActive()) {
+  if (elements.editor?.dataset.document === documentId
+    && !elements.editor.hidden
+    && elements.editor.contentEditable !== "false"
+    && documentState.documentKind !== "whiteboard"
+    && !documentPreviewActive()) {
     documentState.html = serializableEditorHtml();
   }
   state.documentViewStates = updateDocumentViewState(state.documentViewStates, documentId, {
@@ -21280,13 +21286,16 @@ const renderExecutionProcess = (message) => {
     ? execution.documentReadManifest.documents
     : Array.isArray(execution.documentReadManifest?.entries) ? execution.documentReadManifest.entries : [];
   const nativeActualDocumentReads = [...new Set((execution.actualReads || [])
-    .filter((item) => item?.kind !== "skill" && (item?.id || item?.title))
+    .filter((item) => !["skill", "experience"].includes(item?.kind) && (item?.id || item?.title))
+    .map((item) => item.id || item.title))];
+  const nativeActualExperienceReads = [...new Set((execution.actualReads || [])
+    .filter((item) => item?.kind === "experience" && (item?.id || item?.title))
     .map((item) => item.id || item.title))];
   const nativeFullDocumentReads = [...new Set((execution.actualReads || [])
-    .filter((item) => item?.kind !== "skill" && item?.fullText === true && (item?.id || item?.title))
+    .filter((item) => !["skill", "experience"].includes(item?.kind) && item?.fullText === true && (item?.id || item?.title))
     .map((item) => item.id || item.title))];
-  const nativeReadSummary = nativeAgentExecution && (nativePlannedReadEntries.length || nativeActualDocumentReads.length)
-    ? `计划 ${nativePlannedReadEntries.length} 份 · 已实际读取 ${nativeActualDocumentReads.length} 份 · 全文 ${nativeFullDocumentReads.length} 份`
+  const nativeReadSummary = nativeAgentExecution && (nativePlannedReadEntries.length || nativeActualDocumentReads.length || nativeActualExperienceReads.length)
+    ? `计划 ${nativePlannedReadEntries.length} 份 · 已实际读取 ${nativeActualDocumentReads.length} 份 · 创作经验 ${nativeActualExperienceReads.length} 条 · 全文 ${nativeFullDocumentReads.length} 份`
     : "";
   const nativeDeliveryTargets = nativeAgentExecution ? (execution.deliveryTargets || []) : [];
   // A task card is visible before the first documents.write event.  Showing
@@ -21711,13 +21720,14 @@ const renderNativeAgentEvidence = (message) => {
   const merged = new Map();
   for (const item of message.execution?.actualReads || []) {
     if (item?.userVisible === false || !(Number(item?.characters) > 0 || String(item?.title || item?.id || "").trim())) continue;
-    const key = `${item.kind === "skill" ? "skill" : "document"}:${item.id || item.title}`;
+    const readKind = item.kind === "skill" ? "skill" : item.kind === "experience" ? "experience" : "document";
+    const key = `${readKind}:${item.id || item.title}`;
     const previous = merged.get(key);
     merged.set(key, previous ? { ...previous, ...item, fullText: previous.fullText || item.fullText } : item);
   }
   const reads = [...merged.values()];
   if (!reads.length) return "";
-  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : "文档")}</span><strong>${escapeHtml(item.title || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
+  const row = (item) => `<div><span>${escapeHtml(item.kind === "skill" ? "Skill" : item.kind === "experience" ? "创作经验" : "文档")}</span><strong>${escapeHtml(item.title || item.id)}</strong><small>${item.fullText ? "全文" : item.readKind === "search_excerpt" ? "检索片段" : "部分内容"}</small></div>`;
   const preview = reads.slice(0, 3).map(row).join("");
   const remaining = reads.length > 3
     ? `<details><summary>展开全部 ${reads.length} 项</summary><div class="native-agent-read-all">${reads.map(row).join("")}</div></details>`
@@ -25416,27 +25426,14 @@ const memoryReviewFunnelHtml = ({ review, summary }) => {
 };
 
 const renderMemoryReviewEntry = () => {
-  const activeDocument = state.documents?.[state.activeDocument] || null;
-  const blankDocumentTab = !activeDocument && Boolean(state.activeDocumentTabId);
-  // Memory review applies to substantive project documents only. A whiteboard
-  // has its own canvas controls, and a blank/new tab has no manuscript text to
-  // inspect; showing the entry in either place is misleading.
-  const available = state.workspaceKind === "project"
-    && !workspaceHasNoActiveEntry()
-    && Boolean(activeDocument)
-    && activeDocument.documentKind !== "whiteboard"
-    && !blankDocumentTab
-    && manuscriptDocumentHasSubstantiveContent(state.activeDocument);
-  elements.memoryReviewButton.hidden = !available;
-  if (!available) return;
-  const health = ui.memoryReview.plan?.health;
-  const attention = health ? Number(health.missing || 0) + Number(health.stale || 0) : 0;
-  elements.memoryReviewBadge.hidden = attention <= 0;
-  elements.memoryReviewBadge.textContent = attention > 99 ? "99+" : String(attention);
-  const coverage = health ? `${Math.round(Number(health.verifiedCoverage || 0) * 1000) / 10}%` : "";
-  elements.memoryReviewButton.title = health
-    ? `检查并修复长文记忆（章节证据校验 ${coverage}）`
-    : "检查并修复长文记忆";
+  // Memory review remains available from the project index's controlled
+  // evidence flow, but it is deliberately not exposed in the text editor
+  // toolbar. A toolbar entry was easy to mistake for an editor operation and
+  // was also misleading on notes, whiteboards and blank tabs.
+  if (!elements.memoryReviewButton) return;
+  elements.memoryReviewButton.hidden = true;
+  elements.memoryReviewButton.setAttribute("aria-hidden", "true");
+  elements.memoryReviewButton.tabIndex = -1;
 };
 
 const memoryReviewCandidateHtml = (candidate) => {
@@ -27320,7 +27317,6 @@ const renderQuickModelSelector = () => {
   const selectedAgentProfileForLabel = activeAgentTextProfile(state.settings);
   const configuredProfiles = chatProfiles;
   const configuredProfileLabels = generationConnectionOptionLabels("text", configuredProfiles);
-  const activeAvailable = generationConnectionIsAvailable("text", active);
   const models = ui.temporaryCodexSelected ? (ui.localCodex?.models || []) : modelOptionsForProvider(active.provider, active.adapter);
   const activeModelDisplay = modelPickerDisplayName(models.find((item) => item.slug === active.model) || active.model) || "未选择模型";
   const permission = agentPermissionModeInfo(state.settings?.agentPermissionMode);
@@ -28056,7 +28052,10 @@ const saveCurrentDocumentVersion = (documentId = state.activeDocument) => {
     showToast("当前内容不支持版本保存");
     return;
   }
-  if (elements.editor.dataset.document === documentId) documentState.html = serializableEditorHtml();
+  if (elements.editor.dataset.document === documentId
+    && !elements.editor.hidden
+    && elements.editor.contentEditable !== "false"
+    && !documentPreviewActive()) documentState.html = serializableEditorHtml();
   const snapshotResult = snapshotDocument(documentId, "用户点击版本保存", { operations: [{ type: "history.save_document", documentId }] });
   if (snapshotResult?.created) {
     recordActivity({ type: "history", label: `手动保存${documentState.title}的当前版本`, documentId });
@@ -28132,7 +28131,11 @@ const openVersionSaveConfirmation = () => {
 
 const restoreVersion = async (versionId, scope = ui.historyScope) => {
   const activeDocumentState = state.documents[state.activeDocument];
-  if (activeDocumentState && elements.editor.dataset.document === state.activeDocument && !documentPreviewActive()) {
+  if (activeDocumentState
+    && elements.editor.dataset.document === state.activeDocument
+    && !elements.editor.hidden
+    && elements.editor.contentEditable !== "false"
+    && !documentPreviewActive()) {
     activeDocumentState.html = serializableEditorHtml();
   }
   const rollbackState = clone(state);
@@ -37514,6 +37517,7 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
   if (!trimmed && !references.length && !workspaceReferences.length && !skillReferences.length && !attachments.length) return false;
   const normalizedDecisionResolution = normalizeAgentDecisionResolution(decisionResolution);
   const lockedMediaDispatch = normalizeConversationMediaDispatchContract(mediaDispatch);
+  const frozenTaskContextSnapshot = clone(taskContextSnapshot || captureTaskContextSnapshot(conversation.id));
   conversation.queue ??= [];
   const queuedItem = {
     id: uid("queued"),
@@ -37536,7 +37540,7 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
     cockpitDecision: cockpitDecision ? clone(cockpitDecision) : null,
     decisionResolution: normalizedDecisionResolution,
     mediaDispatch: lockedMediaDispatch ? clone(lockedMediaDispatch) : null,
-    taskContextSnapshot: clone(taskContextSnapshot || captureTaskContextSnapshot(conversation.id)),
+    taskContextSnapshot: frozenTaskContextSnapshot,
     queuedAt: Date.now(),
     state: "queued",
     leaseId: "",
@@ -37545,6 +37549,10 @@ const enqueueMessage = (content, { inlineEdit = null, guidanceSessionId = "", ex
     lastError: "",
   };
   conversation.queue.push(queuedItem);
+  if (frozenTaskContextSnapshot.adoptedExperienceIds?.length) {
+    ui.automation.experienceAdoptionIds = [];
+    if (ui.settingsSection === "experience") renderExperienceManager();
+  }
   consumeConversationComposerAttachments(conversation);
   consumeConversationComposerReferences(conversation);
   conversation.updatedAt = `今天 ${nowTime()}`;
@@ -39725,7 +39733,10 @@ const executeConversationAgentMessage = async (content, options) => {
       mediaDispatch,
       routingText: String(content || ""),
       frontendRoute: clone(frontendRoute),
-      taskRoute: clone(nativeTaskRoute),
+      taskRoute: clone({
+        ...nativeTaskRoute,
+        adoptedExperienceIds: textTaskExecutionContext?.adoptedExperienceIds || [],
+      }),
       deliverableType: nativeTaskRoute.deliverableType || "",
       targetModule: nativeTaskRoute.targetModule || nativeTaskRoute.activeModule || "",
       activeModule: nativeTaskRoute.activeModule || nativeTaskRoute.targetModule || "",
@@ -43757,19 +43768,28 @@ const refreshAuthorCockpitFromDisk = async () => {
   const workspacePath = state.settings.workspacePath;
   const projectName = state.projectName;
   const apiKey = state.settings.apiKey;
-  const activeDocument = state.activeDocument;
-  const activeModuleId = state.activeModule;
+  const refreshWorkspaceIdentity = workspaceIdentity();
   const beforeHashes = documentSaveHashes(state.documents);
   try {
     if (ui.workspaceDirty) await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
     const payload = await fetchWorkspacePayload(workspacePath);
     if (!payload.state) throw new Error("本地项目没有可读取的最新状态");
+    // A refresh is asynchronous. If the user switched workspace while the
+    // disk read was in flight, never activate that stale payload over the new
+    // workspace. Document navigation inside the same workspace is safe and is
+    // intentionally sampled after the await below.
+    if (workspaceIdentity() !== refreshWorkspaceIdentity) {
+      showToast("索引刷新已取消：当前作品已切换，请在当前作品重新刷新");
+      return false;
+    }
+    const activeDocumentId = String(state.activeDocument || "");
+    const activeModuleId = state.activeModule;
     const afterHashes = documentSaveHashes(payload.state.documents ?? {});
     const externalChanges = [...afterHashes.entries()]
       .filter(([documentId, hash]) => !["report-compile", "index-update-log"].includes(documentId) && beforeHashes.get(documentId) !== hash)
       .map(([documentId]) => payload.state.documents?.[documentId]?.title || documentId);
     payload.state.activeModule = isAuthorCockpitModule(activeModuleId) ? activeModuleId : AUTHOR_COCKPIT_MODULE_ID;
-    payload.state.activeDocument = payload.state.documents?.[activeDocument] ? activeDocument : "report-compile";
+    payload.state.activeDocument = payload.state.documents?.[activeDocumentId] ? activeDocumentId : "report-compile";
     activateProjectState(payload.state, {
       name: projectName,
       workspacePath,
@@ -43777,12 +43797,6 @@ const refreshAuthorCockpitFromDisk = async () => {
       workspaceKind: "project",
       stateStamp: payload.stateStamp,
     });
-    if (state.documents[activeDocument]) {
-      state.activeModule = activeModuleId;
-      state.activeDocument = activeDocument;
-      elements.editor.dataset.document = "";
-      renderAll();
-    }
     const cursor = String(state.authorCockpitRefreshCursor || "");
     const recentEdits = [];
     for (const activity of state.activities ?? []) {
@@ -67641,6 +67655,10 @@ const dispatchComposerContent = (content, {
   const snapshot = clone(retryContext?.sourceMessage
     ? retryContext.sourceMessage.turnContextSnapshot || taskContextSnapshot || captureTaskContextSnapshot(targetConversationId)
     : taskContextSnapshot || captureTaskContextSnapshot(targetConversationId));
+  if (snapshot.adoptedExperienceIds?.length) {
+    ui.automation.experienceAdoptionIds = [];
+    if (ui.settingsSection === "experience") renderExperienceManager();
+  }
   clearActiveComposerDraft();
   if (targetConversation?.id === state.activeConversationId) renderContextChips();
   const immediateInstructionId = showImmediateConversationInstruction(displayContent || content);
@@ -70745,8 +70763,9 @@ const renderExperienceManager = () => {
   const allItems = ui.automation.experienceItems ?? [];
   const view = document.querySelector("#experienceViewFilter")?.value || ui.automation.experienceView || "all";
   ui.automation.experienceView = view;
-  const availableIds = new Set(allItems.filter((item) => item.status !== "revoked").map((item) => item.id));
+  const availableIds = new Set(allItems.filter((item) => item.status !== "revoked" && item.usage?.recallSuspended !== true).map((item) => item.id));
   ui.automation.experienceSelectedIds = (ui.automation.experienceSelectedIds ?? []).filter((id) => availableIds.has(id));
+  ui.automation.experienceAdoptionIds = (ui.automation.experienceAdoptionIds ?? []).filter((id) => availableIds.has(id));
   const mergeButton = document.querySelector("#mergeSelectedExperiences");
   if (mergeButton) {
     const selectedCount = ui.automation.experienceSelectedIds.length;
@@ -70831,17 +70850,36 @@ const renderExperienceManager = () => {
     const templateTrace = [provenance.templateId, provenance.templateRevision && `v${provenance.templateRevision}`, provenance.templateHash && String(provenance.templateHash).slice(0, 12)].filter(Boolean).join(" · ");
     return `<article class="experience-record${suspended ? " suspended" : ""}" data-experience-record="${escapeHtml(item.id)}"><header>${selectControl}<div><span class="experience-record-tags"><i>${escapeHtml(uiText(kind))}</i><i>${escapeHtml(uiText(scopeLevel))}</i>${facetTags}</span><strong>${escapeHtml(item.title || item.observation || "未命名经验")}</strong><small>${escapeHtml([uiText(statusLabel), scope ? `${uiText("适用范围")}：${scope}` : "", updated ? `${uiText("更新时间")}：${updated}` : ""].filter(Boolean).join(" · "))}</small><small>${escapeHtml(usageSummary)}</small></div><div class="experience-record-actions"><button class="secondary-button compact" type="button" data-edit-experience="${escapeHtml(item.id)}">${escapeHtml(uiText("更正分类"))}</button><button class="secondary-button compact" type="button" data-scope-experience="${escapeHtml(item.id)}">${escapeHtml(uiText("调整作用域"))}</button>${splitAction}${promotionAction}${statusAction}</div></header><p>${escapeHtml(item.observation || "")}</p><p><strong>${escapeHtml(uiText("执行建议"))}</strong><br>${escapeHtml(item.recommendation || "")}</p>${suspended ? `<p class="experience-scope-warning">${escapeHtml(uiText("这条经验因有害反馈已暂停自动召回；确认仍然适用后可手动恢复。"))}</p>` : ""}${item.scope?.needsReview ? `<p class="experience-scope-warning">${escapeHtml(uiText("这条旧经验的作用范围需要复核，当前不会升级为作者全局经验。"))}</p>` : ""}<details><summary>${escapeHtml(uiText("查看完整经验、来源与使用记录"))}</summary><div class="experience-detail-grid"><div><b>${escapeHtml(uiText("适用条件"))}</b><p>${escapeHtml((item.conditions ?? []).join("\n") || uiText("未填写"))}</p></div><div><b>${escapeHtml(uiText("禁用条件"))}</b><p>${escapeHtml((item.exclusions ?? []).join("\n") || uiText("未填写"))}</p></div><div><b>${escapeHtml(uiText("来源任务"))}</b><p>${escapeHtml(sourceTrace || uiText("旧数据未记录"))}</p></div><div><b>${escapeHtml(uiText("活动模板版本"))}</b><p>${escapeHtml(templateTrace || uiText("旧数据未记录"))}</p></div><div><b>${escapeHtml(uiText("理论 Skill 来源"))}</b><p>${escapeHtml(theorySources || uiText("本轮未使用理论 Skill"))}</p></div><div><b>${escapeHtml(uiText("Skill 候选状态"))}</b><p>${escapeHtml(item.promotion?.status || "not_eligible")}</p></div></div>${evidence ? `<h5>${escapeHtml(uiText("形成证据"))}</h5><ul>${evidence}</ul>` : ""}${useRows ? `<h5>${escapeHtml(uiText("召回与反馈"))}</h5><div class="experience-use-list">${useRows}</div>` : `<p>${escapeHtml(uiText("尚无召回记录"))}</p>`}</details></article>`;
   };
+  const appendExperienceAdoptionControls = () => {
+    const adoptedIds = new Set(ui.automation.experienceAdoptionIds ?? []);
+    container.querySelectorAll("[data-experience-record]").forEach((recordElement) => {
+      const recordId = recordElement.dataset.experienceRecord || "";
+      const item = allItems.find((entry) => entry.id === recordId);
+      if (!item || item.status === "revoked" || item.usage?.recallSuspended === true) return;
+      const actions = recordElement.querySelector(".experience-record-actions");
+      if (!actions || actions.querySelector("[data-adopt-experience]")) return;
+      const button = document.createElement("button");
+      button.className = `secondary-button compact${adoptedIds.has(recordId) ? " is-selected" : ""}`;
+      button.type = "button";
+      button.dataset.adoptExperience = recordId;
+      button.textContent = uiText(adoptedIds.has(recordId) ? "取消本轮采用" : "本轮采用");
+      actions.prepend(button);
+    });
+  };
   if (view === "category") {
     container.innerHTML = Object.entries(EXPERIENCE_KIND_LABELS).map(([kind, label]) => {
       const group = items.filter((item) => item.kind === kind);
       return group.length ? `<h5 class="experience-section-heading">${escapeHtml(uiText(label))} · ${group.length}</h5>${group.map(recordHtml).join("")}` : "";
     }).join("") || `<p class="settings-empty">${escapeHtml(uiText("没有找到匹配的经验。"))}</p>`;
+    appendExperienceAdoptionControls();
     return;
   }
   container.innerHTML = `${recallTraceHtml}${items.map(recordHtml).join("")}` || `<p class="settings-empty">${escapeHtml(uiText(search && allItems.length ? "没有找到匹配的经验。" : "还没有自动总结的创作经验，正常写作不受影响。"))}</p>`;
+  appendExperienceAdoptionControls();
 };
 
 const refreshExperienceManager = async () => {
+  const refreshIdentity = workspaceIdentity();
   ui.automation.experienceLoading = true;
   ui.automation.experienceError = "";
   renderExperienceManager();
@@ -70855,6 +70893,7 @@ const refreshExperienceManager = async () => {
       listResponse.json().catch(() => ({})),
       activationResponse.json().catch(() => ({})),
     ]);
+    if (workspaceIdentity() !== refreshIdentity) return;
     if (!listResponse.ok || !payload.ok) throw new Error(payload.message || `经验读取失败（HTTP ${listResponse.status}）`);
     if (!activationResponse.ok || !activationPayload.ok) throw new Error(activationPayload.message || `面板状态读取失败（HTTP ${activationResponse.status}）`);
     ui.automation.experienceItems = Array.isArray(payload.items) ? payload.items : [];
@@ -73453,6 +73492,17 @@ document.querySelector("#experienceSearchFilter").addEventListener("keydown", (e
   renderExperienceManager();
 });
 document.querySelector("#experienceList").addEventListener("click", (event) => {
+  const adoptionButton = event.target.closest("[data-adopt-experience]");
+  if (adoptionButton) {
+    const recordId = String(adoptionButton.dataset.adoptExperience || "").trim();
+    const selected = new Set(ui.automation.experienceAdoptionIds ?? []);
+    if (selected.has(recordId)) selected.delete(recordId);
+    else selected.add(recordId);
+    ui.automation.experienceAdoptionIds = [...selected];
+    renderExperienceManager();
+    showToast(selected.has(recordId) ? "已加入下一次正式写作的明确采用经验" : "已取消本轮经验采用");
+    return;
+  }
   const selectInput = event.target.closest("[data-select-experience]");
   if (selectInput) {
     const selected = new Set(ui.automation.experienceSelectedIds ?? []);

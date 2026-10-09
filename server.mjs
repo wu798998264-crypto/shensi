@@ -6532,6 +6532,12 @@ const handleApiRequest = async (request, response, pathname) => {
     const whiteboardCanvasContext = whiteboardOutputSurface
       && body.whiteboardContext?.source === "canvas"
       && /(?:^|\n)# 白板生成输入范围(?:\n|$)/u.test(String(body.projectContext || ""));
+    // The public Kilo/free-model endpoint is a plain text completion lane.
+    // Whiteboard cards still carry a workspace path for bookkeeping, but the
+    // public endpoint cannot execute Shensi workspace tools. Supplying those
+    // tools makes it wait for a tool-call loop indefinitely instead of
+    // returning the model's text. Keep this narrowly scoped to this lane so
+    // all other providers retain their existing tool context.
     if (whiteboardOutputSurface && (
       String(body.conversationId || "").trim()
       || body.historyAuthorization
@@ -6578,6 +6584,16 @@ const handleApiRequest = async (request, response, pathname) => {
     // cannot replace a selected WorkBuddy (or another external runner).
     const trustedAgentModelContext = await trustedConversationModelSettings(body.agentSettings, { executionSurface: "agent" });
     body.agentSettings = trustedAgentModelContext.settings || body.agentSettings;
+    // Resolve the public whiteboard lane from the server-trusted Agent
+    // profile, not the stale top-level Chat profile supplied by an older
+    // client. Switching the conversation model must never re-enable
+    // workspace tools for a Kilo/free whiteboard card: that causes the
+    // public completion request to wait for a tool loop indefinitely.
+    const publicWhiteboardAgent = whiteboardCanvasContext
+      && body.agentSettings?.agentEngine === "codex_api"
+      && (getProviderPreset(body.agentSettings?.provider).public === true
+        || ["免费模型", "公益模型"].includes(String(body.agentSettings?.provider || ""))
+        || String(body.agentSettings?.credentialSource || "") === "public");
     const trustedChatCliName = String(trustedChatSettings.cliPath || "").split(/[\\/]/u).at(-1) || "";
     if (trustedChatSettings.adapter === "cli" && trustedChatSettings.provider === "OpenAI"
       && (trustedChatSettings.agentEngine === "codex" || /^codex(?:\.(?:exe|cmd|ps1))?$/iu.test(trustedChatCliName))) {
@@ -8131,7 +8147,7 @@ const handleApiRequest = async (request, response, pathname) => {
           ...(options.shensiRuntime ? {
             shensiRuntime: {
               ...options.shensiRuntime,
-              ...(body.settings?.workspacePath ? {
+              ...(body.settings?.workspacePath && !publicWhiteboardAgent ? {
                 workspaceToolContext: workspaceToolContextForModelRequest({
                   requestedPath: body.settings.workspacePath,
                   workspaceKind: workspaceMode,
