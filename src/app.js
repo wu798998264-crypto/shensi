@@ -121,7 +121,7 @@ import {
   unifiedOpenCodeProfile,
   upsertGenerationProfile,
   visibleGenerationPickerProfiles,
-} from "./generation-profiles.js?v=9.3.0-integrity-ask-recovery";
+} from "./generation-profiles.js?v=9.3.1-integrity-ask-recovery";
 import {
   ASSET_TRASH_RETENTION_MS,
   assetHistoryIdentitiesMatch,
