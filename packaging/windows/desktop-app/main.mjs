@@ -60,6 +60,7 @@ const appRoot = installed
     : electronBuilderAppRoot)
   : developmentRoot;
 const serverEntry = join(appRoot, "server.mjs");
+const displayVersion = String(JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")).displayVersion || app.getVersion());
 const { writeWhiteboardGenerationDraftJournal } = await import(pathToFileURL(join(appRoot, "src/server/whiteboard-generation-draft-journal.mjs")).href);
 const preloadPath = join(here, "preload.cjs");
 const packagedMediaExecutable = (name) => {
@@ -637,7 +638,7 @@ const createApplicationTray = () => {
   if (sourceIcon.isEmpty()) throw new Error("圆角神思托盘图标无法读取");
   const trayIcon = process.platform === "win32" ? sourceIcon.resize({ width: 24, height: 24, quality: "best" }) : sourceIcon;
   tray = new Tray(trayIcon);
-  tray.setToolTip(`${PRODUCT_NAME_ZH} ${app.getVersion()}`);
+  tray.setToolTip(`${PRODUCT_NAME_ZH} ${displayVersion}`);
   const contextMenu = Menu.buildFromTemplate([
     { label: labels.open, click: showMainWindowFromBackground },
     { label: labels.settings, click: openSettingsFromBackground },
@@ -1680,7 +1681,7 @@ const buildRecoveryPageUrl = ({ phase = "restarting", reason = "", attempt = 0, 
   <div class="progress">${escapeHtml(progress)}</div>
   ${reason ? `<p class="detail">${escapeHtml(String(reason).slice(0, 800))}</p>` : ""}
   ${actions}
-  <small>神思 ${escapeHtml(app.getVersion())}</small>
+  <small>神思 ${escapeHtml(displayVersion)}</small>
 </main></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 };
@@ -1721,7 +1722,7 @@ const loadApplicationPage = async () => {
   rendererUnresponsive = false;
   clearTimeout(rendererUnresponsiveTimer);
   rendererUnresponsiveTimer = null;
-  mainWindow.setTitle(`${PRODUCT_NAME_ZH} ${app.getVersion()}`);
+  mainWindow.setTitle(`${PRODUCT_NAME_ZH} ${displayVersion}`);
   mainWindow.setProgressBar(-1);
   publishWindowState();
 };
@@ -1846,7 +1847,7 @@ const createMainWindowShell = async () => {
     minHeight: saved.minHeight,
     show: false,
     frame: false,
-    title: `${PRODUCT_NAME_ZH} ${app.getVersion()}`,
+    title: `${PRODUCT_NAME_ZH} ${displayVersion}`,
     icon: logoPath,
     backgroundColor: "#e8e8e8",
     autoHideMenuBar: true,
@@ -1861,6 +1862,7 @@ const createMainWindowShell = async () => {
       additionalArguments: [
         "--shensi-desktop-shell",
         `--shensi-app-version=${app.getVersion()}`,
+        `--shensi-display-version=${displayVersion}`,
       ],
     },
   });
@@ -1961,7 +1963,7 @@ const createMainWindowShell = async () => {
     clearTimeout(rendererUnresponsiveTimer);
     rendererUnresponsiveTimer = null;
     if (!recoveryPageActive && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setTitle(`${PRODUCT_NAME_ZH} ${app.getVersion()}`);
+      mainWindow.setTitle(`${PRODUCT_NAME_ZH} ${displayVersion}`);
       mainWindow.setProgressBar(-1);
     }
   });

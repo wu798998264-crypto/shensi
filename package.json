@@ -1,6 +1,7 @@
 {
   "name": "shensi-creative-engine",
-  "version": "9.3.2",
+  "version": "10.0.0",
+  "displayVersion": "k1.0.0",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
@@ -13,6 +14,7 @@
     "test:openai-image-terminal-recovery": "node scripts/test-openai-image-terminal-recovery.mjs",
     "test:libtv-account-status": "node scripts/test-libtv-account-status.mjs",
     "test:libtv-video-live-wait": "node scripts/test-libtv-video-live-wait.mjs",
+    "test:k-media-repair": "node scripts/test-libtv-video-reference-fidelity.mjs && node scripts/test-libtv-job-reference-preservation.mjs && node scripts/test-libtv-video-reference-driver.mjs && node scripts/test-libtv-board-project-store.mjs && node scripts/test-dreamina-video-upload-submit.mjs && node scripts/test-k-release-version.mjs",
     "test:prompt-clipboard-portable": "node scripts/test-whiteboard-prompt-portable-clipboard.mjs && node scripts/test-whiteboard-prompt-clipboard-dom.mjs",
     "test:upload-security-boundaries": "node scripts/test-upload-security-boundaries.mjs",
     "test:credential-vault-tombstones": "node scripts/test-credential-vault-tombstones.mjs",
@@ -119,7 +121,8 @@
     "package:windows": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows/package-windows.ps1",
     "release:prepare-github": "node scripts/windows/prepare-github-release.mjs",
     "test:windows-package-contract": "node scripts/test-v103-regressions.mjs",
-    "release:check": "npm run verify"
+    "release:check": "npm run verify",
+    "preverify": "npm run test:k-media-repair && npm run test:protected-image-profile-switch"
   },
   "devDependencies": {
     "@ffmpeg-installer/ffmpeg": "1.1.0",

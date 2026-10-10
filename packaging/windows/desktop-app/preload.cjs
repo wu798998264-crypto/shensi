@@ -2,11 +2,14 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const versionArgument = process.argv.find((argument) => argument.startsWith("--shensi-app-version="));
 const appVersion = versionArgument ? versionArgument.slice("--shensi-app-version=".length) : "9.3.0";
+const displayVersionArgument = process.argv.find(argument => argument.startsWith("--shensi-display-version="));
+const displayVersion = displayVersionArgument ? displayVersionArgument.slice("--shensi-display-version=".length) : appVersion;
 
 contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
   runtime: "electron",
   platform: process.platform,
   appVersion,
+  displayVersion,
   generationDrafts: Object.freeze({
     write: payload => ipcRenderer.sendSync("shensi:generation-draft:write", payload),
   }),

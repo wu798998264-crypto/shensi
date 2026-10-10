@@ -14,6 +14,9 @@ import { sanitizeMediaProviderPrompt } from "../media-prompt.js";
 import { dreaminaCliEnvironment } from "./dreamina-cli-profile.mjs";
 import { ensureLocalH3Runtime, localH3WorkflowPath, probeLocalH3Runtime } from "./local-h3-runtime.mjs";
 import { waitForLibTvVideoRun } from "./libtv-video-run.mjs";
+import { appDataRoot } from "./app-data.mjs";
+import { libTvBoardScope, getLibTvBoardProject } from "./libtv-board-project-store.mjs";
+import { compileLibTvVideoReferencePrompt, libTvVideoReferenceBindings } from "./libtv-video-references.mjs";
 
 const moduleRoot = dirname(fileURLToPath(import.meta.url));
 const DREAMINA_IMAGE_BRIDGE_PATH = resolve(moduleRoot, "../cli/dreamina-image-cli.mjs");
@@ -1684,18 +1687,50 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     await rename(temporaryPath, metadataPath);
   }
 
-  async project(workRoot, settings = {}) {
+  async project(workRoot, settings = {}, job = {}) {
     const metadataPath = join(workRoot, "libtv-project.json");
     await mkdir(join(workRoot, ".libtv"), { recursive: true });
     let metadata = null;
     try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
     if (metadata?.projectUuid) {
+      if (metadata.boardScopeKey) {
+        const payload = await this.invoke(["account", "list"], { cwd: workRoot, settings, timeoutMs: 30_000, phase: "核对画布所属账号" });
+        const account = (payload.accounts || payload.data?.accounts || []).find(item => item.isActive === true || item.isActive === 1);
+        if (String(account?.accountId || "") !== String(metadata.accountId || "")) {
+          throw Object.assign(asError("LibTV 当前账号已切换，与原任务画布所属账号不同；请切回原账号核对，未重新提交生成", "LIBTV_BOARD_ACCOUNT_CHANGED"), { submissionOutcomeKnown: true });
+        }
+      }
       // A project can be created remotely before the first `project use`
       // response becomes visible to the CLI. Keep the UUID durable and retry
       // only this bounded, pre-node activation step; never create a second
       // remote project when the first one already exists.
       await this.useProjectWithBoundedRecovery(metadata.projectUuid, workRoot, settings);
       const active = { ...metadata, projectUuid: String(metadata.projectUuid), state: "active" };
+      await this.persistProjectMetadata(metadataPath, active);
+      return active;
+    }
+    if (job.target?.documentKind === "whiteboard" && job.target.workspacePath && job.target.documentId) {
+      const accountPayload = await this.invoke(["account", "list"], { cwd: workRoot, settings, timeoutMs: 30_000, phase: "核对画布所属账号" });
+      const accounts = accountPayload.accounts || accountPayload.data?.accounts || [];
+      const activeAccount = accounts.find(account => account.isActive === true || account.isActive === 1);
+      if (!activeAccount?.accountId) throw asError("LibTV 未返回当前账号身份，无法安全复用白板画布；未提交生成", "LIBTV_BOARD_ACCOUNT_MISSING");
+      const scope = libTvBoardScope(job, String(activeAccount.accountId));
+      const shared = await getLibTvBoardProject({
+        root: join(appDataRoot(), "provider-state", "libtv", "boards"), scope, jobId: job.id,
+        create: async name => {
+          const created = await this.invoke(["project", "create", name, "--team-id", "0"], { cwd: workRoot, settings, timeoutMs: 60_000, phase: "创建白板画布" });
+          return created.projectMeta?.uuid || created.uuid || "";
+        },
+        recover: async name => {
+          const listed = await this.invoke(["project", "list", "--name", name, "--team-id", "0", "-s", "100"], { cwd: workRoot, settings, timeoutMs: 45_000, phase: "核对原白板画布" });
+          const items = [listed.projectMetaList, listed.projects, listed.items, listed.data?.items, listed.data?.projects].find(Array.isArray) || [];
+          const matches = items.filter(item => String(item.name || item.projectName || item.projectMeta?.name || "") === name);
+          return matches.length === 1 ? String(matches[0].uuid || matches[0].projectUuid || matches[0].projectMeta?.uuid || "") : "";
+        },
+      });
+      await this.persistProjectMetadata(metadataPath, { ...shared, state: "created" });
+      await this.useProjectWithBoundedRecovery(shared.projectUuid, workRoot, settings);
+      const active = { ...shared, state: "active" };
       await this.persistProjectMetadata(metadataPath, active);
       return active;
     }
@@ -1764,6 +1799,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     let libTvVideoCapability = null;
     let libTvVideoMode = "";
     if (job.channel === "video") {
+      libTvVideoReferenceBindings({ job, references });
       const schemaPayload = await loadLibTvModelSchema({ modelKey, settings: job.request.settings || {} });
       libTvVideoSchema = schemaPayload.schema || {};
       libTvVideoCapability = summarizeLibTvModelSchema({ modelKey, schema: libTvVideoSchema });
@@ -1782,7 +1818,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       }
     }
     const settings = job.request.settings || {};
-    const project = await this.project(workRoot, settings);
+    const project = await this.project(workRoot, settings, job);
     let node;
     try { node = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
     const nodeName = `神思-${job.channel}-${job.id}`;
@@ -1805,7 +1841,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     if (!node?.nodeKey) {
       const names = job.channel === "image" ? LIBTV_IMAGE_NAMES : job.channel === "video" ? LIBTV_VIDEO_NAMES : LIBTV_AUDIO_NAMES;
       const modelName = await resolveLibTvModelName({ channel: job.channel, modelKey, settings });
-      const args = ["node", "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${modelName || names[modelKey] || modelKey}`];
+      const args = ["node", ...(project.boardScopeKey ? ["--x", "1500", "--y", String(project.slot * 3600)] : []), "create", nodeName, "-t", job.channel, "--prompt", providerPrompt(job), "-s", `model=${modelName || names[modelKey] || modelKey}`];
       if (job.channel === "image") {
         // LibTV image schemas vary: older models expose one output control,
         // while the current 2.5 models expose independent quality and
@@ -1889,6 +1925,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         }
       }
       const leftNodes = [];
+      const uploadedNodes = Array(references.length).fill("");
       for (let index = 0; index < references.length; index += 1) {
         const reference = references[index];
         if (!reference?.absolutePath) continue;
@@ -1897,23 +1934,26 @@ export class LibTvMediaDriver extends MediaProviderDriver {
         if (recoveredReference?.id) {
           args.push("--left", recoveredReference.id);
           leftNodes.push(recoveredReference.id);
+          uploadedNodes[index] = recoveredReference.id;
           continue;
         }
-        const uploaded = await this.invoke(["upload", referenceName, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0]], { cwd: workRoot, timeoutMs: 5 * 60_000, settings, phase: "上传参考物" });
+        const uploaded = await this.invoke(["upload", referenceName, "--resource", reference.absolutePath, "-t", String(reference.mimeType || "").split("/")[0], ...(project.boardScopeKey ? ["--x", String((index % 4) * 320), "--y", String(project.slot * 3600 + Math.floor(index / 4) * 240)] : [])], { cwd: workRoot, timeoutMs: 5 * 60_000, settings, phase: "上传参考物" });
         const uploadedNodeKey = String(uploaded.nodeKey || uploaded.newNodeKey || "").trim();
         if (!uploadedNodeKey) throw Object.assign(asError("LibTV 上传参考物未返回节点 ID，尚未提交生成", "LIBTV_REFERENCE_NODE_MISSING"), { submissionOutcomeKnown: true });
         args.push("--left", uploadedNodeKey);
         leftNodes.push(uploadedNodeKey);
+        uploadedNodes[index] = uploadedNodeKey;
       }
+      if (job.channel === "video") args[args.indexOf("--prompt") + 1] = compileLibTvVideoReferencePrompt({ job, references, uploadedNodes });
       const created = await this.invoke(args, { cwd: workRoot, timeoutMs: 90_000, settings, phase: "创建生成节点" });
       // Official CLI create-and-connect receipts use newNodeKey, while
       // unconnected create/query receipts use nodeKey. Both identify the
       // canvas node, and neither is a paid generation submission.
-      node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || created.newNodeKey || "").trim(), nodeName, leftNodes };
+      node = { projectUuid: project.projectUuid, nodeKey: String(created.nodeKey || created.newNodeKey || "").trim(), nodeName, leftNodes, ...(job.channel === "video" ? { referenceBindings: references.map((reference, index) => ({ id: reference.id, nodeKey: uploadedNodes[index] })) } : {}) };
       if (!node.nodeKey) throw Object.assign(asError("LibTV 创建节点未返回节点 ID，尚未提交生成", "LIBTV_NODE_CREATE_FAILED"), { submissionOutcomeKnown: true });
       await writeFile(metadataPath, JSON.stringify(node), "utf8");
     }
-    if (typeof onProviderTaskCreated === "function") {
+    if (job.channel !== "video" && typeof onProviderTaskCreated === "function") {
       await onProviderTaskCreated({
         providerTaskId: node.nodeKey,
         providerStatus: "running",
@@ -1924,9 +1964,23 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     try {
       run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], {
         cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings, phase: "提交生成",
-        ...(job.channel === "video" ? { waitForVideoResult: true, onProviderTask: onProviderTaskCreated } : {}),
+        ...(job.channel === "video" ? { waitForVideoResult: true, onProviderTask: async receipt => {
+          node = { ...node, providerTaskId: String(receipt.providerTaskId) };
+          await this.persistProjectMetadata(metadataPath, node);
+          await onProviderTaskCreated?.(receipt);
+        } } : {}),
       });
     } catch (error) {
+      if (job.channel === "video") {
+        // The first error must survive later read-only recovery. A canvas node
+        // proves neither a paid task nor a successful upload/compliance check.
+        await this.persistProjectMetadata(join(workRoot, "libtv-video-run-error.json"), {
+          recordedAt: new Date().toISOString(), providerTaskId: String(error.providerTaskId || node.providerTaskId || ""),
+          code: String(error.providerErrorCode || error.code || ""), message: String(error.message || "").slice(-8000),
+          stderr: String(error.stderr || "").slice(-16000), stdout: String(error.stdout || "").slice(-16000),
+        });
+        if (libTvRunTransportFailure(error)) error.submissionOutcomeKnown = false;
+      }
       // LibTV creates a durable canvas node before it checks provider
       // capacity.  A capacity response therefore means "node exists, no
       // provider task was created"; return a failed submission observation so
@@ -2001,6 +2055,15 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       settings: job?.request?.settings || {},
       phase: "查询任务状态",
     });
+    if (job.channel === "video" && !payload.data?.taskInfo && !payload.data?.task_info && !payload.taskInfo && !payload.task_info && !payload.taskId && !(payload.data?.url?.length)) {
+      let original = {};
+      try { original = JSON.parse(await readFile(join(workRoot, "libtv-video-run-error.json"), "utf8")); } catch {}
+      return {
+        providerTaskId: node.providerTaskId || (job.providerTaskId !== node.nodeKey ? job.providerTaskId : "") || "",
+        providerStatus: "unknown", rawStatus: "video_task_not_visible", errorCode: "LIBTV_VIDEO_TASK_NOT_VISIBLE",
+        error: `LibTV 画布节点已存在，但没有真实生成任务信息；不能判定为排队。${original.message ? `原始错误：${original.message}` : "请核对原画布，不会重新提交。"}`,
+      };
+    }
     return { ...parseLibTvTaskPayload(payload), providerTaskId: parseLibTvTaskPayload(payload).providerTaskId || job.providerTaskId || node.nodeKey };
   }
 

@@ -8,6 +8,7 @@ import { dirname, extname, join, resolve } from "node:path";
 import { dreaminaAuthRefreshFailureMessage, dreaminaAuthRefreshSessionRejectedMessage, isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionRejected, isDreaminaAuthRequiredResponse } from "../dreamina-auth-recovery.js";
 import { dreaminaFailureDiagnosis } from "../dreamina-failure.js";
 import { seedanceReferenceValidation } from "../seedance-reference-limits.js";
+import { runKnownUnsubmittedVideoUpload } from "./dreamina-video-upload-submit.mjs";
 import { assertDreaminaCliGenerationAccess, assertDreaminaGenerationCredit, cachedDreaminaAccountIdentity, dreaminaControlPlaneFailureIsTransient, dreaminaExecutionReceipt, markDreaminaPreSubmitNoTask, verifiedDreaminaAccountForPaidSubmission, verifiedDreaminaAccountWithControlPlaneFallback } from "./dreamina-account-preflight.mjs";
 import {
   dreaminaCommandForVideoRequest,
@@ -334,21 +335,15 @@ const runCli = async (args, { authRetries = retryCount("SHENSI_DREAMINA_AUTH_RET
 };
 
 const runGenerationSubmitCli = async (args, { uploadRetries = retryCount("SHENSI_DREAMINA_UPLOAD_RETRIES", 4) } = {}) => {
-  let lastError = null;
-  for (let attempt = 0; attempt <= uploadRetries; attempt += 1) {
-    try {
-      return await runCli(args);
-    } catch (error) {
-      lastError = error;
-      if (!referenceUploadDidNotCreateTask(error?.message) || attempt >= uploadRetries) break;
-      await sleep(boundedRetryDelay(uploadRetryDelayMs(), attempt));
-    }
-  }
-  if (referenceUploadDidNotCreateTask(lastError?.message)) {
-    lastError.code = "DREAMINA_REFERENCE_UPLOAD_NO_TASK";
-    lastError.submissionOutcomeKnown = true;
-  }
-  throw lastError;
+  return runKnownUnsubmittedVideoUpload({
+    run: () => runCli(args),
+    knownUploadFailure: referenceUploadDidNotCreateTask,
+    taskId: value => normalizeDreaminaTaskId(value?.providerTaskId)
+      || submitId(parsePayload([value?.stdout, value?.stderr].filter(Boolean).join("\n")))
+      || dreaminaTaskIdInText([value?.message, value?.stdout, value?.stderr].filter(Boolean).join("\n")),
+    retries: uploadRetries,
+    delay: attempt => sleep(boundedRetryDelay(uploadRetryDelayMs(), attempt)),
+  });
 };
 
 const parsePayload = (stdout) => {

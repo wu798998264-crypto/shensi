@@ -563,7 +563,7 @@ const DEFAULT_SHORTCUTS = Object.freeze({
 const normalizedShortcutBindings = (value = {}) => Object.fromEntries(SHORTCUT_DEFINITIONS.map(({ id }) => [id, typeof value?.[id] === "string" ? value[id] : DEFAULT_SHORTCUTS[id]]));
 const root = document.querySelector("#root");
 const DESKTOP_RUNTIME = window.shensiDesktop?.runtime === "electron";
-const PRODUCT_VERSION = String(window.shensiDesktop?.appVersion || "1.0.0");
+const PRODUCT_VERSION = String(window.shensiDesktop?.displayVersion || window.shensiDesktop?.appVersion || "1.0.0");
 const nowTime = () => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
 const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 

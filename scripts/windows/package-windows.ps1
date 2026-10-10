@@ -60,8 +60,8 @@ Write-Host "==> Repo root: $repoRoot"
 $packageJsonPath = Join-Path $repoRoot "package.json"
 $packageJson = Get-Content -LiteralPath $packageJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $version = $packageJson.version
-if ($version -notmatch '^\d\.\d\.\d$') {
-    throw "正式版本号必须由三个单数字段组成；例如 7.7.9 的下一版应进位为 7.8.0"
+if ($version -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+    throw "内部正式版本号必须是递增的三段数字 SemVer，显示版本单独设置"
 }
 
 # Never turn an in-progress checkout (which may contain private notes,
@@ -105,6 +105,8 @@ if (-not (Test-Path -LiteralPath $releaseBuildPath)) {
 
 $releaseBuild = Get-Content -LiteralPath $releaseBuildPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $releaseBuild.version = $version
+$displayVersion = if ($packageJson.displayVersion) { [string]$packageJson.displayVersion } else { [string]$version }
+$releaseBuild | Add-Member -NotePropertyName displayVersion -NotePropertyValue $displayVersion -Force
 $releaseBuild.buildId = $buildId
 $releaseBuild.createdAt = $createdAt
 $releaseBuild.publishable = $true

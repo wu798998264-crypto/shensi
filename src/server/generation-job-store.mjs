@@ -535,6 +535,8 @@ const publicRequest = (channel, request = {}) => {
   interactionStartedAt: normalizedInteractionStartedAt(request),
   prompt: String(request.displayPrompt || (channel === "text" ? request.prompt : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens })) || ""),
   executionPrompt: channel === "text" ? String(request.prompt || "") : sanitizeMediaProviderPrompt(request.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens }),
+  ...(channel === "video" && String(request.settings?.provider || "").toLowerCase() === "libtv" && request.settings?.adapter === "cli"
+    ? { libTvReferencePrompt: String(request.libTvReferencePrompt || "") } : {}),
   providerPromptReferenceTokens,
   ...(preserveReferenceTokens ? { preserveReferenceTokens: true } : {}),
   capabilityProfileSignature: String(request.capabilityProfileSignature || request.settings?.capabilityProfileSignature || "").slice(0, 2000),
@@ -1321,7 +1323,10 @@ export const createMediaGenerationJob = async ({ channel, target, request, repla
     && request?.preserveReferenceTokens === true;
   const prompt = sanitizeMediaProviderPrompt(request?.prompt, { referenceTokens: providerPromptReferenceTokens, preserveReferenceTokens });
   if (!prompt) throw new Error(channel === "video" ? "视频提示词不能为空" : channel === "audio" ? "音频提示词不能为空" : "生图提示词不能为空");
-  const normalizedRequest = { ...request, prompt, providerPromptReferenceTokens, ...(preserveReferenceTokens ? { preserveReferenceTokens: true } : {}) };
+  const normalizedRequest = { ...request, prompt, providerPromptReferenceTokens, ...(preserveReferenceTokens ? { preserveReferenceTokens: true } : {}),
+    ...(channel === "video" && String(request?.settings?.provider || "").toLowerCase() === "libtv" && request?.settings?.adapter === "cli"
+      ? { libTvReferencePrompt: sanitizeMediaProviderPrompt(request.prompt, { preserveReferenceTokens: true }) } : {}),
+  };
   if (isDreaminaCliSettings(normalizedRequest.settings || {})) {
     requireDreaminaCliProfileId(normalizedRequest.settings || {});
   }
