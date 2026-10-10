@@ -13,6 +13,7 @@ import { isDreaminaAuthRefreshRetryableFailure, isDreaminaAuthRefreshSessionReje
 import { sanitizeMediaProviderPrompt } from "../media-prompt.js";
 import { dreaminaCliEnvironment } from "./dreamina-cli-profile.mjs";
 import { ensureLocalH3Runtime, localH3WorkflowPath, probeLocalH3Runtime } from "./local-h3-runtime.mjs";
+import { waitForLibTvVideoRun } from "./libtv-video-run.mjs";
 
 const moduleRoot = dirname(fileURLToPath(import.meta.url));
 const DREAMINA_IMAGE_BRIDGE_PATH = resolve(moduleRoot, "../cli/dreamina-image-cli.mjs");
@@ -1131,10 +1132,9 @@ const libtvExecutable = (settings = {}) => {
   return configured || LIBTV_CLI_ALIAS;
 };
 
-// LibTV normally returns after the node has been accepted. If its `--run`
-// command blocks instead, let the durable worker switch to read-only status
-// polling using the already persisted node key. Never hold the generation
-// task in the submitting process for the provider's full 30-minute timeout.
+// Preserve the existing short image/audio request contract. Video --run is
+// different: the official CLI owns live polling through the terminal result,
+// so it uses waitForLibTvVideoRun without this short request cutoff.
 const LIBTV_RUN_TIMEOUT_MS = Math.max(
   30_000,
   Number(process.env.SHENSI_LIBTV_RUN_TIMEOUT_MS) || 90_000,
@@ -1644,9 +1644,13 @@ export class LibTvMediaDriver extends MediaProviderDriver {
 
   executable(settings = {}) { return libtvExecutable(settings); }
 
-  async invoke(args, { cwd, timeoutMs = 60_000, raw = false, settings = {}, phase = "" } = {}) {
+  async invoke(args, { cwd, timeoutMs = 60_000, raw = false, settings = {}, phase = "", waitForVideoResult = false, onProviderTask = null } = {}) {
     const request = { executable: this.executable(settings), args, cwd, timeoutMs };
     try {
+      if (waitForVideoResult && args[0] === "node" && args.at(-1) === "--run") {
+        const result = await waitForLibTvVideoRun({ ...request, onProviderTask });
+        return parsedJson(result.stdout);
+      }
       return raw ? await spawnRaw(request) : await spawnJson(request);
     } catch (error) {
       throw classifyLibTvCliError(error, { args, phase });
@@ -1918,7 +1922,10 @@ export class LibTvMediaDriver extends MediaProviderDriver {
     }
     let run;
     try {
-      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], { cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings, phase: "提交生成" });
+      run = await this.invoke(["node", node.nodeKey, "-p", project.projectUuid, "--run"], {
+        cwd: workRoot, timeoutMs: LIBTV_RUN_TIMEOUT_MS, settings, phase: "提交生成",
+        ...(job.channel === "video" ? { waitForVideoResult: true, onProviderTask: onProviderTaskCreated } : {}),
+      });
     } catch (error) {
       // LibTV creates a durable canvas node before it checks provider
       // capacity.  A capacity response therefore means "node exists, no
@@ -1941,7 +1948,7 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       // read-only status path instead of leaving the card spinning forever or
       // submitting the same node again. Explicit provider errors still pass
       // through unchanged.
-      if (node.nodeKey && libTvRunTransportFailure(error)) {
+      if (job.channel !== "video" && node.nodeKey && libTvRunTransportFailure(error)) {
         return {
           providerTaskId: node.nodeKey,
           providerStatus: "running",
@@ -1953,6 +1960,12 @@ export class LibTvMediaDriver extends MediaProviderDriver {
       throw error;
     }
     const parsed = parseLibTvTaskPayload(run);
+    if (job.channel === "video" && !["completed", "failed", "cancelled"].includes(parsed.providerStatus)) {
+      throw Object.assign(asError(
+        "LibTV 视频运行命令已结束，但未返回生成终态；原任务已保留，请核对或找回结果，不会重新提交。",
+        "LIBTV_VIDEO_TERMINAL_MISSING",
+      ), { providerTaskId: parsed.providerTaskId || node.nodeKey, submissionOutcomeKnown: true });
+    }
     if (parsed.providerStatus === "unknown" && node.nodeKey) {
       return {
         ...parsed,

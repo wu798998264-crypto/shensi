@@ -141,6 +141,7 @@ import {
   saveRecoveryResumeState,
   saveWorkspaceRecoveryCheckpoint,
 } from "./src/server/recovery-store.mjs";
+import { loadWhiteboardGenerationDrafts, saveWhiteboardGenerationDrafts } from "./src/server/whiteboard-generation-draft-store.mjs";
 import {
   assertMediaGenerationProfileIdentity,
   completeClientGenerationJob,
@@ -3305,6 +3306,18 @@ const handleApiRequest = async (request, response, pathname) => {
       }
     }
     return sendJson(response, 200, { ok: true, ...(await saveRecoveryResumeState({ activeWorkspace, force: replaceInvalidCurrentPointer })) });
+  }
+
+  if (pathname === "/api/whiteboard/generation-drafts" && ["GET", "POST"].includes(request.method)) {
+    const options = request.method === "GET" ? {
+      workspacePath: requestUrl.searchParams.get("workspacePath"),
+      workspaceKind: requestUrl.searchParams.get("workspaceKind"),
+    } : await readJsonBody(request, 16 * 1024 * 1024);
+    if (isTemporaryNotebookPath(options.workspacePath)) {
+      return sendJson(response, request.method === "GET" ? 200 : 409, { ok: request.method === "GET", cache: null, message: "临时笔记本只读预览不写入生成草稿" });
+    }
+    const record = request.method === "GET" ? await loadWhiteboardGenerationDrafts(options) : await saveWhiteboardGenerationDrafts(options);
+    return sendJson(response, 200, { ok: true, ...(request.method === "GET" ? record : { updatedAt: record.updatedAt }) });
   }
 
   if (pathname === "/api/recovery/checkpoint" && request.method === "GET") {

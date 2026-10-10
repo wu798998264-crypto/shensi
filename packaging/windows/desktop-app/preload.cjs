@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld("shensiDesktop", Object.freeze({
   runtime: "electron",
   platform: process.platform,
   appVersion,
+  generationDrafts: Object.freeze({
+    write: payload => ipcRenderer.sendSync("shensi:generation-draft:write", payload),
+  }),
   externalMarkdown: Object.freeze({
     ready: () => ipcRenderer.invoke("shensi:external-markdown:renderer-ready"),
     onOpened: (listener) => {

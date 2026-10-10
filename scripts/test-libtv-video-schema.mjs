@@ -21,6 +21,7 @@ assert.equal(catalog.modelCapabilities["kling-v3-motion-control"].durationDerive
 const ref = (mimeType) => ({ mimeType });
 const capability = (id) => catalog.modelCapabilities[id];
 assert.equal(resolveLibTvVideoMode({ capability: capability("star-video2"), references: [] }), "text2video");
+assert.equal(resolveLibTvVideoMode({ capability: capability("star-video2-mini"), references: [] }), "text2video");
 assert.equal(resolveLibTvVideoMode({ capability: capability("star-video2"), references: [ref("image/png")] }), "singleImage2video");
 assert.equal(resolveLibTvVideoMode({ capability: capability("star-video2"), references: [ref("video/mp4"), ref("audio/mpeg")] }), "mixed2video");
 assert.equal(resolveLibTvVideoMode({ capability: capability("wanx2.7-video"), references: [ref("video/mp4")] }), "video2video");
@@ -79,6 +80,11 @@ const wanArgs = await captureSubmission({
 assert.ok(wanArgs.includes("modeType=video2video"), "视频参考必须选择 video2video");
 assert.ok(wanArgs.includes("duration=2"), "时长必须使用当前模型 Schema 支持的真实值");
 assert.ok(wanArgs.includes("resolution=1080P"), "参数必须还原成 LibTV Schema 的真实大小写");
+
+const miniArgs = await captureSubmission({ model: "star-video2-mini", request: { duration: 4, resolution: "720p", aspectRatio: "16:9" }, references: [] });
+assert.ok(miniArgs.includes("model=Seedance 2.0 Mini"));
+assert.ok(miniArgs.includes("duration=4"));
+assert.ok(miniArgs.includes("modeType=text2video"));
 
 const motionArgs = await captureSubmission({
   model: "kling-v3-motion-control",

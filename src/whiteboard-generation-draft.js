@@ -3,7 +3,6 @@ import { WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS } from "./whiteboard-rich-prompt.
 export const WHITEBOARD_GENERATION_DRAFT_CACHE_KEY = "shensi-whiteboard-generation-drafts-v1";
 
 const CHANNELS = new Set(["text", "image", "video", "audio"]);
-const MAX_ENTRIES = 120;
 const MAX_OPEN_SESSIONS = 24;
 const CURRENT_VERSION = 9;
 const IMAGE_MODEL_MIGRATION_VERSION = 3;
@@ -94,8 +93,7 @@ export const normalizeWhiteboardGenerationDraftCache = (value) => {
       return [key, { ...scope, values, updatedAt: Math.max(0, Number(entry.updatedAt) || 0) }];
     })
     .filter(Boolean)
-    .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
-    .slice(0, MAX_ENTRIES));
+    .sort(([, left], [, right]) => right.updatedAt - left.updatedAt));
   const activeScope = whiteboardGenerationDraftScope(source.active);
   const activeKey = whiteboardGenerationDraftKey(activeScope);
   const active = activeKey && entries[activeKey]
@@ -127,8 +125,7 @@ export const updateWhiteboardGenerationDraftCache = (cache, scope, values, {
   if (existing && existing.updatedAt > timestamp) return normalized;
   normalized.entries[key] = { ...cleanScope, values: normalizeValues(values), updatedAt: timestamp };
   normalized.entries = Object.fromEntries(Object.entries(normalized.entries)
-    .sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
-    .slice(0, MAX_ENTRIES));
+    .sort(([, left], [, right]) => right.updatedAt - left.updatedAt));
   const session = { ...cleanScope, key, collapsed: collapsed === true, updatedAt: timestamp };
   normalized.openSessions = [
     ...normalized.openSessions.filter((item) => item.key !== key),
@@ -136,9 +133,9 @@ export const updateWhiteboardGenerationDraftCache = (cache, scope, values, {
   ].sort((left, right) => right.updatedAt - left.updatedAt).slice(0, MAX_OPEN_SESSIONS);
   normalized.active = active ? session : normalized.active?.key === key ? null : normalized.active;
   // `normalized` already satisfies every cache invariant: the new values and
-  // scope are normalized, entries/sessions are sorted and capped, and active
+  // scope are normalized, entries are sorted, sessions capped, and active
   // points at the freshly inserted canonical entry. Normalizing the entire
-  // 120-entry cache a second time made every prompt keystroke needlessly walk,
+  // entire cache a second time made every prompt keystroke needlessly walk,
   // sort and clone all saved drafts again.
   return normalized;
 };

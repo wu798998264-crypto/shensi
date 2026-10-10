@@ -8,7 +8,7 @@ import { createServer, isIP } from "node:net";
 import { createServer as createHttpServer, request } from "node:http";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createCredentialVault } from "./credential-vault.mjs";
 import { directoryDialogOptions, resolveDirectoryDialogDefaultPath } from "./directory-dialog.mjs";
 import { nextAvailableMediaSavePath, sanitizeSuggestedMediaName } from "./media-save-name.mjs";
@@ -60,6 +60,7 @@ const appRoot = installed
     : electronBuilderAppRoot)
   : developmentRoot;
 const serverEntry = join(appRoot, "server.mjs");
+const { writeWhiteboardGenerationDraftJournal } = await import(pathToFileURL(join(appRoot, "src/server/whiteboard-generation-draft-journal.mjs")).href);
 const preloadPath = join(here, "preload.cjs");
 const packagedMediaExecutable = (name) => {
   const packagedPath = join(process.resourcesPath, "ffmpeg", name);
@@ -1355,6 +1356,15 @@ const installWindowBridge = () => {
     requestApplicationQuit();
     return true;
   }));
+  ipcMain.on("shensi:generation-draft:write", (event, payload) => {
+    try {
+      if (!isTrustedRendererIpcEvent(event)) throw new Error("草稿仅允许神思本地可信界面保存");
+      if (JSON.stringify(payload).length > 256 * 1024) throw new Error("单卡片草稿过大，已保留原日志并交由文件备份保存");
+      event.returnValue = writeWhiteboardGenerationDraftJournal({ ...payload, root: serverMachineDataRoot });
+    } catch (error) {
+      event.returnValue = { ok: false, message: error.message || "草稿日志写入失败" };
+    }
+  });
   ipcMain.handle("shensi:window:confirm-close", trustedIpcHandler("shensi:window:confirm-close", (event, saved) => {
     const target = windowForEvent(event);
     if (saved === true && explicitQuitRequested) {
@@ -1364,6 +1374,8 @@ const installWindowBridge = () => {
     } else if (saved === true) {
       target?.hide();
     } else {
+      clearTimeout(rendererCloseTimer);
+      rendererCloseTimer = null;
       explicitQuitRequested = false;
       target?.show();
       target?.focus();

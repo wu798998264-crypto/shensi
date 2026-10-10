@@ -147,6 +147,7 @@ import { conversationMediaDefaultIntent, conversationMediaEffectiveSelection, ex
 import { normalizeRecoveryComposerDraft, normalizeWorkspaceComposerDraft, readComposerDraftCacheEntry, readComposerDraftCacheState, writeComposerDraftCacheEntry } from "./composer-draft-cache.js";
 import { WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, deactivateWhiteboardGenerationDraft, duplicateWhiteboardGenerationDraftEntries, mergeWhiteboardGenerationDraftCaches, normalizeWhiteboardGenerationDraftCache, preferredWhiteboardGenerationDraftForNode, updateWhiteboardGenerationDraftCache, whiteboardGenerationDraftKey, whiteboardGenerationSurfaceIsActive } from "./whiteboard-generation-draft.js?v=5.4.10-audio-draft-v9";
 import { createWhiteboardPromptHistory, normalizeWhiteboardPromptHistorySnapshot, pushWhiteboardPromptHistory, stepWhiteboardPromptHistory } from "./whiteboard-generation-prompt-history.js?v=1.0.0";
+import { createWhiteboardGenerationDraftPersistence } from "./whiteboard-generation-draft-persistence.js";
 import { WHITEBOARD_RICH_PROMPT_CARET_GUARD, WHITEBOARD_RICH_PROMPT_MAX_CHARACTERS, serializeWhiteboardRichPromptBeforePoint, serializeWhiteboardRichPromptNode, whiteboardPromptAtomicDropOffset, whiteboardPromptReferenceIdentityMatches, whiteboardPromptReferenceReplacementIsSafe, whiteboardPromptReferenceSequenceAfterInsertion, whiteboardPromptReferenceSequenceAfterReplacement } from "./whiteboard-rich-prompt.js?v=1.0.3-reference-replacement";
 import { buildBudgetedConversationContext, candidateComparisonContextMessages, conversationGeneratedImageAttachmentsForReference, conversationGeneratedMediaContext, conversationMessageContentForModel, conversationMessageEligibleForModel, conversationMessagesForActiveAssociation, extractConversationConstraintIndex, historicalConversationReferencePrompt, mergeConversationConstraintIndex, modelConversationCharacterBudget, rebuildConversationDerivedContext, resolveHistoricalConversationTaskReference } from "./conversation-context.js?v=1.0.24-candidate-comparison";
 import { buildConversationCompressionCheckpoint, conversationCompressionSourceSignature } from "./conversation-state-ledger.js?v=1.0.0";
@@ -5455,6 +5456,10 @@ const flushWorkspaceSave = async ({ throwOnError = false, recoverConflict = true
 };
 
 const flushWorkspaceBeforeSwitch = async () => {
+  // This barrier belongs to user navigation, NOT generation/result landing.
+  // A slow draft backup must never delay or reclassify a completed image job.
+  flushWhiteboardGenerationDrafts();
+  await whiteboardGenerationDraftPersistence.flush();
   try {
     await flushWorkspaceSave({ throwOnError: true, recoverConflict: true });
     return { preservedConflict: false };
@@ -6131,7 +6136,7 @@ const hydrateWorkspace = async () => {
     ui.workspaceRevision = ui.recoveryCheckpointRevision;
     ui.workspaceDirty = checkpointCanRestore;
     ui.workspaceStateChangesPending = checkpointCanRestore;
-    if (checkpointCanRestore && checkpoint.whiteboardGenerationDrafts) {
+    if (checkpoint?.whiteboardGenerationDrafts) {
       // A checkpoint can be older than the renderer's local draft cache when
       // the process crashed between localStorage and the asynchronous server
       // write. Merge by per-entry updatedAt instead of overwriting the newest
@@ -6140,8 +6145,9 @@ const hydrateWorkspace = async () => {
         readWhiteboardGenerationDraftCache(),
         checkpoint.whiteboardGenerationDrafts,
       );
-      writeWhiteboardGenerationDraftCache(mergedDrafts);
+      writeWhiteboardGenerationDraftCache(mergedDrafts, { persist: false });
     }
+    await restorePersistentWhiteboardGenerationDrafts();
     persistActiveWorkspacePointer();
     rememberCurrentWorkspaceState();
     if (payload.recovery?.recoveredTransactions) {
@@ -43558,6 +43564,7 @@ const switchNotebook = async ({ workspacePath, name }) => {
       documentHashes: payload.documentHashes,
       baselineStateHashes: payload.baselineStateHashes,
     });
+    await restorePersistentWhiteboardGenerationDrafts();
     if (payload.revalidateStamp) void revalidateActivatedWorkspace({ workspaceKind: "notebook", workspacePath, cachedStateStamp: payload.stateStamp });
     // A newly created notebook is already protected by persist(): it receives
     // an immediate recovery checkpoint and a scheduled canonical save. Do not
@@ -43620,6 +43627,7 @@ const switchProject = async ({ workspacePath, name }) => {
         documentHashes: payload.documentHashes,
         baselineStateHashes: payload.baselineStateHashes,
       });
+      await restorePersistentWhiteboardGenerationDrafts();
       if (payload.revalidateStamp) void revalidateActivatedWorkspace({ workspaceKind: "project", workspacePath, cachedStateStamp: payload.stateStamp });
       if (payload.recovery?.recoveredTransactions) showToast(`已自动恢复并完成 ${payload.recovery.recoveredTransactions} 个未完成落盘事务`);
       if (saveDisposition?.preservedConflict) showToast("已切换；原工作区的冲突草稿已保存在恢复检查点，未覆盖磁盘版本");
@@ -54724,6 +54732,53 @@ const switchWhiteboardGenerationType = (dialog, channel) => {
 let whiteboardGenerationDraftCacheRaw = null;
 let whiteboardGenerationDraftCacheValue = null;
 const WHITEBOARD_GENERATION_ACTIVE_DRAFT_KEY = "shensi-whiteboard-generation-active-draft-v1";
+let whiteboardGenerationDraftSaveErrorShown = false;
+const whiteboardGenerationDraftPersistence = createWhiteboardGenerationDraftPersistence({
+  send: async (payload, { keepalive = false } = {}) => {
+    const body = JSON.stringify(payload);
+    const response = await fetch("/api/whiteboard/generation-drafts", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body,
+      keepalive: keepalive && new Blob([body]).size < 60 * 1024,
+      signal: AbortSignal.timeout(10_000),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.message || "生成操作栏草稿写入失败");
+    whiteboardGenerationDraftSaveErrorShown = false;
+  },
+  onError: (error) => {
+    if (!whiteboardGenerationDraftSaveErrorShown) showToast(`生成操作栏草稿尚未完成本地落盘：${error.message}。请勿强制退出，正在重试保存。`);
+    whiteboardGenerationDraftSaveErrorShown = true;
+  },
+});
+
+const restorePersistentWhiteboardGenerationDrafts = async () => {
+  if (state.temporaryNotebook || state.readOnly || !state.settings.workspacePath) return;
+  const workspaceId = workspaceIdentity();
+  try {
+    const query = new URLSearchParams({ workspaceKind: state.workspaceKind, workspacePath: state.settings.workspacePath });
+    const response = await fetch(`/api/whiteboard/generation-drafts?${query}`, { signal: AbortSignal.timeout(12_000) });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(result.message || "草稿文件读取失败");
+    if (workspaceIdentity() !== workspaceId) return;
+    const local = readWhiteboardGenerationDraftCache();
+    const merged = mergeWhiteboardGenerationDraftCaches(result.cache, local);
+    // A durable closed-session marker outranks an old checkpoint's open bar.
+    // Only the pointer changes here; each draft still merges by its own time.
+    const localSessionTime = Math.max(Number(storedWhiteboardGenerationActiveDraft()?.updatedAt) || 0, Number(local.active?.updatedAt) || 0);
+    if (Number(result.sessionUpdatedAt) > 0 && Number(result.sessionUpdatedAt) >= localSessionTime) {
+      merged.active = result.cache?.active || null;
+      merged.openSessions = merged.active ? [merged.active] : [];
+    }
+    writeWhiteboardGenerationDraftCache(merged, { persist: false });
+    // Migrate successfully recovered legacy drafts into the independent file
+    // even if the author only opens them and makes no further edits.
+    whiteboardGenerationDraftPersistence.enqueue(merged, {
+      workspaceId, workspaceKind: state.workspaceKind, workspacePath: state.settings.workspacePath,
+    });
+  } catch (error) {
+    showToast(`生成操作栏草稿恢复未完成：${error.message}。未覆盖已有本地草稿，请勿在旧操作栏上继续编辑。`);
+  }
+};
 
 const storedWhiteboardGenerationActiveDraft = () => {
   try {
@@ -54740,42 +54795,68 @@ const readWhiteboardGenerationDraftCache = () => {
     if (raw === whiteboardGenerationDraftCacheRaw && whiteboardGenerationDraftCacheValue) {
       return whiteboardGenerationDraftCacheValue;
     }
-    whiteboardGenerationDraftCacheRaw = raw;
-    whiteboardGenerationDraftCacheValue = normalizeWhiteboardGenerationDraftCache(JSON.parse(raw));
+    const diskCache = normalizeWhiteboardGenerationDraftCache(JSON.parse(raw));
     const active = storedWhiteboardGenerationActiveDraft();
     const activeKey = whiteboardGenerationDraftKey(active);
-    if (activeKey && whiteboardGenerationDraftCacheValue.entries[activeKey]) {
+    if (activeKey && diskCache.entries[activeKey]) {
       const session = { ...active, key: activeKey, collapsed: false, updatedAt: Math.max(0, Number(active.updatedAt) || Date.now()) };
-      whiteboardGenerationDraftCacheValue.active = session;
-      whiteboardGenerationDraftCacheValue.openSessions = [session];
+      diskCache.active = session;
+      diskCache.openSessions = [session];
     }
+    whiteboardGenerationDraftCacheRaw = raw;
+    whiteboardGenerationDraftCacheValue = whiteboardGenerationDraftCacheValue
+      ? mergeWhiteboardGenerationDraftCaches(diskCache, whiteboardGenerationDraftCacheValue) : diskCache;
     return whiteboardGenerationDraftCacheValue;
   } catch {
     whiteboardGenerationDraftCacheRaw = "{}";
-    whiteboardGenerationDraftCacheValue = normalizeWhiteboardGenerationDraftCache({});
+    whiteboardGenerationDraftCacheValue ||= normalizeWhiteboardGenerationDraftCache({});
     return whiteboardGenerationDraftCacheValue;
   }
 };
 
-const writeWhiteboardGenerationDraftCache = (cache, { normalized = false } = {}) => {
+const writeWhiteboardGenerationDraftCache = (cache, { normalized = false, persist: persistDraft = true } = {}) => {
+  const durableCache = normalized ? cache : normalizeWhiteboardGenerationDraftCache(cache);
+  const previous = whiteboardGenerationDraftCacheValue;
+  // Preserve the newest in-memory values even if Chromium storage is full or
+  // unavailable; the independent file writer still receives this exact copy.
+  whiteboardGenerationDraftCacheValue = durableCache;
+  if (persistDraft && !state.temporaryNotebook && !state.readOnly && window.shensiDesktop?.generationDrafts?.write) {
+    for (const [key, entry] of Object.entries(durableCache.entries)) {
+      if (entry.workspaceId !== workspaceIdentity() || entry.updatedAt === previous?.entries?.[key]?.updatedAt) continue;
+      try {
+        const result = window.shensiDesktop.generationDrafts.write({ workspaceKind: state.workspaceKind, workspacePath: state.settings.workspacePath, entry, active: durableCache.active });
+        if (!result?.ok) throw new Error(result?.message || "同步草稿日志写入失败");
+      } catch (error) {
+        if (!whiteboardGenerationDraftSaveErrorShown) showToast(`操作栏同步保护未完成：${error.message}。正在重试文件保存，请勿强制退出。`);
+        whiteboardGenerationDraftSaveErrorShown = true;
+      }
+    }
+  }
   try {
-    const durableCache = normalized ? cache : normalizeWhiteboardGenerationDraftCache(cache);
     // The active/open pointer changes whenever a bar is opened or closed. Keep
     // it in a tiny independent record so that action never rewrites every long
     // prompt in the 120-entry draft cache on the renderer thread.
     const raw = JSON.stringify({ ...durableCache, active: null, openSessions: [] });
     if (raw !== whiteboardGenerationDraftCacheRaw) localStorage.setItem(WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, raw);
     if (durableCache.active) localStorage.setItem(WHITEBOARD_GENERATION_ACTIVE_DRAFT_KEY, JSON.stringify(durableCache.active));
-    else localStorage.removeItem(WHITEBOARD_GENERATION_ACTIVE_DRAFT_KEY);
+    else localStorage.setItem(WHITEBOARD_GENERATION_ACTIVE_DRAFT_KEY, JSON.stringify({ closed: true, updatedAt: Date.now() }));
     whiteboardGenerationDraftCacheRaw = raw;
     whiteboardGenerationDraftCacheValue = durableCache;
-  } catch {}
+  } catch (error) {
+    console.warn("Generation draft browser cache failed; retaining live draft for file persistence:", error.name);
+  }
+  if (persistDraft && !state.temporaryNotebook && !state.readOnly) {
+    whiteboardGenerationDraftPersistence.enqueue(durableCache, {
+      workspaceId: workspaceIdentity(), workspaceKind: state.workspaceKind, workspacePath: state.settings.workspacePath,
+    });
+  }
 };
 
 window.addEventListener("storage", (event) => {
   if (![WHITEBOARD_GENERATION_DRAFT_CACHE_KEY, WHITEBOARD_GENERATION_ACTIVE_DRAFT_KEY].includes(event.key)) return;
   whiteboardGenerationDraftCacheRaw = null;
-  whiteboardGenerationDraftCacheValue = null;
+  // A storage event may contain an older snapshot from another window. Merge
+  // it on read instead of discarding newer keystrokes held in memory.
 });
 
 const markWhiteboardGenerationDraftDurable = () => {
@@ -55019,7 +55100,7 @@ const saveWhiteboardGenerationDraft = (dialog, {
 } = {}) => {
   const config = whiteboardGenerationConfigFor(dialog);
   const scope = whiteboardGenerationDialogDraftScope(dialog);
-  if (!config || !scope) return;
+  if (!config || !scope || dialog.dataset.draftInitializing === "true") return;
   // The visible rich editor is authoritative. Flush it into the hidden
   // textarea before reading form values so the newest keystrokes survive a
   // crash/recovery even when the input event has not reached the next frame.
@@ -55035,7 +55116,7 @@ const saveWhiteboardGenerationDraft = (dialog, {
     previous,
     scope,
     values,
-    { active, open, collapsed: false },
+    { active, open, collapsed: false, updatedAt: Math.max(Date.now(), Number(existing?.updatedAt || 0) + 1) },
   );
   writeWhiteboardGenerationDraftCache(cache, { normalized: true });
   if (durable && valuesChanged) markWhiteboardGenerationDraftDurable();
@@ -55434,6 +55515,9 @@ const primeWhiteboardGenerationDialog = (dialog, nodeId, { centered = false } = 
   cancelWhiteboardCardOpen();
   collapseWhiteboardContextMenu();
   const config = whiteboardGenerationConfigFor(dialog);
+  // The previous card still owns the current editor until its full draft has
+  // been captured. Installing the new anchor first saved old UI into a new card.
+  if (dialog.open) saveWhiteboardGenerationDraft(dialog);
   const initializationToken = String(++whiteboardGenerationDialogInitializationSequence);
   clearWhiteboardGenerationDialogRecoveryTimer(dialog);
   // Clear a previous session before installing the new token.  This is safe
@@ -55441,6 +55525,7 @@ const primeWhiteboardGenerationDialog = (dialog, nodeId, { centered = false } = 
   // its own busy/inert state below.
   resetWhiteboardGenerationDialogInteractivity(dialog, { clearInitialization: true });
   if (config?.form) config.form.dataset.nodeId = nodeId;
+  dialog.dataset.draftInitializing = "true";
   dialog.dataset.anchorNodeId = nodeId;
   dialog.dataset.anchorDocumentId = state.activeDocument;
   dialog.dataset.anchorWorkspaceId = workspaceIdentity();
@@ -55566,6 +55651,7 @@ const showWhiteboardGenerationDialog = (dialog, nodeId, focusTarget, initializat
   dialog.scrollTop = 0;
   closeWhiteboardGenerationMentionMenu(dialog.querySelector("form"));
   initializeWhiteboardPromptHistory(dialog.querySelector("form"));
+  delete dialog.dataset.draftInitializing;
   saveWhiteboardGenerationDraft(dialog, { active: true, open: true, durable: false });
   syncWhiteboardCardGenerationTypeIndicator(nodeId, whiteboardGenerationConfigFor(dialog)?.channel);
   renderWhiteboardGenerationCollapsedSessions();
@@ -63084,6 +63170,9 @@ whiteboardGenerationConfigs().forEach(({ dialog, form }) => {
   const saveDraft = () => saveWhiteboardGenerationDraft(dialog);
   const capturePromptEdit = (event) => {
     saveDraft();
+    // Reference insertion and capability pickers can update several hidden
+    // fields after dispatching input. Capture their final ordered state too.
+    queueMicrotask(saveDraft);
     if (whiteboardPromptHistoryEventTargetsPrompt(form, event)) queueWhiteboardPromptHistoryRecord(form);
   };
   form.addEventListener("input", capturePromptEdit);
@@ -68341,6 +68430,7 @@ document.addEventListener("visibilitychange", () => {
   persistWritingTimerStore(writingTimerStore);
   syncComposerDraftFromInput();
   flushWhiteboardGenerationDrafts();
+  void whiteboardGenerationDraftPersistence.flush({ keepalive: true }).catch(() => {});
   persist();
   if (!workspaceHasNoActiveEntry()) persistActiveWorkspacePointer({ keepalive: true });
   flushRecoveryCheckpoint({ keepalive: true }).catch(() => {});
@@ -68352,6 +68442,7 @@ window.addEventListener("beforeunload", () => {
   persistWritingTimerStore(writingTimerStore);
   syncComposerDraftFromInput();
   flushWhiteboardGenerationDrafts();
+  void whiteboardGenerationDraftPersistence.flush({ keepalive: true }).catch(() => {});
   if (!workspaceHasNoActiveEntry()) persistActiveWorkspacePointer({ keepalive: true });
   if (ui.workspaceDirty || whiteboardGenerationDraftNeedsRecoveryCheckpoint()) flushRecoveryCheckpoint({ keepalive: true }).catch(() => {});
 });
@@ -68360,6 +68451,7 @@ window.addEventListener("pagehide", () => {
   clearTimeout(writingTimerPersistTimer);
   persistWritingTimerStore(writingTimerStore);
   flushWhiteboardGenerationDrafts();
+  void whiteboardGenerationDraftPersistence.flush({ keepalive: true }).catch(() => {});
   if (!workspaceHasNoActiveEntry()) persistActiveWorkspacePointer({ keepalive: true });
   if (ui.workspaceDirty || whiteboardGenerationDraftNeedsRecoveryCheckpoint()) flushRecoveryCheckpoint({ keepalive: true }).catch(() => {});
 });
@@ -70142,7 +70234,10 @@ desktopControlBridge?.onCloseRequested?.(async () => {
     new Promise((resolveDeadline) => setTimeout(() => resolveDeadline(fallback), milliseconds)),
   ]);
   let saved = false;
+  let draftSaveFailed = false;
   try {
+    flushWhiteboardGenerationDrafts();
+    await whiteboardGenerationDraftPersistence.flush();
     saved = await deadline(flushWorkspaceSave(), 7_000, false) === true;
     if (!saved) {
       await deadline(flushRecoveryCheckpoint({ keepalive: true }), 2_500, null).catch(() => null);
@@ -70151,8 +70246,11 @@ desktopControlBridge?.onCloseRequested?.(async () => {
     await deadline(generationSecretWritePromise, 2_500, null).catch((error) => {
       showToast(`凭证安全存储未及时完成：${error.message}`);
     });
+  } catch (error) {
+    draftSaveFailed = true;
+    showToast(`退出已暂停，生成操作栏草稿尚未保存：${error.message}。请重试关闭，勿强制结束进程。`);
   } finally {
-    await desktopControlBridge.confirmClose?.(true);
+    await desktopControlBridge.confirmClose?.(!draftSaveFailed && !whiteboardGenerationDraftPersistence.hasPending());
     desktopClosePreparationActive = false;
   }
 });
