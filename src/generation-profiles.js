@@ -391,10 +391,9 @@ const BUILT_IN_LIBTV_VIDEO = {
   provider: "LibTV",
   protocol: "media",
   baseUrl: "",
-  // Keep the bundled profile pointed at a model that is present in the current
-  // LibTV catalog.  Hailuo H3 and wanx3.0 were historical aliases and now make
-  // the CLI fail before submission with MODEL_NOT_FOUND.
-  model: "star-video2",
+  // Seedance 2.5 is the default for new LibTV video configurations. Existing
+  // card/draft selections and explicitly selected profile models stay intact.
+  model: "star-video2.5",
   timeoutMs: "1800000",
   apiKey: "",
   cliPath: LIBTV_CLI_ALIAS,

@@ -1,7 +1,7 @@
 {
   "name": "shensi-creative-engine",
-  "version": "10.0.0",
-  "displayVersion": "k1.0.0",
+  "version": "10.0.1",
+  "displayVersion": "k1.0.1",
   "dataSchemaVersion": 1,
   "private": true,
   "type": "module",
