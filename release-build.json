@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "version": "10.0.0",
+  "version": "10.0.1",
   "dataSchemaVersion": 1,
-  "buildId": "20261010114408964",
-  "createdAt": "2026-10-10T11:44:08.9645839Z",
+  "buildId": "20261011025336321",
+  "createdAt": "2026-10-11T02:53:36.3211501Z",
   "publishable": true,
-  "runtimeManifestHash": "1447839db053a538143df41644089207cbc869d22274482902324f08bf3f4d30",
+  "runtimeManifestHash": "9468ec781ad85156794f5a07275aa3e4eb5461965f471e98a2cafb79c669cfee",
   "sourceDirty": false,
   "sourceDirtyHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "displayVersion": "k1.0.0",
-  "commit": "1aad108736b2a6cf26566d4401824f2f92dc1a58"
+  "displayVersion": "k1.0.1",
+  "commit": "2c399d4b1591da8478b771ac5d4294107241b763"
 }
